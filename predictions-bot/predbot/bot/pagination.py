@@ -109,7 +109,10 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
     page = clamp_page(page, len(items), size)
     chunk = slice_page(items, page, size)
 
-    heading = "Top predictions for today–– " if view == VIEW_TOP else "Daily picks for today–– "
+    if view == VIEW_TOP:
+        heading = "Top predictions for today–– "
+    else:
+        heading = "Daily picks for today–– "
     lines = [f"<b>{heading}{snapshot.date}</b>", ""]
 
     if not chunk:

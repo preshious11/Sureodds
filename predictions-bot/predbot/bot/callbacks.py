@@ -29,7 +29,7 @@ def welcome_message(first_name: str = "there") -> str:
         f"👋 Hi, {first_name}\n\n"
         "Use the menu below or these commands:\n\n"
         "/top – Top picks of the day\n"
-        "/dailypicks – Accumulator slip\n"
+        "/today – Daily picks · Accumulator slip\n"
         "/stats – See prediction results."
     )
 
