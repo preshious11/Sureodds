@@ -21,6 +21,7 @@ RESULT_ICON = {"won": "✅", "lost": "❌", "push": "↩️", "half_won": "✅½
 class PickLine(NamedTuple):
     """One prediction exactly as the daily post renders it."""
 
+    sport: str             # "Football", "Basketball", etc.
     match: str             # "Chelsea vs Man United"
     outcome: str           # short code, e.g. "1X", "Over 2.5 Goals"
     league: str
@@ -57,11 +58,10 @@ def combined_odds(prices: Iterable[float]) -> float:
 
 
 def pick_lines(p: PickLine) -> List[str]:
-    """The four lines one pick occupies: match, outcome, confidence | kickoff, odds."""
-    match = f"{p.match} ({p.league})" if p.league else p.match
-    return [esc(match), esc(p.outcome),
-            f"Confidence: {round(p.confidence * 100)}% | {p.when}",
-            f"Odds: {p.price:.2f}"]
+    """The six lines one pick occupies: sport, league, match, outcome, confidence | kickoff, odds."""
+    return [esc(p.sport), esc(p.league), esc(p.match), esc(p.outcome),
+            f"{round(p.confidence * 100)}% | {p.when}",
+            f"{p.price:.2f}"]
 
 
 def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str] = None,
@@ -90,7 +90,8 @@ def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str])
     picks: List[PickLine] = []
     for s in list(top) + list(daily):
         e = s.event
-        picks.append(PickLine(match=f"{e.home} vs {e.away}",
+        picks.append(PickLine(sport=sport_name(e.sport),
+                              match=f"{e.home} vs {e.away}",
                               outcome=short_selection(s.line, e.home, e.away, e.sport),
                               league=e.league or sport_name(e.sport),
                               confidence=s.p_model, when=kickoff_label(e.start, tz),

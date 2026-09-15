@@ -27,7 +27,8 @@ def picks_text(snapshot: DailySnapshot, tz: str) -> str:
     picks = []
     for p in snapshot.top_picks + snapshot.daily_picks:
         ml = MarketLine(p.market, p.selection, p.price, line=p.line)
-        picks.append(PickLine(match=f"{p.home} vs {p.away}",
+        picks.append(PickLine(sport=sport_name(p.sport),
+                              match=f"{p.home} vs {p.away}",
                               outcome=short_selection(ml, p.home, p.away, p.sport) or p.label,
                               league=p.league or sport_name(p.sport),
                               confidence=p.prob, when=kickoff_label(parse_iso(p.kickoff_utc), tz),
