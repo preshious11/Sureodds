@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS subscribers (
     chat_id TEXT PRIMARY KEY,            -- DM chat with the user
     username TEXT,
     first_name TEXT,
+    timezone TEXT,                       -- IANA timezone (e.g. "Africa/Lagos", "America/New_York")
     subscribed_at TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1
 );
@@ -243,6 +244,15 @@ class Database:
 
     def subscribers_active(self) -> List[sqlite3.Row]:
         return self.query("SELECT * FROM subscribers WHERE active=1 ORDER BY subscribed_at")
+
+    def get_user_timezone(self, chat_id: str) -> Optional[str]:
+        """Get subscriber's timezone; None if not set."""
+        rows = self.query("SELECT timezone FROM subscribers WHERE chat_id=?", (str(chat_id),))
+        return rows[0]["timezone"] if rows and rows[0]["timezone"] else None
+
+    def set_user_timezone(self, chat_id: str, timezone: str) -> None:
+        """Store subscriber's timezone."""
+        self.execute("UPDATE subscribers SET timezone=? WHERE chat_id=?", (timezone, str(chat_id)))
 
     def delivery_done(self, kind: str, post_date: str, chat_id: str) -> bool:
         return bool(self.query("SELECT 1 FROM deliveries WHERE kind=? AND post_date=? AND chat_id=?",

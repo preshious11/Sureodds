@@ -122,9 +122,11 @@ class CommandLoop(threading.Thread):
     def _send_view(self, chat_id: str, view: str) -> None:
         """Send paginated view (top, daily, or stats) with inline navigation."""
         try:
+            user_tz = self.db.get_user_timezone(chat_id)
             snapshot = self.service.get_daily_snapshot()
             text, markup = pagination.render_view(snapshot, view, 0,
-                                                  self.page_size, self.cfg.timezone, db=self.db)
+                                                  self.page_size, self.cfg.timezone,
+                                                  db=self.db, user_tz=user_tz)
             _retry_send(self.tg, text, chat_id, reply_markup=markup)
         except (ValueError, KeyError, AttributeError) as e:
             log.exception("view %s failed: %s", view, e)
