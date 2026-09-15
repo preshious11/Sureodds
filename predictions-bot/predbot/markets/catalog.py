@@ -160,9 +160,12 @@ def short_selection(ml: MarketLine, home: str = "", away: str = "", sport: str =
         core = {"home_draw": "1X", "away_draw": "X2", "home_away": "12"}.get(s, s)
     elif m == "btts":
         core = f"BTTS {s.title()}"
-    elif m == "total" and ml.line is not None:
-        ent = f"{team.get(ml.entity, ml.entity)} " if ml.entity != "all" else ""
-        core = f"{ent}{s.title()} {_fmt_line(ml.line)} {stat_word}".strip()
+    elif m == "total":
+        if ml.line is not None:
+            ent = f"{team.get(ml.entity, ml.entity)} " if ml.entity != "all" else ""
+            core = f"{ent}{s.title()} {_fmt_line(ml.line)} {stat_word}".strip()
+        else:
+            core = ml.label or s.title()  # fallback: use label or selection if no line
     elif m == "handicap" and ml.line is not None:
         core = f"{team.get(s, s)} {_fmt_line(ml.line, signed=True)}".strip()
         if ml.stat not in ("points",):
