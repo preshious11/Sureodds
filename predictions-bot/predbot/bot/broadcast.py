@@ -45,11 +45,10 @@ def _record_line(snapshot: DailySnapshot) -> Optional[str]:
 
 
 def deliver_picks(db: Database, cfg, tg: Telegram, snapshot: DailySnapshot) -> int:
-    """Send today's picks to every active subscriber (once per day per user)."""
+    """Send today's picks to every active subscriber using their timezone (once per day per user)."""
     if not (snapshot.top_picks or snapshot.daily_picks):
         return 0
-    text = picks_text(snapshot, cfg.timezone)
-    return _deliver(db, tg, "picks", snapshot.date, text, "daily picks")
+    return _deliver_per_user(db, cfg, tg, "picks", snapshot.date, snapshot, "daily picks")
 
 
 def deliver_recap(db: Database, cfg, tg: Telegram, text: Optional[str]) -> int:
@@ -68,6 +67,26 @@ def _deliver(db: Database, tg: Telegram, kind: str, date_str: str, text: str, la
         chat_id = str(row["chat_id"])
         if db.delivery_done(kind, date_str, chat_id):
             continue
+        if tg.send(text, chat_id=chat_id):
+            db.mark_delivery(kind, date_str, chat_id)
+            sent += 1
+    if sent:
+        log.info("broadcast: %s delivered to %d subscriber(s)", label, sent)
+    return sent
+
+
+def _deliver_per_user(db: Database, cfg, tg: Telegram, kind: str, date_str: str,
+                      snapshot: DailySnapshot, label: str) -> int:
+    """Send content to each subscriber using their timezone."""
+    if not tg.token:
+        return 0
+    sent = 0
+    for row in db.subscribers_active():
+        chat_id = str(row["chat_id"])
+        if db.delivery_done(kind, date_str, chat_id):
+            continue
+        user_tz = row.get("timezone") or cfg.timezone
+        text = picks_text(snapshot, user_tz)
         if tg.send(text, chat_id=chat_id):
             db.mark_delivery(kind, date_str, chat_id)
             sent += 1

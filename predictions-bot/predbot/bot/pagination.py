@@ -62,23 +62,25 @@ def slice_page(items: List[PickRecord], page: int, size: int) -> List[PickRecord
 
 
 # ----------------------------------------------------------------- rendering
-def _kickoff_hhmm(pick: PickRecord, tz: str) -> str:
+def _kickoff_hhmm(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> str:
+    """Format kickoff time in user's timezone, or default timezone if user_tz not provided."""
     start = parse_iso(pick.kickoff_utc)
     if not start:
         return "--:--"
-    local = to_local(start, tz)
-    tz_abbr = local.tzname() or tz  # fallback to full timezone name
+    display_tz = user_tz or tz  # use user timezone if provided, else fall back to default
+    local = to_local(start, display_tz)
+    tz_abbr = local.tzname() or display_tz
     return f"{local.strftime('%I:%M %p')} {tz_abbr}"
 
 
-def render_pick(pick: PickRecord, tz: str) -> str:
+def render_pick(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> str:
     sport = pick.sport if pick.sport != "other" else "Other"
     sport_label = sport.replace("_", " ").title()
     league = pick.league or sport_label
     fixture = f"{esc(pick.home)} vs {esc(pick.away)}"
     outcome = esc(pick.label)
     confidence = f"<b>{round(pick.prob * 100)}%</b>"
-    time_wat = _kickoff_hhmm(pick, tz)
+    time_wat = _kickoff_hhmm(pick, tz, user_tz)
     odd = f"{pick.price:.2f}"
 
     return (f"{sport_label}\n"
@@ -107,7 +109,7 @@ def build_keyboard(view: str, page: int, pages: int) -> Dict:
 
 
 def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
-                tz: str) -> Tuple[str, Dict]:
+                tz: str, user_tz: Optional[str] = None) -> Tuple[str, Dict]:
     items = snapshot.view_items(view)
     pages = total_pages(len(items), size)
     page = clamp_page(page, len(items), size)
@@ -123,7 +125,7 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
         lines.append("No picks available.")
     else:
         for p in chunk:
-            lines.append(render_pick(p, tz))
+            lines.append(render_pick(p, tz, user_tz))
             lines.append("")
         try:
             total_odds = combined_odds([p.price for p in items])
@@ -164,8 +166,8 @@ def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC") -> Tuple[str
 
 
 def render_view(snapshot: DailySnapshot, view: str, page: int, size: int,
-                tz: str, db=None) -> Tuple[str, Dict]:
+                tz: str, db=None, user_tz: Optional[str] = None) -> Tuple[str, Dict]:
     """Entry point used by both the /today command and callback navigation."""
     if view == VIEW_STATS:
         return render_stats(snapshot, db=db, tz=tz)
-    return render_page(snapshot, view, page, size, tz)
+    return render_page(snapshot, view, page, size, tz, user_tz)

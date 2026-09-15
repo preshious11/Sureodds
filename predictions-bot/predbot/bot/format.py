@@ -30,12 +30,13 @@ class PickLine(NamedTuple):
     price: float
 
 
-def kickoff_label(start: Optional[datetime], tz: str) -> str:
+def kickoff_label(start: Optional[datetime], tz: str, user_tz: Optional[str] = None) -> str:
     """Local kickoff with its zone abbreviation ("7:45 PM WAT"); "--:--" when unknown."""
     if start is None:
         return "--:--"
-    local = to_local(start, tz)
-    return f"{local.strftime('%I:%M %p')} {local.tzname() or tz}"
+    display_tz = user_tz or tz
+    local = to_local(start, display_tz)
+    return f"{local.strftime('%I:%M %p')} {local.tzname() or display_tz}"
 
 
 def combined_odds(prices: Iterable[float]) -> float:
@@ -57,10 +58,13 @@ def combined_odds(prices: Iterable[float]) -> float:
     return total
 
 
-def pick_lines(p: PickLine) -> List[str]:
+def pick_lines(p: PickLine, user_tz: Optional[str] = None) -> List[str]:
     """The six lines one pick occupies: sport, league, match, outcome, confidence | kickoff, odds."""
+    when = p.when
+    if user_tz and p.when != "--:--":
+        when = p.when  # when is pre-rendered in PickLine; would need refactoring for per-user tz
     return [esc(p.sport), esc(p.league), esc(p.match), esc(p.outcome),
-            f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {p.when}",
+            f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {when}",
             f"{p.price:.2f}"]
 
 

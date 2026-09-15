@@ -23,6 +23,39 @@ from predbot.storage.db import Database
 
 log = logging.getLogger(__name__)
 
+LOCALE_TO_TIMEZONE = {
+    "en_US": "America/New_York",
+    "en_GB": "Europe/London",
+    "de_DE": "Europe/Berlin",
+    "fr_FR": "Europe/Paris",
+    "it_IT": "Europe/Rome",
+    "es_ES": "Europe/Madrid",
+    "pt_PT": "Europe/Lisbon",
+    "pt_BR": "America/Sao_Paulo",
+    "ru_RU": "Europe/Moscow",
+    "ja_JP": "Asia/Tokyo",
+    "zh_CN": "Asia/Shanghai",
+    "zh_TW": "Asia/Taipei",
+    "ko_KR": "Asia/Seoul",
+    "en_IN": "Asia/Kolkata",
+    "ar_SA": "Asia/Riyadh",
+    "ar_EG": "Africa/Cairo",
+    "en_NG": "Africa/Lagos",
+    "ar_AE": "Asia/Dubai",
+    "en_SG": "Asia/Singapore",
+    "en_AU": "Australia/Sydney",
+    "en_NZ": "Pacific/Auckland",
+}
+
+def _detect_user_timezone(user: Dict[str, Any]) -> Optional[str]:
+    """Detect timezone from Telegram user locale."""
+    if not user:
+        return None
+    locale = user.get("language_code") or user.get("language")
+    if locale:
+        return LOCALE_TO_TIMEZONE.get(locale)
+    return None
+
 def welcome_message(first_name: str = "there") -> str:
     """Generate personalized welcome message."""
     return (
@@ -30,7 +63,7 @@ def welcome_message(first_name: str = "there") -> str:
         "Use the menu below or these commands:\n\n"
         "<b>🏆 /top</b> – Top picks of the day\n"
         "<b>📋 /daily</b> – Daily picks · Accumulator slip\n"
-        "<b>📊 /stats</b> – See prediction results."
+        "<b>📊 /stats</b> – See prediction results"
     )
 
 
@@ -43,9 +76,15 @@ def menu_markup() -> Dict[str, Any]:
 
 
 def handle_start(db: Database, tg: Telegram, chat_id: str, user: Optional[Dict[str, Any]]) -> None:
-    """/start: show the menu."""
+    """/start: show the menu and detect user timezone."""
     user = user or {}
     first_name = str(user.get("first_name") or "there")
+
+    user_tz = _detect_user_timezone(user)
+    db.subscriber_add(chat_id, str(user.get("username") or ""), first_name)
+    if user_tz:
+        db.set_user_timezone(chat_id, user_tz)
+
     tg.send(welcome_message(first_name), chat_id=chat_id, reply_markup=menu_markup())
 
 
@@ -67,9 +106,10 @@ def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram
             tg.answer_callback_query(cb_id)      # e.g. the page indicator button
             return
         view, page = parsed
+        user_tz = db.get_user_timezone(chat_id) if db else None
         snapshot = service.get_daily_snapshot()  # cache-first read
         text, markup = pagination.render_view(snapshot, view, page, page_size,
-                                              cfg.timezone, db=db)
+                                              cfg.timezone, db=db, user_tz=user_tz)
         if chat_id and message_id:
             tg.edit_message_text(chat_id, int(message_id), text, reply_markup=markup)
         tg.answer_callback_query(cb_id, text=_toast(view, snapshot, page, page_size))
