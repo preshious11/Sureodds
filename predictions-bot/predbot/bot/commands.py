@@ -117,7 +117,7 @@ class CommandLoop(threading.Thread):
         try:
             snapshot = self.service.get_daily_snapshot()
             text, markup = pagination.render_view(snapshot, pagination.VIEW_DAILY, 0,
-                                                  self.page_size, self.cfg.timezone, db=self.db, chat_id=chat_id)
+                                                  self.page_size, self.cfg.timezone, db=self.db)
             _retry_send(self.tg, text, chat_id, reply_markup=markup)
         except (ValueError, KeyError, AttributeError) as e:
             log.exception("today failed: %s", e)
