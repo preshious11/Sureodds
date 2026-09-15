@@ -28,7 +28,7 @@ def main() -> None:
     chain = ProviderChain(providers, cfg.provider_order, cfg.chain_min_events)
     resolver = ResultsResolver(providers)
     tg = Telegram(cfg.telegram_token, cfg.telegram_chat_id)
-    cache = CacheManager(redis_url=cfg.redis_url)
+    cache = CacheManager(redis_url=cfg.redis_url, cache_dir=cfg.cache_dir)
     service = UnifiedFetcher(chain, db, cfg, cache)
     log.info("providers: %s | timezone %s | picks at %s | recap at %s | cache: %s",
              ", ".join(chain.order) or "none", cfg.timezone, cfg.post_time, cfg.recap_time,

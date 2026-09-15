@@ -86,6 +86,10 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
     for s in top_pool:
         if top and top_odds >= cfg.top_odds_target:
             break                                  # the top ticket is already worth ~2.00
+        if len(top) >= max(1, cfg.top_max_picks):
+            break                                  # never more than 1..3 strong picks
+        if top and top_odds * s.price > cfg.top_odds_target * 1.7:
+            continue                               # skip picks that would blow past ~2.00
         if any(t.event.dedupe_key() == s.event.dedupe_key() for t in top):
             continue
         if top and selection_family(s.line) == selection_family(top[0].line) and len(top_pool) > 6:

@@ -64,15 +64,26 @@ class SportsGameOddsProvider(BaseProvider):
         if limit <= 0:
             log.warning("SGO: no object allowance left today (monthly limit %d)", self.monthly_limit)
             return []
+        if self.budget.is_exhausted(self.name):
+            return []                              # tier/quota problem already seen today
+        if not self.leagues:
+            # the free tier requires a leagueID (or eventID) - sportID-only queries 400
+            log.warning("SGO: this subscription tier requires a leagueID - set SGO_LEAGUES "
+                        "(comma-separated sportsgameodds.com league IDs) to enable this provider")
+            self.budget.mark_exhausted(self.name, "free tier requires SGO_LEAGUES")
+            return []
         params: Dict = {
             "startsAfter": iso(start), "startsBefore": iso(end), "oddsAvailable": "true",
             "type": "match", "includeAltLines": "false", "limit": min(limit, 100),
+            "leagueID": ",".join(self.leagues),
         }
-        if self.leagues:
-            params["leagueID"] = ",".join(self.leagues)
-        else:
-            params["sportID"] = ",".join(self.sports)
-        data = self.http.get("/events", params)
+        try:
+            data = self.http.get("/events", params)
+        except ProviderError as e:
+            if "leagueID" in str(e):
+                # tier changed or league id invalid - don't hammer it all day
+                self.budget.mark_exhausted(self.name, str(e))
+            raise
         events = data.get("data", []) if isinstance(data, dict) else []
         self.budget.spend(self.name, len(events))
         out: List[Event] = []

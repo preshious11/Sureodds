@@ -54,3 +54,12 @@ class Budget:
         days_left = days_in_month - now.day + 1
         remaining = max(0, monthly_limit - self.used_month(provider))
         return int(remaining * (1 - reserve_frac) / max(1, days_left))
+
+    # ---- exhaustion marks (persisted per UTC day, so restarts don't re-burn quota)
+    def mark_exhausted(self, provider: str, reason: str = "") -> None:
+        log.warning("%s marked exhausted for %s%s", provider, self._day(),
+                    f": {reason}" if reason else "")
+        self.db.budget_add(f"{provider}:exhausted", self._day(), 1)
+
+    def is_exhausted(self, provider: str) -> bool:
+        return self.db.budget_used(f"{provider}:exhausted", self._day()) > 0

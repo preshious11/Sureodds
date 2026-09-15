@@ -67,11 +67,17 @@ class ApiFootballProvider(BaseProvider):
 
     # ---------------------------------------------------------------- helpers
     def _call(self, path: str, params: Dict, reserve: int = 0) -> Optional[Dict]:
+        if self.budget.is_exhausted(self.name):
+            return None                            # daily plan limit hit - stop calling until tomorrow
         if not self.budget.can_spend(self.name, 1, daily_limit=self.daily_limit - reserve):
             return None
         data = self.http.get(path, params)
         errs = data.get("errors") if isinstance(data, dict) else None
         if errs and (isinstance(errs, dict) and errs or isinstance(errs, list) and errs):
+            msg = str(errs)
+            if "request limit" in msg or "requests" in errs:
+                # plan quota exhausted: mark it so every later call today is skipped
+                self.budget.mark_exhausted(self.name, msg)
             raise ProviderError(f"API-Football error: {errs}")
         self.budget.spend(self.name, 1)  # only successful calls count against the quota
         return data
