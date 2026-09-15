@@ -38,10 +38,21 @@ def kickoff_label(start: Optional[datetime], tz: str) -> str:
 
 
 def combined_odds(prices: Iterable[float]) -> float:
-    """Accumulator price: every listed pick has to land for the ticket to land."""
+    """Accumulator price: every listed pick has to land for the ticket to land.
+
+    Decimal odds are always MULTIPLIED (1.50 x 2.00 = 3.00), never added.
+    Invalid odds (non-numeric, or <= 1.0) raise ValueError - a ticket made of
+    bad prices would be meaningless, so it fails loudly instead.
+    """
     total = 1.0
     for p in prices:
-        total *= float(p)
+        try:
+            p = float(p)
+        except (TypeError, ValueError):
+            raise ValueError(f"invalid odds value: {p!r}")
+        if not p > 1.0 or p != p:  # also rejects NaN
+            raise ValueError(f"odds must be > 1.0, got {p!r}")
+        total *= p
     return total
 
 

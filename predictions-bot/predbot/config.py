@@ -71,6 +71,7 @@ class Config:
     min_lead_minutes: int = field(default_factory=lambda: _int("MIN_LEAD_MINUTES", 30))
     daily_min_odds: float = field(default_factory=lambda: _float("DAILY_MIN_ODDS", 1.30))
     daily_max_odds: float = field(default_factory=lambda: _float("DAILY_MAX_ODDS", 5.00))
+    top_max_picks: int = field(default_factory=lambda: _int("TOP_MAX_PICKS", 3))
     daily_min_ev: float = field(default_factory=lambda: _float("DAILY_MIN_EV", 0.02))
     daily_min_prob: float = field(default_factory=lambda: _float("DAILY_MIN_PROB", 0.30))
     top_min_odds: float = field(default_factory=lambda: _float("TOP_MIN_ODDS", 1.35))
@@ -89,6 +90,7 @@ class Config:
 
     # Cache / pagination
     redis_url: str = field(default_factory=lambda: _env("REDIS_URL"))
+    cache_dir: str = field(default_factory=lambda: _env("CACHE_DIR", "./cache"))
     page_size: int = field(default_factory=lambda: _int("PAGE_SIZE", 5))
 
     # Storage / logging
