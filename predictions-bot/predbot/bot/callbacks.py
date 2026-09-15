@@ -15,7 +15,6 @@ import logging
 from typing import Any, Dict, Optional
 
 from predbot.bot import pagination
-from predbot.bot.broadcast import picks_text
 from predbot.bot.telegram import Telegram
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.cache.models import DailySnapshot, VIEW_STATS
@@ -65,8 +64,7 @@ def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram
     message_id = message.get("message_id")
     try:
         if data == "menu" or data.startswith("sub|"):
-            _handle_menu_action(cb_id, data, chat_id, message_id, db, tg, cfg,
-                                service, page_size)
+            _handle_menu_action(cb_id, data, chat_id, message_id, db, tg, page_size)
             return
         parsed = pagination.decode_callback(data)
         if parsed is None:
@@ -86,8 +84,7 @@ def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram
 
 
 def _handle_menu_action(cb_id: str, data: str, chat_id: str, message_id,
-                        db: Optional[Database], tg: Telegram, cfg: Config,
-                        service: Optional[UnifiedFetcher], page_size: int) -> None:
+                        db: Optional[Database], tg: Telegram, page_size: int) -> None:
     """Subscribe / unsubscribe / re-render the menu."""
     if db is None or not chat_id:
         tg.answer_callback_query(cb_id, text="Unavailable.")
@@ -96,7 +93,6 @@ def _handle_menu_action(cb_id: str, data: str, chat_id: str, message_id,
     if data == "sub|on":
         db.subscriber_add(chat_id)
         toast = "Subscribed ✅"
-        _send_todays_picks_if_any(db, tg, cfg, service, chat_id)
     elif data == "sub|off":
         db.subscriber_remove(chat_id)
         subscribed, toast = False, "Unsubscribed"
@@ -104,19 +100,6 @@ def _handle_menu_action(cb_id: str, data: str, chat_id: str, message_id,
         tg.edit_message_text(chat_id, int(message_id), welcome_message(),
                              reply_markup=menu_markup(subscribed))
     tg.answer_callback_query(cb_id, text=toast)
-
-
-def _send_todays_picks_if_any(db: Database, tg: Telegram, cfg: Config,
-                              service: Optional[UnifiedFetcher], chat_id: str) -> None:
-    """New/re-subscribed user: catch them up with today's picks (zero API)."""
-    if service is None:
-        return
-    try:
-        snapshot = service.get_daily_snapshot()
-        if snapshot.top_picks or snapshot.daily_picks:
-            tg.send(picks_text(snapshot, cfg.timezone), chat_id=chat_id)
-    except Exception:  # noqa: BLE001
-        log.exception("failed to deliver today's picks to subscriber %s", chat_id)
 
 
 def _toast(view: str, snapshot: DailySnapshot, page: int, size: int) -> str:
