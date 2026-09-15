@@ -147,7 +147,7 @@ class CommandLoop(threading.Thread):
             if r.get("start_utc"):
                 local = to_local(parse_iso(r["start_utc"]), self.cfg.timezone)
                 tz_abbr = local.tzname() or self.cfg.timezone.split("/")[-1]
-                kickoff = f"{local.strftime('%H:%M')} {tz_abbr}"
+                kickoff = f"{local.strftime('%I:%M %p')} {tz_abbr}"
             else:
                 kickoff = "--:--"
             odd = f"{float(r['price']):.2f}"
@@ -169,7 +169,7 @@ class CommandLoop(threading.Thread):
                         (" · /run /settle /recap" if user_id in self.cfg.telegram_admin_ids else ""))
             return stats_message(stats_mod.compute(self.db, local))
         if cmd == "/today":
-            return self._day_list(local.strftime("%Y-%m-%d"), f"Picks · {local.strftime('%a %d %b')}")
+            return self._day_list(local.strftime("%Y-%m-%d"), f"📋 Daily Picks · {local.strftime('%a %d %b')}")
         if cmd == "/yesterday":
             y = local - timedelta(days=1)
             return recap_card(self.db, local)

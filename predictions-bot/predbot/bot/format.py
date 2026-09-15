@@ -31,11 +31,11 @@ class PickLine(NamedTuple):
 
 
 def kickoff_label(start: Optional[datetime], tz: str) -> str:
-    """Local kickoff with its zone abbreviation ("19:45 WAT"); "--:--" when unknown."""
+    """Local kickoff with its zone abbreviation ("7:45 PM WAT"); "--:--" when unknown."""
     if start is None:
         return "--:--"
     local = to_local(start, tz)
-    return f"{local.strftime('%H:%M')} {local.tzname() or tz}"
+    return f"{local.strftime('%I:%M %p')} {local.tzname() or tz}"
 
 
 def combined_odds(prices: Iterable[float]) -> float:
