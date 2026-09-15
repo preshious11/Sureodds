@@ -48,7 +48,7 @@ def test_card_matches_the_requested_layout(db):
         _pick(db, date="2030-05-28", rank=200 + i, status="lost", price=2.00)
 
     assert _card(db) == (
-        "📊 SureOdds RESULTS — YESTERDAY\n"
+        "📊 SUREODDS — YESTERDAY\n"
         "\n"
         "✅ Wins: 4\n"
         "❌ Losses: 0\n"
@@ -128,6 +128,20 @@ def test_best_pick_label_is_html_escaped(db):
 
 
 # ------------------------------------------------------------------ job wiring
+def test_yesterday_command_serves_the_summary_card(db):
+    from predbot.bot.commands import recap_card
+
+    now_utc = datetime.now(timezone.utc)
+    y = (now_utc - timedelta(days=1)).strftime("%Y-%m-%d")
+    _pick(db, date=y, label="Geylang International FC Win", price=1.44)
+
+    text = recap_card(db, now_utc)
+
+    assert text.startswith("📊 SUREODDS — YESTERDAY")
+    assert "✅ Wins: 1" in text and "🎯 Hit Rate: 100.0%" in text
+    assert "Geylang International FC Win @ 1.44 ✅" in text
+
+
 def test_recap_job_renders_the_new_card(db, capsys):
     today_utc = datetime.now(timezone.utc)
     y = (today_utc - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -135,7 +149,7 @@ def test_recap_job_renders_the_new_card(db, capsys):
 
     text = recap.run(db, Config(timezone="UTC"), None, dry_run=True)
 
-    assert text.startswith("📊 SureOdds RESULTS — YESTERDAY")
+    assert text.startswith("📊 SUREODDS — YESTERDAY")
     assert "⚽ Football: 1/1" in text
     assert "🔥 BEST PICK" in text
     assert text in capsys.readouterr().out

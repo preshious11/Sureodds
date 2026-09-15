@@ -132,7 +132,7 @@ def recap_message(day_label: str, sport_breakdown: List[Dict], s: Dict) -> str:
     case void/push simply render as 0).
     """
     y, seven = s["yesterday"], s["last7"]
-    lines = [f"📊 {BRAND} RESULTS — {day_label}", ""]
+    lines = [f"📊 {BRAND.upper()} — {day_label}", ""]
     lines.append(f"✅ Wins: {y['won']}")
     lines.append(f"❌ Losses: {y['lost']}")
     lines.append(f"➖ Void: {y.get('void', 0)}")

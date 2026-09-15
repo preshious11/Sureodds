@@ -25,6 +25,16 @@ from predbot.util.timeutil import to_local, utcnow
 log = logging.getLogger(__name__)
 
 
+def recap_card(db: Database, local_now: datetime) -> str:
+    """The /yesterday summary card (wins/losses/void, hit rate, per-sport, 7-day, best pick)."""
+    from predbot.bot.format import recap_message  # local import keeps module import light
+
+    st = stats_mod.compute(db, local_now)
+    yesterday = (local_now - timedelta(days=1)).strftime("%Y-%m-%d")
+    rows = stats_mod.rows_for_recap(db, yesterday)
+    return recap_message("YESTERDAY", stats_mod.by_sport(rows), st)
+
+
 class CommandLoop(threading.Thread):
     def __init__(self, tg: Telegram, db: Database, cfg: Config,
                  actions: Dict[str, Callable[[], str]],
@@ -113,7 +123,7 @@ class CommandLoop(threading.Thread):
             return self._day_list(local.strftime("%Y-%m-%d"), f"Picks · {local.strftime('%a %d %b')}")
         if cmd == "/yesterday":
             y = local - timedelta(days=1)
-            return self._day_list(y.strftime("%Y-%m-%d"), f"Picks · {y.strftime('%a %d %b')}")
+            return recap_card(self.db, local)
         if cmd in ("/run", "/settle", "/recap"):
             if user_id not in self.cfg.telegram_admin_ids:
                 return "Not allowed."
