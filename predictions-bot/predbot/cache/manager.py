@@ -121,7 +121,6 @@ class FileBackend(_Backend):
     """Local filesystem cache: JSON files with TTL metadata. Good for dev/offline."""
 
     def __init__(self, cache_dir: str = "./cache") -> None:
-        import os
         self._cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
         self._mutexes: Dict[str, threading.Lock] = {}
@@ -134,7 +133,6 @@ class FileBackend(_Backend):
         return self._path(key).replace(".json", ".meta")
 
     def get(self, key: str) -> Optional[str]:
-        import os
         path = self._path(key)
         meta_path = self._meta_path(key)
         if not os.path.exists(path):
@@ -153,7 +151,6 @@ class FileBackend(_Backend):
             return None
 
     def set(self, key: str, payload: str, ttl_seconds: float) -> None:
-        import os
         path = self._path(key)
         meta_path = self._meta_path(key)
         expires_at = time.time() + max(1.0, float(ttl_seconds))
@@ -166,7 +163,6 @@ class FileBackend(_Backend):
             pass
 
     def delete(self, key: str) -> None:
-        import os
         path = self._path(key)
         meta_path = self._meta_path(key)
         try:
