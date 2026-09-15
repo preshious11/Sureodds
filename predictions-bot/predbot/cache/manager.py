@@ -8,14 +8,15 @@ TTL
     Values expire at the *end* of the UTC day they belong to, so every new UTC
     day begins with a guaranteed cache miss and exactly one build.
 
-Backends
-    * InMemoryBackend (default) - thread-safe TTL dictionary guarded by an
-      RLock.  Correct for the single-process worker (scheduler thread and the
-      command-loop thread share one CacheManager instance).
+Backends (priority: Redis → File → Memory)
     * RedisBackend (optional)   - enabled when ``redis_url`` is set and the
       ``redis`` package is installed (``pip install redis``).  Shares cache and
-      lock across processes/replicas.  If Redis is unreachable at startup the
-      manager degrades to in-memory with a one-time warning.
+      lock across processes/replicas (for Railway multi-instance).
+    * FileBackend (optional)    - enabled when ``cache_dir`` is set. Stores
+      JSON snapshots locally with TTL metadata. Good for dev/offline use.
+    * InMemoryBackend (default) - thread-safe TTL dictionary guarded by an
+      RLock. Correct for the single-process worker (scheduler thread and the
+      command-loop thread share one CacheManager instance).
 
 The mutex is a token lock: in-memory it is a threading.Lock per key; on Redis
 it is ``SET NX PX`` acquired with a unique token and released via a
@@ -26,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from contextlib import contextmanager
@@ -115,6 +117,79 @@ class InMemoryBackend(_Backend):
                 pass  # not held by this thread any more
 
 
+class FileBackend(_Backend):
+    """Local filesystem cache: JSON files with TTL metadata. Good for dev/offline."""
+
+    def __init__(self, cache_dir: str = "./cache") -> None:
+        import os
+        self._cache_dir = cache_dir
+        os.makedirs(cache_dir, exist_ok=True)
+        self._mutexes: Dict[str, threading.Lock] = {}
+
+    def _path(self, key: str) -> str:
+        safe_key = key.replace(":", "_").replace("/", "_")
+        return os.path.join(self._cache_dir, f"{safe_key}.json")
+
+    def _meta_path(self, key: str) -> str:
+        return self._path(key).replace(".json", ".meta")
+
+    def get(self, key: str) -> Optional[str]:
+        import os
+        path = self._path(key)
+        meta_path = self._meta_path(key)
+        if not os.path.exists(path):
+            return None
+        try:
+            if os.path.exists(meta_path):
+                with open(meta_path) as f:
+                    meta = json.load(f)
+                    if time.time() >= meta.get("expires_at", 0):
+                        os.remove(path)
+                        os.remove(meta_path)
+                        return None
+            with open(path) as f:
+                return f.read()
+        except Exception:
+            return None
+
+    def set(self, key: str, payload: str, ttl_seconds: float) -> None:
+        import os
+        path = self._path(key)
+        meta_path = self._meta_path(key)
+        expires_at = time.time() + max(1.0, float(ttl_seconds))
+        try:
+            with open(path, "w") as f:
+                f.write(payload)
+            with open(meta_path, "w") as f:
+                json.dump({"expires_at": expires_at}, f)
+        except Exception:
+            pass
+
+    def delete(self, key: str) -> None:
+        import os
+        path = self._path(key)
+        meta_path = self._meta_path(key)
+        try:
+            os.remove(path)
+            os.remove(meta_path)
+        except FileNotFoundError:
+            pass
+
+    def try_acquire(self, key: str, token: str, ttl_seconds: float) -> bool:
+        with threading.RLock():
+            lock = self._mutexes.setdefault(key, threading.Lock())
+        return lock.acquire(blocking=False)
+
+    def release(self, key: str, token: str) -> None:
+        with threading.RLock():
+            lock = self._mutexes.get(key)
+        if lock is not None:
+            try:
+                lock.release()
+            except RuntimeError:
+                pass
+
+
 class RedisBackend(_Backend):
     """Optional cross-process backend (pip install redis)."""
 
@@ -149,17 +224,31 @@ class RedisBackend(_Backend):
 
 
 class CacheManager:
-    """Public cache API: JSON values, UTC daily keys, token mutex."""
+    """Public cache API: JSON values, UTC daily keys, token mutex.
 
-    def __init__(self, redis_url: str = "") -> None:
+    Cache priority: Redis (multi-instance) → File (local persistent) → Memory.
+    """
+
+    def __init__(self, redis_url: str = "", cache_dir: str = "") -> None:
         self._backend: _Backend = InMemoryBackend()
         self._backend_name = "memory"
+
         if redis_url:
             try:
                 self._backend = RedisBackend(redis_url)
                 self._backend_name = "redis"
+                return
             except Exception as exc:  # noqa: BLE001
-                log.warning("Redis unavailable (%s) - using in-process cache", exc)
+                log.warning("Redis unavailable (%s) - trying file cache", exc)
+
+        if cache_dir:
+            try:
+                self._backend = FileBackend(cache_dir)
+                self._backend_name = "file"
+                log.info("Using local file cache: %s", cache_dir)
+                return
+            except Exception as exc:  # noqa: BLE001
+                log.warning("File cache unavailable (%s) - using in-process cache", exc)
 
     @property
     def backend_name(self) -> str:

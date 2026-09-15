@@ -73,6 +73,11 @@ def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram],
         log.info("picks already published for %s", pick_date)
         return PickSet()
     ps = build_picks(chain, db, cfg, now)
+    if not ps.top and not ps.daily and not dry_run and not force:
+        # Every provider failed or nothing cleared the bar - don't publish an empty
+        # card; the next scheduled run can publish once providers recover.
+        log.warning("no picks for %s (providers empty or down) - skipping publication", pick_date)
+        return ps
     st = stats_mod.compute(db, local_day)
     text = picks_message(ps.top, ps.daily, now, cfg.timezone,
                          stats_line(st) if st["all"]["n"] else None)

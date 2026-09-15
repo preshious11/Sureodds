@@ -90,6 +90,7 @@ class Config:
 
     # Cache / pagination
     redis_url: str = field(default_factory=lambda: _env("REDIS_URL"))
+    cache_dir: str = field(default_factory=lambda: _env("CACHE_DIR", "./cache"))
     page_size: int = field(default_factory=lambda: _int("PAGE_SIZE", 5))
 
     # Storage / logging
