@@ -86,7 +86,7 @@ class Config:
     timezone: str = field(default_factory=lambda: _env("TIMEZONE", "UTC"))
     post_time: str = field(default_factory=lambda: _env("POST_TIME", "08:00"))
     recap_time: str = field(default_factory=lambda: _env("RECAP_TIME", "07:45"))
-    settle_interval_min: int = field(default_factory=lambda: _int("SETTLE_INTERVAL_MIN", 30))
+    # Note: settlement now runs dynamically after all daily predictions end (latest match + sport duration + buffer)
 
     # Cache / pagination
     redis_url: str = field(default_factory=lambda: _env("REDIS_URL"))

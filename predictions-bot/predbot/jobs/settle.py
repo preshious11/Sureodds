@@ -21,6 +21,33 @@ log = logging.getLogger(__name__)
 DURATION_H = {"football": 2.2, "basketball": 2.8, "american_football": 3.6, "hockey": 3.0,
               "baseball": 3.6, "tennis": 3.0, "mma": 3.0, "handball": 2.2, "other": 3.0}
 MAX_PENDING_DAYS = 4
+SETTLEMENT_BUFFER_MIN = 15  # buffer after last match to ensure all results are available
+
+
+def compute_settlement_deadline(db: Database, today_local_date: str) -> Optional[datetime]:
+    """Compute when to run settlement: when the latest match today will finish + buffer.
+
+    Returns UTC datetime, or None if no picks found for today.
+    """
+    picks = db.picks_for_date(today_local_date)
+    if not picks:
+        return None
+
+    latest_start = None
+    latest_sport = "other"
+    for p in picks:
+        start = parse_iso(p["start_utc"])
+        if latest_start is None or start > latest_start:
+            latest_start = start
+            latest_sport = p["sport"]
+
+    if latest_start is None:
+        return None
+
+    duration_h = DURATION_H.get(latest_sport, 3.0)
+    deadline = latest_start + timedelta(hours=duration_h, minutes=SETTLEMENT_BUFFER_MIN)
+    log.info("settlement deadline: %s (%s + %.1fh for %s)", iso(deadline), iso(latest_start), duration_h, latest_sport)
+    return deadline
 
 
 def _row_to_line(r) -> MarketLine:
