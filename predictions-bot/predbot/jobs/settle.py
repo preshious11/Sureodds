@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional
 
 from predbot.config import Config
-from predbot.markets.settlement import FINAL_OUTCOMES, PENDING, VOID, grade
+from predbot.markets.settlement import PENDING, VOID, grade
 from predbot.model.calibration import Calibrator
 from predbot.model.elo import Elo
 from predbot.providers.base import MarketLine, MatchResult

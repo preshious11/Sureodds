@@ -61,6 +61,8 @@ class ScoreGrid:
                 tot += p
             grid.append(row)
         self.grid = [[p / tot for p in row] for row in grid]
+        self._result: Optional[Tuple[float, float, float]] = None
+        self._total_dist: Dict[str, Dict[int, float]] = {}
 
     # -- basic outcome probabilities -------------------------------------
     def p(self, i: int, j: int) -> float:
@@ -69,24 +71,31 @@ class ScoreGrid:
         return 0.0
 
     def result(self) -> Tuple[float, float, float]:
-        h = d = a = 0.0
-        for i in range(self.n + 1):
-            for j in range(self.n + 1):
-                v = self.grid[i][j]
-                if i > j:
-                    h += v
-                elif i == j:
-                    d += v
-                else:
-                    a += v
-        return h, d, a
+        # the grid is immutable: compute 1X2 once, reuse for every market
+        if self._result is None:
+            h = d = a = 0.0
+            for i in range(self.n + 1):
+                for j in range(self.n + 1):
+                    v = self.grid[i][j]
+                    if i > j:
+                        h += v
+                    elif i == j:
+                        d += v
+                    else:
+                        a += v
+            self._result = (h, d, a)
+        return self._result
 
     def total_dist(self, entity: str = "all") -> Dict[int, float]:
+        cached = self._total_dist.get(entity)
+        if cached is not None:
+            return cached
         out: Dict[int, float] = {}
         for i in range(self.n + 1):
             for j in range(self.n + 1):
                 k = i + j if entity == "all" else i if entity == "home" else j
                 out[k] = out.get(k, 0.0) + self.grid[i][j]
+        self._total_dist[entity] = out
         return out
 
     def margin_dist(self) -> Dict[int, float]:
@@ -237,7 +246,10 @@ def lambdas_from_market(p_home: Optional[float], p_draw: Optional[float], p_away
     return lam_total * r, lam_total * (1 - r)
 
 
+@lru_cache(maxsize=256)
 def grid_for_period(lh: float, la: float, period: str, sport: str) -> ScoreGrid:
+    """Memoised: the same (lambdas, period, sport) always yields the same grid,
+    so an event's markets share one grid instead of rebuilding it per market."""
     s = PERIOD_SCALE.get(period, 1.0)
     return ScoreGrid(lh * s, la * s, DEFAULT_RHO.get(sport, 0.0), MAX_GOALS.get(sport, 10))
 

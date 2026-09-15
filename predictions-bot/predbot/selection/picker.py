@@ -82,6 +82,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
                 and s.agreement >= 0.5 and len(s.sources) >= 2 and s.line.market != "prop"]
     top_pool.sort(key=_top_score, reverse=True)
     top: List[Scored] = []
+    top_ids: set = set()                           # identity: Scored.__eq__ is field-wise (slow)
     top_odds = 1.0
     for s in top_pool:
         if top and top_odds >= cfg.top_odds_target:
@@ -94,15 +95,16 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
             continue
         if top and selection_family(s.line) == selection_family(top[0].line) and len(top_pool) > 6:
             # prefer a different outcome type while the ticket is being filled
-            alt = next((x for x in top_pool if x is not s and x not in top
+            alt = next((x for x in top_pool if x is not s and id(x) not in top_ids
                         and selection_family(x.line) != selection_family(top[0].line)
                         and x.event.dedupe_key() != top[0].event.dedupe_key()), None)
             if alt is not None and _top_score(alt) >= _top_score(s) - 0.03:
                 s = alt
-        if s in top:
+        if id(s) in top_ids:
             continue
         s.tier = "top"
         top.append(s)
+        top_ids.add(id(s))
         top_odds *= s.price
     ps.top = top
 
@@ -113,7 +115,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
     daily_pool = [s for s in base
                   if cfg.daily_min_odds <= s.price <= cfg.daily_max_odds
                   and s.p_model >= cfg.daily_min_prob and s.ev >= cfg.daily_min_ev
-                  and s.agreement >= 0.30 and s not in top]
+                  and s.agreement >= 0.30 and id(s) not in top_ids]
     daily_pool.sort(key=lambda s: s.rank_score, reverse=True)
 
     per_event: Dict[str, int] = {}
@@ -128,6 +130,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
             "exotic": _cap(0.25, cap), "sport": _cap(0.75, cap) if len(sports_available) > 1 else cap}
 
     chosen: List[Scored] = []
+    chosen_ids: set = set()
 
     def conflicts(s: Scored) -> bool:
         for other in top + chosen:
@@ -160,6 +163,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
         if enforce_sport_cap and sport_count.get(s.event.sport, 0) >= caps["sport"]:
             return False
         chosen.append(s)
+        chosen_ids.add(id(s))
         per_event[ek] = per_event.get(ek, 0) + 1
         family_count[fam] = family_count.get(fam, 0) + 1
         market_count[mk] = market_count.get(mk, 0) + 1
@@ -191,7 +195,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
         for s in daily_pool:
             if not under_cap():
                 break
-            if s in chosen or not fits(s.price):
+            if id(s) in chosen_ids or not fits(s.price):
                 continue
             if try_add(s, enforce_sport_cap=False):
                 ticket *= s.price

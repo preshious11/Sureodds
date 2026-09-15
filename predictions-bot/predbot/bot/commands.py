@@ -12,9 +12,9 @@ import threading
 from datetime import timedelta
 from typing import Callable, Dict, Optional
 
-from predbot.bot import broadcast, pagination
+from predbot.bot import pagination
 from predbot.bot.callbacks import handle_callback, handle_start
-from predbot.bot.format import stats_message
+from predbot.bot.format import RESULT_ICON, stats_message
 from predbot.bot.telegram import Telegram, esc
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
@@ -105,11 +105,10 @@ class CommandLoop(threading.Thread):
         rows = self.db.picks_for_date(date_str)
         if not rows:
             return f"No picks for {title}."
-        icons = {"won": "✅", "lost": "❌", "push": "↩️", "half_won": "✅½", "half_lost": "❌½", "void": "⚪", "pending": "⏳"}
         lines = [f"<b>{title}</b>"]
         for r in rows:
             tag = "🏆 " if r["tier"] == "top" else ""
-            lines.append(f"{icons.get(r['status'], '⏳')} {tag}{esc(r['home'])} vs {esc(r['away'])} · {esc(r['label'])} @ {float(r['price']):.2f}")
+            lines.append(f"{RESULT_ICON.get(r['status'], '⏳')} {tag}{esc(r['home'])} vs {esc(r['away'])} · {esc(r['label'])} @ {float(r['price']):.2f}")
         return "\n".join(lines)
 
     def handle(self, cmd: str, user_id: str) -> Optional[str]:

@@ -12,8 +12,6 @@ from predbot.providers.base import MarketLine, MatchResult
 WON, LOST, PUSH, HALF_WON, HALF_LOST, VOID, PENDING = (
     "won", "lost", "push", "half_won", "half_lost", "void", "pending")
 
-FINAL_OUTCOMES = {WON, LOST, PUSH, HALF_WON, HALF_LOST, VOID}
-
 
 def _cmp_line(value: float, line: float, side: str) -> str:
     """Grade an over/under-style comparison including Asian quarter lines."""

@@ -41,15 +41,16 @@ class Elo:
 
     def probs(self, sport: str, home: str, away: str) -> Tuple[Optional[Tuple[float, float, float]], int]:
         """(p_home, p_draw, p_away), confidence games. None when no data."""
-        e, games = self.expected_home(sport, home, away)
+        rh, gh = self.get(sport, home)
+        ra, ga = self.get(sport, away)
+        games = min(gh, ga)
         if games == 0:
             return None, 0
+        diff = rh + HOME_ADV.get(sport, 50.0) - ra
+        e = 1.0 / (1.0 + 10 ** (-diff / 400.0))
         base_draw = BASE_DRAW.get(sport, 0.0)
         if base_draw:
-            rh, _ = self.get(sport, home)
-            ra, _ = self.get(sport, away)
-            diff = abs(rh + HOME_ADV.get(sport, 50.0) - ra)
-            p_draw = max(0.10, base_draw - 0.00030 * diff)
+            p_draw = max(0.10, base_draw - 0.00030 * abs(diff))
             p_home = (1 - p_draw) * e
             p_away = (1 - p_draw) * (1 - e)
             return (p_home, p_draw, p_away), games

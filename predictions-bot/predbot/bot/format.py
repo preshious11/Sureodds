@@ -15,7 +15,7 @@ SPORT_LABEL = {"football": "Football", "basketball": "Basketball", "american_foo
                "hockey": "Hockey", "baseball": "Baseball", "tennis": "Tennis", "mma": "MMA",
                "handball": "Handball", "other": "Other"}
 RESULT_ICON = {"won": "✅", "lost": "❌", "push": "↩️", "half_won": "✅½", "half_lost": "❌½",
-               "void": "⚪", "pending": "⏳"}
+               "void": "➖", "pending": "⏳"}
 
 
 class PickLine(NamedTuple):
