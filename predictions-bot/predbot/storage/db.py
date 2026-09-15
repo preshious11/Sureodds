@@ -244,11 +244,6 @@ class Database:
     def subscribers_active(self) -> List[sqlite3.Row]:
         return self.query("SELECT * FROM subscribers WHERE active=1 ORDER BY subscribed_at")
 
-    def subscriber_is_active(self, chat_id: str) -> bool:
-        """Check if a specific chat_id is an active subscriber."""
-        result = self.query("SELECT active FROM subscribers WHERE chat_id=?", (str(chat_id),))
-        return bool(result) and result[0]["active"] == 1
-
     def delivery_done(self, kind: str, post_date: str, chat_id: str) -> bool:
         return bool(self.query("SELECT 1 FROM deliveries WHERE kind=? AND post_date=? AND chat_id=?",
                                (kind, post_date, str(chat_id))))
