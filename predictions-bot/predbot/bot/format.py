@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Dict, Iterable, List, NamedTuple, Optional
 
 from predbot.bot.telegram import esc
+from predbot.markets.catalog import short_selection
 from predbot.util.timeutil import to_local
 
 BRAND = "SureOdds"
@@ -20,8 +21,9 @@ RESULT_ICON = {"won": "✅", "lost": "❌", "push": "↩️", "half_won": "✅½
 class PickLine(NamedTuple):
     """One prediction exactly as the daily post renders it."""
 
+    match: str             # "Chelsea vs Man United"
+    outcome: str           # short code, e.g. "1X", "Over 2.5 Goals"
     league: str
-    label: str
     confidence: float      # model probability, 0..1
     when: str              # local kickoff with its zone, e.g. "19:45 WAT"
     price: float
@@ -44,8 +46,9 @@ def combined_odds(prices: Iterable[float]) -> float:
 
 
 def pick_lines(p: PickLine) -> List[str]:
-    """The four lines one pick occupies: league, selection, confidence | kickoff, odds."""
-    return [esc(p.league or ""), esc(p.label),
+    """The four lines one pick occupies: match, outcome, confidence | kickoff, odds."""
+    match = f"{p.match} ({p.league})" if p.league else p.match
+    return [esc(match), esc(p.outcome),
             f"Confidence: {round(p.confidence * 100)}% | {p.when}",
             f"Odds: {p.price:.2f}"]
 
@@ -62,8 +65,8 @@ def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str]
         lines.append("No selection cleared the quality bar today.")
     for p in picks:
         lines.extend(pick_lines(p))
-    if picks:
         lines.append("")
+    if picks:
         lines.append(f"Combined Odds: {combined_odds([p.price for p in picks]):.4f}")
     if stats_line:
         lines.append("")
@@ -76,7 +79,9 @@ def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str])
     picks: List[PickLine] = []
     for s in list(top) + list(daily):
         e = s.event
-        picks.append(PickLine(league=e.league or sport_name(e.sport), label=s.label,
+        picks.append(PickLine(match=f"{e.home} vs {e.away}",
+                              outcome=short_selection(s.line, e.home, e.away, e.sport),
+                              league=e.league or sport_name(e.sport),
                               confidence=s.p_model, when=kickoff_label(e.start, tz),
                               price=s.price))
     return picks_card(picks, to_local(day, tz).strftime("%Y-%m-%d"), stats_line)

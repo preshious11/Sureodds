@@ -141,6 +141,62 @@ def selection_label(ml: MarketLine, home: str, away: str, sport: str = "football
     return f"{core}{suffix}"
 
 
+def short_selection(ml: MarketLine, home: str = "", away: str = "", sport: str = "football") -> str:
+    """Compact outcome code for the picks card: '1', 'X2', 'Over 2.5 Goals', 'BTTS Yes'."""
+    if ml.label and ml.market == "prop":
+        return ml.label
+    m, s = ml.market, ml.selection
+    team = {"home": home, "away": away}
+    pts = SPORT_POINTS_WORD.get(sport, "Points")
+    stat_word = STAT_NAMES.get(ml.stat, ml.stat.title()) or pts
+    per = PERIOD_NAMES.get(ml.period, ml.period)
+    suffix = f" ({per})" if per and ml.period not in ("full", "reg") else ""
+
+    if m in ("result3", "result2"):
+        core = {"home": "1", "draw": "X", "away": "2"}.get(s, s)
+    elif m == "dnb":
+        core = {"home": "1", "away": "2"}.get(s, s) + " DNB"
+    elif m == "dc":
+        core = {"home_draw": "1X", "away_draw": "X2", "home_away": "12"}.get(s, s)
+    elif m == "btts":
+        core = f"BTTS {s.title()}"
+    elif m == "total" and ml.line is not None:
+        ent = f"{team.get(ml.entity, ml.entity)} " if ml.entity != "all" else ""
+        core = f"{ent}{s.title()} {_fmt_line(ml.line)} {stat_word}".strip()
+    elif m == "handicap" and ml.line is not None:
+        core = f"{team.get(s, s)} {_fmt_line(ml.line, signed=True)}".strip()
+        if ml.stat not in ("points",):
+            core += f" {stat_word}"
+    elif m == "odd_even":
+        core = f"{stat_word} {s.title()}"
+    elif m == "ht_ft":
+        a, b = (s.split("/") + [""])[:2]
+        name = {"home": "1", "draw": "X", "away": "2"}
+        core = f"HT {name.get(a, a)} / FT {name.get(b, b)}"
+    elif m == "correct_score":
+        core = f"Score {s}" if s else "Correct Score"
+    elif m == "result_total":
+        t, ou = s.split("_", 1) if "_" in s else (s, "")
+        code = {"home": "1", "draw": "X", "away": "2"}.get(t, t)
+        core = f"{code} & {ou.title()} {_fmt_line(ml.line)}".strip()
+    elif m == "result_btts":
+        t, yn = s.split("_", 1) if "_" in s else (s, "")
+        code = {"home": "1", "draw": "X", "away": "2"}.get(t, t)
+        core = f"{code} & BTTS {yn.title()}"
+    elif m == "clean_sheet":
+        core = f"{team.get(ml.entity, ml.entity)} Clean Sheet {s.title()}"
+    elif m == "win_to_nil":
+        core = f"{team.get(ml.entity, ml.entity)} Win To Nil {s.title()}"
+    elif m == "team_to_score":
+        core = f"{team.get(ml.entity, ml.entity)} To Score {s.title()}"
+    elif m == "winning_margin":
+        t, band = s.split("_", 1) if "_" in s else (s, "")
+        core = f"{team.get(t, t)} by {band.replace('_', '-')}"
+    else:
+        core = ml.label or f"{ml.market_name or ml.market} {s}".strip() or s
+    return f"{core}{suffix}"
+
+
 def selection_family(ml: MarketLine) -> str:
     """Coarse class of the outcome, used to stop the bot leaning on one outcome
     type (e.g. 20 home wins). Values: home, away, draw, over, under, yes, no,

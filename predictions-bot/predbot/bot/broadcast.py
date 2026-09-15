@@ -14,6 +14,8 @@ from typing import Optional
 from predbot.bot.format import PickLine, kickoff_label, picks_card, sport_name
 from predbot.bot.telegram import Telegram
 from predbot.cache.models import DailySnapshot
+from predbot.markets.catalog import short_selection
+from predbot.providers.base import MarketLine
 from predbot.storage.db import Database
 from predbot.util.timeutil import parse_iso, to_local, utcnow
 
@@ -22,10 +24,14 @@ log = logging.getLogger(__name__)
 
 def picks_text(snapshot: DailySnapshot, tz: str) -> str:
     """The daily predictions card (top picks first, then the daily ones) from a snapshot."""
-    picks = [PickLine(league=p.league or sport_name(p.sport), label=p.label,
-                      confidence=p.prob, when=kickoff_label(parse_iso(p.kickoff_utc), tz),
-                      price=p.price)
-             for p in snapshot.top_picks + snapshot.daily_picks]
+    picks = []
+    for p in snapshot.top_picks + snapshot.daily_picks:
+        ml = MarketLine(p.market, p.selection, p.price, line=p.line)
+        picks.append(PickLine(match=f"{p.home} vs {p.away}",
+                              outcome=short_selection(ml, p.home, p.away, p.sport) or p.label,
+                              league=p.league or sport_name(p.sport),
+                              confidence=p.prob, when=kickoff_label(parse_iso(p.kickoff_utc), tz),
+                              price=p.price))
     return picks_card(picks, snapshot.date, _record_line(snapshot))
 
 
