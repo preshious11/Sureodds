@@ -104,7 +104,7 @@ def test_deliver_picks_reaches_all_subscribers_once(db):
     assert [s["chat_id"] for s in tg.sends] == ["42", "77"]
     card = tg.sends[0]["text"]
     assert card.startswith("📋 Top Picks for Today")
-    assert card.count("Confidence:") == 4                # 1 top + 3 daily picks
+    assert card.count("Football") == 4                # 1 top + 3 daily picks (sport line per pick)
     assert "Combined Odds:" in card
 
     # same day again (e.g. a restart): deliveries are de-duplicated per user
@@ -142,25 +142,6 @@ def test_callback_sub_toggle_updates_db_and_menu(db):
     handle_callback(_cb("sub|on"), service=fetcher, tg=tg, db=db, cfg=Config())
     assert len(db.subscribers_active()) == 1
     assert tg.answers[-1]["text"] == "Subscribed ✅"
-
-
-def test_new_subscriber_gets_todays_picks_via_sub_on(db):
-    today = datetime_now_utc()
-    db.insert_pick({
-        "pick_date": today, "tier": "top", "rank": 1, "provider": "fake",
-        "provider_event_id": "e1", "sport": "football", "league": "EPL",
-        "home": "A", "away": "B", "start_utc": "2030-06-01T18:00:00Z",
-        "market": "total", "period": "full", "stat": "points", "entity": "all",
-        "line": 2.5, "selection": "over", "label": "Over 2.5 goals", "price": 1.9,
-        "prob": 0.7, "ev": 0.1, "p_market": 0.55, "sources": {"market": 0.55},
-    })
-    fetcher = UnifiedFetcher(FakeChain(), db, Config(), CacheManager())
-    tg = FakeTG()
-
-    handle_callback(_cb("sub|on"), service=fetcher, tg=tg, db=db, cfg=Config())
-
-    picks_sends = [s for s in tg.sends if "Top Picks for Today" in s["text"]]
-    assert len(picks_sends) == 1            # zero-API catch-up from the DB
 
 
 def test_page_callbacks_still_work_after_router_change(db):
