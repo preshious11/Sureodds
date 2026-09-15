@@ -21,7 +21,7 @@ from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
 from predbot.jobs import stats as stats_mod
 from predbot.storage.db import Database
-from predbot.util.timeutil import to_local, utcnow
+from predbot.util.timeutil import parse_iso, to_local, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -137,10 +137,23 @@ class CommandLoop(threading.Thread):
         rows = self.db.picks_for_date(date_str)
         if not rows:
             return f"No picks for {title}."
-        lines = [f"<b>{title}</b>"]
+        lines = [f"<b>{title}</b>", ""]
         for r in rows:
-            tag = "🏆 " if r["tier"] == "top" else ""
-            lines.append(f"{RESULT_ICON.get(r['status'], '⏳')} {tag}{esc(r['home'])} vs {esc(r['away'])} · {esc(r['label'])} @ {float(r['price']):.2f}")
+            sport = r["sport"].replace("_", " ").title()
+            league = r["league"] or sport
+            fixture = f"{esc(r['home'])} vs {esc(r['away'])}"
+            outcome = esc(r["label"])
+            confidence = f"{round(float(r['prob']) * 100)}%" if r.get("prob") else "–"
+            kickoff = to_local(parse_iso(r["start_utc"]), self.cfg.timezone).strftime("%H:%M") if r.get("start_utc") else "--:--"
+            odd = f"{float(r['price']):.2f}"
+
+            lines.append(sport)
+            lines.append(league)
+            lines.append(fixture)
+            lines.append(outcome)
+            lines.append(f"{confidence} | {kickoff}")
+            lines.append(odd)
+            lines.append("")
         return "\n".join(lines)
 
     def handle(self, cmd: str, user_id: str) -> Optional[str]:
