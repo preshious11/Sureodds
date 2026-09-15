@@ -1,7 +1,7 @@
-"""Optional long-polling command handler: /stats /today /yesterday, and for
+"""Optional long-polling command handler: /stats /daily /yesterday, and for
 admins /run (force picks), /settle, /recap.
 
-When a UnifiedFetcher is wired in, /today renders the paginated inline-keyboard
+When a UnifiedFetcher is wired in, /daily renders the paginated inline-keyboard
 view (zero API reads) and inline-button presses are routed to the callback
 handler.
 """
@@ -18,12 +18,19 @@ from predbot.bot.callbacks import handle_callback, handle_start
 from predbot.bot.format import RESULT_ICON, stats_message
 from predbot.bot.telegram import Telegram, esc
 from predbot.cache.fetcher import UnifiedFetcher
+from predbot.cache.models import VIEW_DAILY, VIEW_STATS, VIEW_TOP
 from predbot.config import Config
 from predbot.jobs import stats as stats_mod
 from predbot.storage.db import Database
 from predbot.util.timeutil import parse_iso, to_local, utcnow
 
 log = logging.getLogger(__name__)
+
+CMD_TO_VIEW = {
+    "/top": VIEW_TOP,
+    "/daily": VIEW_DAILY,
+    "/stats": VIEW_STATS,
+}
 
 
 def _retry_get_updates(tg: Telegram, offset: Optional[int], timeout: int, max_retries: int = 3) -> list:
@@ -101,8 +108,8 @@ class CommandLoop(threading.Thread):
                 if cmd == "/start":
                     handle_start(self.db, self.tg, chat_id, msg.get("from") or {})
                     continue
-                if cmd == "/today" and self.service is not None:
-                    self._send_today(chat_id)
+                if cmd in CMD_TO_VIEW and self.service is not None:
+                    self._send_view(chat_id, CMD_TO_VIEW[cmd])
                     continue
                 try:
                     reply = self.handle(cmd, user_id)
@@ -112,16 +119,20 @@ class CommandLoop(threading.Thread):
                 if reply:
                     _retry_send(self.tg, reply, chat_id)
 
-    def _send_today(self, chat_id: str) -> None:
-        """Paginated /daily: page 0 of the daily picks with inline navigation."""
+    def _send_view(self, chat_id: str, view: str) -> None:
+        """Send paginated view (top, daily, or stats) with inline navigation."""
         try:
             snapshot = self.service.get_daily_snapshot()
-            text, markup = pagination.render_view(snapshot, pagination.VIEW_DAILY, 0,
+            text, markup = pagination.render_view(snapshot, view, 0,
                                                   self.page_size, self.cfg.timezone, db=self.db)
             _retry_send(self.tg, text, chat_id, reply_markup=markup)
         except (ValueError, KeyError, AttributeError) as e:
-            log.exception("today failed: %s", e)
-            _retry_send(self.tg, "Today's picks are unavailable.", chat_id)
+            log.exception("view %s failed: %s", view, e)
+            _retry_send(self.tg, "View unavailable.", chat_id)
+
+    def _send_today(self, chat_id: str) -> None:
+        """Paginated /daily: page 0 of the daily picks with inline navigation."""
+        self._send_view(chat_id, pagination.VIEW_DAILY)
 
     def _dispatch_callback(self, cb: Dict) -> None:
         if self.service is None:
@@ -146,7 +157,7 @@ class CommandLoop(threading.Thread):
             confidence = f"<b>{round(float(r['prob']) * 100)}%</b>" if r.get("prob") else "–"
             if r.get("start_utc"):
                 local = to_local(parse_iso(r["start_utc"]), self.cfg.timezone)
-                tz_abbr = local.tzname() or self.cfg.timezone.split("/")[-1]
+                tz_abbr = local.tzname() or self.cfg.timezone
                 kickoff = f"{local.strftime('%I:%M %p')} {tz_abbr}"
             else:
                 kickoff = "--:--"
@@ -165,10 +176,10 @@ class CommandLoop(threading.Thread):
         local = to_local(utcnow(), self.cfg.timezone)
         if cmd in ("/stats", "/help"):
             if cmd != "/stats":
-                return ("Commands: /start (menu) · /today · /yesterday · /stats" +
+                return ("Commands: /start (menu) · /daily · /yesterday · /stats" +
                         (" · /run /settle /recap" if user_id in self.cfg.telegram_admin_ids else ""))
             return stats_message(stats_mod.compute(self.db, local))
-        if cmd == "/today":
+        if cmd == "/daily":
             return self._day_list(local.strftime("%Y-%m-%d"), f"📋 Daily Picks · {local.strftime('%a %d %b')}")
         if cmd == "/yesterday":
             y = local - timedelta(days=1)

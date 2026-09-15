@@ -67,7 +67,7 @@ def _kickoff_hhmm(pick: PickRecord, tz: str) -> str:
     if not start:
         return "--:--"
     local = to_local(start, tz)
-    tz_abbr = local.tzname() or tz.split("/")[-1]  # fallback to last part of timezone name
+    tz_abbr = local.tzname() or tz  # fallback to full timezone name
     return f"{local.strftime('%I:%M %p')} {tz_abbr}"
 
 
