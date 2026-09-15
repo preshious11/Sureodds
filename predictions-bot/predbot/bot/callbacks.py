@@ -29,7 +29,7 @@ def welcome_message(first_name: str = "there") -> str:
         f"👋 Hi, {first_name}\n\n"
         "Use the menu below or these commands:\n\n"
         "<b>🏆 /top</b> – Top picks of the day\n"
-        "<b>📋 /today</b> – Daily picks · Accumulator slip\n"
+        "<b>📋 /daily</b> – Daily picks · Accumulator slip\n"
         "<b>📊 /stats</b> – See prediction results."
     )
 
@@ -73,7 +73,7 @@ def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram
         view, page = parsed
         snapshot = service.get_daily_snapshot()  # cache-first read
         text, markup = pagination.render_view(snapshot, view, page, page_size,
-                                              cfg.timezone, db=db)
+                                              cfg.timezone, db=db, chat_id=chat_id)
         if chat_id and message_id:
             tg.edit_message_text(chat_id, int(message_id), text, reply_markup=markup)
         tg.answer_callback_query(cb_id, text=_toast(view, snapshot, page, page_size))
