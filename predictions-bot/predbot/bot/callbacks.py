@@ -25,10 +25,7 @@ log = logging.getLogger(__name__)
 
 def welcome_message(first_name: str = "there") -> str:
     """Generate personalized welcome message."""
-    from datetime import datetime
-    today = datetime.now().strftime("%Y-%m-%d")
     return (
-        f"<b>Top predictions for today–– {today}</b>\n\n"
         f"👋 Hi, {first_name}\n\n"
         "Use the menu below or these commands:\n\n"
         "<b>🏆 /top</b> – Top picks of the day\n"
