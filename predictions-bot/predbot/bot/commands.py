@@ -143,7 +143,7 @@ class CommandLoop(threading.Thread):
             league = r["league"] or sport
             fixture = f"{esc(r['home'])} vs {esc(r['away'])}"
             outcome = esc(r["label"])
-            confidence = f"{round(float(r['prob']) * 100)}%" if r.get("prob") else "–"
+            confidence = f"<b>{round(float(r['prob']) * 100)}%</b>" if r.get("prob") else "–"
             kickoff = to_local(parse_iso(r["start_utc"]), self.cfg.timezone).strftime("%H:%M") if r.get("start_utc") else "--:--"
             odd = f"{float(r['price']):.2f}"
 
@@ -151,7 +151,7 @@ class CommandLoop(threading.Thread):
             lines.append(league)
             lines.append(fixture)
             lines.append(outcome)
-            lines.append(f"{confidence} | {kickoff}")
+            lines.append(f"Confidence level: {confidence} | {kickoff}")
             lines.append(odd)
             lines.append("")
         return "\n".join(lines)
