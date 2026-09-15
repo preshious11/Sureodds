@@ -71,9 +71,16 @@ class EventModel:
         self.elo_games = 0
         self.apif_probs: Optional[Tuple[float, float, float]] = None
         self.notes: Dict = {}
+        self._market_index: Dict[Tuple, List[MarketLine]] = {}
+        self._build_market_index()
         self._build()
 
     # ---------------------------------------------------------------- build
+    def _build_market_index(self) -> None:
+        for ml in self.ev.markets:
+            key = (ml.market, ml.period, ml.entity, ml.stat)
+            self._market_index.setdefault(key, []).append(ml)
+
     def _build(self) -> None:
         self._market_probs()
         self._score_model()
@@ -122,8 +129,11 @@ class EventModel:
 
     def _find(self, market: str, period: str = "full", entity: str = "all", stat: str = "points",
               selection: Optional[str] = None) -> List[MarketLine]:
-        return [m for m in self.ev.markets if m.market == market and m.period == period and m.entity == entity
-                and m.stat == stat and (selection is None or m.selection == selection)]
+        key = (market, period, entity, stat)
+        results = self._market_index.get(key, [])
+        if selection is None:
+            return results
+        return [m for m in results if m.selection == selection]
 
     def _main_line(self, market: str, entity: str = "all") -> Optional[Tuple[float, float]]:
         """Return (line, p_over_or_cover_for_home) for the most balanced line."""

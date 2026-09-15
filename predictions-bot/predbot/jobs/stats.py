@@ -76,19 +76,36 @@ def compute(db: Database, today_local: datetime) -> Dict:
     y = (d0 - timedelta(days=1)).strftime("%Y-%m-%d")
     since7 = (d0 - timedelta(days=7)).strftime("%Y-%m-%d")
     since30 = (d0 - timedelta(days=30)).strftime("%Y-%m-%d")
+    today_str = d0.strftime("%Y-%m-%d")
+
     all_rows = db.query("SELECT * FROM picks WHERE status NOT IN ('pending')")
-    rows7 = [r for r in all_rows if since7 <= r["pick_date"] < d0.strftime("%Y-%m-%d")]
-    rows30 = [r for r in all_rows if since30 <= r["pick_date"] < d0.strftime("%Y-%m-%d")]
-    rows_y = [r for r in all_rows if r["pick_date"] == y]
+    rows7 = []
+    rows30 = []
+    rows_y = []
+    rows_y_top = []
+    top_all = []
+
+    for r in all_rows:
+        if r["pick_date"] == y:
+            rows_y.append(r)
+            if r["tier"] == "top":
+                rows_y_top.append(r)
+        if since7 <= r["pick_date"] < today_str:
+            rows7.append(r)
+        if since30 <= r["pick_date"] < today_str:
+            rows30.append(r)
+        if r["tier"] == "top":
+            top_all.append(r)
+
     out = {
         "last7": _block(rows7), "last30": _block(rows30), "all": _block(all_rows),
-        "yesterday": _block(rows_y), "yesterday_top": _block([r for r in rows_y if r["tier"] == "top"]),
-        "top_all": _block([r for r in all_rows if r["tier"] == "top"]),
+        "yesterday": _block(rows_y), "yesterday_top": _block(rows_y_top),
+        "top_all": _block(top_all),
         "streak": _streak(all_rows),
     }
     try:
         out["brier"] = Calibrator(db).brier()
-    except Exception:  # noqa: BLE001
+    except (ValueError, KeyError, TypeError):
         out["brier"] = None
     return out
 

@@ -62,34 +62,51 @@ def run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]:
     elo = Elo(db)
     counts = {"settled": 0, "pending": 0, "void": 0, "errors": 0}
     cache: Dict[str, MatchResult] = {}
+    stats_cache: Dict[str, Dict] = {}
     rows = db.pending_picks(before_utc=iso(now))
     apif = resolver.providers.get("api_football")
 
     # Batch API-Football results (20 fixtures per request) before per-pick resolution
     apif_ids = sorted({r["provider_event_id"] for r in rows if r["provider"] == "api_football"
-                       and parse_iso(r["start_utc"]) + timedelta(hours=DURATION_H.get(r["sport"], 3)) <= now})
+                       and (s := parse_iso(r["start_utc"])) is not None
+                       and s + timedelta(hours=DURATION_H.get(r["sport"], 3)) <= now})
     if apif and apif_ids:
         try:
             for fid, res in apif.fetch_results_batch(apif_ids).items():
                 cache[f"api_football:{fid}"] = res
-        except Exception as e:  # noqa: BLE001
-            log.warning("batch API-Football results failed: %s", e)
+        except (ValueError, KeyError, TypeError) as e:
+            log.exception("batch API-Football results failed: %s", e)
+
+    # Pre-fetch statistics for fixtures that need them (corners/cards)
+    stats_needed = sorted({r["provider_event_id"] for r in rows if r["provider"] == "api_football"
+                           and r["stat"] in ("corners", "cards")})
+    if apif and stats_needed:
+        for fid in stats_needed:
+            try:
+                stats_cache[fid] = apif.fetch_statistics(fid)
+            except Exception:
+                pass
 
     for r in rows:
         start = parse_iso(r["start_utc"])
+        if start is None:
+            log.error("invalid start time for pick %s: %s", r["id"], r["start_utc"])
+            counts["errors"] += 1
+            continue
         if start + timedelta(hours=DURATION_H.get(r["sport"], 3)) > now:
             counts["pending"] += 1
             continue
         try:
             src = json.loads(r["sources"]) if r["sources"] else {}
-        except ValueError:
+        except ValueError as e:
+            log.warning("malformed sources JSON for pick %s: %s", r["id"], e)
             src = {}
         alt_ids = src.get("_alt_ids") or {}
         try:
             res = resolver.resolve(r["provider"], r["provider_event_id"], r["sport"], r["home"], r["away"],
                                   start, alt_ids=alt_ids, cache=cache)
-        except Exception as e:  # noqa: BLE001
-            log.warning("resolve failed for pick %s: %s", r["id"], e)
+        except (ValueError, KeyError, TypeError, AttributeError) as e:
+            log.exception("resolve failed for pick %s: %s", r["id"], e)
             counts["errors"] += 1
             continue
         if res is None:
@@ -100,13 +117,11 @@ def run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]:
                 counts["pending"] += 1
             continue
         ml = _row_to_line(r)
-        # corners/cards for API-Football picks need the statistics endpoint
+        # corners/cards for API-Football picks need the statistics endpoint (cached)
         if ml.stat in ("corners", "cards") and res.stat(ml.stat, ml.period) is None and apif \
                 and r["provider"] == "api_football" and res.status == "final":
-            try:
-                res.stats.update(apif.fetch_statistics(r["provider_event_id"]))
-            except Exception as e:  # noqa: BLE001
-                log.warning("statistics failed for %s: %s", r["provider_event_id"], e)
+            if r["provider_event_id"] in stats_cache:
+                res.stats.update(stats_cache[r["provider_event_id"]])
         outcome = grade(ml, res, r["sport"])
         if outcome == PENDING:
             if res.status == "final" and start < now - timedelta(days=MAX_PENDING_DAYS):
@@ -128,7 +143,7 @@ def run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]:
     if counts["settled"]:
         try:
             Calibrator(db).refit()
-        except Exception as e:  # noqa: BLE001
-            log.warning("calibration refit failed: %s", e)
+        except (ValueError, KeyError, TypeError) as e:
+            log.error("calibration refit failed (probabilities may be stale): %s", e)
     log.info("settlement: %s", counts)
     return counts

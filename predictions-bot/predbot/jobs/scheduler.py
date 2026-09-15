@@ -3,6 +3,7 @@ smart settlement (runs after all predictions end), all in the configured timezon
 from __future__ import annotations
 
 import logging
+import signal
 import time
 from datetime import datetime, timedelta
 from typing import Callable, Optional
@@ -82,10 +83,22 @@ class DynamicJob:
 
 def loop(jobs, poll_seconds: int = 30) -> None:
     log.info("scheduler running with %d jobs", len(jobs))
-    while True:
+    shutdown = False
+
+    def handle_signal(signum, frame):
+        nonlocal shutdown
+        log.info("received signal %d, shutting down gracefully", signum)
+        shutdown = True
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
+    while not shutdown:
         now = utcnow()
         for j in jobs:
             if j.due(now):
                 log.info("running job %s", j.name)
                 j.run(now)
         time.sleep(poll_seconds)
+
+    log.info("scheduler stopped")
