@@ -1,6 +1,12 @@
 __pycache__/
 *.pyc
+
+# ---- Environment / secrets (never commit real values) ----
 .env
+.env.*
+*.env
+!.env.example
+
 *.db
 *.db-journal
 .pytest_cache/
