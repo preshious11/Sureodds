@@ -64,7 +64,11 @@ def slice_page(items: List[PickRecord], page: int, size: int) -> List[PickRecord
 # ----------------------------------------------------------------- rendering
 def _kickoff_hhmm(pick: PickRecord, tz: str) -> str:
     start = parse_iso(pick.kickoff_utc)
-    return to_local(start, tz).strftime("%H:%M") if start else "--:--"
+    if not start:
+        return "--:--"
+    local = to_local(start, tz)
+    tz_abbr = local.tzname() or tz.split("/")[-1]  # fallback to last part of timezone name
+    return f"{local.strftime('%H:%M')} {tz_abbr}"
 
 
 def render_pick(pick: PickRecord, tz: str) -> str:
