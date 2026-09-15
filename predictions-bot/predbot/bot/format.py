@@ -60,7 +60,7 @@ def combined_odds(prices: Iterable[float]) -> float:
 def pick_lines(p: PickLine) -> List[str]:
     """The six lines one pick occupies: sport, league, match, outcome, confidence | kickoff, odds."""
     return [esc(p.sport), esc(p.league), esc(p.match), esc(p.outcome),
-            f"{round(p.confidence * 100)}% | {p.when}",
+            f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {p.when}",
             f"{p.price:.2f}"]
 
 

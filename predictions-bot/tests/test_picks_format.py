@@ -50,14 +50,14 @@ def test_card_matches_the_requested_layout():
         "Premier League\n"
         "Home1 vs Away1\n"
         "Aston Villa to win\n"
-        "72% | 19:45 WAT\n"
+        "Confidence level: <b>72%</b> | 19:45 WAT\n"
         "2.05\n"
         "\n"
         "Football\n"
         "La Liga\n"
         "Home2 vs Away2\n"
         "Over 1.5 Goals\n"
-        "84% | 15:00 WAT\n"
+        "Confidence level: <b>84%</b> | 15:00 WAT\n"
         "1.74\n"
         "\n"
         "Combined Odds: 3.5670"
@@ -85,7 +85,7 @@ def test_every_pick_gets_the_six_line_block():
         "Serie A",
         "Home1 vs Away1",
         "Inter to win",
-        "66% | 19:45 WAT",
+        "Confidence level: <b>66%</b> | 19:45 WAT",
         "1.95",
         "",
         "Combined Odds: 1.9500",

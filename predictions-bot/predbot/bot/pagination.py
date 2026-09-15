@@ -73,7 +73,7 @@ def render_pick(pick: PickRecord, tz: str) -> str:
     league = pick.league or sport_label
     fixture = f"{esc(pick.home)} vs {esc(pick.away)}"
     outcome = esc(pick.label)
-    confidence = f"{round(pick.prob * 100)}%"
+    confidence = f"<b>{round(pick.prob * 100)}%</b>"
     time_wat = _kickoff_hhmm(pick, tz)
     odd = f"{pick.price:.2f}"
 
@@ -81,7 +81,7 @@ def render_pick(pick: PickRecord, tz: str) -> str:
             f"{league}\n"
             f"{fixture}\n"
             f"{outcome}\n"
-            f"{confidence} | {time_wat}\n"
+            f"Confidence level: {confidence} | {time_wat}\n"
             f"{odd}")
 
 
