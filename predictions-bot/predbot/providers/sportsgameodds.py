@@ -246,7 +246,7 @@ class SportsGameOddsProvider(BaseProvider):
             return None
         data = self.http.get("/events", {"eventID": provider_event_id, "expandResults": "true"})
         events = data.get("data", []) if isinstance(data, dict) else []
-        self.budget.spend(self.name, max(1, len(events)))
+        self.budget.spend(self.name, len(events))
         if not events:
             return None
         return self._parse_result(events[0])

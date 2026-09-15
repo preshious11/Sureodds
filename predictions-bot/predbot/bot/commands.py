@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import timedelta
 from typing import Callable, Dict, Optional
 
@@ -23,6 +24,37 @@ from predbot.storage.db import Database
 from predbot.util.timeutil import to_local, utcnow
 
 log = logging.getLogger(__name__)
+
+
+def _retry_get_updates(tg: Telegram, offset: Optional[int], timeout: int, max_retries: int = 3) -> list:
+    """Retry get_updates with exponential backoff on transient failures."""
+    for attempt in range(max_retries):
+        try:
+            return tg.get_updates(offset, timeout=timeout)
+        except (ConnectionError, TimeoutError) as e:
+            if attempt == max_retries - 1:
+                log.warning("get_updates failed after %d retries: %s", max_retries, e)
+                return []
+            wait = 2 ** attempt
+            log.debug("get_updates attempt %d failed, retrying in %ds: %s", attempt + 1, wait, e)
+            time.sleep(wait)
+    return []
+
+
+def _retry_send(tg: Telegram, text: str, chat_id: str, reply_markup: Optional[Dict] = None, max_retries: int = 3) -> bool:
+    """Retry send with exponential backoff on transient failures. Returns True if sent."""
+    for attempt in range(max_retries):
+        try:
+            tg.send(text, chat_id=chat_id, reply_markup=reply_markup)
+            return True
+        except (ConnectionError, TimeoutError) as e:
+            if attempt == max_retries - 1:
+                log.error("send failed after %d retries: %s", max_retries, e)
+                return False
+            wait = 2 ** attempt
+            log.debug("send attempt %d failed, retrying in %ds: %s", attempt + 1, wait, e)
+            time.sleep(wait)
+    return False
 
 
 def recap_card(db: Database, local_now: datetime) -> str:
@@ -53,7 +85,7 @@ class CommandLoop(threading.Thread):
     def run(self) -> None:
         log.info("command loop started")
         while not self._stop.is_set():
-            for upd in self.tg.get_updates(self.offset, timeout=20):
+            for upd in _retry_get_updates(self.tg, self.offset, timeout=20):
                 self.offset = upd["update_id"] + 1
                 cb = upd.get("callback_query")
                 if cb:
@@ -74,11 +106,11 @@ class CommandLoop(threading.Thread):
                     continue
                 try:
                     reply = self.handle(cmd, user_id)
-                except Exception as e:  # noqa: BLE001
+                except (ValueError, KeyError, AttributeError) as e:
                     log.exception("command failed: %s", e)
                     reply = "Command failed."
                 if reply:
-                    self.tg.send(reply, chat_id=chat_id)
+                    _retry_send(self.tg, reply, chat_id)
 
     def _send_today(self, chat_id: str) -> None:
         """Paginated /today: page 0 of the top picks with inline navigation."""
@@ -86,10 +118,10 @@ class CommandLoop(threading.Thread):
             snapshot = self.service.get_daily_snapshot()
             text, markup = pagination.render_view(snapshot, pagination.VIEW_TOP, 0,
                                                   self.page_size, self.cfg.timezone)
-            self.tg.send(text, chat_id=chat_id, reply_markup=markup)
-        except Exception as e:  # noqa: BLE001
+            _retry_send(self.tg, text, chat_id, reply_markup=markup)
+        except (ValueError, KeyError, AttributeError) as e:
             log.exception("today failed: %s", e)
-            self.tg.send("Today's picks are unavailable.", chat_id=chat_id)
+            _retry_send(self.tg, "Today's picks are unavailable.", chat_id)
 
     def _dispatch_callback(self, cb: Dict) -> None:
         if self.service is None:
@@ -98,7 +130,7 @@ class CommandLoop(threading.Thread):
         try:
             handle_callback(cb, service=self.service, tg=self.tg, db=self.db,
                             cfg=self.cfg, page_size=self.page_size)
-        except Exception as e:  # noqa: BLE001
+        except (ValueError, KeyError, AttributeError, IndexError) as e:
             log.exception("callback dispatch failed: %s", e)
 
     def _day_list(self, date_str: str, title: str) -> str:
