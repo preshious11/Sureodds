@@ -1,0 +1,5 @@
+{"response": [
+ {"fixture": {"id": 1001, "date": "2030-03-01T15:00:00+00:00", "status": {"short": "FT"}}, "league": {"id": 39, "name": "Premier League"},
+  "teams": {"home": {"id": 42, "name": "Arsenal"}, "away": {"id": 49, "name": "Chelsea"}}, "goals": {"home": 2, "away": 1},
+  "score": {"halftime": {"home": 1, "away": 1}, "fulltime": {"home": 2, "away": 1}, "extratime": {"home": null, "away": null}, "penalty": {"home": null, "away": null}}}
+]}

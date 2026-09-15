@@ -1,0 +1,31 @@
+{
+  "eventID": "trulBe8G1Fwl0n9qV2zF", "sportID": "SOCCER", "leagueID": "FR_LIGUE_1", "type": "match",
+  "teams": {"home": {"teamID": "ANGERS_FR_LIGUE_1", "names": {"long": "Angers", "medium": "Angers", "short": "ANG"}},
+            "away": {"teamID": "NANTES_FR_LIGUE_1", "names": {"long": "Nantes", "medium": "Nantes", "short": "FCN"}}},
+  "status": {"started": false, "completed": false, "cancelled": false, "ended": false, "finalized": false,
+             "oddsAvailable": true, "startsAt": "2030-12-12T19:45:00.000Z"},
+  "players": {"AMINE_MOUSSAOUI_1_FR_LIGUE_1": {"playerID": "AMINE_MOUSSAOUI_1_FR_LIGUE_1", "name": "Amine Moussaoui"}},
+  "odds": {
+    "points-home-reg-ml3way-home": {"oddID": "points-home-reg-ml3way-home", "statID": "points", "statEntityID": "home", "periodID": "reg", "betTypeID": "ml3way", "sideID": "home", "bookOddsAvailable": true, "fairOdds": "+127", "bookOdds": "+115", "scoringSupported": true,
+      "byBookmaker": {"fanduel": {"odds": "+115", "available": true}, "draftkings": {"odds": "+120", "available": true}, "betmgm": {"odds": "+110", "available": false}}},
+    "points-away-reg-ml3way-away": {"oddID": "points-away-reg-ml3way-away", "statID": "points", "statEntityID": "away", "periodID": "reg", "betTypeID": "ml3way", "sideID": "away", "bookOddsAvailable": true, "fairOdds": "+284", "bookOdds": "+258", "scoringSupported": true,
+      "byBookmaker": {"fanduel": {"odds": "+260", "available": true}, "draftkings": {"odds": "+255", "available": true}}},
+    "points-all-reg-ml3way-draw": {"oddID": "points-all-reg-ml3way-draw", "statID": "points", "statEntityID": "all", "periodID": "reg", "betTypeID": "ml3way", "sideID": "draw", "bookOddsAvailable": true, "fairOdds": "+245", "bookOdds": "+230", "scoringSupported": true,
+      "byBookmaker": {"fanduel": {"odds": "+230", "available": true}}},
+    "points-home-reg-ml3way-home+draw": {"oddID": "points-home-reg-ml3way-home+draw", "statID": "points", "statEntityID": "home", "periodID": "reg", "betTypeID": "ml3way", "sideID": "home+draw", "bookOddsAvailable": true, "fairOdds": "-284", "bookOdds": "-250", "scoringSupported": true},
+    "points-home-reg-ml-home": {"oddID": "points-home-reg-ml-home", "statID": "points", "statEntityID": "home", "periodID": "reg", "betTypeID": "ml", "sideID": "home", "bookOddsAvailable": true, "fairOdds": "-167", "bookOdds": "-200", "scoringSupported": true},
+    "points-away-reg-ml-away": {"oddID": "points-away-reg-ml-away", "statID": "points", "statEntityID": "away", "periodID": "reg", "betTypeID": "ml", "sideID": "away", "bookOddsAvailable": true, "fairOdds": "+167", "bookOdds": "+150", "scoringSupported": true},
+    "points-home-reg-sp-home": {"oddID": "points-home-reg-sp-home", "statID": "points", "statEntityID": "home", "periodID": "reg", "betTypeID": "sp", "sideID": "home", "bookOddsAvailable": true, "fairOdds": "+117", "bookOdds": "+108", "fairSpread": "-0.5", "bookSpread": "-0.5", "scoringSupported": true},
+    "points-away-reg-sp-away": {"oddID": "points-away-reg-sp-away", "statID": "points", "statEntityID": "away", "periodID": "reg", "betTypeID": "sp", "sideID": "away", "bookOddsAvailable": true, "fairOdds": "-117", "bookOdds": "-128", "fairSpread": "+0.5", "bookSpread": "+0.5", "scoringSupported": true},
+    "points-all-reg-ou-over": {"oddID": "points-all-reg-ou-over", "statID": "points", "statEntityID": "all", "periodID": "reg", "betTypeID": "ou", "sideID": "over", "bookOddsAvailable": true, "fairOdds": "+143", "bookOdds": "+128", "fairOverUnder": "2.5", "bookOverUnder": "2.5", "scoringSupported": true},
+    "points-all-reg-ou-under": {"oddID": "points-all-reg-ou-under", "statID": "points", "statEntityID": "all", "periodID": "reg", "betTypeID": "ou", "sideID": "under", "bookOddsAvailable": true, "fairOdds": "-143", "bookOdds": "-167", "fairOverUnder": "2.5", "bookOverUnder": "2.5", "scoringSupported": true},
+    "points-home-1h-ml3way-home": {"oddID": "points-home-1h-ml3way-home", "statID": "points", "statEntityID": "home", "periodID": "1h", "betTypeID": "ml3way", "sideID": "home", "bookOddsAvailable": true, "fairOdds": "+198", "bookOdds": "+180", "scoringSupported": true},
+    "bothTeamsScored-all-game-yn-no": {"oddID": "bothTeamsScored-all-game-yn-no", "statID": "bothTeamsScored", "statEntityID": "all", "periodID": "game", "betTypeID": "yn", "sideID": "no", "bookOddsAvailable": true, "fairOdds": "-110", "bookOdds": "-128", "scoringSupported": true},
+    "bothTeamsScored-all-game-yn-yes": {"oddID": "bothTeamsScored-all-game-yn-yes", "statID": "bothTeamsScored", "statEntityID": "all", "periodID": "game", "betTypeID": "yn", "sideID": "yes", "bookOddsAvailable": true, "fairOdds": "+110", "bookOdds": "-105", "scoringSupported": true},
+    "cornerKicks-home-game-ou-under": {"oddID": "cornerKicks-home-game-ou-under", "statID": "cornerKicks", "statEntityID": "home", "periodID": "game", "betTypeID": "ou", "sideID": "under", "bookOddsAvailable": true, "fairOdds": "-126", "bookOdds": "-150", "fairOverUnder": "5.5", "bookOverUnder": "5.5", "scoringSupported": true},
+    "cornerKicks-home-game-ou-over": {"oddID": "cornerKicks-home-game-ou-over", "statID": "cornerKicks", "statEntityID": "home", "periodID": "game", "betTypeID": "ou", "sideID": "over", "bookOddsAvailable": true, "fairOdds": "+126", "bookOdds": "+110", "fairOverUnder": "5.5", "bookOverUnder": "5.5", "scoringSupported": true},
+    "lastToScore-AMINE_MOUSSAOUI_1_FR_LIGUE_1-game-yn-yes": {"oddID": "lastToScore-AMINE_MOUSSAOUI_1_FR_LIGUE_1-game-yn-yes", "statID": "lastToScore", "statEntityID": "AMINE_MOUSSAOUI_1_FR_LIGUE_1", "periodID": "game", "betTypeID": "yn", "sideID": "yes", "playerID": "AMINE_MOUSSAOUI_1_FR_LIGUE_1", "bookOddsAvailable": true, "fairOdds": "+990", "bookOdds": "+900", "scoringSupported": false},
+    "points-AMINE_MOUSSAOUI_1_FR_LIGUE_1-game-ou-over": {"oddID": "points-AMINE_MOUSSAOUI_1_FR_LIGUE_1-game-ou-over", "statID": "points", "statEntityID": "AMINE_MOUSSAOUI_1_FR_LIGUE_1", "periodID": "game", "betTypeID": "ou", "sideID": "over", "playerID": "AMINE_MOUSSAOUI_1_FR_LIGUE_1", "bookOddsAvailable": true, "fairOdds": "+300", "bookOdds": "+280", "fairOverUnder": "0.5", "bookOverUnder": "0.5", "scoringSupported": true}
+  },
+  "results": {}
+}

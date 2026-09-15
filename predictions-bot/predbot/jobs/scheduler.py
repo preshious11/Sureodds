@@ -1,0 +1,65 @@
+"""Tiny in-process scheduler (no external deps): daily recap, daily picks and
+periodic settlement, all in the configured timezone."""
+from __future__ import annotations
+
+import logging
+import time
+from datetime import datetime, timedelta
+from typing import Callable, Optional
+
+from predbot.util.timeutil import to_local, utcnow
+
+log = logging.getLogger(__name__)
+
+
+def _parse_hhmm(s: str):
+    h, m = s.split(":")
+    return int(h), int(m)
+
+
+class DailyJob:
+    def __init__(self, name: str, at: str, tz: str, fn: Callable[[], None]):
+        self.name, self.tz, self.fn = name, tz, fn
+        self.h, self.m = _parse_hhmm(at)
+        self.last_run_date: Optional[str] = None
+
+    def due(self, now: datetime) -> bool:
+        local = to_local(now, self.tz)
+        today = local.strftime("%Y-%m-%d")
+        if self.last_run_date == today:
+            return False
+        return (local.hour, local.minute) >= (self.h, self.m)
+
+    def run(self, now: datetime) -> None:
+        self.last_run_date = to_local(now, self.tz).strftime("%Y-%m-%d")
+        try:
+            self.fn()
+        except Exception as e:  # noqa: BLE001
+            log.exception("job %s failed: %s", self.name, e)
+
+
+class IntervalJob:
+    def __init__(self, name: str, minutes: int, fn: Callable[[], None]):
+        self.name, self.every, self.fn = name, timedelta(minutes=minutes), fn
+        self.next = utcnow() + timedelta(minutes=2)
+
+    def due(self, now: datetime) -> bool:
+        return now >= self.next
+
+    def run(self, now: datetime) -> None:
+        self.next = now + self.every
+        try:
+            self.fn()
+        except Exception as e:  # noqa: BLE001
+            log.exception("job %s failed: %s", self.name, e)
+
+
+def loop(jobs, poll_seconds: int = 30) -> None:
+    log.info("scheduler running with %d jobs", len(jobs))
+    while True:
+        now = utcnow()
+        for j in jobs:
+            if j.due(now):
+                log.info("running job %s", j.name)
+                j.run(now)
+        time.sleep(poll_seconds)

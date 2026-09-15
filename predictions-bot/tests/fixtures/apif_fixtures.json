@@ -1,0 +1,8 @@
+{"response": [
+ {"fixture": {"id": 1001, "date": "2030-03-01T15:00:00+00:00", "status": {"short": "NS"}}, "league": {"id": 39, "name": "Premier League", "country": "England"},
+  "teams": {"home": {"id": 42, "name": "Arsenal"}, "away": {"id": 49, "name": "Chelsea"}}, "goals": {"home": null, "away": null},
+  "score": {"halftime": {"home": null, "away": null}, "fulltime": {"home": null, "away": null}}},
+ {"fixture": {"id": 1002, "date": "2030-03-01T17:30:00+00:00", "status": {"short": "NS"}}, "league": {"id": 140, "name": "La Liga", "country": "Spain"},
+  "teams": {"home": {"id": 541, "name": "Real Madrid"}, "away": {"id": 529, "name": "Barcelona"}}, "goals": {"home": null, "away": null},
+  "score": {"halftime": {"home": null, "away": null}, "fulltime": {"home": null, "away": null}}}
+]}

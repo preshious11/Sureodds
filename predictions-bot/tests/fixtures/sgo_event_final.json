@@ -1,0 +1,13 @@
+{
+  "eventID": "trulBe8G1Fwl0n9qV2zF", "sportID": "SOCCER", "leagueID": "FR_LIGUE_1", "type": "match",
+  "teams": {"home": {"names": {"long": "Angers"}}, "away": {"names": {"long": "Nantes"}}},
+  "status": {"started": true, "completed": true, "cancelled": false, "ended": true, "finalized": true, "startsAt": "2030-12-12T19:45:00.000Z"},
+  "results": {"reg": {"home": {"points": 2, "cornerKicks": 6}, "away": {"points": 1, "cornerKicks": 3}},
+              "1h": {"home": {"points": 1}, "away": {"points": 1}}},
+  "odds": {
+    "points-all-reg-ou-over": {"oddID": "points-all-reg-ou-over", "statID": "points", "statEntityID": "all", "periodID": "reg", "betTypeID": "ou", "sideID": "over", "score": 3, "closeOverUnder": "2.5"},
+    "cornerKicks-home-game-ou-over": {"oddID": "cornerKicks-home-game-ou-over", "statID": "cornerKicks", "statEntityID": "home", "periodID": "game", "betTypeID": "ou", "sideID": "over", "score": 6},
+    "cornerKicks-away-game-ou-over": {"oddID": "cornerKicks-away-game-ou-over", "statID": "cornerKicks", "statEntityID": "away", "periodID": "game", "betTypeID": "ou", "sideID": "over", "score": 3},
+    "points-AMINE_MOUSSAOUI_1_FR_LIGUE_1-game-ou-over": {"oddID": "points-AMINE_MOUSSAOUI_1_FR_LIGUE_1-game-ou-over", "statID": "points", "statEntityID": "AMINE_MOUSSAOUI_1_FR_LIGUE_1", "periodID": "game", "betTypeID": "ou", "sideID": "over", "score": 1}
+  }
+}
