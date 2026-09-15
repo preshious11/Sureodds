@@ -41,12 +41,12 @@ def main() -> None:
     def job_recap():
         job_settle()               # make sure yesterday is graded first
         text = recap.run(db, cfg, tg)                # channel mirror (optional)
-        broadcast.deliver_recap(db, cfg, tg, text)   # DM yesterday's results
+        broadcast.deliver_recap(db, cfg, tg, text)   # DM yesterday's results to subscribers
 
     def job_picks():
         daily_picks.run(chain, db, cfg, tg)          # channel mirror (optional)
         service.refresh_cache_from_db()  # write-once-per-day: feed the interactive cache
-        broadcast.deliver_picks(db, cfg, tg, service.get_daily_snapshot())
+        broadcast.deliver_picks(db, cfg, tg, service.get_daily_snapshot())  # DM picks to subscribers
 
     def compute_settle_deadline(now):
         today = to_local(now, cfg.timezone).strftime("%Y-%m-%d")

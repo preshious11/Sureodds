@@ -34,23 +34,19 @@ def welcome_message(first_name: str = "there") -> str:
     )
 
 
-def menu_markup(subscribed: bool = True) -> Dict[str, Any]:
-    toggle = ({"text": "🔕 Unsubscribe from daily posts", "callback_data": "sub|off"}
-              if subscribed else
-              {"text": "🔔 Subscribe to daily posts", "callback_data": "sub|on"})
+def menu_markup() -> Dict[str, Any]:
     return {"inline_keyboard": [
         [{"text": "🏆 Top Picks", "callback_data": "pg|top|0"},
          {"text": "📋 Daily Picks", "callback_data": "pg|daily|0"}],
-        [{"text": "📊 Stats", "callback_data": "pg|stats|0"}, toggle],
+        [{"text": "📊 Stats", "callback_data": "pg|stats|0"}],
     ]}
 
 
 def handle_start(db: Database, tg: Telegram, chat_id: str, user: Optional[Dict[str, Any]]) -> None:
-    """/start: register (or re-activate) the subscriber and show the menu."""
+    """/start: show the menu."""
     user = user or {}
     first_name = str(user.get("first_name") or "there")
-    db.subscriber_add(chat_id, str(user.get("username") or ""), first_name)
-    tg.send(welcome_message(first_name), chat_id=chat_id, reply_markup=menu_markup(subscribed=True))
+    tg.send(welcome_message(first_name), chat_id=chat_id, reply_markup=menu_markup())
 
 
 def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram,
@@ -85,21 +81,14 @@ def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram
 
 def _handle_menu_action(cb_id: str, data: str, chat_id: str, message_id,
                         db: Optional[Database], tg: Telegram, page_size: int) -> None:
-    """Subscribe / unsubscribe / re-render the menu."""
-    if db is None or not chat_id:
+    """Re-render the menu."""
+    if not chat_id:
         tg.answer_callback_query(cb_id, text="Unavailable.")
         return
-    subscribed, toast = True, "Menu"
-    if data == "sub|on":
-        db.subscriber_add(chat_id)
-        toast = "Subscribed ✅"
-    elif data == "sub|off":
-        db.subscriber_remove(chat_id)
-        subscribed, toast = False, "Unsubscribed"
     if message_id:
         tg.edit_message_text(chat_id, int(message_id), welcome_message(),
-                             reply_markup=menu_markup(subscribed))
-    tg.answer_callback_query(cb_id, text=toast)
+                             reply_markup=menu_markup())
+    tg.answer_callback_query(cb_id, text="Menu")
 
 
 def _toast(view: str, snapshot: DailySnapshot, page: int, size: int) -> str:

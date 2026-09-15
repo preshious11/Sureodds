@@ -65,7 +65,7 @@ def pick_lines(p: PickLine) -> List[str]:
 
 
 def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str] = None,
-               heading: str = "📋 Top Picks for Today") -> str:
+               heading: str = "📋 Daily Picks for Today") -> str:
     """The daily predictions post: one block per pick, then the combined odds.
 
     Top picks are listed first, then the rest of the day's selections, so the
