@@ -113,11 +113,11 @@ class CommandLoop(threading.Thread):
                     _retry_send(self.tg, reply, chat_id)
 
     def _send_today(self, chat_id: str) -> None:
-        """Paginated /today: page 0 of the top picks with inline navigation."""
+        """Paginated /daily: page 0 of the daily picks with inline navigation."""
         try:
             snapshot = self.service.get_daily_snapshot()
-            text, markup = pagination.render_view(snapshot, pagination.VIEW_TOP, 0,
-                                                  self.page_size, self.cfg.timezone)
+            text, markup = pagination.render_view(snapshot, pagination.VIEW_DAILY, 0,
+                                                  self.page_size, self.cfg.timezone, db=self.db, chat_id=chat_id)
             _retry_send(self.tg, text, chat_id, reply_markup=markup)
         except (ValueError, KeyError, AttributeError) as e:
             log.exception("today failed: %s", e)
