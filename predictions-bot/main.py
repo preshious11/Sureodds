@@ -10,10 +10,11 @@ from predbot.cache.fetcher import UnifiedFetcher
 from predbot.cache.manager import CacheManager
 from predbot.config import load_config
 from predbot.jobs import daily_picks, recap, settle
-from predbot.jobs.scheduler import DailyJob, IntervalJob, loop
+from predbot.jobs.scheduler import DailyJob, DynamicJob, loop
 from predbot.log import setup_logging
 from predbot.providers.chain import ProviderChain, ResultsResolver, build_providers
 from predbot.storage.db import Database
+from predbot.util.timeutil import to_local, utcnow
 
 log = logging.getLogger("main")
 
@@ -47,10 +48,14 @@ def main() -> None:
         service.refresh_cache_from_db()  # write-once-per-day: feed the interactive cache
         broadcast.deliver_picks(db, cfg, tg, service.get_daily_snapshot())
 
+    def compute_settle_deadline(now):
+        today = to_local(now, cfg.timezone).strftime("%Y-%m-%d")
+        return settle.compute_settlement_deadline(db, today)
+
     jobs = [
         DailyJob("recap", cfg.recap_time, cfg.timezone, job_recap),
         DailyJob("picks", cfg.post_time, cfg.timezone, job_picks),
-        IntervalJob("settle", cfg.settle_interval_min, job_settle),
+        DynamicJob("settle", cfg.timezone, compute_settle_deadline, job_settle),
     ]
 
     if cfg.enable_commands and cfg.telegram_token:

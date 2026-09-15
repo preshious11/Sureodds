@@ -1,5 +1,5 @@
 """Tiny in-process scheduler (no external deps): daily recap, daily picks and
-periodic settlement, all in the configured timezone."""
+smart settlement (runs after all predictions end), all in the configured timezone."""
 from __future__ import annotations
 
 import logging
@@ -48,6 +48,32 @@ class IntervalJob:
 
     def run(self, now: datetime) -> None:
         self.next = now + self.every
+        try:
+            self.fn()
+        except Exception as e:  # noqa: BLE001
+            log.exception("job %s failed: %s", self.name, e)
+
+
+class DynamicJob:
+    """Runs once when a computed deadline is reached (e.g., after all daily matches end)."""
+    def __init__(self, name: str, tz: str, compute_next_fn: Callable[[datetime], Optional[datetime]], fn: Callable[[], None]):
+        self.name, self.tz, self.fn = name, tz, fn
+        self.compute_next_fn = compute_next_fn
+        self.next: Optional[datetime] = None
+        self.last_run_date: Optional[str] = None
+
+    def due(self, now: datetime) -> bool:
+        if self.next is None:
+            self.next = self.compute_next_fn(now)
+        if self.next is None:
+            return False
+        if self.last_run_date == to_local(now, self.tz).strftime("%Y-%m-%d"):
+            return False
+        return now >= self.next
+
+    def run(self, now: datetime) -> None:
+        self.last_run_date = to_local(now, self.tz).strftime("%Y-%m-%d")
+        self.next = None
         try:
             self.fn()
         except Exception as e:  # noqa: BLE001
