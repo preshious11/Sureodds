@@ -1,6 +1,7 @@
 """Picker rules: no padding, no top/daily overlap, no single-outcome bias."""
 from __future__ import annotations
 
+import math
 from datetime import timedelta
 
 from predbot.config import Config
@@ -73,7 +74,8 @@ def test_top_picks_meet_quality_bar():
         assert t.p_model >= c.top_min_prob
         assert t.ev >= c.top_min_ev
         assert len(t.sources) >= 2
-    assert len(ps.top) <= c.top_target
+    ticket = math.prod(t.price for t in ps.top)
+    assert ps.top and ticket >= c.top_odds_target
 
 
 def test_single_source_never_top():
@@ -113,3 +115,41 @@ def test_min_lead_time_excludes_imminent():
     soon = ev(1, start=dt(hh=22, mm=0))   # 10 min away, below 30 min lead
     ps = select([sc(soon, "result3", "home", 0.7, 1.8)], cfg(), now)
     assert ps.all() == []
+
+
+# ------------------------------------------------------------- ticket sizing
+def test_top_ticket_is_sized_by_odds_not_by_a_count():
+    now = dt()
+    pool = [sc(ev(i), "result3", "home", 0.70, 1.45) for i in range(6)]
+    ps = select(pool, cfg(), now)
+
+    assert len(ps.top) == 2                                # 1.45 * 1.45 = 2.10 >= 2.00
+    assert math.prod(t.price for t in ps.top) >= cfg().top_odds_target
+
+
+def test_one_big_price_closes_the_top_ticket_on_its_own():
+    now = dt()
+    pool = [sc(ev(1), "result3", "home", 0.70, 2.05), sc(ev(2), "result3", "home", 0.70, 1.45)]
+    ps = select(pool, cfg(), now)
+
+    assert len(ps.top) == 1                                # 2.05 is already worth ~2.00
+
+
+def test_daily_list_is_sized_by_the_combined_odds_window():
+    now = dt()
+    pool = [sc(ev(i), "result3", "home", 0.62, 1.45) for i in range(30)]
+    ps = select(pool, cfg(), now)
+    c = cfg()
+    ticket = math.prod(s.price for s in ps.all())
+
+    assert c.daily_odds_min <= ticket <= c.daily_odds_max   # 10 .. 20
+    assert len(ps.all()) < 30                               # stops long before the pool runs out
+
+
+def test_pick_count_never_passes_the_cap():
+    now = dt()
+    c = Config(daily_odds_min=900.0, daily_odds_max=1000.0)   # window far out of reach
+    pool = [sc(ev(i), "result3", "home", 0.62, 1.45) for i in range(40)]
+    ps = select(pool, c, now)
+
+    assert len(ps.all()) <= c.daily_target

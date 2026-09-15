@@ -1,10 +1,16 @@
 """Turn scored market lines into the day's Top Picks and Daily Picks.
 
+Sizing: the daily post is ONE ticket, so combined odds - not pick counts -
+decide how long the lists are.
+
 Rules (from the brief):
   * top picks are the most solid selections: high probability *and* positive
-    expected value with at least two agreeing sources
-  * daily picks are filled only with selections that clear the quality bar -
-    if only 11 qualify, 11 are posted (never padded to 20)
+    expected value with at least two agreeing sources, added best-first until
+    the ticket is worth TOP_COMBINED_ODDS (~2.00)
+  * daily picks then extend the same ticket until the whole list is worth
+    DAILY_COMBINED_MIN_ODDS..DAILY_COMBINED_MAX_ODDS (10-20), and only with
+    selections that clear the quality bar - if only 11 qualify, 11 are posted
+    (never padded up to DAILY_PICKS_TARGET)
   * an outcome that is a top pick is never repeated in the daily list; the same
     match may appear with a *different* outcome, but never a contradictory one
   * the bot must not lean on one outcome type: caps on home/away/over/under
@@ -69,29 +75,37 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
         s.rank_score = _daily_score(s)
 
     # ------------------------------------------------------------ top picks
+    # Sized by odds: take the best candidates until the ticket is worth ~2.00.
     top_pool = [s for s in base
                 if cfg.top_min_odds <= s.price <= cfg.top_max_odds
                 and s.p_model >= cfg.top_min_prob and s.ev >= cfg.top_min_ev
                 and s.agreement >= 0.5 and len(s.sources) >= 2 and s.line.market != "prop"]
     top_pool.sort(key=_top_score, reverse=True)
     top: List[Scored] = []
+    top_odds = 1.0
     for s in top_pool:
-        if len(top) >= cfg.top_target:
-            break
+        if top and top_odds >= cfg.top_odds_target:
+            break                                  # the top ticket is already worth ~2.00
         if any(t.event.dedupe_key() == s.event.dedupe_key() for t in top):
             continue
         if top and selection_family(s.line) == selection_family(top[0].line) and len(top_pool) > 6:
-            # prefer a different outcome type for the second top pick when the pool allows
-            alt = next((x for x in top_pool if x is not s and selection_family(x.line) != selection_family(top[0].line)
+            # prefer a different outcome type while the ticket is being filled
+            alt = next((x for x in top_pool if x is not s and x not in top
+                        and selection_family(x.line) != selection_family(top[0].line)
                         and x.event.dedupe_key() != top[0].event.dedupe_key()), None)
             if alt is not None and _top_score(alt) >= _top_score(s) - 0.03:
                 s = alt
+        if s in top:
+            continue
         s.tier = "top"
         top.append(s)
+        top_odds *= s.price
     ps.top = top
 
     # ---------------------------------------------------------- daily picks
-    target = cfg.daily_target
+    # One ticket for the whole post: keep filling while it is short of the floor,
+    # stop before a pick would break the ceiling or the pick cap.
+    cap = cfg.daily_target
     daily_pool = [s for s in base
                   if cfg.daily_min_odds <= s.price <= cfg.daily_max_odds
                   and s.p_model >= cfg.daily_min_prob and s.ev >= cfg.daily_min_ev
@@ -106,8 +120,8 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
     sport_count: Dict[str, int] = {}
     favs = props = exotics = 0
     sports_available = {s.event.sport for s in daily_pool}
-    caps = {"family": _cap(0.45, target), "market": _cap(0.50, target), "favs": _cap(0.50, target),
-            "exotic": _cap(0.25, target), "sport": _cap(0.75, target) if len(sports_available) > 1 else target}
+    caps = {"family": _cap(0.45, cap), "market": _cap(0.50, cap), "favs": _cap(0.50, cap),
+            "exotic": _cap(0.25, cap), "sport": _cap(0.75, cap) if len(sports_available) > 1 else cap}
 
     chosen: List[Scored] = []
 
@@ -151,21 +165,36 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
         exotics += 1 if grp == "exotic" else 0
         return True
 
+    ticket = top_odds
+
+    def under_cap() -> bool:
+        return len(top) + len(chosen) < cap        # "up to DAILY_PICKS_TARGET picks" in one list
+
+    def fits(price: float) -> bool:
+        """Short of the floor anything fits; inside the window keep it under the ceiling."""
+        if ticket >= cfg.daily_odds_max:
+            return False
+        return ticket < cfg.daily_odds_min or ticket * price <= cfg.daily_odds_max
+
     for s in daily_pool:
-        if len(chosen) >= target:
+        if not under_cap():
             break
-        try_add(s, enforce_sport_cap=True)
-    if len(chosen) < target:
+        if not fits(s.price):
+            continue
+        if try_add(s, enforce_sport_cap=True):
+            ticket *= s.price
+    if ticket < cfg.daily_odds_min:
         for s in daily_pool:
-            if len(chosen) >= target:
+            if not under_cap():
                 break
-            if s in chosen:
+            if s in chosen or not fits(s.price):
                 continue
-            try_add(s, enforce_sport_cap=False)
+            if try_add(s, enforce_sport_cap=False):
+                ticket *= s.price
 
     for s in chosen:
         s.tier = "daily"
     ps.daily = chosen
-    log.info("picker: pool=%d eligible=%d top_pool=%d daily_pool=%d -> top=%d daily=%d",
-             ps.pool_size, ps.eligible, len(top_pool), len(daily_pool), len(top), len(chosen))
+    log.info("picker: pool=%d eligible=%d top_pool=%d daily_pool=%d -> top=%d daily=%d ticket=%.2f",
+             ps.pool_size, ps.eligible, len(top_pool), len(daily_pool), len(top), len(chosen), ticket)
     return ps

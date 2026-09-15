@@ -14,13 +14,15 @@ PROFIT = {
 
 
 def _block(rows: List) -> Dict:
-    won = lost = push = 0
+    won = lost = push = void = 0
     profit = 0.0
     staked = 0
     best: Optional[Dict] = None
     for r in rows:
         st = r["status"]
         if st in ("pending", "void"):
+            if st == "void":
+                void += 1
             continue
         staked += 1
         profit += PROFIT[st](float(r["price"]))
@@ -32,8 +34,28 @@ def _block(rows: List) -> Dict:
             lost += 1
         else:
             push += 1
-    return {"won": won, "lost": lost, "push": push, "n": staked,
+    return {"won": won, "lost": lost, "push": push, "void": void, "n": staked,
             "roi": (100.0 * profit / staked) if staked else 0.0, "profit": round(profit, 2), "best_win": best}
+
+
+def by_sport(rows: List) -> List[Dict]:
+    """Decided results per sport (most picks first, ties alphabetical).
+
+    ``n`` is the hit-rate denominator (won + lost): pending and void picks are
+    excluded, halves count as their full win/loss side, pushes count in neither.
+    """
+    agg: Dict[str, Dict[str, int]] = {}
+    for r in rows:
+        st = r["status"]
+        if st in ("pending", "void", "push"):
+            continue
+        if st not in PROFIT:
+            continue
+        blk = agg.setdefault(str(r["sport"]), {"won": 0, "lost": 0})
+        blk["won" if st in ("won", "half_won") else "lost"] += 1
+    out = [{"sport": sport, "won": b["won"], "lost": b["lost"], "n": b["won"] + b["lost"]}
+           for sport, b in agg.items()]
+    return sorted([b for b in out if b["n"]], key=lambda b: (-b["n"], b["sport"]))
 
 
 def _streak(rows: List) -> str:

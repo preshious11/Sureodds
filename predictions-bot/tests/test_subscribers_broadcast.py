@@ -102,7 +102,10 @@ def test_deliver_picks_reaches_all_subscribers_once(db):
 
     assert sent == 2
     assert [s["chat_id"] for s in tg.sends] == ["42", "77"]
-    assert "TOP PICKS" in tg.sends[0]["text"] and "DAILY PICKS (3)" in tg.sends[0]["text"]
+    card = tg.sends[0]["text"]
+    assert card.startswith("📋 Top Picks for Today")
+    assert card.count("Confidence:") == 4                # 1 top + 3 daily picks
+    assert "Combined Odds:" in card
 
     # same day again (e.g. a restart): deliveries are de-duplicated per user
     assert broadcast.deliver_picks(db, Config(), tg, _snapshot()) == 0
@@ -156,7 +159,7 @@ def test_new_subscriber_gets_todays_picks_via_sub_on(db):
 
     handle_callback(_cb("sub|on"), service=fetcher, tg=tg, db=db, cfg=Config())
 
-    picks_sends = [s for s in tg.sends if "TOP PICKS" in s["text"]]
+    picks_sends = [s for s in tg.sends if "Top Picks for Today" in s["text"]]
     assert len(picks_sends) == 1            # zero-API catch-up from the DB
 
 

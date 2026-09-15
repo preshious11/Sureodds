@@ -11,33 +11,30 @@ import logging
 from datetime import timedelta
 from typing import Optional
 
-from predbot.bot.pagination import render_pick
+from predbot.bot.format import PickLine, kickoff_label, picks_card, sport_name
 from predbot.bot.telegram import Telegram
 from predbot.cache.models import DailySnapshot
 from predbot.storage.db import Database
-from predbot.util.timeutil import to_local, utcnow
+from predbot.util.timeutil import parse_iso, to_local, utcnow
 
 log = logging.getLogger(__name__)
 
 
 def picks_text(snapshot: DailySnapshot, tz: str) -> str:
-    """Full picks message (top + daily + record) rendered from a snapshot."""
-    lines = [f"<b>🏆 TOP PICKS · {snapshot.date}</b>"]
-    if not snapshot.top_picks:
-        lines.append("No selection met the top-pick bar today.")
-    lines.extend(render_pick(p, tz) for p in snapshot.top_picks)
-    lines.append("")
-    lines.append(f"<b>📋 DAILY PICKS ({len(snapshot.daily_picks)})</b>")
-    if not snapshot.daily_picks:
-        lines.append("No further selections cleared the quality bar today.")
-    lines.extend(render_pick(p, tz) for p in snapshot.daily_picks)
-    if snapshot.stats is not None:
-        seven = snapshot.stats.to_raw()["last7"]
-        lines.append("")
-        lines.append(f"📊 Record: {seven['won']}W-{seven['lost']}L · ROI {seven['roi']:+.1f}%")
-    lines.append("")
-    lines.append("<i>Tap /start to browse interactively.</i>")
-    return "\n".join(lines)
+    """The daily predictions card (top picks first, then the daily ones) from a snapshot."""
+    picks = [PickLine(league=p.league or sport_name(p.sport), label=p.label,
+                      confidence=p.prob, when=kickoff_label(parse_iso(p.kickoff_utc), tz),
+                      price=p.price)
+             for p in snapshot.top_picks + snapshot.daily_picks]
+    return picks_card(picks, snapshot.date, _record_line(snapshot))
+
+
+def _record_line(snapshot: DailySnapshot) -> Optional[str]:
+    """7-day record footer - only once there is settled history worth showing."""
+    if snapshot.stats is None or not snapshot.stats.all.n:
+        return None
+    seven = snapshot.stats.to_raw()["last7"]
+    return f"📊 7d: {seven['won']}W-{seven['lost']}L · ROI {seven['roi']:+.1f}%"
 
 
 def deliver_picks(db: Database, cfg, tg: Telegram, snapshot: DailySnapshot) -> int:

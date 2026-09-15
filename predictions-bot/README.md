@@ -95,9 +95,13 @@ score across signals, and an expected value / edge.
 The **picker** then applies your rules:
 
 - **Top picks** need high model probability *and* positive EV *and* at least two
-  agreeing sources; it prefers the two top picks to be different outcome types.
-- **Daily picks** are filled only with selections that clear the quality bar —
-  if only 11 qualify, 11 are posted. **It never pads to 20.**
+  agreeing sources; they are added best-first until the ticket is worth
+  `TOP_COMBINED_ODDS` (~2.00), preferring different outcome types.
+- **Daily picks** then extend the same ticket until the whole list is worth
+  `DAILY_COMBINED_MIN_ODDS`–`DAILY_COMBINED_MAX_ODDS` (10–20). A pick is only
+  added when it clears the quality bar, so **it never pads**: if only 11
+  qualify, 11 are posted. `DAILY_PICKS_TARGET` is just a safety cap on the
+  number of picks in the one list.
 - **No overlap:** a top-pick outcome is never repeated in the daily list, and no
   contradictory/equivalent line on the same match is added. The same match *may*
   appear again with a genuinely different outcome.

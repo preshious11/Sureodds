@@ -61,9 +61,12 @@ class Config:
     apif_predictions_per_run: int = field(default_factory=lambda: _int("APIF_PREDICTIONS_PER_RUN", 25))
     apif_odds_pages: int = field(default_factory=lambda: _int("APIF_ODDS_PAGES", 3))
 
-    # Picks
+    # Picks - the daily post is ONE ticket, so combined odds (not pick counts)
+    # size the lists; daily_target is only a safety cap on the number of picks.
     daily_target: int = field(default_factory=lambda: _int("DAILY_PICKS_TARGET", 20))
-    top_target: int = field(default_factory=lambda: _int("TOP_PICKS_TARGET", 2))
+    top_odds_target: float = field(default_factory=lambda: _float("TOP_COMBINED_ODDS", 2.00))
+    daily_odds_min: float = field(default_factory=lambda: _float("DAILY_COMBINED_MIN_ODDS", 10.0))
+    daily_odds_max: float = field(default_factory=lambda: _float("DAILY_COMBINED_MAX_ODDS", 20.0))
     pick_window_hours: int = field(default_factory=lambda: _int("PICK_WINDOW_HOURS", 24))
     min_lead_minutes: int = field(default_factory=lambda: _int("MIN_LEAD_MINUTES", 30))
     daily_min_odds: float = field(default_factory=lambda: _float("DAILY_MIN_ODDS", 1.30))

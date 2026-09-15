@@ -2,46 +2,84 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, NamedTuple, Optional
 
 from predbot.bot.telegram import esc
 from predbot.util.timeutil import to_local
 
+BRAND = "SureOdds"
 SPORT_ICON = {"football": "⚽", "basketball": "🏀", "american_football": "🏈", "hockey": "🏒",
               "baseball": "⚾", "tennis": "🎾", "mma": "🥊", "handball": "🤾", "other": "🎯"}
+SPORT_LABEL = {"football": "Football", "basketball": "Basketball", "american_football": "American Football",
+               "hockey": "Hockey", "baseball": "Baseball", "tennis": "Tennis", "mma": "MMA",
+               "handball": "Handball", "other": "Other"}
 RESULT_ICON = {"won": "✅", "lost": "❌", "push": "↩️", "half_won": "✅½", "half_lost": "❌½",
                "void": "⚪", "pending": "⏳"}
 
 
-def _hm(dt: datetime, tz: str) -> str:
-    return to_local(dt, tz).strftime("%H:%M")
+class PickLine(NamedTuple):
+    """One prediction exactly as the daily post renders it."""
+
+    league: str
+    label: str
+    confidence: float      # model probability, 0..1
+    when: str              # local kickoff with its zone, e.g. "19:45 WAT"
+    price: float
 
 
-def _date(dt: datetime, tz: str) -> str:
-    return to_local(dt, tz).strftime("%a %d %b")
+def kickoff_label(start: Optional[datetime], tz: str) -> str:
+    """Local kickoff with its zone abbreviation ("19:45 WAT"); "--:--" when unknown."""
+    if start is None:
+        return "--:--"
+    local = to_local(start, tz)
+    return f"{local.strftime('%H:%M')} {local.tzname() or tz}"
 
 
-def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str]) -> str:
-    lines: List[str] = []
-    lines.append(f"<b>🏆 TOP PICKS · {_date(day, tz)}</b>")
-    if not top:
-        lines.append("No selection met the top-pick bar today.")
-    for i, s in enumerate(top, 1):
-        e = s.event
-        lines.append(f"{i}. {SPORT_ICON.get(e.sport, '🎯')} <b>{esc(e.home)} vs {esc(e.away)}</b> · {esc(e.league)} · {_hm(e.start, tz)}")
-        lines.append(f"   ▸ <b>{esc(s.label)}</b> @ {s.price:.2f} · {round(s.p_model * 100)}%")
-    lines.append("")
-    lines.append(f"<b>📋 DAILY PICKS ({len(daily)}) · {_date(day, tz)}</b>")
-    if not daily:
-        lines.append("No further selections cleared the quality bar today.")
-    for s in daily:
-        e = s.event
-        lines.append(f"{SPORT_ICON.get(e.sport, '🎯')} {_hm(e.start, tz)} {esc(e.home)} vs {esc(e.away)} · "
-                     f"<b>{esc(s.label)}</b> @ {s.price:.2f} · {round(s.p_model * 100)}%")
+def combined_odds(prices: Iterable[float]) -> float:
+    """Accumulator price: every listed pick has to land for the ticket to land."""
+    total = 1.0
+    for p in prices:
+        total *= float(p)
+    return total
+
+
+def pick_lines(p: PickLine) -> List[str]:
+    """The four lines one pick occupies: league, selection, confidence | kickoff, odds."""
+    return [esc(p.league or ""), esc(p.label),
+            f"Confidence: {round(p.confidence * 100)}% | {p.when}",
+            f"Odds: {p.price:.2f}"]
+
+
+def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str] = None,
+               heading: str = "📋 Top Picks for Today") -> str:
+    """The daily predictions post: one block per pick, then the combined odds.
+
+    Top picks are listed first, then the rest of the day's selections, so the
+    card reads as a single list of up to ``picks`` entries.
+    """
+    lines = [f"{heading} {date_label}", ""]
+    if not picks:
+        lines.append("No selection cleared the quality bar today.")
+    for p in picks:
+        lines.extend(pick_lines(p))
+    if picks:
+        lines.append("")
+        lines.append(f"Combined Odds: {combined_odds([p.price for p in picks]):.4f}")
     if stats_line:
         lines.append("")
         lines.append(stats_line)
     return "\n".join(lines)
+
+
+def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str]) -> str:
+    """Channel post for the day's selections: top picks first, then the daily ones."""
+    picks: List[PickLine] = []
+    for s in list(top) + list(daily):
+        e = s.event
+        picks.append(PickLine(league=e.league or sport_name(e.sport), label=s.label,
+                              confidence=s.p_model, when=kickoff_label(e.start, tz),
+                              price=s.price))
+    return picks_card(picks, to_local(day, tz).strftime("%Y-%m-%d"), stats_line)
 
 
 def _pct(w: int, l: int) -> str:
@@ -60,22 +98,47 @@ def stats_line(s: Dict) -> str:
     return " · ".join(parts)
 
 
-def recap_message(day_label: str, rows: List, s: Dict) -> str:
-    lines = [f"<b>📊 RESULTS · {day_label}</b>"]
-    t, d = s["yesterday_top"], s["yesterday"]
-    lines.append(f"Top picks: {t['won']}W-{t['lost']}L" + (f"-{t['push']}P" if t['push'] else ""))
-    lines.append(f"Daily picks: {d['won'] - t['won']}W-{d['lost'] - t['lost']}L" + (f"-{d['push'] - t['push']}P" if (d['push'] - t['push']) else ""))
-    if d.get("best_win"):
-        lines.append(f"Best win: {esc(d['best_win']['label'])} @ {d['best_win']['price']:.2f}")
-    seven = s["last7"]
-    lines.append(f"Last 7 days: {seven['won']}W-{seven['lost']}L ({_pct(seven['won'], seven['lost'])}) · ROI {seven['roi']:+.1f}%")
-    if s.get("streak"):
-        lines.append(f"Streak: {s['streak']}")
+def _hit_rate(won: int, lost: int) -> str:
+    """One-decimal hit rate; an em dash when nothing is decided yet."""
+    n = won + lost
+    return f"{100.0 * won / n:.1f}%" if n else "–"
+
+
+def sport_name(sport: str) -> str:
+    return SPORT_LABEL.get(sport, sport.replace("_", " ").title())
+
+
+def recap_message(day_label: str, sport_breakdown: List[Dict], s: Dict) -> str:
+    """Yesterday's results card: record, hit rate, per-sport split, 7-day form, best pick.
+
+    ``sport_breakdown`` is ``predbot.jobs.stats.by_sport()`` output; ``s`` is
+    ``predbot.jobs.stats.compute()`` output (or StatsSummary.to_raw(), in which
+    case void/push simply render as 0).
+    """
+    y, seven = s["yesterday"], s["last7"]
+    lines = [f"📊 {BRAND} RESULTS — {day_label}", ""]
+    lines.append(f"✅ Wins: {y['won']}")
+    lines.append(f"❌ Losses: {y['lost']}")
+    lines.append(f"➖ Void: {y.get('void', 0)}")
+    if y.get("push"):
+        lines.append(f"↩️ Push: {y['push']}")
     lines.append("")
-    for r in rows:
-        icon = RESULT_ICON.get(r["status"], "⏳")
-        tag = "🏆 " if r["tier"] == "top" else ""
-        lines.append(f"{icon} {tag}{esc(r['home'])} vs {esc(r['away'])} · {esc(r['label'])} @ {r['price']:.2f}")
+    lines.append(f"🎯 Hit Rate: {_hit_rate(y['won'], y['lost'])}")
+    if sport_breakdown:
+        lines.append("")
+        for b in sport_breakdown:
+            icon = SPORT_ICON.get(b["sport"], SPORT_ICON["other"])
+            lines.append(f"{icon} {sport_name(b['sport'])}: {b['won']}/{b['n']}")
+    lines.append("")
+    lines.append("📈 LAST 7 DAYS")
+    lines.append(f"Wins: {seven['won']}")
+    lines.append(f"Losses: {seven['lost']}")
+    lines.append(f"Hit Rate: {_hit_rate(seven['won'], seven['lost'])}")
+    best = y.get("best_win")
+    if best:
+        lines.append("")
+        lines.append("🔥 BEST PICK")
+        lines.append(f"{esc(best['label'])} @ {best['price']:.2f} ✅")
     return "\n".join(lines)
 
 
