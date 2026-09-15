@@ -6,13 +6,17 @@ edits the existing Telegram message via callback buttons.
 """
 from __future__ import annotations
 
+import logging
+from datetime import timedelta
 from typing import Dict, List, Optional, Tuple
 
-from predbot.bot.format import SPORT_ICON, stats_message
+from predbot.bot.format import SPORT_ICON, recap_message
 from predbot.bot.telegram import esc
 from predbot.cache.models import (DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STATS,
                                   VIEW_TOP)
-from predbot.util.timeutil import parse_iso, to_local
+from predbot.util.timeutil import parse_iso, to_local, utcnow
+
+log = logging.getLogger(__name__)
 
 PAGE_SIZE_DEFAULT = 5
 CALLBACK_PREFIX = "pg"
@@ -104,19 +108,35 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
     return "\n".join(lines), build_keyboard(view, page, pages)
 
 
-def render_stats(snapshot: DailySnapshot) -> Tuple[str, Dict]:
+def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC") -> Tuple[str, Dict]:
+    """The 📊 Stats button: the ``SUREODDS — YESTERDAY`` summary card.
+
+    With a Database handle the card is computed fresh (wins/losses/void, hit
+    rate, per-sport split, 7-day form, best pick).  Without one it falls back
+    to the cached snapshot's stats (same layout, no per-sport rows).
+    """
+    if db is not None:
+        try:
+            from predbot.jobs import stats as stats_mod
+
+            local = to_local(utcnow(), tz)
+            st = stats_mod.compute(db, local)
+            yesterday = (local - timedelta(days=1)).strftime("%Y-%m-%d")
+            rows = stats_mod.rows_for_recap(db, yesterday)
+            text = recap_message("YESTERDAY", stats_mod.by_sport(rows), st)
+            return text, build_keyboard(VIEW_STATS, 0, 1)
+        except Exception as e:  # noqa: BLE001
+            log.warning("stats view DB render failed, using snapshot: %s", e)
     if snapshot.stats is None:
-        text = "<b>📊 STATS</b>\nNo stats recorded yet."
+        text = "📊 SUREODDS — YESTERDAY\nNo settled picks yet."
     else:
-        text = stats_message(snapshot.stats.to_raw())
-        text += (f"\n\n<i>{snapshot.total_picks()} picks today · snapshot "
-                 f"{snapshot.generated_at or 'n/a'}</i>")
+        text = recap_message("YESTERDAY", [], snapshot.stats.to_raw())
     return text, build_keyboard(VIEW_STATS, 0, 1)
 
 
 def render_view(snapshot: DailySnapshot, view: str, page: int, size: int,
-                tz: str) -> Tuple[str, Dict]:
+                tz: str, db=None) -> Tuple[str, Dict]:
     """Entry point used by both the /today command and callback navigation."""
     if view == VIEW_STATS:
-        return render_stats(snapshot)
+        return render_stats(snapshot, db=db, tz=tz)
     return render_page(snapshot, view, page, size, tz)

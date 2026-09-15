@@ -73,7 +73,7 @@ def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram
         view, page = parsed
         snapshot = service.get_daily_snapshot()  # cache-first read
         text, markup = pagination.render_view(snapshot, view, page, page_size,
-                                              cfg.timezone)
+                                              cfg.timezone, db=db)
         if chat_id and message_id:
             tg.edit_message_text(chat_id, int(message_id), text, reply_markup=markup)
         tg.answer_callback_query(cb_id, text=_toast(view, snapshot, page, page_size))

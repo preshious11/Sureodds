@@ -246,9 +246,9 @@ def test_render_page_structure_and_keyboard():
     assert "◀️" in buttons and "▶️" not in buttons
 
 
-def test_render_stats_uses_formatter():
+def test_render_stats_shows_the_sureodds_yesterday_card():
     text, markup = pagination.render_stats(make_snapshot())
-    assert "STATS" in text and "W2" in text
+    assert "SUREODDS — YESTERDAY" in text and "LAST 7 DAYS" in text
     assert markup["inline_keyboard"]
 
 
