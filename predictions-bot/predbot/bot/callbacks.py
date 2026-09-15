@@ -24,13 +24,15 @@ from predbot.storage.db import Database
 
 log = logging.getLogger(__name__)
 
-WELCOME = (
-    "👋 <b>Welcome to predbot!</b>\n\n"
-    "I price every market the APIs offer and post the model's best selections "
-    "every morning, then grade the results automatically.\n\n"
-    "<b>You are subscribed to the daily picks + results.</b> "
-    "Use the menu below to browse anytime."
-)
+def welcome_message(first_name: str = "there") -> str:
+    """Generate personalized welcome message."""
+    return (
+        f"👋 Hi, {first_name}\n\n"
+        "Use the menu below or these commands:\n\n"
+        "/top – Top picks of the day\n"
+        "/dailypicks – Accumulator slip\n"
+        "/stats – See prediction results."
+    )
 
 
 def menu_markup(subscribed: bool = True) -> Dict[str, Any]:
@@ -47,9 +49,9 @@ def menu_markup(subscribed: bool = True) -> Dict[str, Any]:
 def handle_start(db: Database, tg: Telegram, chat_id: str, user: Optional[Dict[str, Any]]) -> None:
     """/start: register (or re-activate) the subscriber and show the menu."""
     user = user or {}
-    db.subscriber_add(chat_id, str(user.get("username") or ""),
-                      str(user.get("first_name") or ""))
-    tg.send(WELCOME, chat_id=chat_id, reply_markup=menu_markup(subscribed=True))
+    first_name = str(user.get("first_name") or "there")
+    db.subscriber_add(chat_id, str(user.get("username") or ""), first_name)
+    tg.send(welcome_message(first_name), chat_id=chat_id, reply_markup=menu_markup(subscribed=True))
 
 
 def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram,
@@ -99,7 +101,7 @@ def _handle_menu_action(cb_id: str, data: str, chat_id: str, message_id,
         db.subscriber_remove(chat_id)
         subscribed, toast = False, "Unsubscribed"
     if message_id:
-        tg.edit_message_text(chat_id, int(message_id), WELCOME,
+        tg.edit_message_text(chat_id, int(message_id), welcome_message(),
                              reply_markup=menu_markup(subscribed))
     tg.answer_callback_query(cb_id, text=toast)
 
