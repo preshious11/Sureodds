@@ -77,6 +77,49 @@ def test_sgo_leagueid_error_marks_exhausted_for_the_day(db):
     assert Budget(db).is_exhausted("sportsgameodds")
 
 
+def test_sgo_drops_leagues_not_covered_by_the_tier(db):
+    http = FakeHttp(result={"data": []})
+    # /leagues says the tier covers LA_LIGA only - EPL must be dropped
+    http.get_results = [{"data": [{"leagueID": "LA_LIGA"}]}, {"data": []}]
+
+    def get(path, params=None):
+        http.calls.append((path, params))
+        return http.get_results.pop(0)
+
+    http.get = get
+    p = sgo(http, db, leagues=["EPL", "LA_LIGA"])
+    out = p.fetch_events(START, END)
+
+    assert out == []
+    events_call = [c for c in http.calls if c[0] == "/events"][0]
+    assert events_call[1]["leagueID"] == "LA_LIGA"        # EPL filtered out, no 400
+
+
+def test_sgo_all_leagues_unavailable_marks_exhausted(db):
+    http = FakeHttp(result={"data": []})
+    http.get_results = [{"data": [{"leagueID": "NBA"}]}, {"data": []}]
+
+    def get(path, params=None):
+        http.calls.append((path, params))
+        return http.get_results.pop(0)
+
+    http.get = get
+    p = sgo(http, db, leagues=["EPL"])
+    assert p.fetch_events(START, END) == []
+    assert Budget(db).is_exhausted("sportsgameodds")
+    assert all(c[0] != "/events" for c in http.calls)     # no doomed events call
+
+
+def test_sgo_leagues_call_failure_falls_back_to_configured(db):
+    http = FakeHttp(error="503 from /leagues")
+    p = sgo(http, db, leagues=["EPL"])
+
+    with pytest.raises(ProviderError):
+        p.fetch_events(START, END)                        # /leagues failed -> still tries EPL
+
+    assert any(c[0] == "/events" for c in http.calls)
+
+
 def test_exhaustion_marks_are_scoped_to_the_day_bucket(db):
     b = Budget(db)
     b.mark_exhausted("api_football")

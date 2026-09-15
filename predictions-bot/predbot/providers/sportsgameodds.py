@@ -51,11 +51,31 @@ class SportsGameOddsProvider(BaseProvider):
         self.leagues = leagues
         self.event_limit = event_limit
         self.monthly_limit = monthly_limit
+        self._available_leagues: Optional[set] = None
         self.http = Http("https://api.sportsgameodds.com/v2", headers={"X-Api-Key": api_key},
                          rate=RateLimiter(1.0))
 
     def enabled(self) -> bool:
         return bool(self.key)
+
+    def available_leagues(self) -> Optional[set]:
+        """LeagueIDs available to THIS key at its subscription tier (cached).
+
+        GET /leagues is a cheap metadata call (it does not bill event objects).
+        Returns None when the call fails - callers then keep their configured list.
+        """
+        if self._available_leagues is not None:
+            return self._available_leagues
+        try:
+            data = self.http.get("/leagues")
+        except ProviderError as e:
+            log.warning("SGO: could not list leagues: %s", e)
+            return None
+        rows = data.get("data", []) if isinstance(data, dict) else []
+        ids = {r.get("leagueID") for r in rows if isinstance(r, dict) and r.get("leagueID")}
+        log.info("SGO: %d leagues available at this tier", len(ids))
+        self._available_leagues = ids
+        return ids
 
     # ------------------------------------------------------------------ fetch
     def fetch_events(self, start: datetime, end: datetime) -> List[Event]:
@@ -72,17 +92,34 @@ class SportsGameOddsProvider(BaseProvider):
                         "(comma-separated sportsgameodds.com league IDs) to enable this provider")
             self.budget.mark_exhausted(self.name, "free tier requires SGO_LEAGUES")
             return []
+        # Drop configured leagues this key's tier does not cover (EPL etc. on free plans).
+        avail = self.available_leagues()
+        if avail is not None:
+            usable = [lg for lg in self.leagues if lg in avail]
+            if not usable:
+                log.warning("SGO: none of the configured leagues (%s) are available at this "
+                            "subscription tier. Check GET /leagues for what this key covers, "
+                            "or upgrade the plan.", ",".join(self.leagues))
+                self.budget.mark_exhausted(self.name, "configured leagues unavailable at tier")
+                return []
+            if len(usable) < len(self.leagues):
+                dropped = [lg for lg in self.leagues if lg not in avail]
+                log.warning("SGO: dropping leagues not covered by this tier: %s", ",".join(dropped))
+            leagues = usable
+        else:
+            leagues = self.leagues                 # could not verify - try as configured
         params: Dict = {
             "startsAfter": iso(start), "startsBefore": iso(end), "oddsAvailable": "true",
             "type": "match", "includeAltLines": "false", "limit": min(limit, 100),
-            "leagueID": ",".join(self.leagues),
+            "leagueID": ",".join(leagues),
         }
         try:
             data = self.http.get("/events", params)
         except ProviderError as e:
-            if "leagueID" in str(e):
+            msg = str(e)
+            if "leagueID" in msg:
                 # tier changed or league id invalid - don't hammer it all day
-                self.budget.mark_exhausted(self.name, str(e))
+                self.budget.mark_exhausted(self.name, msg)
             raise
         events = data.get("data", []) if isinstance(data, dict) else []
         self.budget.spend(self.name, len(events))
