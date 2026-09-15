@@ -10,7 +10,7 @@ import logging
 from datetime import timedelta
 from typing import Dict, List, Optional, Tuple
 
-from predbot.bot.format import SPORT_ICON, recap_message
+from predbot.bot.format import SPORT_ICON, combined_odds, recap_message
 from predbot.bot.telegram import esc
 from predbot.cache.models import (DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STATS,
                                   VIEW_TOP)
@@ -68,13 +68,21 @@ def _kickoff_hhmm(pick: PickRecord, tz: str) -> str:
 
 
 def render_pick(pick: PickRecord, tz: str) -> str:
-    icon = SPORT_ICON.get(pick.sport, "🎯")
-    trophy = "🏆 " if pick.tier == "top" else ""
-    status = "" if pick.status == "pending" else f" {esc(pick.status)}"
-    return (f"{trophy}{icon} {_kickoff_hhmm(pick, tz)} "
-            f"<b>{esc(pick.home)} vs {esc(pick.away)}</b>\n"
-            f"      ▸ <b>{esc(pick.label)}</b> @ {pick.price:.2f} · "
-            f"{round(pick.prob * 100)}%{status}")
+    sport = pick.sport if pick.sport != "other" else "Other"
+    sport_label = sport.replace("_", " ").title()
+    league = pick.league or sport_label
+    fixture = f"{esc(pick.home)} vs {esc(pick.away)}"
+    outcome = esc(pick.label)
+    confidence = f"{round(pick.prob * 100)}%"
+    time_wat = _kickoff_hhmm(pick, tz)
+    odd = f"{pick.price:.2f}"
+
+    return (f"{sport_label}\n"
+            f"{league}\n"
+            f"{fixture}\n"
+            f"{outcome}\n"
+            f"{confidence} | {time_wat}\n"
+            f"{odd}")
 
 
 def build_keyboard(view: str, page: int, pages: int) -> Dict:
@@ -100,11 +108,25 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
     pages = total_pages(len(items), size)
     page = clamp_page(page, len(items), size)
     chunk = slice_page(items, page, size)
-    lines = [f"<b>{VIEW_TITLES[view]} · {snapshot.date}</b>",
-             f"<i>{len(items)} picks · page {page + 1}/{pages}</i>", ""]
+
+    heading = "Top predictions for today–– " if view == VIEW_TOP else "Daily picks for today–– "
+    lines = [f"<b>{heading}{snapshot.date}</b>", ""]
+
     if not chunk:
         lines.append("No picks available.")
-    lines.extend(render_pick(p, tz) for p in chunk)
+    else:
+        for p in chunk:
+            lines.append(render_pick(p, tz))
+            lines.append("")
+        try:
+            total_odds = combined_odds([p.price for p in chunk])
+            lines.append(f"<b>Total odds: {total_odds:.4f}</b>")
+        except ValueError:
+            pass
+
+    if pages > 1:
+        lines.append(f"<i>Page {page + 1}/{pages}</i>")
+
     return "\n".join(lines), build_keyboard(view, page, pages)
 
 
