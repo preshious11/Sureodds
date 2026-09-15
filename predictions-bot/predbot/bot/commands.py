@@ -144,7 +144,12 @@ class CommandLoop(threading.Thread):
             fixture = f"{esc(r['home'])} vs {esc(r['away'])}"
             outcome = esc(r["label"])
             confidence = f"<b>{round(float(r['prob']) * 100)}%</b>" if r.get("prob") else "–"
-            kickoff = to_local(parse_iso(r["start_utc"]), self.cfg.timezone).strftime("%H:%M") if r.get("start_utc") else "--:--"
+            if r.get("start_utc"):
+                local = to_local(parse_iso(r["start_utc"]), self.cfg.timezone)
+                tz_abbr = local.tzname() or self.cfg.timezone.split("/")[-1]
+                kickoff = f"{local.strftime('%H:%M')} {tz_abbr}"
+            else:
+                kickoff = "--:--"
             odd = f"{float(r['price']):.2f}"
 
             lines.append(sport)
