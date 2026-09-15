@@ -46,15 +46,19 @@ def test_card_matches_the_requested_layout():
     assert picks_message([villa], [overs], DAY, WAT, None) == (
         "📋 Top Picks for Today 2026-09-16\n"
         "\n"
-        "Home1 vs Away1 (Premier League)\n"
-        "1\n"
-        "Confidence: 72% | 19:45 WAT\n"
-        "Odds: 2.05\n"
+        "Football\n"
+        "Premier League\n"
+        "Home1 vs Away1\n"
+        "Aston Villa to win\n"
+        "72% | 19:45 WAT\n"
+        "2.05\n"
         "\n"
-        "Home2 vs Away2 (La Liga)\n"
+        "Football\n"
+        "La Liga\n"
+        "Home2 vs Away2\n"
         "Over 1.5 Goals\n"
-        "Confidence: 84% | 15:00 WAT\n"
-        "Odds: 1.74\n"
+        "84% | 15:00 WAT\n"
+        "1.74\n"
         "\n"
         "Combined Odds: 3.5670"
     )
@@ -68,19 +72,21 @@ def test_top_picks_are_listed_first_then_the_daily_ones():
     card = picks_message(top, daily, DAY, WAT, None)
 
     assert card.index("Home1 vs Away1") < card.index("Home2 vs Away2") < card.index("Home3 vs Away3")
-    assert card.count("Confidence:") == 3
+    assert card.count("Top One") == 1 and card.count("Daily One") == 1 and card.count("Daily Two") == 1
 
 
-def test_every_pick_gets_the_four_line_block():
+def test_every_pick_gets_the_six_line_block():
     card = picks_message([sc(event(1, "Serie A"), "Inter to win", 0.66, 1.95)], [], DAY, WAT, None)
 
     assert card.splitlines() == [
         "\U0001F4CB Top Picks for Today 2026-09-16",
         "",
-        "Home1 vs Away1 (Serie A)",
-        "1",
-        "Confidence: 66% | 19:45 WAT",
-        "Odds: 1.95",
+        "Football",
+        "Serie A",
+        "Home1 vs Away1",
+        "Inter to win",
+        "66% | 19:45 WAT",
+        "1.95",
         "",
         "Combined Odds: 1.9500",
     ]
@@ -96,7 +102,10 @@ def test_empty_day_has_a_placeholder_and_no_combined_odds():
 def test_league_falls_back_to_the_sport_name_and_unknown_kickoff_is_dashed():
     card = picks_message([sc(event(1, league=""), "Home Win", 0.60, 1.50)], [], DAY, WAT, None)
 
-    assert "(Football)\n" in card
+    assert "Football\n" in card
+    lines = card.splitlines()
+    assert lines[2] == "Football"  # sport
+    assert lines[3] == "Football"  # league (fallback to sport)
     assert kickoff_label(None, WAT) == "--:--"
 
 
@@ -104,8 +113,9 @@ def test_match_and_league_are_html_escaped():
     ev = event(1, league="Copa & Liga", home="Benfica <B>", away="Away & Co")
     card = picks_message([sc(ev, "x", 0.60, 1.50)], [], DAY, WAT, None)
 
-    assert "Benfica &lt;B&gt; vs Away &amp; Co" in card
-    assert "Copa &amp; Liga" in card
+    lines = card.splitlines()
+    assert "Benfica &lt;B&gt; vs Away &amp; Co" in lines  # match line escaped
+    assert "Copa &amp; Liga" in lines  # league line escaped
 
 
 def test_combined_odds_is_the_product_of_every_listed_pick():
