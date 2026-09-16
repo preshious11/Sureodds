@@ -1,15 +1,15 @@
 """UnifiedFetcher: the normalization engine behind write-once-per-day reads.
 
 Execution flow for :meth:`UnifiedFetcher.get_daily_snapshot`
-    1. Cache hit for today's UTC key  -> return immediately. No external call.
+    1. Cache hit for today's application-date key  -> return immediately. No external call.
     2. Cache miss -> acquire the per-day mutex:
          a. double-check the cache (another writer may have just filled it)
          b. rebuild from the SQLite picks table (zero external calls) whenever
             today's picks are already published - the normal case, because the
-            08:00 scheduler run persists them and calls refresh_cache_from_db()
+            daily scheduler run persists them and calls refresh_cache_from_db()
          c. otherwise run the full pipeline once (ProviderChain -> pricing
             model -> picker), persist the picks for settlement, and normalise
-         d. write the snapshot with TTL = end of the UTC day
+         d. write the snapshot with TTL = end of the application day
     3. If the mutex is busy, wait for the writer's cache entry instead of
        dispatching a duplicate API batch.
 """
@@ -29,11 +29,11 @@ from predbot.config import Config
 from predbot.jobs import daily_picks, stats as stats_mod
 from predbot.providers.chain import ProviderChain
 from predbot.storage.db import Database
-from predbot.util.timeutil import iso, to_local, utcnow
+from predbot.util.timeutil import iso, to_local, utcnow, day_bounds
 
 log = logging.getLogger(__name__)
 
-LOCK_TTL_SECONDS = 30.0     # a single build must finish within this window
+LOCK_TTL_SECONDS = 1800.0   # provider pagination/features can take several minutes
 LOCK_WAIT_SECONDS = 60.0    # how long a caller waits for the current builder
 CACHE_POLL_SECONDS = 0.5
 
@@ -59,8 +59,8 @@ class UnifiedFetcher:
 
     # ------------------------------------------------------------------ API
     def get_daily_snapshot(self, force_refresh: bool = False) -> DailySnapshot:
-        """Today's snapshot; at most one provider batch per UTC day."""
-        day = utc_day()
+        """Today's snapshot; one complete build per application day, with bounded partial retries."""
+        day = to_local(utcnow(), self.cfg.timezone).date()
         key = self.cache.daily_key(day)
         if not force_refresh:
             cached = self._read_cache(key)
@@ -76,7 +76,7 @@ class UnifiedFetcher:
                 waited = self._wait_for_cache(key, LOCK_WAIT_SECONDS)
                 if waited is not None:
                     return waited
-                return self._build_and_store(day, key)
+                raise RuntimeError("Snapshot generation already in progress; retry shortly")
             if not force_refresh:
                 cached = self._read_cache(key)  # double-check inside the lock
                 if cached is not None:
@@ -87,7 +87,7 @@ class UnifiedFetcher:
         """Scheduler hook after the daily publish: cache today's DB picks.
 
         Zero external calls. Returns True when the cache was written."""
-        day = utc_day()
+        day = to_local(utcnow(), self.cfg.timezone).date()
         snapshot = self._snapshot_from_db(day)
         if snapshot is None or not (snapshot.top_picks or snapshot.daily_picks):
             return False
@@ -118,8 +118,12 @@ class UnifiedFetcher:
         return snapshot
 
     def _store(self, day: date, snapshot: DailySnapshot) -> None:
-        self.cache.set(self.cache.daily_key(day), snapshot.to_dict(),
-                       ttl_seconds=ttl_until_end_of_utc_day())
+        now = utcnow()
+        _, midnight = day_bounds(now, self.cfg.timezone)
+        ttl = max(1, (midnight - now).total_seconds())
+        if snapshot.generation.get("complete") is False:
+            ttl = min(ttl, 15 * 60)
+        self.cache.set(self.cache.daily_key(day), snapshot.to_dict(), ttl_seconds=ttl)
 
     def _build(self, day: date) -> DailySnapshot:
         snapshot = self._snapshot_from_db(day)
@@ -150,13 +154,8 @@ class UnifiedFetcher:
 
     # ------------------------------------------------------- normalisation
     def _candidate_dates(self, day: date) -> List[str]:
-        """UTC date first, then the local publication date when it differs
-        (picks are stored under the bot's configured local date)."""
-        dates = [day.isoformat()]
-        local = to_local(utcnow(), self.cfg.timezone).strftime("%Y-%m-%d")
-        if local not in dates:
-            dates.append(local)
-        return dates
+        """Use only the configured local publication date; never yesterday's UTC rows."""
+        return [day.isoformat()]
 
     def _snapshot_from_db(self, day: date) -> Optional[DailySnapshot]:
         """Rebuild the snapshot from persisted picks. Zero external calls."""
@@ -172,6 +171,7 @@ class UnifiedFetcher:
         daily = sorted((p for p in picks if p.tier != "top"), key=lambda p: p.rank)
         return DailySnapshot(date=day.isoformat(), generated_at=iso(utcnow()),
                              origin=origin, top_picks=top, daily_picks=daily,
+                             generation=json.loads(self.db.get_kv("generation:" + day.isoformat(), "{}")),
                              stats=self._stats_summary())
 
     def _snapshot_from_providers(self, day: date) -> DailySnapshot:
@@ -183,6 +183,11 @@ class UnifiedFetcher:
         self.api_batches += 1
         local_date = to_local(utcnow(), self.cfg.timezone).strftime("%Y-%m-%d")
         pickset = daily_picks.build_picks(self.chain, self.db, self.cfg)
+        if not pickset.complete:
+            log.warning("Incomplete prediction snapshot withheld; providers=%s", pickset.diagnostics.get("providers"))
+            return DailySnapshot(date=day.isoformat(), origin="partial", generated_at=iso(utcnow()),
+                                 generation=pickset.diagnostics)
+
         if (pickset.top or pickset.daily) and not self.db.has_picks_for_date(local_date):
             # Persist so the scheduled settlement/recap keeps working.
             daily_picks.store_picks(pickset, self.db, local_date)
@@ -198,7 +203,7 @@ class UnifiedFetcher:
         top = [self._pick_from_scored(s, i, "top") for i, s in enumerate(pickset.top, 1)]
         daily = [self._pick_from_scored(s, i, "daily") for i, s in enumerate(pickset.daily, 1)]
         return DailySnapshot(date=day.isoformat(), generated_at=iso(utcnow()),
-                             origin="api", top_picks=top, daily_picks=daily,
+                             origin="api", top_picks=top, daily_picks=daily, generation=pickset.diagnostics,
                              stats=self._stats_summary())
 
     def _pick_from_scored(self, scored, rank: int, tier: str) -> PickRecord:

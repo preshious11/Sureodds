@@ -104,6 +104,9 @@ def build_keyboard(view: str, page: int, pages: int) -> Dict:
 
 def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
                 tz: str) -> Tuple[str, Dict]:
+    if snapshot.generation.get("complete") is False:
+        return ("Prediction data is temporarily incomplete. Please try again later.",
+                build_keyboard(view, 0, 1))
     items = snapshot.view_items(view)
     pages = total_pages(len(items), size)
     page = clamp_page(page, len(items), size)

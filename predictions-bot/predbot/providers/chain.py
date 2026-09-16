@@ -1,5 +1,5 @@
-"""Fallback chain: walk providers in the configured order, stop as soon as the
-pool is big enough. Events seen from more than one provider are merged so the
+"""Provider collection: visit every configured enabled provider within its budget.
+Events seen from more than one provider are merged so the
 model sees every book's price for the same selection.
 
 Also hosts the results resolver used for settlement: origin provider first,
@@ -8,6 +8,8 @@ then any provider that can look a result up by teams + kick-off time.
 from __future__ import annotations
 
 import logging
+import copy
+from collections import Counter
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -47,26 +49,45 @@ class ProviderChain:
         self.providers = providers
         self.order = [p for p in order if p in providers]
         self.min_events = min_events
+        self.last_report = {}
+        self._successful = {}
 
     def collect(self, start: datetime, end: datetime) -> List[Event]:
         pool: List[Event] = []
+        self.last_report = {}
         for name in self.order:
             prov = self.providers[name]
             if not prov.enabled():
                 continue
+            key = (name, end.isoformat())
             try:
-                events = prov.fetch_events(start, end)
+                prov.last_fetch_complete = True
+                if key in self._successful:
+                    events = copy.deepcopy(self._successful[key])
+                else:
+                    events = prov.fetch_events(start, end)
+                    if getattr(prov, 'last_fetch_complete', True):
+                        self._successful[key] = copy.deepcopy(events)
             except ProviderError as e:
-                log.warning("provider %s failed: %s", name, e)
+                self.last_report[name] = {"status": "failed", "error_type": type(e).__name__}
+                log.warning("provider %s failed (%s)", name, type(e).__name__)
                 continue
             except Exception as e:  # noqa: BLE001
-                log.exception("provider %s crashed: %s", name, e)
+                self.last_report[name] = {"status": "failed", "error_type": type(e).__name__}
+                log.warning("provider %s crashed (%s)", name, type(e).__name__)
                 continue
+            events = [e for e in events if start <= e.start < end]
+            self.last_report[name] = {"status": "complete" if getattr(prov, 'last_fetch_complete', True) else "partial",
+                                      "fetch": getattr(prov, 'fetch_counts', {}),
+                                      "normalization": getattr(prov, 'normalization_counts', {}),
+                                      "events": dict(Counter(e.sport for e in events)),
+                                      "markets": dict(Counter(e.sport for e in events for m in e.markets))}
             pool = merge_events(pool, events)
             priced = sum(1 for e in pool if _has_main_market(e))
             log.info("chain: after %s -> %d events (%d with main markets)", name, len(pool), priced)
-            if priced >= self.min_events:
-                break
+            # A global event count cannot establish coverage of other sports.
+        self._successful = {k: v for k, v in self._successful.items() if k[1] == end.isoformat()}
+        log.info("provider collection: %s", self.last_report)
         return pool
 
 

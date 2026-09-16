@@ -136,6 +136,7 @@ class DailySnapshot:
     daily_picks: List[PickRecord] = field(default_factory=list)
     stats: Optional[StatsSummary] = None
     schema_version: int = SCHEMA_VERSION
+    generation: Dict[str, Any] = field(default_factory=dict)
 
     def view_items(self, view: str) -> List[PickRecord]:
         if view == VIEW_TOP:
@@ -154,6 +155,7 @@ class DailySnapshot:
             "date": self.date,
             "generated_at": self.generated_at,
             "origin": self.origin,
+            "generation": self.generation,
             "top_picks": [p.to_dict() for p in self.top_picks],
             "daily_picks": [p.to_dict() for p in self.daily_picks],
             "stats": (asdict(self.stats) if self.stats else None),
@@ -169,6 +171,7 @@ class DailySnapshot:
             date=str(data["date"]),
             generated_at=str(data.get("generated_at", "")),
             origin=str(data.get("origin", "cache")),
+            generation=dict(data.get("generation") or {}),
             top_picks=[PickRecord.from_dict(p) for p in data.get("top_picks", [])],
             daily_picks=[PickRecord.from_dict(p) for p in data.get("daily_picks", [])],
             stats=(StatsSummary.from_raw(stats_raw) if stats_raw else None),

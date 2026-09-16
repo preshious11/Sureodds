@@ -79,14 +79,19 @@ class SportsGameOddsProvider(BaseProvider):
 
     # ------------------------------------------------------------------ fetch
     def fetch_events(self, start: datetime, end: datetime) -> List[Event]:
+        self.last_fetch_complete = True
+        self.fetch_counts = {}
         allowance = self.budget.monthly_daily_allowance(self.name, self.monthly_limit)
         limit = max(0, min(self.event_limit, allowance))
         if limit <= 0:
+            self.last_fetch_complete = False
             log.warning("SGO: no object allowance left today (monthly limit %d)", self.monthly_limit)
             return []
         if self.budget.is_exhausted(self.name):
+            self.last_fetch_complete = False
             return []                              # tier/quota problem already seen today
         if not self.leagues:
+            self.last_fetch_complete = False
             # the free tier requires a leagueID (or eventID) - sportID-only queries 400
             log.warning("SGO: this subscription tier requires a leagueID - set SGO_LEAGUES "
                         "(comma-separated sportsgameodds.com league IDs) to enable this provider")
@@ -97,6 +102,7 @@ class SportsGameOddsProvider(BaseProvider):
         if avail is not None:
             usable = [lg for lg in self.leagues if lg in avail]
             if not usable:
+                self.last_fetch_complete = False
                 log.warning("SGO: none of the configured leagues (%s) are available at this "
                             "subscription tier. Check GET /leagues for what this key covers, "
                             "or upgrade the plan.", ",".join(self.leagues))
@@ -108,26 +114,62 @@ class SportsGameOddsProvider(BaseProvider):
             leagues = usable
         else:
             leagues = self.leagues                 # could not verify - try as configured
-        params: Dict = {
-            "startsAfter": iso(start), "startsBefore": iso(end), "oddsAvailable": "true",
-            "type": "match", "includeAltLines": "false", "limit": min(limit, 100),
-            "leagueID": ",".join(leagues),
-        }
-        try:
-            data = self.http.get("/events", params)
-        except ProviderError as e:
-            msg = str(e)
-            if "leagueID" in msg:
-                # tier changed or league id invalid - don't hammer it all day
-                self.budget.mark_exhausted(self.name, msg)
-            raise
-        events = data.get("data", []) if isinstance(data, dict) else []
-        self.budget.spend(self.name, len(events))
+        events = []
+        pending = []
+        self.fetch_counts = {}
+        # Share the existing object allowance across configured leagues so the
+        # first sport in a multi-league response cannot consume the whole page.
+        for index, league in enumerate(leagues):
+            remaining = limit - len(events)
+            if remaining <= 0:
+                self.last_fetch_complete = False
+                break
+            page_limit = max(1, remaining // (len(leagues) - index))
+            params = {"startsAfter": iso(start), "startsBefore": iso(end), "oddsAvailable": "true",
+                      "type": "match", "includeAltLines": "false", "limit": min(page_limit, 100),
+                      "leagueID": league}
+            try:
+                data = self.http.get("/events", params)
+                if not isinstance(data, dict) or data.get("success") is False:
+                    raise ProviderError("Invalid SGO events response")
+            except ProviderError as exc:
+                if "leagueID" in str(exc):
+                    self.budget.mark_exhausted(self.name, "league access/configuration error")
+                self.last_fetch_complete = False
+                self.fetch_counts[league] = {"status": "failed"}
+                continue
+            batch = data.get("data", []) if isinstance(data, dict) else []
+            self.budget.spend(self.name, len(batch))
+            self.fetch_counts[league] = {"status": "complete", "raw_events": len(batch),
+                                        "capped": bool(data.get("nextCursor"))}
+            events.extend(batch)
+            if data.get("nextCursor"):
+                pending.append((league, params, data["nextCursor"]))
+        # Reuse spare allowance from empty leagues without changing cursor filters.
+        while pending:
+            league, params, cursor = pending.pop(0)
+            if len(events) + params["limit"] > limit:
+                continue
+            try:
+                data = self.http.get("/events", {**params, "cursor": cursor})
+            except ProviderError:
+                self.last_fetch_complete = False
+                self.fetch_counts[league]["status"] = "partial"
+                continue
+            batch = data.get("data", [])
+            self.budget.spend(self.name, len(batch))
+            events.extend(batch)
+            self.fetch_counts[league]["raw_events"] += len(batch)
+            self.fetch_counts[league]["capped"] = bool(data.get("nextCursor"))
+            if batch and data.get("nextCursor") and data["nextCursor"] != cursor:
+                pending.append((league, params, data["nextCursor"]))
+        if self.fetch_counts and all(v["status"] == "failed" for v in self.fetch_counts.values()):
+            raise ProviderError("All configured SGO league requests failed")
         out: List[Event] = []
         for ev in events:
             try:
                 e = self._parse_event(ev)
-                if e and e.markets:
+                if e and e.markets and start <= e.start < end:
                     out.append(e)
             except Exception as ex:  # noqa: BLE001
                 log.debug("SGO parse error %s: %s", ev.get("eventID"), ex)
@@ -143,7 +185,7 @@ class SportsGameOddsProvider(BaseProvider):
         start = parse_iso((ev.get("status") or {}).get("startsAt", ""))
         if not (home and away and start):
             return None
-        sport = SPORT_MAP.get(ev.get("sportID", ""), "other")
+        sport = SPORT_MAP.get(str(ev.get("sportID", "")).upper(), "other")
         players = ev.get("players") or {}
         e = Event(provider=self.name, provider_event_id=ev["eventID"], sport=sport,
                   league=str(ev.get("leagueID", "")).replace("_", " "), league_id=ev.get("leagueID", ""),

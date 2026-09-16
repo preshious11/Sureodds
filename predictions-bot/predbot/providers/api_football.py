@@ -84,20 +84,27 @@ class ApiFootballProvider(BaseProvider):
 
     # ------------------------------------------------------------------ fetch
     def fetch_events(self, start: datetime, end: datetime) -> List[Event]:
+        self.last_fetch_complete = True
+        self.fetch_counts = {"raw_fixtures": 0, "in_window": 0, "league_rejected": 0,
+                             "odds_rows": 0, "events_with_markets": 0}
         fixtures: Dict[int, Dict] = {}
         d = start.date()
         while d <= end.date():
             data = self._call("/fixtures", {"date": d.strftime("%Y-%m-%d")}, reserve=self.settlement_reserve)
             if data is None:
+                self.last_fetch_complete = False
                 break
             for fx in data.get("response", []):
+                self.fetch_counts["raw_fixtures"] += 1
                 st = parse_iso(fx["fixture"]["date"])
                 if not st or not (start <= st <= end):
                     continue
                 if fx["fixture"]["status"]["short"] != "NS":
                     continue
+                self.fetch_counts["in_window"] += 1
                 lid = int(fx["league"]["id"])
                 if self.league_ids and lid not in self.league_ids:
+                    self.fetch_counts["league_rejected"] += 1
                     continue
                 fixtures[int(fx["fixture"]["id"])] = fx
             d += timedelta(days=1)
@@ -113,13 +120,16 @@ class ApiFootballProvider(BaseProvider):
                 try:
                     data = self._call("/odds", params, reserve=self.settlement_reserve)
                 except ProviderError as e:
+                    self.last_fetch_complete = False
                     # free plans cap the page parameter - keep whatever we already have
                     log.warning("odds page %d for %s failed: %s", page, d, e)
                     break
                 if data is None:
+                    self.last_fetch_complete = False
                     break
                 total = int((data.get("paging") or {}).get("total", 1))
                 for item in data.get("response", []):
+                    self.fetch_counts["odds_rows"] += 1
                     fid = int(item["fixture"]["id"])
                     fx = fixtures.get(fid)
                     if not fx:
@@ -131,6 +141,7 @@ class ApiFootballProvider(BaseProvider):
                 page += 1
 
         out = list(events.values())
+        self.fetch_counts["events_with_markets"] = len(out)
         out.sort(key=lambda e: _PRI.get(int(e.extra.get("league_id", 0)), 999))
         # Predictions for the most relevant fixtures (model features).
         # The free plan allows 10 requests/minute, so pace this phase to stay
