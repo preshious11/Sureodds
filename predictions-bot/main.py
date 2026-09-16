@@ -10,7 +10,7 @@ from predbot.cache.fetcher import UnifiedFetcher
 from predbot.cache.manager import CacheManager
 from predbot.config import load_config
 from predbot.jobs import daily_picks, recap, settle
-from predbot.jobs.scheduler import DailyJob, DynamicJob, loop
+from predbot.jobs.scheduler import DailyJob, DynamicJob, IntervalJob, loop
 from predbot.log import setup_logging
 from predbot.providers.chain import ProviderChain, ResultsResolver, build_providers
 from predbot.storage.db import Database
@@ -46,7 +46,12 @@ def main() -> None:
     def job_picks():
         daily_picks.run(chain, db, cfg, tg)          # channel mirror (optional)
         service.refresh_cache_from_db()  # write-once-per-day: feed the interactive cache
-        broadcast.deliver_picks(db, cfg, tg, service.get_daily_snapshot())  # DM picks to subscribers
+
+    def job_broadcast_picks():
+        """Check every minute if subscribers' 9:30 AM has arrived; send if so."""
+        snapshot = service.get_daily_snapshot()
+        if snapshot.top_picks or snapshot.daily_picks:
+            broadcast.deliver_picks(db, cfg, tg, snapshot)
 
     def compute_settle_deadline(now):
         today = to_local(now, cfg.timezone).strftime("%Y-%m-%d")
@@ -55,6 +60,7 @@ def main() -> None:
     jobs = [
         DailyJob("recap", cfg.recap_time, cfg.timezone, job_recap),
         DailyJob("picks", cfg.post_time, cfg.timezone, job_picks),
+        IntervalJob("broadcast_picks", 1, job_broadcast_picks),  # Check every minute
         DynamicJob("settle", cfg.timezone, compute_settle_deadline, job_settle),
     ]
 
