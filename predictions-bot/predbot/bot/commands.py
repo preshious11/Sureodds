@@ -1,27 +1,27 @@
-"""Optional long-polling command handler: /stats /today /yesterday, and for
-admins /run (force picks), /settle, /recap.
+"""Optional long-polling command handler and the shared view commands.
 
-When a UnifiedFetcher is wired in, /today renders the paginated inline-keyboard
-view (zero API reads) and inline-button presses are routed to the callback
-handler.
+Typed /top, /daily (alias /today) and /stats are dispatched to
+``callbacks.handle_command`` - the very handler the inline menu buttons use, so a
+tap and a type produce identical output.  /start shows the menu, /timezone picks
+the delivery zone, /stop unsubscribes; admins also get /run, /settle and /recap.
 """
 from __future__ import annotations
 
 import logging
 import threading
 import time
-from datetime import timedelta
-from typing import Callable, Dict, Optional
+from datetime import datetime, timedelta
+from typing import Callable, Dict, List, Optional, Tuple
 
-from predbot.bot import pagination
+from predbot.bot import callbacks, pagination
 from predbot.bot.callbacks import handle_callback, handle_start
-from predbot.bot.format import RESULT_ICON, stats_message
-from predbot.bot.telegram import Telegram, esc
+from predbot.bot.telegram import Telegram, esc, PollingError
+from predbot.bot.runtime import PollingLease, log_identity
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
 from predbot.jobs import stats as stats_mod
 from predbot.storage.db import Database
-from predbot.util.timeutil import parse_iso, to_local, utcnow
+from predbot.util.timeutil import is_valid_tz, to_local, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +57,14 @@ def _retry_send(tg: Telegram, text: str, chat_id: str, reply_markup: Optional[Di
     return False
 
 
+def split_command(text: str) -> Tuple[str, List[str]]:
+    """``"/top@MyBot extra"`` -> ``("/top", ["extra"])`` (Telegram adds @bot in groups)."""
+    parts = text.split()
+    if not parts:
+        return "", []
+    return parts[0].split("@")[0].lower(), parts[1:]
+
+
 def recap_card(db: Database, local_now: datetime) -> str:
     """The /yesterday summary card (wins/losses/void, hit rate, per-sport, 7-day, best pick)."""
     from predbot.bot.format import recap_message  # local import keeps module import light
@@ -77,15 +85,29 @@ class CommandLoop(threading.Thread):
         self.service = service
         self.page_size = page_size
         self.offset: Optional[int] = None
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_event.set()
 
     def run(self) -> None:
-        log.info("command loop started")
-        while not self._stop.is_set():
-            for upd in _retry_get_updates(self.tg, self.offset, timeout=20):
+        try:
+            with PollingLease(self.tg.token):
+                self.instance = log_identity(handle_start)
+                self._poll()
+        except Exception as exc:
+            log.critical("Command loop stopped | error_type=%s | check polling ownership and restart the intended instance",
+                         type(exc).__name__)
+
+    def _poll(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                updates = _retry_get_updates(self.tg, self.offset, timeout=20)
+            except PollingError as exc:
+                log.error("%s", exc)
+                self._stop_event.wait(30)
+                continue
+            for upd in updates:
                 self.offset = upd["update_id"] + 1
                 cb = upd.get("callback_query")
                 if cb:
@@ -97,34 +119,37 @@ class CommandLoop(threading.Thread):
                     continue
                 chat_id = str(msg.get("chat", {}).get("id"))
                 user_id = str((msg.get("from") or {}).get("id"))
-                cmd = text.split("@")[0].lower()
+                cmd, args = split_command(text)
                 if cmd == "/start":
-                    handle_start(self.db, self.tg, chat_id, msg.get("from") or {})
+                    try:
+                        handle_start(self.db, self.tg, chat_id, msg.get("from") or {})
+                        log.info("start handled | instance=%s | update_id=%s",
+                                 self.instance, upd["update_id"])
+                    except Exception as exc:
+                        log.error("start failed | error_type=%s", type(exc).__name__)
                     continue
-                if cmd == "/today" and self.service is not None:
-                    self._send_today(chat_id)
+                if self.service is not None and callbacks.is_view_command(cmd):
+                    self._send_view(cmd, chat_id)
                     continue
                 try:
-                    reply = self.handle(cmd, user_id)
+                    reply = self.handle(cmd, user_id, chat_id, args)
                 except (ValueError, KeyError, AttributeError) as e:
                     log.exception("command failed: %s", e)
                     reply = "Command failed."
                 if reply:
                     _retry_send(self.tg, reply, chat_id)
 
-    def _send_today(self, chat_id: str) -> None:
-        """Paginated /daily: page 0 of the daily picks with inline navigation."""
+    def _send_view(self, cmd: str, chat_id: str) -> None:
+        """Typed /top, /daily, /today or /stats: the same handler as the buttons."""
         try:
-            snapshot = self.service.get_daily_snapshot()
-            text, markup = pagination.render_view(snapshot, pagination.VIEW_DAILY, 0,
-                                                  self.page_size, self.cfg.timezone, db=self.db)
-            _retry_send(self.tg, text, chat_id, reply_markup=markup)
+            callbacks.handle_command(cmd, chat_id, service=self.service, tg=self.tg,
+                                     cfg=self.cfg, db=self.db, page_size=self.page_size)
         except (ValueError, KeyError, AttributeError) as e:
-            log.exception("today failed: %s", e)
-            _retry_send(self.tg, "Today's picks are unavailable.", chat_id)
+            log.exception("%s failed: %s", cmd, e)
+            _retry_send(self.tg, "That view is unavailable right now.", chat_id)
 
     def _dispatch_callback(self, cb: Dict) -> None:
-        if self.service is None:
+        if self.service is None and cb.get("data") not in ("menu", "sub|on", "sub|off"):
             self.tg.answer_callback_query(str(cb.get("id") or ""), text="Unavailable.")
             return
         try:
@@ -133,45 +158,25 @@ class CommandLoop(threading.Thread):
         except (ValueError, KeyError, AttributeError, IndexError) as e:
             log.exception("callback dispatch failed: %s", e)
 
-    def _day_list(self, date_str: str, title: str) -> str:
-        rows = self.db.picks_for_date(date_str)
-        if not rows:
-            return f"No picks for {title}."
-        lines = [f"<b>{title}</b>", ""]
-        for r in rows:
-            sport = r["sport"].replace("_", " ").title()
-            league = r["league"] or sport
-            fixture = f"{esc(r['home'])} vs {esc(r['away'])}"
-            outcome = esc(r["label"])
-            confidence = f"<b>{round(float(r['prob']) * 100)}%</b>" if r.get("prob") else "–"
-            if r.get("start_utc"):
-                local = to_local(parse_iso(r["start_utc"]), self.cfg.timezone)
-                tz_abbr = local.tzname() or self.cfg.timezone.split("/")[-1]
-                kickoff = f"{local.strftime('%I:%M %p')} {tz_abbr}"
-            else:
-                kickoff = "--:--"
-            odd = f"{float(r['price']):.2f}"
-
-            lines.append(sport)
-            lines.append(league)
-            lines.append(fixture)
-            lines.append(outcome)
-            lines.append(f"Confidence level: {confidence} | {kickoff}")
-            lines.append(odd)
-            lines.append("")
-        return "\n".join(lines)
-
-    def handle(self, cmd: str, user_id: str) -> Optional[str]:
+    def handle(self, cmd: str, user_id: str, chat_id: str = "",
+               args: Optional[List[str]] = None) -> Optional[str]:
+        """Text-only commands; the three views go through ``_send_view``."""
+        args = args or []
         local = to_local(utcnow(), self.cfg.timezone)
-        if cmd in ("/stats", "/help"):
-            if cmd != "/stats":
-                return ("Commands: /start (menu) · /today · /yesterday · /stats" +
-                        (" · /run /settle /recap" if user_id in self.cfg.telegram_admin_ids else ""))
-            return stats_message(stats_mod.compute(self.db, local))
-        if cmd == "/today":
-            return self._day_list(local.strftime("%Y-%m-%d"), f"📋 Daily Picks · {local.strftime('%a %d %b')}")
+        if cmd == "/help":
+            extra = ("\n\n🛠 <b>Admin</b>: /run · /settle · /recap"
+                     if user_id in self.cfg.telegram_admin_ids else "")
+            return ("👋 <b>Commands</b>\n\n" + callbacks.commands_text() + "\n\n"
+                    "🕒 /timezone — your delivery zone\n"
+                    f"Picks arrive at <b>{esc(self.cfg.post_time)}</b> your local time.\n"
+                    "🛑 /stop — unsubscribe" + extra)
+        if cmd == "/timezone":
+            return self._timezone(chat_id or user_id, args)
+        if cmd == "/stop":
+            self.db.subscriber_remove(chat_id or user_id)
+            return ("🛑 Unsubscribed — no more daily picks. "
+                    "Send /start whenever you want them back.")
         if cmd == "/yesterday":
-            y = local - timedelta(days=1)
             return recap_card(self.db, local)
         if cmd in ("/run", "/settle", "/recap"):
             if user_id not in self.cfg.telegram_admin_ids:
@@ -179,3 +184,21 @@ class CommandLoop(threading.Thread):
             fn = self.actions.get(cmd)
             return fn() if fn else "Unavailable."
         return None
+
+    def _timezone(self, chat_id: str, args: List[str]) -> str:
+        """Show or set the IANA zone this subscriber's daily picks are timed in."""
+        current = self.db.subscriber_timezone(chat_id) or self.cfg.timezone
+        if not args:
+            return (f"🕒 Delivery zone: <b>{esc(current)}</b>\n"
+                    f"The daily picks arrive at {esc(self.cfg.post_time)} in that zone.\n"
+                    "Change it with /timezone Africa/Lagos — an IANA name such as "
+                    "Africa/Lagos, Europe/London, America/New_York or Asia/Tokyo.")
+        requested = args[0].strip()
+        if not is_valid_tz(requested):
+            return (f"Unknown timezone <b>{esc(requested)}</b>.\n"
+                    "Use an IANA name, e.g. Africa/Lagos or Asia/Tokyo.")
+        self.db.subscriber_set_timezone(chat_id, requested)
+        now_local = to_local(utcnow(), requested)
+        return (f"✅ Delivery zone set to <b>{esc(requested)}</b> — "
+                f"your local time is now {now_local.strftime('%H:%M')}.\n"
+                f"Picks arrive at {esc(self.cfg.post_time)} local.")

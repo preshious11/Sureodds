@@ -10,6 +10,10 @@ log = logging.getLogger(__name__)
 MAX_LEN = 4000
 
 
+class PollingError(RuntimeError):
+    """Sanitized polling failure; never includes a credential-bearing URL."""
+
+
 class Telegram:
     def __init__(self, token: str, chat_id: str):
         self.token = token
@@ -73,11 +77,12 @@ class Telegram:
                                                                     "allowed_updates": '["message","callback_query"]'},
                                  timeout=timeout + 10)
             if r.status_code != 200:
-                return []
+                if r.status_code == 409:
+                    raise PollingError("Telegram polling conflict (409): another poller or webhook owns this token; stop duplicate consumers")
+                raise PollingError(f"Telegram getUpdates failed (HTTP {r.status_code})")
             return r.json().get("result", [])
         except requests.RequestException as e:
-            log.warning("getUpdates error: %s", e)
-            return []
+            raise PollingError(f"Telegram getUpdates transport failure ({type(e).__name__})") from None
 
 
 def _split(text: str) -> List[str]:

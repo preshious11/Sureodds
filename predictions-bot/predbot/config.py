@@ -84,7 +84,9 @@ class Config:
 
     # Schedule
     timezone: str = field(default_factory=lambda: _env("TIMEZONE", "UTC"))
-    post_time: str = field(default_factory=lambda: _env("POST_TIME", "08:00"))
+    # POST_TIME is the *recipient's local* clock: every subscriber gets the card
+    # at this time in their own zone (subscribers.timezone, else this TIMEZONE).
+    post_time: str = field(default_factory=lambda: _env("POST_TIME", "09:30"))
     recap_time: str = field(default_factory=lambda: _env("RECAP_TIME", "07:45"))
     # Note: settlement now runs dynamically after all daily predictions end (latest match + sport duration + buffer)
 
