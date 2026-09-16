@@ -36,6 +36,8 @@ def decode_events(payload):
 def expected_sports(name, provider):
     if name == 'api_football':
         return ['football']
+    if name == 'betminer':
+        return ['football']
     if name == 'sportsgameodds':
         from predbot.providers.sportsgameodds import SPORT_MAP
         return sorted({SPORT_MAP.get(s.upper(), s.lower()) for s in provider.sports})

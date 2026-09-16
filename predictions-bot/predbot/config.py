@@ -51,7 +51,13 @@ class Config:
     api_football_host: str = field(default_factory=lambda: _env("API_FOOTBALL_HOST", "v3.football.api-sports.io"))
     sgo_key: str = field(default_factory=lambda: _env("SPORTSGAMEODDS_KEY"))
     sharpapi_key: str = field(default_factory=lambda: _env("SHARPAPI_KEY"))
-    provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "api_football,sportsgameodds,sharpapi"))
+    # BetMiner (RapidAPI): 1 broad /matches/{from}/{to} call per day; leagues are
+    # filtered client-side by competition NAME (BetMiner league ids are unverified).
+    betminer_key: str = field(default_factory=lambda: _env("BETMINER_RAPIDAPI_KEY"))
+    betminer_host: str = field(default_factory=lambda: _env("BETMINER_RAPIDAPI_HOST", "betminer.p.rapidapi.com"))
+    betminer_daily_limit: int = field(default_factory=lambda: _int("BETMINER_DAILY_REQUEST_LIMIT", 5))
+    betminer_leagues: List[str] = field(default_factory=lambda: _list("BETMINER_LEAGUES"))
+    provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "api_football,sportsgameodds,sharpapi,betminer"))
     chain_min_events: int = field(default_factory=lambda: _int("CHAIN_MIN_EVENTS", 40))
     sgo_sports: List[str] = field(default_factory=lambda: _list("SGO_SPORTS", "SOCCER,BASKETBALL,TENNIS,HOCKEY,BASEBALL,FOOTBALL"))
     sgo_leagues: List[str] = field(default_factory=lambda: _list("SGO_LEAGUES"))
@@ -81,6 +87,10 @@ class Config:
     top_max_odds: float = field(default_factory=lambda: _float("TOP_MAX_ODDS", 2.60))
     top_min_prob: float = field(default_factory=lambda: _float("TOP_MIN_PROB", 0.62))
     top_min_ev: float = field(default_factory=lambda: _float("TOP_MIN_EV", 0.02))
+    #: How closely the model's own signals must agree with each other before a
+    #: selection may enter the Top ticket (0.50 = the historical bar). Lowering
+    #: it admits model-vs-market disagreement picks; the default is unchanged.
+    top_min_agreement: float = field(default_factory=lambda: _float("TOP_MIN_AGREEMENT", 0.50))
     max_picks_per_event: int = field(default_factory=lambda: _int("MAX_PICKS_PER_EVENT", 2))
     max_player_props: int = field(default_factory=lambda: _int("MAX_PLAYER_PROPS", 2))
     model_shrink: float = field(default_factory=lambda: _float("MODEL_SHRINK_TO_MARKET", 0.80))
@@ -104,6 +114,7 @@ class Config:
             "api_football": bool(self.api_football_key),
             "sportsgameodds": bool(self.sgo_key),
             "sharpapi": bool(self.sharpapi_key),
+            "betminer": bool(self.betminer_key),
         }
         return [p for p in self.provider_order if keys.get(p)]
 

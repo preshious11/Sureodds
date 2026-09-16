@@ -114,7 +114,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
     top_pool = [s for s in base
                 if cfg.top_min_odds <= s.price <= cfg.top_max_odds
                 and s.p_model >= cfg.top_min_prob and s.ev >= cfg.top_min_ev
-                and s.agreement >= 0.5 and len(s.sources) >= 2 and s.line.market != "prop"]
+                and s.agreement >= cfg.top_min_agreement and len(s.sources) >= 2 and s.line.market != "prop"]
     top, checked = choose_top(top_pool, cfg)
     top_ids = {id(s) for s in top}
     top_odds = math.prod(s.price for s in top)
