@@ -52,11 +52,11 @@ def deliver_picks(db: Database, cfg, tg: Telegram, snapshot: DailySnapshot) -> i
 
 
 def deliver_recap(db: Database, cfg, tg: Telegram, text: Optional[str]) -> int:
-    """Send yesterday's recap text (as produced by jobs.recap.run) to subscribers."""
+    """Send recap to each subscriber after last fixture ends in their timezone."""
     if not text:
         return 0
     yesterday = (to_local(utcnow(), cfg.timezone) - timedelta(days=1)).strftime("%Y-%m-%d")
-    return _deliver(db, tg, "recap", yesterday, text, "recap")
+    return _deliver_recap_after_fixtures(db, cfg, tg, "recap", yesterday, text, "recap")
 
 
 def _deliver(db: Database, tg: Telegram, kind: str, date_str: str, text: str, label: str) -> int:
@@ -116,4 +116,49 @@ def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_s
                 sent += 1
     if sent:
         log.info("broadcast: %s delivered to %d subscriber(s) at their 9:30 AM", label, sent)
+    return sent
+
+
+def _get_last_fixture_end_time(db: Database, pick_date: str) -> Optional[datetime]:
+    """Get the latest fixture end time for a date (latest kickoff + 4 hour buffer for results)."""
+    rows = db.picks_for_date(pick_date)
+    if not rows:
+        return None
+    latest_kickoff = None
+    for row in rows:
+        if row.get("start_utc"):
+            kt = parse_iso(row["start_utc"])
+            if latest_kickoff is None or kt > latest_kickoff:
+                latest_kickoff = kt
+    if latest_kickoff is None:
+        return None
+    return latest_kickoff + timedelta(hours=4)  # buffer for match duration + results processing
+
+
+def _deliver_recap_after_fixtures(db: Database, cfg, tg: Telegram, kind: str, date_str: str,
+                                   text: str, label: str) -> int:
+    """Send recap to each subscriber after last fixture ends in their timezone."""
+    if not tg.token:
+        return 0
+    last_fixture_end = _get_last_fixture_end_time(db, date_str)
+    if not last_fixture_end:
+        log.warning("recap: no fixtures found for %s", date_str)
+        return 0
+
+    now = utcnow()
+    sent = 0
+    for row in db.subscribers_active():
+        chat_id = str(row["chat_id"])
+        if db.delivery_done(kind, date_str, chat_id):
+            continue
+        user_tz = row.get("timezone") or cfg.timezone
+        local = to_local(now, user_tz)
+        fixture_end_local = to_local(last_fixture_end, user_tz)
+
+        if local >= fixture_end_local:
+            if tg.send(text, chat_id=chat_id):
+                db.mark_delivery(kind, date_str, chat_id)
+                sent += 1
+    if sent:
+        log.info("broadcast: %s delivered to %d subscriber(s) after last fixture ended", label, sent)
     return sent
