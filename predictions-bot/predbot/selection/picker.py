@@ -21,6 +21,8 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
+from collections import Counter
+from itertools import combinations
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -37,6 +39,8 @@ class PickSet:
     daily: List[Scored] = field(default_factory=list)
     pool_size: int = 0
     eligible: int = 0
+    diagnostics: Dict = field(default_factory=dict)
+    complete: bool = True
 
     def all(self) -> List[Scored]:
         return self.top + self.daily
@@ -66,10 +70,41 @@ def _cap(frac: float, target: int) -> int:
     return max(1, int(math.ceil(frac * target)))
 
 
+def choose_top(pool: List[Scored], cfg: Config):
+    """Bounded deterministic search, retaining quality bars and unique matches.
+
+    Collapse identical match/price options to the strongest, then reserve half
+    the 60-option budget for strength and half for low-odds combination options.
+    """
+    ranked = sorted(pool, key=lambda s: (-_top_score(s), s.event.dedupe_key(), s.line.key().__repr__()))
+    unique = {}
+    for s in ranked:
+        unique.setdefault((s.event.dedupe_key(), round(s.price, 4)), s)
+    options = list(unique.values())
+    if len(options) > 60:
+        options = options[:30] + sorted(options[30:], key=lambda s: (s.price, -_top_score(s), s.event.dedupe_key()))[:30]
+    target = cfg.top_odds_target
+    best, best_key, checked = [], None, 0
+    for size in range(1, min(3, max(1, cfg.top_max_picks)) + 1):
+        for group in combinations(options, size):
+            if len({s.event.dedupe_key() for s in group}) != size:
+                continue
+            checked += 1
+            price = math.prod(s.price for s in group)
+            if price > target * 1.7:
+                continue
+            band = 0 if target <= price <= target * 1.05 else 1 if price >= target else 2
+            key = (band, abs(price - target), -sum(_top_score(s) for s in group) / size,
+                   -len({selection_family(s.line) for s in group}), size)
+            if best_key is None or key < best_key:
+                best, best_key = list(group), key
+    return best, checked
+
+
 def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
     ps = PickSet(pool_size=len(scored))
     lead = now + timedelta(minutes=cfg.min_lead_minutes)
-    base = [s for s in scored if s.event.start >= lead and _settleable(s) and s.price >= 1.15]
+    base = [s for s in scored if s.event.start >= lead and _settleable(s) and math.isfinite(s.price) and s.price >= 1.15]
     ps.eligible = len(base)
     for s in base:
         s.rank_score = _daily_score(s)
@@ -80,33 +115,18 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
                 if cfg.top_min_odds <= s.price <= cfg.top_max_odds
                 and s.p_model >= cfg.top_min_prob and s.ev >= cfg.top_min_ev
                 and s.agreement >= 0.5 and len(s.sources) >= 2 and s.line.market != "prop"]
-    top_pool.sort(key=_top_score, reverse=True)
-    top: List[Scored] = []
-    top_ids: set = set()                           # identity: Scored.__eq__ is field-wise (slow)
-    top_odds = 1.0
-    for s in top_pool:
-        if top and top_odds >= cfg.top_odds_target:
-            break                                  # the top ticket is already worth ~2.00
-        if len(top) >= max(1, cfg.top_max_picks):
-            break                                  # never more than 1..3 strong picks
-        if top and top_odds * s.price > cfg.top_odds_target * 1.7:
-            continue                               # skip picks that would blow past ~2.00
-        if any(t.event.dedupe_key() == s.event.dedupe_key() for t in top):
-            continue
-        if top and selection_family(s.line) == selection_family(top[0].line) and len(top_pool) > 6:
-            # prefer a different outcome type while the ticket is being filled
-            alt = next((x for x in top_pool if x is not s and id(x) not in top_ids
-                        and selection_family(x.line) != selection_family(top[0].line)
-                        and x.event.dedupe_key() != top[0].event.dedupe_key()), None)
-            if alt is not None and _top_score(alt) >= _top_score(s) - 0.03:
-                s = alt
-        if id(s) in top_ids:
-            continue
+    top, checked = choose_top(top_pool, cfg)
+    top_ids = {id(s) for s in top}
+    top_odds = math.prod(s.price for s in top)
+    for s in top:
         s.tier = "top"
-        top.append(s)
-        top_ids.add(id(s))
-        top_odds *= s.price
     ps.top = top
+    ps.diagnostics = {"base_by_sport": dict(Counter(s.event.sport for s in base)),
+                      "unique_candidates_by_sport": dict(Counter(sport for sport, _, _ in
+                          {(s.event.sport, s.event.dedupe_key(), s.line.key()) for s in base})),
+                      "gte50_by_sport": dict(Counter(s.event.sport for s in base if s.p_model >= .5)),
+                      "top_eligible_by_sport": dict(Counter(s.event.sport for s in top_pool)),
+                      "combinations_checked": checked, "top_odds": top_odds if top else None}
 
     # ---------------------------------------------------------- daily picks
     # One ticket for the whole post: keep filling while it is short of the floor,
@@ -116,6 +136,10 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
                   if cfg.daily_min_odds <= s.price <= cfg.daily_max_odds
                   and s.p_model >= cfg.daily_min_prob and s.ev >= cfg.daily_min_ev
                   and s.agreement >= 0.30 and id(s) not in top_ids]
+    preferred = [s for s in daily_pool if s.p_model >= .5]
+    if preferred or any(s.p_model >= .5 for s in top):
+        daily_pool = preferred
+    ps.diagnostics["daily_eligible_by_sport"] = dict(Counter(s.event.sport for s in daily_pool))
     daily_pool.sort(key=lambda s: s.rank_score, reverse=True)
 
     per_event: Dict[str, int] = {}
@@ -205,4 +229,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
     ps.daily = chosen
     log.info("picker: pool=%d eligible=%d top_pool=%d daily_pool=%d -> top=%d daily=%d ticket=%.2f",
              ps.pool_size, ps.eligible, len(top_pool), len(daily_pool), len(top), len(chosen), ticket)
+    ps.diagnostics["daily_ticket_by_sport"] = dict(Counter(s.event.sport for s in ps.all()))
+    ps.diagnostics["top_selected_by_sport"] = dict(Counter(s.event.sport for s in ps.top))
+    log.info("selection diagnostics: %s", ps.diagnostics)
     return ps

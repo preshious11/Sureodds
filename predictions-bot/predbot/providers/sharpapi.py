@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections import defaultdict
+from collections import defaultdict, Counter
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -51,6 +51,8 @@ class SharpApiProvider(BaseProvider):
         return bool(self.key)
 
     def fetch_events(self, start: datetime, end: datetime) -> List[Event]:
+        self.last_fetch_complete = True
+        self.fetch_counts = {}
         rows: List[Dict] = []
         targets = self.leagues or [None]
         for league in targets:
@@ -65,12 +67,14 @@ class SharpApiProvider(BaseProvider):
                 try:
                     data = self.http.get("/odds", params)
                 except ProviderError as e:
+                    self.last_fetch_complete = False
                     log.warning("SharpAPI fetch failed (%s): %s", league or "all", e)
                     break
                 self.budget.spend(self.name, 1)
                 pages += 1
                 rows.extend(data.get("data", []))
                 pag = data.get("pagination") or {}
+                self.fetch_counts[str(league or "all")] = {"pages": pages, "capped": bool(pag.get("has_more"))}
                 if not pag.get("has_more") or not pag.get("next_cursor"):
                     break
                 cursor = pag["next_cursor"]
@@ -80,6 +84,7 @@ class SharpApiProvider(BaseProvider):
 
     # ------------------------------------------------------------------ parse
     def _rows_to_events(self, rows: List[Dict], start: datetime, end: datetime) -> List[Event]:
+        counts = Counter()
         by_event: Dict[str, List[Dict]] = defaultdict(list)
         for r in rows:
             if r.get("is_active") is False or r.get("is_live"):
@@ -89,9 +94,12 @@ class SharpApiProvider(BaseProvider):
         for eid, ers in by_event.items():
             r0 = ers[0]
             st = parse_iso(r0.get("event_start_time", ""))
-            if not st or not (start <= st <= end):
-                continue
             sport = SPORT_MAP.get(str(r0.get("sport", "")).lower(), "other")
+            counts[sport + ":raw_events"] += 1
+            if not st or not (start <= st <= end):
+                counts[sport + ":outside_window"] += 1
+                continue
+            counts[sport + ":in_window"] += 1
             e = Event(provider=self.name, provider_event_id=eid, sport=sport,
                       league=str(r0.get("league", "")).replace("_", " ").upper(), league_id=str(r0.get("league", "")),
                       home=r0.get("home_team", ""), away=r0.get("away_team", ""), start=st, sources=[self.name])
@@ -112,7 +120,10 @@ class SharpApiProvider(BaseProvider):
                     merged[k] = ml
             e.markets = list(merged.values())
             if e.markets and e.home and e.away:
+                counts[sport + ":normalized_events"] += 1
                 events.append(e)
+        self.normalization_counts = dict(counts)
+        log.info("SharpAPI normalization: %s", self.normalization_counts)
         return events
 
     def _row_to_line(self, r: Dict, sport: str) -> Optional[MarketLine]:

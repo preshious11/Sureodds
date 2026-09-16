@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta
+from collections import Counter
 from typing import Dict, List, Optional
 
 from predbot.bot.format import picks_message, stats_line
@@ -17,7 +18,7 @@ from predbot.providers.base import Event
 from predbot.providers.chain import ProviderChain
 from predbot.selection.picker import PickSet, select
 from predbot.storage.db import Database
-from predbot.util.timeutil import iso, to_local, utcnow
+from predbot.util.timeutil import iso, to_local, utcnow, day_bounds, parse_iso
 
 log = logging.getLogger(__name__)
 
@@ -37,12 +38,34 @@ def score_events(events: List[Event], db: Database, cfg: Config) -> List[Scored]
 
 def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[datetime] = None) -> PickSet:
     now = now or utcnow()
+    day = to_local(now, cfg.timezone).date().isoformat()
+    state_key = "generation:" + day
+    state = json.loads(db.get_kv(state_key, "{}"))
+    if state.get("complete") is False:
+        retry = parse_iso(state.get("retry_after", ""))
+        if state.get("attempts", 0) >= 3 or (retry and now < retry):
+            return PickSet(complete=False, diagnostics=state)
     start = now + timedelta(minutes=cfg.min_lead_minutes)
-    end = now + timedelta(hours=cfg.pick_window_hours)
+    _, midnight = day_bounds(now, cfg.timezone)
+    end = min(midnight, now + timedelta(hours=cfg.pick_window_hours))
+    if start >= end:
+        return PickSet()
     events = chain.collect(start, end)
     log.info("collected %d events (%d markets)", len(events), sum(len(e.markets) for e in events))
     scored = score_events(events, db, cfg)
-    return select(scored, cfg, now)
+    ps = select(scored, cfg, now)
+    providers = getattr(chain, "last_report", {})
+    ps.complete = all(p["status"] == "complete" for p in providers.values())
+    ps.diagnostics.update({"providers": providers,
+                           "events_by_sport": dict(Counter(e.sport for e in events)),
+                           "markets_by_sport": dict(Counter(e.sport for e in events for m in e.markets)),
+                           "scored_by_sport": dict(Counter(s.event.sport for s in scored)),
+                           "complete": ps.complete, "generated_at": iso(now),
+                           "attempts": state.get("attempts", 0) + 1,
+                           "retry_after": iso(now + timedelta(minutes=15))})
+    db.set_kv(state_key, json.dumps(ps.diagnostics))
+    log.info("Prediction generation %s: %s", day, ps.diagnostics)
+    return ps
 
 
 def store_picks(ps: PickSet, db: Database, pick_date: str) -> None:
@@ -73,6 +96,9 @@ def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram],
         log.info("picks already published for %s", pick_date)
         return PickSet()
     ps = build_picks(chain, db, cfg, now)
+    if not ps.complete:
+        log.warning("Withholding incomplete generation; bounded retry on subsequent snapshot requests. diagnostics=%s", ps.diagnostics)
+        return ps
     if not ps.top and not ps.daily and not dry_run and not force:
         # Every provider failed or nothing cleared the bar - don't publish an empty
         # card; the next scheduled run can publish once providers recover.
