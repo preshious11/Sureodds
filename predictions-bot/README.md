@@ -239,8 +239,11 @@ Predictions use the existing SQLite database (`DB_PATH`) as the only cache.
 - Startup logs `Prediction cache backend=sqlite` and the resolved SQLite path.
   Docker sets `DB_PATH=/data/predbot.db`; mount persistent storage at `/data`.
   Persistence across container replacement must be verified in JustRunMyApp.
-- `python diagnose_prediction_cache.py` reads cache state without any sports API
-  calls. See `SQLITE_CACHE_REPORT.md` for migration and deployment verification.
+- `python diagnose_prediction_cache.py` is the single cache diagnostic. It opens the
+  configured SQLite file read-only (no generation, migration or sports API calls) and
+  prints the backend, database path, today's HIT/MISS, COMPLETE/PARTIAL status, sport
+  status, football/baseball/Top/Daily counts, generated/updated times, retry-after when
+  partial and the cache version. See `SQLITE_CACHE_REPORT.md` for deployment verification.
 
 ---
 
