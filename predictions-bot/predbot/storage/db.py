@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS subscribers (
     chat_id TEXT PRIMARY KEY,            -- DM chat with the user
     username TEXT,
     first_name TEXT,
-    timezone TEXT NOT NULL DEFAULT '',   -- IANA zone for local 09:30 delivery ('' = config TIMEZONE)
+    timezone TEXT NOT NULL DEFAULT '',   -- IANA zone for localized prediction display ('' = config TIMEZONE)
     subscribed_at TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1
 );
@@ -266,7 +266,7 @@ class Database:
         return str(rows[0]["timezone"] or "") if rows else ""
 
     def subscriber_set_timezone(self, chat_id: str, timezone: str) -> None:
-        """Store the IANA zone the subscriber's 09:30 delivery is measured in.
+        """Store the IANA zone used for subscriber-local prediction display.
 
         Creates the subscriber when the chat is unknown (a /timezone before
         /start), so the setting is never silently dropped.

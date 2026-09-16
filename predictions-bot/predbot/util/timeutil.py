@@ -4,8 +4,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple
 from zoneinfo import ZoneInfo
 
-#: Delivery time used when nothing is configured ("09:30" local, per the brief).
-DEFAULT_HHMM = "09:30"
+#: Delivery time used when nothing is configured ("09:00" local, per the brief).
+DEFAULT_HHMM = "09:00"
 
 
 def utcnow() -> datetime:
@@ -25,7 +25,7 @@ def parse_hhmm(s: str, default: str = DEFAULT_HHMM) -> Tuple[int, int]:
             continue
         if 0 <= h <= 23 and 0 <= m <= 59:
             return h, m
-    return 9, 30
+    return 9, 0
 
 
 def is_valid_tz(name: str) -> bool:
@@ -50,6 +50,18 @@ def parse_iso(s: str) -> Optional[datetime]:
         return None
 
 
+def resolve_timezone(stored: Optional[str], configured: str = "UTC") -> str:
+    """Subscriber preference, then application zone, then safe UTC fallback.
+
+    No location is inferred from Telegram user metadata.
+    """
+    for candidate in (stored, configured, "UTC"):
+        name = str(candidate or "").strip()
+        if name and is_valid_tz(name):
+            return name
+    return "UTC"
+
+
 def to_local(dt: datetime, tz: str) -> datetime:
     try:
         return dt.astimezone(ZoneInfo(tz))
@@ -64,9 +76,8 @@ def iso(dt: datetime) -> str:
 def local_reached(dt: datetime, tz: str, at: str) -> bool:
     """True when the wall clock in ``tz`` is at/after ``at`` ("HH:MM").
 
-    The single timezone rule used by every scheduled delivery: each subscriber
-    (and each global job) is gated on the clock in *its own* zone, not on a
-    shared server-side instant.
+    Scheduling uses the configured application zone; subscriber preferences
+    affect presentation only.
     """
     h, m = parse_hhmm(at)
     local = to_local(dt, tz)
