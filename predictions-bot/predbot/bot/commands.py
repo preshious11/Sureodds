@@ -15,8 +15,9 @@ from typing import Callable, Dict, Optional
 
 from predbot.bot import pagination
 from predbot.bot.callbacks import handle_callback, handle_start
-from predbot.bot.format import stats_message
+from predbot.bot.format import outcome_label, stats_message
 from predbot.bot.telegram import Telegram, esc
+from predbot.providers.base import MarketLine
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.cache.models import VIEW_DAILY, VIEW_STATS, VIEW_TOP
 from predbot.config import Config
@@ -155,12 +156,13 @@ class CommandLoop(threading.Thread):
             sport = r["sport"].replace("_", " ").title()
             league = r["league"] or sport
             fixture = f"{esc(r['home'])} vs {esc(r['away'])}"
-            outcome = esc(r["label"])
-            confidence = f"<b>{round(float(r['prob']) * 100)}%</b>" if r.get("prob") else "–"
-            if r.get("start_utc"):
+            ml = MarketLine(r["market"], r["selection"], float(r["price"]), line=r["line"])
+            outcome = esc(outcome_label(r["label"], ml, r["home"], r["away"], r["sport"]))
+            confidence = f"<b>{round(float(r['prob']) * 100)}%</b>" if r["prob"] else "–"
+            if r["start_utc"]:
                 local = to_local(parse_iso(r["start_utc"]), self.cfg.timezone)
                 tz_abbr = local.tzname() or self.cfg.timezone
-                kickoff = f"{local.strftime('%I:%M %p')} {tz_abbr}"
+                kickoff = f"{local.strftime('%I:%M %p').lstrip('0')} {tz_abbr}"
             else:
                 kickoff = "--:--"
             odd = f"{float(r['price']):.2f}"
@@ -184,7 +186,6 @@ class CommandLoop(threading.Thread):
         if cmd == "/daily":
             return self._day_list(local.strftime("%Y-%m-%d"), f"📋 Daily Picks · {local.strftime('%a %d %b')}")
         if cmd == "/yesterday":
-            y = local - timedelta(days=1)
             return recap_card(self.db, local)
         if cmd in ("/run", "/settle", "/recap"):
             if user_id not in self.cfg.telegram_admin_ids:

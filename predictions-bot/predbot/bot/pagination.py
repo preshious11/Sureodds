@@ -10,8 +10,9 @@ import logging
 from datetime import timedelta
 from typing import Dict, List, Optional, Tuple
 
-from predbot.bot.format import SPORT_ICON, combined_odds, recap_message
+from predbot.bot.format import combined_odds, outcome_label, recap_message
 from predbot.bot.telegram import esc
+from predbot.providers.base import MarketLine
 from predbot.cache.models import (DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STATS,
                                   VIEW_TOP)
 from predbot.util.timeutil import parse_iso, to_local, utcnow
@@ -70,7 +71,7 @@ def _kickoff_hhmm(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> s
     display_tz = user_tz or tz  # use user timezone if provided, else fall back to default
     local = to_local(start, display_tz)
     tz_abbr = local.tzname() or display_tz
-    return f"{local.strftime('%I:%M %p')} {tz_abbr}"
+    return f"{local.strftime('%I:%M %p').lstrip('0')} {tz_abbr}"
 
 
 def render_pick(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> str:
@@ -78,7 +79,8 @@ def render_pick(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> str
     sport_label = sport.replace("_", " ").title()
     league = pick.league or sport_label
     fixture = f"{esc(pick.home)} vs {esc(pick.away)}"
-    outcome = esc(pick.label)
+    ml = MarketLine(pick.market, pick.selection, pick.price, line=pick.line)
+    outcome = esc(outcome_label(pick.label, ml, pick.home, pick.away, pick.sport))
     confidence = f"<b>{round(pick.prob * 100)}%</b>"
     time_wat = _kickoff_hhmm(pick, tz, user_tz)
     odd = f"{pick.price:.2f}"
@@ -116,9 +118,9 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
     chunk = slice_page(items, page, size)
 
     if view == VIEW_TOP:
-        heading = "Top predictions for today–– "
+        heading = "🏆 Top picks for today–– "
     else:
-        heading = "Daily picks for today–– "
+        heading = "📋 Daily picks for today–– "
     lines = [f"<b>{heading}{snapshot.date}</b>", ""]
 
     if not chunk:

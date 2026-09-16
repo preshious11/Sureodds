@@ -44,20 +44,20 @@ def test_card_matches_the_requested_layout():
                "Over 1.5 Goals", 0.84, 1.74, market="total", selection="over", line=1.5)
 
     assert picks_message([villa], [overs], DAY, WAT, None) == (
-        "📋 Top Picks for Today 2026-09-16\n"
+        "📋 Daily Picks for Today 2026-09-16\n"
         "\n"
         "Football\n"
         "Premier League\n"
         "Home1 vs Away1\n"
         "Aston Villa to win\n"
-        "Confidence level: <b>72%</b> | 07:45 PM WAT\n"
+        "Confidence level: <b>72%</b> | 7:45 PM WAT\n"
         "2.05\n"
         "\n"
         "Football\n"
         "La Liga\n"
         "Home2 vs Away2\n"
         "Over 1.5 Goals\n"
-        "Confidence level: <b>84%</b> | 03:00 PM WAT\n"
+        "Confidence level: <b>84%</b> | 3:00 PM WAT\n"
         "1.74\n"
         "\n"
         "Combined Odds: 3.5670"
@@ -79,13 +79,13 @@ def test_every_pick_gets_the_six_line_block():
     card = picks_message([sc(event(1, "Serie A"), "Inter to win", 0.66, 1.95)], [], DAY, WAT, None)
 
     assert card.splitlines() == [
-        "\U0001F4CB Top Picks for Today 2026-09-16",
+        "\U0001F4CB Daily Picks for Today 2026-09-16",
         "",
         "Football",
         "Serie A",
         "Home1 vs Away1",
         "Inter to win",
-        "Confidence level: <b>66%</b> | 07:45 PM WAT",
+        "Confidence level: <b>66%</b> | 7:45 PM WAT",
         "1.95",
         "",
         "Combined Odds: 1.9500",
