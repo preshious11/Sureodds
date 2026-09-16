@@ -217,8 +217,14 @@ Interactive Telegram reads never touch the provider APIs:
   the cache, then rebuilds from the SQLite picks table (still zero API) and only
   falls back to a full provider fetch when nothing is published yet. Concurrent
   readers wait for the builder's cache entry instead of duplicating API calls.
-- The default backend is an in-process TTL dictionary; set `REDIS_URL` (and
-  `pip install redis`) to share the cache and lock across replicas.
+- Set `REDIS_URL` on the bot service to enable Redis; its Python client is included
+  in `requirements.txt`. Redeploy after dependency changes. Startup must report
+  `Cache backend: redis (connection verified)` and `cache: redis`.
+- Without usable Redis, the application uses `CACHE_DIR` (default `./cache`),
+  falling back to memory if file-cache initialization fails. File/memory caching
+  does not share data between hosts. A Redis startup failure requires restarting
+  the bot after correcting the cause; it does not automatically reconnect from
+  the fallback backend. The welcome message is not cached.
 
 ---
 

@@ -138,7 +138,7 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
             lines.append("")
         try:
             total_odds = combined_odds([p.price for p in items])
-            lines.append(f"<b>Total odds: {total_odds:.4f}</b>")
+            lines.append(f"<b>Total odds: {total_odds:.2f}</b>")
         except ValueError:
             pass
 
