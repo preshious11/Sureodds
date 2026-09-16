@@ -38,9 +38,10 @@ def test_commands_and_buttons_have_exact_layout_and_subscriber_timezone(db, view
     # the requested six-line block: sport / league / fixture / outcome / confidence | time / odds
     assert text.startswith(f'{heading} 2030-06-01\n\n'
                            f'Football\nHidden League\nArsenal vs Chelsea\nOver 1.5 Goals\n'
-                           f'Confidence level: <b>84%</b> | {time}\n2.00\n')
+                           f'Confidence level: <b>84%</b> | {time}\nOdds: 2.00\n')
     assert 'predictions——' not in text          # the superseded copy stays gone
-    assert text.endswith(f'Combined Odds: {total}')
+    picks_in_section = 1 if view == 'top' else 3
+    assert text.endswith(f'Total Picks: {picks_in_section}\nCombined Odds: {total}')
     assert ('Liverpool' in text) == (view == 'daily')
 
 

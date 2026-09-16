@@ -346,12 +346,22 @@ class Database:
     # ---- subscribers / deliveries ----
     def subscriber_add(self, chat_id: str, username: str = "", first_name: str = "",
                        timezone: str = "") -> None:
-        """Register (or re-activate) a subscriber; non-empty fields are kept/overwritten."""
+        """Register (or re-activate) a subscriber; non-empty fields are kept/overwritten.
+
+        ``subscribed_at`` marks when the CURRENT subscription started, because the
+        delivery gate uses it to decide whether today's card was already due when
+        this person joined (see ``broadcast._joined_before_target``).  It is
+        refreshed only when the row was inactive - i.e. on a genuine (re)subscribe.
+        An already-active user sending /start again keeps their original instant,
+        so that cannot cost them the card that was already owed to them.
+        """
         self.execute(
             "INSERT INTO subscribers(chat_id,username,first_name,timezone,subscribed_at,active) "
             "VALUES(?,?,?,?,?,1) ON CONFLICT(chat_id) DO UPDATE SET active=1, "
             "username=CASE WHEN excluded.username!='' THEN excluded.username ELSE subscribers.username END, "
             "first_name=CASE WHEN excluded.first_name!='' THEN excluded.first_name ELSE subscribers.first_name END, "
+            "subscribed_at=CASE WHEN subscribers.active=0 THEN excluded.subscribed_at "
+            "ELSE subscribers.subscribed_at END, "
             "timezone=CASE WHEN excluded.timezone!='' THEN excluded.timezone ELSE subscribers.timezone END",
             (str(chat_id), str(username or ""), str(first_name or ""), str(timezone or ""), _now()))
 
