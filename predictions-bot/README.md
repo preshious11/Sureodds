@@ -214,26 +214,33 @@ The footer multiplies all odds in the selected ticket, across every page, and
 displays two decimal places. The saved `/timezone` preference applies to both
 commands and buttons; the configured timezone is the fallback.
 
-Interactive Telegram reads never touch the provider APIs:
+Predictions use the existing SQLite database (`DB_PATH`) as the only cache.
 
-- The whole day's data (top picks, daily picks, stats) is normalised into one
-  `DailySnapshot` and cached **once per UTC day** under
-  `bot:predictions:daily:{YYYY-MM-DD}`; the entry expires at UTC midnight.
-- `/today` posts page 0 with inline buttons; ◀️ ▶️ and the Top / Daily / Stats
-  switch all **edit the existing message from the cached snapshot** — zero
-  external API requests per navigation.
-- A cache miss takes the per-day mutex (`bot:predictions:lock:{...}`), re-checks
-  the cache, then rebuilds from the SQLite picks table (still zero API) and only
-  falls back to a full provider fetch when nothing is published yet. Concurrent
-  readers wait for the builder's cache entry instead of duplicating API calls.
-- Set `REDIS_URL` on the bot service to enable Redis; its Python client is included
-  in `requirements.txt`. Redeploy after dependency changes. Startup must report
-  `Cache backend: redis (connection verified)` and `cache: redis`.
-- Without usable Redis, the application uses `CACHE_DIR` (default `./cache`),
-  falling back to memory if file-cache initialization fails. File/memory caching
-  does not share data between hosts. A Redis startup failure requires restarting
-  the bot after correcting the cause; it does not automatically reconnect from
-  the fallback backend. The welcome message is not cached.
+- `/top`, `/daily`, their buttons, and scheduled publication all use
+  `UnifiedFetcher.get_daily_snapshot()` and the same `prediction_cache` row.
+- Keys contain the application timezone and calendar date. Subscriber zones affect
+  display only. Rows expire at application-zone midnight (Africa/Lagos by default).
+- COMPLETE snapshots return without provider calls, including after process restart.
+- PARTIAL snapshots remain usable. After `CACHE_RETRY_SECONDS` (default 900), failed
+  providers are retried; successful provider portions in `provider_cache` are reused.
+  Valid empty results count as completed; a failed football source does not.
+- Successful API-Football generation responses are stored in SQLite as well, so
+  retries reuse fixture/odds/prediction requests already fetched that day. Settlement
+  remains separate because results become available after kickoff.
+- `force_refresh=True` rebuilds Top/Daily selection from canonical provider data.
+  Completed source responses remain protected from unnecessary paid refetches.
+- SQLite transactions save both lists/status together; a shared in-process lock
+  prevents command and scheduler threads from duplicating generation. Run one bot
+  process against this database; this is not a multi-host distributed cache.
+- `CACHE_RETENTION_DAYS` defaults to 7. Pruning removes only expired cache history,
+  not subscribers, picks, results, settings or API budget records.
+- No Redis package, URL, server, file-cache directory or external service is required.
+  Previous `REDIS_URL`/`CACHE_DIR` settings are unused and can be removed.
+- Startup logs `Prediction cache backend=sqlite` and the resolved SQLite path.
+  Docker sets `DB_PATH=/data/predbot.db`; mount persistent storage at `/data`.
+  Persistence across container replacement must be verified in JustRunMyApp.
+- `python diagnose_prediction_cache.py` reads cache state without any sports API
+  calls. See `SQLITE_CACHE_REPORT.md` for migration and deployment verification.
 
 ---
 

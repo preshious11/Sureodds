@@ -1,3 +1,6 @@
+> Historical investigation. The cache/retry implementation below has been superseded
+> by the SQLite-only architecture documented in SQLITE_CACHE_REPORT.md.
+
 # Prediction generation investigation — September 16, 2026
 
 ## Findings from actual provider GET requests

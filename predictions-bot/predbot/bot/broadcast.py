@@ -1,7 +1,7 @@
 """Subscriber broadcasts: daily picks + results, built from the cached snapshot.
 
-Zero external API calls: both messages are composed from the write-once-per-day
-snapshot (picks) or from the recap job's already-fetched text (results).  Every
+Picks use the same canonical SQLite snapshot as commands; its service may retry
+failed providers after the configured cooldown. Recaps use already-fetched text.  Every
 send is de-duplicated per (kind, card date, chat) in the ``deliveries`` table, so
 restarts and repeated job runs never double-send.
 
@@ -24,7 +24,7 @@ from predbot.util.timeutil import resolve_timezone, local_reached, parse_iso, to
 
 log = logging.getLogger(__name__)
 
-#: Resolves the card to deliver (zero API reads); ``UnifiedFetcher.published_snapshot``.
+#: Resolves the canonical card to deliver; ``UnifiedFetcher.published_snapshot``.
 SnapshotProvider = Callable[[], Optional[DailySnapshot]]
 
 
