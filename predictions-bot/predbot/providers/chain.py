@@ -33,7 +33,8 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
         out["api_football"] = ApiFootballProvider(
             cfg.api_football_key, budget, host=cfg.api_football_host, league_ids=cfg.apif_league_ids,
             daily_limit=cfg.apif_daily_limit, predictions_per_run=cfg.apif_predictions_per_run,
-            odds_pages=cfg.apif_odds_pages)
+            odds_pages=cfg.apif_odds_pages,
+            timezone=cfg.timezone)
     if cfg.sgo_key:
         out["sportsgameodds"] = SportsGameOddsProvider(
             cfg.sgo_key, budget, sports=cfg.sgo_sports, leagues=cfg.sgo_leagues,
@@ -51,8 +52,16 @@ class ProviderChain:
         self.min_events = min_events
         self.last_report = {}
         self._successful = {}
+        self.db = None
+        self.cfg = None
 
     def collect(self, start: datetime, end: datetime) -> List[Event]:
+        if self.db is not None:
+            from predbot.cache.providers import collect_persisted
+            return collect_persisted(self, start, end)
+        return self._collect_uncached(start, end)
+
+    def _collect_uncached(self, start: datetime, end: datetime) -> List[Event]:
         pool: List[Event] = []
         self.last_report = {}
         for name in self.order:

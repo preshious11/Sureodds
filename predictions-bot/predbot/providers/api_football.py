@@ -10,6 +10,8 @@ corners/cards pick needs it.
 from __future__ import annotations
 
 import logging
+import json
+import hashlib
 import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -20,6 +22,7 @@ from predbot.util.http import Http, ProviderError, RateLimiter
 from predbot.util.names import same_team
 from predbot.util.odds import parse_decimal
 from predbot.util.timeutil import parse_iso
+from predbot.util.timeutil import utcnow, to_local, day_bounds
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +50,8 @@ class ApiFootballProvider(BaseProvider):
 
     def __init__(self, api_key: str, budget: Budget, host: str = "v3.football.api-sports.io",
                  league_ids: Optional[List[str]] = None, daily_limit: int = 100, predictions_per_run: int = 25,
-                 odds_pages: int = 3, settlement_reserve: int = 15):
+                 odds_pages: int = 3, settlement_reserve: int = 15,
+                 timezone: str = "Africa/Lagos"):
         self.key = api_key
         self.budget = budget
         self.host = host
@@ -56,30 +60,45 @@ class ApiFootballProvider(BaseProvider):
         self.predictions_per_run = predictions_per_run
         self.odds_pages = odds_pages
         self.settlement_reserve = settlement_reserve
+        self.timezone = timezone
+        self._cache_scope = hashlib.sha256((host + api_key).encode()).hexdigest()[:20]
         if "rapidapi" in host:
             headers = {"x-rapidapi-key": api_key, "x-rapidapi-host": host}
         else:
             headers = {"x-apisports-key": api_key}
-        self.http = Http(f"https://{host}", headers=headers, rate=RateLimiter(0.4))
+        self.http = Http(f"https://{host}", headers=headers, rate=RateLimiter(7.0), retries=0)
 
     def enabled(self) -> bool:
         return bool(self.key)
 
     # ---------------------------------------------------------------- helpers
     def _call(self, path: str, params: Dict, reserve: int = 0) -> Optional[Dict]:
+        cache_key = None
+        if reserve:
+            now = utcnow()
+            day = to_local(now, self.timezone).date().isoformat()
+            request_id = hashlib.sha256(json.dumps([path, params], sort_keys=True).encode()).hexdigest()[:20]
+            cache_key = f"football:raw:v2:{self._cache_scope}:{day}:{request_id}"
+            cached = self.budget.db.get_provider_cache(cache_key)
+            if cached and cached['cache_version'] == 1 and parse_iso(cached['expires_at']) > now:
+                return json.loads(cached['payload_json'])
         if self.budget.is_exhausted(self.name):
             return None                            # daily plan limit hit - stop calling until tomorrow
-        if not self.budget.can_spend(self.name, 1, daily_limit=self.daily_limit - reserve):
+        if self.budget.used_today(self.name) >= max(0, self.daily_limit - reserve):
             return None
+        # Count every attempted HTTP request, including errors; no hidden retries.
+        self.budget.spend(self.name, 1)
         data = self.http.get(path, params)
         errs = data.get("errors") if isinstance(data, dict) else None
         if errs and (isinstance(errs, dict) and errs or isinstance(errs, list) and errs):
             msg = str(errs)
-            if "request limit" in msg or "requests" in errs:
+            if any(word in msg.lower() for word in ("day", "daily", "quota")):
                 # plan quota exhausted: mark it so every later call today is skipped
-                self.budget.mark_exhausted(self.name, msg)
+                self.budget.mark_exhausted(self.name, 'daily API quota exhausted')
             raise ProviderError(f"API-Football error: {errs}")
-        self.budget.spend(self.name, 1)  # only successful calls count against the quota
+        if cache_key and isinstance(data, dict) and isinstance(data.get('response'), list):
+            _, expiry = day_bounds(now, self.timezone)
+            self.budget.db.upsert_provider_cache(cache_key, day, data, {}, expiry.isoformat())
         return data
 
     # ------------------------------------------------------------------ fetch
@@ -90,7 +109,11 @@ class ApiFootballProvider(BaseProvider):
         fixtures: Dict[int, Dict] = {}
         d = start.date()
         while d <= end.date():
-            data = self._call("/fixtures", {"date": d.strftime("%Y-%m-%d")}, reserve=self.settlement_reserve)
+            try:
+                data = self._call("/fixtures", {"date": d.strftime("%Y-%m-%d")}, reserve=self.settlement_reserve)
+            except ProviderError:
+                self.last_fetch_complete = False
+                break
             if data is None:
                 self.last_fetch_complete = False
                 break
@@ -154,6 +177,7 @@ class ApiFootballProvider(BaseProvider):
             for ev in out:
                 if n >= self.predictions_per_run:
                     break
+                n += 1
                 try:
                     data = self._call("/predictions", {"fixture": ev.provider_event_id}, reserve=self.settlement_reserve)
                 except ProviderError as e:
@@ -164,7 +188,6 @@ class ApiFootballProvider(BaseProvider):
                 resp = data.get("response") or []
                 if resp:
                     ev.extra["prediction"] = resp[0]
-                n += 1
         finally:
             if self.http.rate and fast is not None:
                 self.http.rate.min_interval = fast

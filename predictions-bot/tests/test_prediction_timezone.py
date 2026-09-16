@@ -8,7 +8,6 @@ from predbot.bot.callbacks import handle_callback, handle_command
 from predbot.bot.commands import CommandLoop
 from predbot.bot.format import kickoff_label
 from predbot.cache.fetcher import UnifiedFetcher
-from predbot.cache.manager import CacheManager
 from predbot.config import Config
 from predbot.jobs.daily_picks import store_picks
 from predbot.selection.picker import PickSet
@@ -34,7 +33,7 @@ def test_utc_storage_to_local_command_button_and_broadcast(db, stamp, zone, expe
     assert parsed.tzinfo == timezone.utc
     selection = sc(event(1, kickoff=stamp), 'Home Win', .81, 2.0)
     store_picks(PickSet(top=[selection]), db, stamp[:10])
-    fetcher = UnifiedFetcher(None, db, Config(), CacheManager())
+    fetcher = UnifiedFetcher(None, db, Config())
     rows = db.picks_for_date(stamp[:10])
     snapshot = fetcher._snapshot_from_rows(rows, parsed.date(), 'db')
     original = snapshot.to_dict()

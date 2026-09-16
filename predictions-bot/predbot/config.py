@@ -37,6 +37,9 @@ def _list(name: str, default: str = "") -> List[str]:
 
 @dataclass
 class Config:
+    cache_retry_seconds: int = field(default_factory=lambda: max(60, _int("CACHE_RETRY_SECONDS", 900)))
+    cache_retention_days: int = field(default_factory=lambda: max(1, _int("CACHE_RETENTION_DAYS", 7)))
+
     # Telegram
     telegram_token: str = field(default_factory=lambda: _env("TELEGRAM_BOT_TOKEN"))
     telegram_chat_id: str = field(default_factory=lambda: _env("TELEGRAM_CHAT_ID"))
@@ -90,8 +93,6 @@ class Config:
     # Note: settlement now runs dynamically after all daily predictions end (latest match + sport duration + buffer)
 
     # Cache / pagination
-    redis_url: str = field(default_factory=lambda: _env("REDIS_URL"))
-    cache_dir: str = field(default_factory=lambda: _env("CACHE_DIR", "./cache"))
     page_size: int = field(default_factory=lambda: _int("PAGE_SIZE", 5))
 
     # Storage / logging

@@ -5,7 +5,6 @@ import pytest
 from predbot.bot.callbacks import handle_callback, handle_command
 from predbot.bot.pagination import render_page
 from predbot.cache.models import DailySnapshot, PickRecord
-from predbot.cache.manager import CacheManager
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
 from predbot.jobs.daily_picks import store_picks
@@ -64,7 +63,7 @@ def test_selected_ticket_survives_database_and_cache_with_correct_totals(db):
     configuration = cfg()
     picks = select([sc(ev(i), 'result3', 'home', .70, 1.45) for i in range(40)], configuration, dt())
     store_picks(picks, db, '2030-06-01')
-    fetcher = UnifiedFetcher(None, db, configuration, CacheManager())
+    fetcher = UnifiedFetcher(None, db, configuration)
     snap = fetcher._snapshot_from_rows(db.picks_for_date('2030-06-01'), dt().date(), 'db')
     restored = DailySnapshot.from_dict(snap.to_dict())
     from math import prod

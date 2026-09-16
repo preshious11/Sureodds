@@ -5,7 +5,6 @@ from unittest.mock import Mock
 import pytest
 
 from predbot.cache.fetcher import UnifiedFetcher
-from predbot.cache.manager import CacheManager
 from predbot.cache.models import DailySnapshot
 from predbot.config import Config
 from predbot.jobs import daily_picks
@@ -107,45 +106,28 @@ def test_generation_uses_lagos_day_including_utc_previous_date(db, monkeypatch):
     assert end == datetime(2030, 6, 2, 23, tzinfo=timezone.utc)
 
 
-def test_partial_generation_is_not_persisted_and_retry_recovers(db, monkeypatch):
+def test_partial_generation_keeps_valid_picks(db, monkeypatch):
     now = dt()
-    clock = [now]
-    monkeypatch.setattr('predbot.cache.fetcher.utcnow', lambda: clock[0])
-    monkeypatch.setattr(daily_picks, 'utcnow', lambda: clock[0])
+    monkeypatch.setattr('predbot.cache.fetcher.utcnow', lambda: now)
+    monkeypatch.setattr(daily_picks, 'utcnow', lambda: now)
     candidates = [sc(ev(1), 'result3', 'home', .75, 2.0)]
     monkeypatch.setattr(daily_picks, 'score_events', lambda *args: candidates)
     chain = Mock()
     chain.collect.return_value = [candidates[0].event]
     chain.last_report = {'football': {'status': 'failed'}}
-    cache = CacheManager()
-    fetcher = UnifiedFetcher(chain, db, Config(timezone='UTC'), cache)
+    # Old retry exhaustion must no longer prevent usable providers from running.
+    db.set_kv('generation:' + now.date().isoformat(), '{"complete": false, "attempts": 3}')
+    cache = None
+    fetcher = UnifiedFetcher(chain, db, Config(timezone='UTC'))
     first = fetcher.get_daily_snapshot()
     assert first.generation['complete'] is False
-    assert first.total_picks() == 0
-    assert not db.has_picks_for_date(now.date().isoformat())
+    assert first.top_picks
+    assert db.has_picks_for_date(now.date().isoformat())
     fetcher.get_daily_snapshot()
     assert chain.collect.call_count == 1
-    chain.last_report = {'football': {'status': 'complete'}}
-    clock[0] += timedelta(minutes=16)
-    cache.delete(cache.daily_key(now.date()))  # simulate TTL expiry without sleeping
-    recovered = fetcher.get_daily_snapshot()
-    assert recovered.top_picks
-    assert recovered.generation['complete']
-    assert chain.collect.call_count == 2
-    restored = DailySnapshot.from_dict(recovered.to_dict())
-    assert restored.top_picks[0].sport == 'football'
-    assert restored.generation == recovered.generation
-
-
-def test_partial_retry_budget_survives_reinitialization(db, monkeypatch):
-    monkeypatch.setattr(daily_picks, 'score_events', lambda *args: [])
-    chain = Mock()
-    chain.collect.return_value = []
-    chain.last_report = {'a': {'status': 'failed'}}
-    for i in range(5):
-        result = daily_picks.build_picks(chain, db, Config(timezone='UTC'), dt() + timedelta(minutes=16*i))
-        assert not result.complete
-    assert chain.collect.call_count == 3
+    from predbot.bot.pagination import render_page
+    text, _ = render_page(first, 'top', 0, 5, 'UTC')
+    assert 'temporarily incomplete' not in text
 
 
 def test_sgo_probes_each_league_and_reuses_spare_allowance(budget):
@@ -188,4 +170,4 @@ def test_partial_snapshot_is_not_presented_as_quality_rejection():
     from predbot.bot.pagination import render_page
     snapshot = DailySnapshot(date='2030-06-01', generation={'complete': False})
     text, _ = render_page(snapshot, 'top', 0, 5, 'UTC')
-    assert 'incomplete' in text
+    assert 'temporarily incomplete' not in text

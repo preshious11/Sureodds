@@ -45,8 +45,8 @@ def test_apif_quota_error_marks_exhausted_and_short_circuits(db):
                                                 "for the day, Go to https://dashboard.api-football.com"}})
     p = apif(http, db)
 
-    with pytest.raises(ProviderError):
-        p.fetch_events(START, END)
+    assert p.fetch_events(START, END) == []
+    assert not p.last_fetch_complete
 
     b = Budget(db)
     assert b.is_exhausted("api_football")

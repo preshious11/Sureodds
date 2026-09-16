@@ -9,7 +9,6 @@ from predbot.bot.callbacks import (handle_callback, handle_start, menu_markup,
 from predbot.bot.commands import CommandLoop
 from predbot.bot.pagination import view_button_label
 from predbot.cache.fetcher import UnifiedFetcher
-from predbot.cache.manager import CacheManager
 from predbot.cache.models import (DailySnapshot, PickRecord, StatsSummary, VIEW_DAILY,
                                   VIEW_STATS, VIEW_TOP)
 from predbot.config import Config
@@ -215,9 +214,10 @@ def test_help_lists_every_advertised_command(db):
 # ---------------------------------------------------------- one view, two doors
 def test_button_and_command_render_the_same_card(db):
     """The /top button and typed /top render byte-identical text and keyboard."""
-    cache = CacheManager()
-    cache.set(cache.daily_key(), _snapshot().to_dict(), ttl_seconds=60)
-    fetcher = UnifiedFetcher(FakeChain(), db, Config(), cache)
+    cache = None
+    fetcher = UnifiedFetcher(FakeChain(), db, Config())
+    from tests.test_cache_pagination import _seed
+    _seed(fetcher, _snapshot())
     tg = FakeTG()
 
     assert callbacks.handle_command("/top", "42", service=fetcher, tg=tg, db=db,
@@ -230,9 +230,10 @@ def test_button_and_command_render_the_same_card(db):
 
 
 def test_page_callbacks_still_work_after_router_change(db):
-    cache = CacheManager()
-    cache.set(cache.daily_key(), _snapshot().to_dict(), ttl_seconds=60)
-    fetcher = UnifiedFetcher(FakeChain(), db, Config(), cache)
+    cache = None
+    fetcher = UnifiedFetcher(FakeChain(), db, Config())
+    from tests.test_cache_pagination import _seed
+    _seed(fetcher, _snapshot())
     tg = FakeTG()
 
     handle_callback(_cb("pg|top|0"), service=fetcher, tg=tg, db=db, cfg=Config())
