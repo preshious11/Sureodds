@@ -205,6 +205,15 @@ Run `python cli.py budget` any time to see where you stand.
 
 ## Daily cache & zero-API pagination
 
+`/top` and the Top Picks button show the top ticket (target approximately 2.00).
+`/daily` and the Daily Picks button show the complete daily ticket: top selections
+plus the additional daily selections, which the picker sizes toward 10–20 odds.
+Commands and buttons share the same renderer. Each prediction shows its sport
+icon, fixture, outcome, confidence, subscriber-local kickoff time and odds.
+The footer multiplies all odds in the selected ticket, across every page, and
+displays two decimal places. The saved `/timezone` preference applies to both
+commands and buttons; the configured timezone is the fallback.
+
 Interactive Telegram reads never touch the provider APIs:
 
 - The whole day's data (top picks, daily picks, stats) is normalised into one

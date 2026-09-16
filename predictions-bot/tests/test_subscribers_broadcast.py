@@ -113,10 +113,10 @@ def test_deliver_picks_reaches_all_subscribers_once(db):
     assert sent == 2
     assert [s["chat_id"] for s in tg.sends] == ["42", "77"]
     card = tg.sends[0]["text"]
-    assert card.startswith("📋 Daily Picks for Today 2030-06-01")
-    assert card.count("Confidence level:") == 4        # 1 top + 3 daily picks
-    assert card.count("Football") == 8                 # sport + league line per pick
-    assert "Combined Odds:" in card
+    assert card.startswith("<b>Today's</b> predictions—— <b>2030-06-01</b>")
+    assert card.count("Confidence:") == 4        # 1 top + 3 daily picks
+    assert card.count("Football") == 4                 # one sport line per pick, no league
+    assert "Combined odds:" in card
 
     # same day again (e.g. a restart): deliveries are de-duplicated per user
     assert broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot, now=now) == 0
@@ -240,7 +240,7 @@ def test_page_callbacks_still_work_after_router_change(db):
     handle_callback(_cb("pg|top|0"), service=fetcher, tg=tg, db=db, cfg=Config())
 
     assert len(tg.edits) == 1
-    assert "Top predictions for today" in tg.edits[0]["text"]
+    assert "<b>Top</b> predictions" in tg.edits[0]["text"]
     assert [b["text"] for b in tg.edits[0]["reply_markup"]["inline_keyboard"][-1]] == \
         ["🏆 /top", "📋 /daily", "📊 /stats"]
 

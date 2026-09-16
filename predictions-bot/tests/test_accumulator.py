@@ -64,7 +64,7 @@ def test_empty_pool_returns_empty_sections_and_placeholder_card():
     assert ps.top == [] and ps.daily == []
     card = picks_message([], [], DAY, "UTC", None)
     assert "No selection cleared the quality bar today." in card
-    assert "Combined Odds" not in card
+    assert "Combined odds" not in card
 
 
 # -------------------------------------------------- duplicate handling
@@ -134,4 +134,5 @@ def test_total_counts_are_reported_per_section():
     ps = select(pool, cfg(), now)
     assert len(ps.top) + len(ps.daily) == len(ps.all())
     card = picks_message(ps.top, ps.daily, DAY, "UTC", None)
-    assert card.count("\nOdds:") == len(ps.all())             # one odds line per pick
+    assert card.count("\nConfidence:") == len(ps.all())
+    assert card.count("\n1.45\n") == len(ps.all())

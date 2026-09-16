@@ -10,8 +10,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from predbot.bot.format import combined_odds, stats_message
-from predbot.bot.telegram import esc
+from predbot.bot.format import PickLine, pick_lines, picks_card, sport_name, stats_message
 from predbot.cache.models import (DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STATS,
                                   VIEW_TOP)
 from predbot.util.timeutil import parse_iso, to_local, utcnow
@@ -86,21 +85,12 @@ def _kickoff_hhmm(pick: PickRecord, tz: str) -> str:
 
 
 def render_pick(pick: PickRecord, tz: str) -> str:
-    sport = pick.sport if pick.sport != "other" else "Other"
-    sport_label = sport.replace("_", " ").title()
-    league = pick.league or sport_label
-    fixture = f"{esc(pick.home)} vs {esc(pick.away)}"
-    outcome = esc(pick.label)
-    confidence = f"<b>{round(pick.prob * 100)}%</b>"
-    time_wat = _kickoff_hhmm(pick, tz)
-    odd = f"{pick.price:.2f}"
+    return "\n".join(pick_lines(_pick_line(pick, tz)))
 
-    return (f"{sport_label}\n"
-            f"{league}\n"
-            f"{fixture}\n"
-            f"{outcome}\n"
-            f"Confidence level: {confidence} | {time_wat}\n"
-            f"{odd}")
+
+def _pick_line(pick: PickRecord, tz: str) -> PickLine:
+    return PickLine(sport_name(pick.sport), f"{pick.home} vs {pick.away}",
+                    pick.label, pick.league, pick.prob, _kickoff_hhmm(pick, tz), pick.price)
 
 
 def build_keyboard(view: str, page: int, pages: int) -> Dict:
@@ -124,28 +114,14 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
     page = clamp_page(page, len(items), size)
     chunk = slice_page(items, page, size)
 
-    if view == VIEW_TOP:
-        heading = "Top predictions for today–– "
-    else:
-        heading = "Daily picks for today–– "
-    lines = [f"<b>{heading}{snapshot.date}</b>", ""]
-
-    if not chunk:
-        lines.append("No picks available.")
-    else:
-        for p in chunk:
-            lines.append(render_pick(p, tz))
-            lines.append("")
-        try:
-            total_odds = combined_odds([p.price for p in items])
-            lines.append(f"<b>Total odds: {total_odds:.2f}</b>")
-        except ValueError:
-            pass
+    text = picks_card([_pick_line(p, tz) for p in chunk], snapshot.date,
+                      heading="Top" if view == VIEW_TOP else "Today's",
+                      total_prices=[p.price for p in items])
 
     if pages > 1:
-        lines.append(f"<i>Page {page + 1}/{pages}</i>")
+        text += f"\n<i>Page {page + 1}/{pages}</i>"
 
-    return "\n".join(lines), build_keyboard(view, page, pages)
+    return text, build_keyboard(view, page, pages)
 
 
 def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC",
