@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS subscribers (
     chat_id TEXT PRIMARY KEY,            -- DM chat with the user
     username TEXT,
     first_name TEXT,
-    timezone TEXT,                       -- IANA timezone (e.g. "Africa/Lagos", "America/New_York")
+    timezone TEXT,                       -- Auto-detected timezone (IANA format)
     subscribed_at TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1
 );
