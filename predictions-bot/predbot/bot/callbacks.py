@@ -76,12 +76,12 @@ def menu_markup() -> Dict[str, Any]:
 
 
 def handle_start(db: Database, tg: Telegram, chat_id: str, user: Optional[Dict[str, Any]]) -> None:
-    """/start: show the menu and detect user timezone."""
+    """/start: auto-subscribe user and auto-detect timezone."""
     user = user or {}
     first_name = str(user.get("first_name") or "there")
 
-    user_tz = _detect_user_timezone(user)
     db.subscriber_add(chat_id, str(user.get("username") or ""), first_name)
+    user_tz = _detect_user_timezone(user)
     if user_tz:
         db.set_user_timezone(chat_id, user_tz)
 
