@@ -41,7 +41,14 @@ def main() -> None:
     def job_recap():
         job_settle()               # make sure yesterday is graded first
         text = recap.run(db, cfg, tg)                # channel mirror (optional)
-        broadcast.deliver_recap(db, cfg, tg, text)   # DM yesterday's results to subscribers
+        if text:
+            db.set_kv("recap_text", text)            # cache recap for broadcast job
+
+    def job_broadcast_recap():
+        """Send recap to each subscriber after last fixture ends in their timezone."""
+        text = db.get_kv("recap_text")
+        if text:
+            broadcast.deliver_recap(db, cfg, tg, text)
 
     def job_picks():
         daily_picks.run(chain, db, cfg, tg)          # channel mirror (optional)
@@ -60,7 +67,8 @@ def main() -> None:
     jobs = [
         DailyJob("recap", cfg.recap_time, cfg.timezone, job_recap),
         DailyJob("picks", cfg.post_time, cfg.timezone, job_picks),
-        IntervalJob("broadcast_picks", 1, job_broadcast_picks),  # Check every minute
+        IntervalJob("broadcast_picks", 1, job_broadcast_picks),  # Check every minute for 9:30 AM
+        IntervalJob("broadcast_recap", 5, job_broadcast_recap),  # Check every 5 min for fixture end
         DynamicJob("settle", cfg.timezone, compute_settle_deadline, job_settle),
     ]
 
