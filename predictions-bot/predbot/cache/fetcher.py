@@ -38,6 +38,14 @@ LOCK_WAIT_SECONDS = 60.0    # how long a caller waits for the current builder
 CACHE_POLL_SECONDS = 0.5
 
 
+def _safe_date(value: str) -> date:
+    """``"2026-09-16"`` -> date; falls back to the current UTC day."""
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return utc_day()
+
+
 class UnifiedFetcher:
     """Cache-first facade over the provider chain + pricing model + picker."""
 
@@ -87,6 +95,21 @@ class UnifiedFetcher:
         log.info("cache: daily snapshot written (%d top, %d daily) from db",
                  len(snapshot.top_picks), len(snapshot.daily_picks))
         return True
+
+    def published_snapshot(self) -> Optional[DailySnapshot]:
+        """The newest already-published card - the subscriber broadcast's only read.
+
+        Zero external calls: the picks are read from the SQLite store, so
+        per-zone delivery never triggers an API batch.  Returns None until the
+        day's picks have been published.
+        """
+        date_str = self.db.latest_pick_date()
+        if not date_str:
+            return None
+        rows = self.db.picks_for_date(date_str)
+        if not rows:
+            return None
+        return self._snapshot_from_rows(rows, _safe_date(date_str), origin="db")
 
     # ------------------------------------------------------------------ flow
     def _build_and_store(self, day: date, key: str) -> DailySnapshot:

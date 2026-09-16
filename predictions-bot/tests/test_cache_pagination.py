@@ -246,10 +246,31 @@ def test_render_page_structure_and_keyboard():
     assert "◀️" in buttons and "▶️" not in buttons
 
 
-def test_render_stats_shows_the_sureodds_yesterday_card():
+def test_render_stats_matches_the_stats_command(db):
+    """📊 The /stats button and the /stats command must send the exact same card."""
+    from predbot.bot.format import stats_message
+    from predbot.jobs import stats as stats_mod
+    from predbot.util.timeutil import to_local
+
+    now = datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)
+    expected = stats_message(stats_mod.compute(db, to_local(now, "UTC")))
+
+    text, markup = pagination.render_stats(make_snapshot(), db=db, tz="UTC", now=now)
+
+    assert text == expected                     # one renderer, no drift
+    assert "Last 7 days:" in text and "All time:" in text
+    assert markup["inline_keyboard"][-1][0]["text"] == "🏆 /top"
+
+
+def test_render_stats_without_db_falls_back_to_the_snapshot():
     text, markup = pagination.render_stats(make_snapshot())
-    assert "SUREODDS — YESTERDAY" in text and "LAST 7 DAYS" in text
+    assert "Last 7 days: 3W-1L" in text and "ROI +12.5%" in text
     assert markup["inline_keyboard"]
+
+
+def test_render_stats_reports_an_empty_snapshot_plainly():
+    text, _ = pagination.render_stats(DailySnapshot(date="2030-06-01"))
+    assert "No settled picks yet" in text
 
 
 # ------------------------------------------------------------- callback handler

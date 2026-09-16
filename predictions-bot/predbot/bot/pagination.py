@@ -7,10 +7,10 @@ edits the existing Telegram message via callback buttons.
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from predbot.bot.format import SPORT_ICON, combined_odds, recap_message
+from predbot.bot.format import combined_odds, stats_message
 from predbot.bot.telegram import esc
 from predbot.cache.models import (DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STATS,
                                   VIEW_TOP)
@@ -23,6 +23,20 @@ CALLBACK_PREFIX = "pg"
 CALLBACK_NOOP = "noop"
 
 VIEW_TITLES = {VIEW_TOP: "🏆 TOP PICKS", VIEW_DAILY: "📋 DAILY PICKS", VIEW_STATS: "📊 STATS"}
+
+#: The three interactive views: the emoji, the command that opens each one and a
+#: one-line description.  Buttons are always labelled with their command, so a
+#: tap and a type are visibly the same action - one definition shared by the
+#: /start menu, the welcome screen, /help and the pagination switch row.
+VIEW_ICON = {VIEW_TOP: "🏆", VIEW_DAILY: "📋", VIEW_STATS: "📊"}
+VIEW_COMMAND = {VIEW_TOP: "/top", VIEW_DAILY: "/daily", VIEW_STATS: "/stats"}
+VIEW_DESC = {VIEW_TOP: "strongest picks", VIEW_DAILY: "all predictions today",
+             VIEW_STATS: "quick summary"}
+
+
+def view_button_label(view: str) -> str:
+    """Inline-button label for a view: its emoji plus the command it runs."""
+    return f"{VIEW_ICON[view]} {VIEW_COMMAND[view]}"
 
 
 # --------------------------------------------------------------- payload codec
@@ -98,11 +112,8 @@ def build_keyboard(view: str, page: int, pages: int) -> Dict:
         row.append({"text": f"{page + 1}/{pages}", "callback_data": CALLBACK_NOOP})
         if page < pages - 1:
             row.append({"text": "▶️", "callback_data": encode_callback(view, page + 1)})
-    switch = [
-        {"text": "🏆 Top", "callback_data": encode_callback(VIEW_TOP, 0)},
-        {"text": "📋 Daily", "callback_data": encode_callback(VIEW_DAILY, 0)},
-        {"text": "📊 Stats", "callback_data": encode_callback(VIEW_STATS, 0)},
-    ]
+    switch = [{"text": view_button_label(v), "callback_data": encode_callback(v, 0)}
+              for v in (VIEW_TOP, VIEW_DAILY, VIEW_STATS)]
     return {"inline_keyboard": ([row] if row else []) + [switch]}
 
 
@@ -137,30 +148,29 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
     return "\n".join(lines), build_keyboard(view, page, pages)
 
 
-def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC") -> Tuple[str, Dict]:
-    """The 📊 Stats button: the ``SUREODDS — YESTERDAY`` summary card.
+def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC",
+                 now: Optional[datetime] = None) -> Tuple[str, Dict]:
+    """The 📊 /stats card - the rolling record the /stats command sends.
 
-    With a Database handle the card is computed fresh (wins/losses/void, hit
-    rate, per-sport split, 7-day form, best pick).  Without one it falls back
-    to the cached snapshot's stats (same layout, no per-sport rows).
+    One renderer for the command and the button: with a Database handle the
+    record is computed fresh (7/30-day and all-time W-L, ROI, best picks,
+    calibration, streak), otherwise it falls back to the cached snapshot's
+    stats.  The richer ``SUREODDS — YESTERDAY`` card stays a broadcast (the
+    scheduled recap) instead of becoming a second /stats implementation.
     """
+    raw = None
     if db is not None:
         try:
             from predbot.jobs import stats as stats_mod
 
-            local = to_local(utcnow(), tz)
-            st = stats_mod.compute(db, local)
-            yesterday = (local - timedelta(days=1)).strftime("%Y-%m-%d")
-            rows = stats_mod.rows_for_recap(db, yesterday)
-            text = recap_message("YESTERDAY", stats_mod.by_sport(rows), st)
-            return text, build_keyboard(VIEW_STATS, 0, 1)
+            raw = stats_mod.compute(db, to_local(now or utcnow(), tz))
         except Exception as e:  # noqa: BLE001
             log.warning("stats view DB render failed, using snapshot: %s", e)
-    if snapshot.stats is None:
-        text = "📊 SUREODDS — YESTERDAY\nNo settled picks yet."
-    else:
-        text = recap_message("YESTERDAY", [], snapshot.stats.to_raw())
-    return text, build_keyboard(VIEW_STATS, 0, 1)
+    if raw is None:
+        if snapshot.stats is None:
+            return "📊 STATS\nNo settled picks yet.", build_keyboard(VIEW_STATS, 0, 1)
+        raw = snapshot.stats.to_raw()
+    return stats_message(raw), build_keyboard(VIEW_STATS, 0, 1)
 
 
 def render_view(snapshot: DailySnapshot, view: str, page: int, size: int,

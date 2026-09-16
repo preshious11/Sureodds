@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS subscribers (
     chat_id TEXT PRIMARY KEY,            -- DM chat with the user
     username TEXT,
     first_name TEXT,
+    timezone TEXT NOT NULL DEFAULT '',   -- IANA zone for local 09:30 delivery ('' = config TIMEZONE)
     subscribed_at TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1
 );
@@ -118,6 +119,14 @@ class Database:
         self.conn.execute("PRAGMA synchronous=NORMAL")
         with self._lock:
             self.conn.executescript(SCHEMA)
+            self.conn.commit()
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Additive migrations for databases created by older versions."""
+        cols = {str(r["name"]) for r in self.query("PRAGMA table_info(subscribers)")}
+        if "timezone" not in cols:                      # per-subscriber local delivery zone
+            self.conn.execute("ALTER TABLE subscribers ADD COLUMN timezone TEXT NOT NULL DEFAULT ''")
             self.conn.commit()
 
     # ---- generic ----
@@ -164,6 +173,11 @@ class Database:
 
     def picks_for_date(self, pick_date: str) -> List[sqlite3.Row]:
         return self.query("SELECT * FROM picks WHERE pick_date=? ORDER BY tier DESC, rank ASC", (pick_date,))
+
+    def latest_pick_date(self) -> str:
+        """The most recent pick_date in the store ('' when nothing is published)."""
+        rows = self.query("SELECT MAX(pick_date) AS d FROM picks")
+        return str(rows[0]["d"] or "") if rows and rows[0]["d"] else ""
 
     def has_picks_for_date(self, pick_date: str) -> bool:
         return bool(self.query("SELECT 1 FROM picks WHERE pick_date=? LIMIT 1", (pick_date,)))
@@ -229,20 +243,38 @@ class Database:
                      (kind, post_date, message_id, _now()))
 
     # ---- subscribers / deliveries ----
-    def subscriber_add(self, chat_id: str, username: str = "", first_name: str = "") -> None:
-        """Register (or re-activate) a subscriber; non-empty names are kept."""
+    def subscriber_add(self, chat_id: str, username: str = "", first_name: str = "",
+                       timezone: str = "") -> None:
+        """Register (or re-activate) a subscriber; non-empty fields are kept/overwritten."""
         self.execute(
-            "INSERT INTO subscribers(chat_id,username,first_name,subscribed_at,active) "
-            "VALUES(?,?,?,?,1) ON CONFLICT(chat_id) DO UPDATE SET active=1, "
+            "INSERT INTO subscribers(chat_id,username,first_name,timezone,subscribed_at,active) "
+            "VALUES(?,?,?,?,?,1) ON CONFLICT(chat_id) DO UPDATE SET active=1, "
             "username=CASE WHEN excluded.username!='' THEN excluded.username ELSE subscribers.username END, "
-            "first_name=CASE WHEN excluded.first_name!='' THEN excluded.first_name ELSE subscribers.first_name END",
-            (str(chat_id), str(username or ""), str(first_name or ""), _now()))
+            "first_name=CASE WHEN excluded.first_name!='' THEN excluded.first_name ELSE subscribers.first_name END, "
+            "timezone=CASE WHEN excluded.timezone!='' THEN excluded.timezone ELSE subscribers.timezone END",
+            (str(chat_id), str(username or ""), str(first_name or ""), str(timezone or ""), _now()))
 
     def subscriber_remove(self, chat_id: str) -> None:
         self.execute("UPDATE subscribers SET active=0 WHERE chat_id=?", (str(chat_id),))
 
     def subscribers_active(self) -> List[sqlite3.Row]:
         return self.query("SELECT * FROM subscribers WHERE active=1 ORDER BY subscribed_at")
+
+    def subscriber_timezone(self, chat_id: str) -> str:
+        """The subscriber's stored IANA zone ('' when unset)."""
+        rows = self.query("SELECT timezone FROM subscribers WHERE chat_id=?", (str(chat_id),))
+        return str(rows[0]["timezone"] or "") if rows else ""
+
+    def subscriber_set_timezone(self, chat_id: str, timezone: str) -> None:
+        """Store the IANA zone the subscriber's 09:30 delivery is measured in.
+
+        Creates the subscriber when the chat is unknown (a /timezone before
+        /start), so the setting is never silently dropped.
+        """
+        self.execute(
+            "INSERT INTO subscribers(chat_id,timezone,subscribed_at,active) VALUES(?,?,?,1) "
+            "ON CONFLICT(chat_id) DO UPDATE SET timezone=excluded.timezone",
+            (str(chat_id), str(timezone or ""), _now()))
 
     def delivery_done(self, kind: str, post_date: str, chat_id: str) -> bool:
         return bool(self.query("SELECT 1 FROM deliveries WHERE kind=? AND post_date=? AND chat_id=?",
