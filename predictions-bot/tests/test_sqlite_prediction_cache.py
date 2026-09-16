@@ -356,3 +356,63 @@ def test_scheduled_publication_uses_same_snapshot(db, monkeypatch, clock):
     b.fetch_events.assert_called_once()
     daily_picks.run(app.chain, db, app.cfg, tg, service=app)
     tg.send.assert_called_once()
+
+
+def _diagnose(db, monkeypatch, clock):
+    import requests
+    import diagnose_prediction_cache as diag
+    monkeypatch.setattr(requests.Session, 'request',
+                        Mock(side_effect=AssertionError('diagnostic must not call any API')))
+    monkeypatch.setattr(diag.timeutil, 'utcnow', lambda: clock[0])
+    # Only stdlib sqlite3 + config/time helpers: no provider, fetcher or HTTP modules loaded.
+    assert not any(name in diag.__dict__ for name in ('requests', 'build_providers', 'UnifiedFetcher', 'Http'))
+    return diag.main(Config(db_path=db.path, timezone='Africa/Lagos'))
+
+
+def test_diagnostic_reports_complete_cache_without_api_calls(db, monkeypatch, clock, capsys):
+    app, f, b = service(db, monkeypatch)
+    snapshot = app.get_daily_snapshot()
+    f.fetch_events.reset_mock(); b.fetch_events.reset_mock()
+    info = _diagnose(db, monkeypatch, clock)
+    out = capsys.readouterr().out
+    f.fetch_events.assert_not_called(); b.fetch_events.assert_not_called()
+    assert info['backend'] == 'sqlite' and info['today'] == 'HIT' and info['status'] == 'COMPLETE'
+    assert info['prediction_table'] == 'prediction_cache' and info['provider_table'] == 'provider_cache'
+    assert info['top_picks_count'] == len(snapshot.top_picks)
+    assert info['daily_picks_count'] == len(snapshot.daily_picks)
+    assert info['football_count'] + info['baseball_count'] == snapshot.total_picks()
+    assert info['retry_after'] is None and info['cache_version'] == SCHEMA_VERSION
+    for label in ('Prediction cache backend=sqlite', 'Database path:', 'Status: COMPLETE', 'Sport status:',
+                  'Football count:', 'Baseball count:', 'Top Picks count:', 'Daily Picks count:',
+                  'Generated time:', 'Updated time:', f'Cache version: {SCHEMA_VERSION}'):
+        assert label in out
+    assert 'Retry-after' not in out
+
+
+def test_diagnostic_reports_partial_cache_with_retry_after(db, monkeypatch, clock, capsys):
+    app, f, b = service(db, monkeypatch, football_error=True)
+    assert app.get_daily_snapshot().status == 'PARTIAL'
+    info = _diagnose(db, monkeypatch, clock)
+    out = capsys.readouterr().out
+    assert info['status'] == 'PARTIAL' and info['football_count'] == 0 and info['baseball_count'] > 0
+    assert parse_iso(info['retry_after']) is not None
+    assert 'Status: PARTIAL' in out and f"Retry-after: {info['retry_after']}" in out
+
+
+def test_diagnostic_reports_missing_database(tmp_path, capsys):
+    import diagnose_prediction_cache as diag
+    info = diag.main(Config(db_path=str(tmp_path / 'absent.db')))
+    assert info['db_exists'] is False and info['today'] is None
+    assert 'No database exists here' in capsys.readouterr().out
+
+
+def test_runtime_source_has_no_redis_dependency():
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    files = list((root / 'predbot').rglob('*.py')) + [root / 'main.py', root / 'cli.py',
+                                                       root / 'diagnose_prediction_cache.py']
+    offenders = [str(f) for f in files if f.exists()
+                 and re.search(r'\bimport redis\b|\bfrom redis\b|redis_url|REDIS_URL', f.read_text(encoding='utf-8'))]
+    assert offenders == []
+    assert 'redis' not in (root / 'requirements.txt').read_text(encoding='utf-8').lower()
