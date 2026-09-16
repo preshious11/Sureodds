@@ -25,7 +25,7 @@ from predbot.cache.fetcher import UnifiedFetcher
 from predbot.cache.models import VIEW_DAILY, VIEW_STATS, VIEW_TOP
 from predbot.config import Config
 from predbot.storage.db import Database
-from predbot.util.timeutil import is_valid_tz
+from predbot.util.timeutil import resolve_timezone
 
 log = logging.getLogger(__name__)
 
@@ -106,9 +106,8 @@ def open_view(view: str, *, service: UnifiedFetcher, tg: Telegram, cfg: Config,
     one; both receive exactly the same text and keyboard.
     """
     snapshot = service.get_daily_snapshot()          # cache-first read
-    timezone = db.subscriber_timezone(chat_id) if db is not None else ""
-    if not is_valid_tz(timezone):
-        timezone = cfg.timezone
+    timezone = resolve_timezone(db.subscriber_timezone(chat_id) if db is not None else "",
+                                cfg.timezone)
     text, markup = pagination.render_view(snapshot, view, page, page_size,
                                           timezone, db=db)
     if message_id:

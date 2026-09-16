@@ -131,22 +131,20 @@ def test_deliver_picks_skips_empty_snapshot(db):
                                    lambda: empty, now=now) == 0
 
 
-def test_deliver_picks_honours_each_subscribers_own_clock(db):
-    """09:30 means 09:30 locally: one zone gets the card while the other waits."""
-    db.subscriber_add("42", timezone="Asia/Tokyo")         # 18:30 local at 09:30 UTC
-    db.subscriber_add("77", timezone="America/New_York")   # 05:30 local at 09:30 UTC
+def test_all_subscribers_receive_at_same_nigerian_instant(db):
+    db.subscriber_add("42", timezone="Asia/Tokyo")
+    db.subscriber_add("77", timezone="America/New_York")
+    db.subscriber_add("88", timezone="Africa/Lagos")
     tg = FakeTG()
-    cfg = Config(timezone="UTC")
-    now = datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)
-
-    assert broadcast.deliver_picks(db, cfg, tg, _snapshot, now=now) == 1
-    assert [s["chat_id"] for s in tg.sends] == ["42"]
-    assert "03:00 AM JST" in tg.sends[0]["text"]           # kickoffs in the reader's zone
-
-    ny_morning = datetime(2030, 6, 1, 13, 30, tzinfo=timezone.utc)   # 09:30 in New York
-    assert broadcast.deliver_picks(db, cfg, tg, _snapshot, now=ny_morning) == 1
-    assert [s["chat_id"] for s in tg.sends] == ["42", "77"]
-    assert "02:00 PM EDT" in tg.sends[1]["text"]           # June -> daylight time
+    cfg = Config(timezone="Africa/Lagos", post_time="09:00")
+    before = datetime(2030, 6, 1, 7, 59, tzinfo=timezone.utc)
+    due = datetime(2030, 6, 1, 8, 0, tzinfo=timezone.utc)
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot, now=before) == 0
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot, now=due) == 3
+    assert "03:00 AM JST" in tg.sends[0]["text"]
+    assert "02:00 PM EDT" in tg.sends[1]["text"]
+    assert "07:00 PM WAT" in tg.sends[2]["text"]
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot, now=due) == 0
 
 
 def test_deliver_picks_uses_the_config_timezone_when_unset(db):

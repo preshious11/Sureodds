@@ -269,3 +269,12 @@ predbot/
   storage/db.py         SQLite persistence
 tests/                  pytest suite + fixtures
 ```
+
+### Shared daily broadcast time
+
+The default is `TIMEZONE=Africa/Lagos` and `POST_TIME=09:00`. All subscribers
+receive the same scheduled broadcast at 09:00 WAT (08:00 UTC), subject to job
+completion and delivery retries. Their saved timezone changes displayed kickoff
+times and the local schedule shown by `/timezone`, not the delivery instant.
+For New York this is 03:00 EST or 04:00 EDT. Set both deployment variables and
+redeploy; existing environment values override code defaults.

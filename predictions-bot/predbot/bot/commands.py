@@ -21,7 +21,7 @@ from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
 from predbot.jobs import stats as stats_mod
 from predbot.storage.db import Database
-from predbot.util.timeutil import is_valid_tz, to_local, utcnow
+from predbot.util.timeutil import is_valid_tz, resolve_timezone, to_local, utcnow, parse_hhmm
 
 log = logging.getLogger(__name__)
 
@@ -168,7 +168,7 @@ class CommandLoop(threading.Thread):
                      if user_id in self.cfg.telegram_admin_ids else "")
             return ("👋 <b>Commands</b>\n\n" + callbacks.commands_text() + "\n\n"
                     "🕒 /timezone — your delivery zone\n"
-                    f"Picks arrive at <b>{esc(self.cfg.post_time)}</b> your local time.\n"
+                    f"{self._schedule_text(resolve_timezone(self.db.subscriber_timezone(chat_id or user_id), self.cfg.timezone))}\n"
                     "🛑 /stop — unsubscribe" + extra)
         if cmd == "/timezone":
             return self._timezone(chat_id or user_id, args)
@@ -187,10 +187,10 @@ class CommandLoop(threading.Thread):
 
     def _timezone(self, chat_id: str, args: List[str]) -> str:
         """Show or set the IANA zone this subscriber's daily picks are timed in."""
-        current = self.db.subscriber_timezone(chat_id) or self.cfg.timezone
+        current = resolve_timezone(self.db.subscriber_timezone(chat_id), self.cfg.timezone)
         if not args:
             return (f"🕒 Delivery zone: <b>{esc(current)}</b>\n"
-                    f"The daily picks arrive at {esc(self.cfg.post_time)} in that zone.\n"
+                    f"{self._schedule_text(current)}\n"
                     "Change it with /timezone Africa/Lagos — an IANA name such as "
                     "Africa/Lagos, Europe/London, America/New_York or Asia/Tokyo.")
         requested = args[0].strip()
@@ -201,4 +201,14 @@ class CommandLoop(threading.Thread):
         now_local = to_local(utcnow(), requested)
         return (f"✅ Delivery zone set to <b>{esc(requested)}</b> — "
                 f"your local time is now {now_local.strftime('%H:%M')}.\n"
-                f"Picks arrive at {esc(self.cfg.post_time)} local.")
+                + self._schedule_text(requested))
+
+    def _schedule_text(self, zone: str) -> str:
+        now = utcnow()
+        hour, minute = parse_hhmm(self.cfg.post_time, "09:00")
+        scheduled = to_local(now, self.cfg.timezone).replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if scheduled <= now:
+            scheduled += timedelta(days=1)
+        local = to_local(scheduled, zone)
+        return (f"Daily broadcast: {scheduled.strftime('%I:%M %p %Z')}; "
+                f"next scheduled time in your zone: {local.strftime('%Y-%m-%d %I:%M %p %Z')}.")

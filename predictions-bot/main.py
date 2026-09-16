@@ -18,9 +18,7 @@ from predbot.util.timeutil import to_local, utcnow
 
 log = logging.getLogger("main")
 
-#: How often the per-subscriber delivery pass runs.  Each pass is SQLite-only
-#: (never a provider call) and idempotent, so every subscriber's own POST_TIME
-#: local clock is served within this window of it arriving.
+#: Retry subscriber delivery after the shared daily publication time.
 DELIVERY_POLL_MINUTES = 5
 
 
@@ -50,15 +48,13 @@ def main() -> None:
         broadcast.deliver_recap(db, cfg, tg, text)   # DM yesterday's results to subscribers
 
     def job_deliver():
-        # Per-subscriber zones: whoever's own clock is past POST_TIME receives the
-        # newest published card, once per card (``deliveries`` dedupe).  The card
-        # is read from SQLite, so polling never spends an API call.
+        # One broadcast instant; kickoff times are localized per subscriber.
         broadcast.deliver_picks(db, cfg, tg, service.published_snapshot)
 
     def job_picks():
         daily_picks.run(chain, db, cfg, tg)          # channel mirror (optional)
         service.refresh_cache_from_db()  # write-once-per-day: feed the interactive cache
-        job_deliver()                    # serve the subscribers already past their local POST_TIME
+        job_deliver()                    # serve all subscribers after the shared POST_TIME
 
     def compute_settle_deadline(now):
         today = to_local(now, cfg.timezone).strftime("%Y-%m-%d")

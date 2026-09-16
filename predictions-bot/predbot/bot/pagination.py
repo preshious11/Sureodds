@@ -10,7 +10,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from predbot.bot.format import PickLine, pick_lines, picks_card, sport_name, stats_message
+from predbot.bot.format import PickLine, kickoff_label, pick_lines, picks_card, sport_name, stats_message
 from predbot.cache.models import (DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STATS,
                                   VIEW_TOP)
 from predbot.util.timeutil import parse_iso, to_local, utcnow
@@ -76,12 +76,7 @@ def slice_page(items: List[PickRecord], page: int, size: int) -> List[PickRecord
 
 # ----------------------------------------------------------------- rendering
 def _kickoff_hhmm(pick: PickRecord, tz: str) -> str:
-    start = parse_iso(pick.kickoff_utc)
-    if not start:
-        return "--:--"
-    local = to_local(start, tz)
-    tz_abbr = local.tzname() or tz.split("/")[-1]  # fallback to last part of timezone name
-    return f"{local.strftime('%I:%M %p')} {tz_abbr}"
+    return kickoff_label(parse_iso(pick.kickoff_utc), tz)
 
 
 def render_pick(pick: PickRecord, tz: str) -> str:

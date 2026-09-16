@@ -83,10 +83,9 @@ class Config:
     model_shrink: float = field(default_factory=lambda: _float("MODEL_SHRINK_TO_MARKET", 0.80))
 
     # Schedule
-    timezone: str = field(default_factory=lambda: _env("TIMEZONE", "UTC"))
-    # POST_TIME is the *recipient's local* clock: every subscriber gets the card
-    # at this time in their own zone (subscribers.timezone, else this TIMEZONE).
-    post_time: str = field(default_factory=lambda: _env("POST_TIME", "09:30"))
+    timezone: str = field(default_factory=lambda: _env("TIMEZONE", "Africa/Lagos"))
+    # POST_TIME is in TIMEZONE; every subscriber receives the same scheduled instant.
+    post_time: str = field(default_factory=lambda: _env("POST_TIME", "09:00"))
     recap_time: str = field(default_factory=lambda: _env("RECAP_TIME", "07:45"))
     # Note: settlement now runs dynamically after all daily predictions end (latest match + sport duration + buffer)
 
