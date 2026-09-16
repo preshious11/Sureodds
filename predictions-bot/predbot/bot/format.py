@@ -16,6 +16,10 @@ SPORT_LABEL = {"football": "Football", "basketball": "Basketball", "american_foo
                "handball": "Handball", "other": "Other"}
 RESULT_ICON = {"won": "✅", "lost": "❌", "push": "↩️", "half_won": "✅½", "half_lost": "❌½",
                "void": "➖", "pending": "⏳"}
+# The two card headings. Defined once here so the broadcast card, the /top and
+# /daily commands and their inline buttons cannot drift apart again.
+HEADING_TOP = "🏆 Top Picks for Today"
+HEADING_DAILY = "📋 Daily Picks for Today"
 # Bare codes a punter should never have to decode; mapped to plain English.
 _TERSE_CODES = {"1": "{home} to win", "2": "{away} to win", "X": "Draw",
                 "1X": "{home} or Draw", "X2": "{away} or Draw", "12": "{home} or {away}",
@@ -95,11 +99,15 @@ def pick_lines(p: PickLine) -> List[str]:
 
 
 def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str] = None,
-               heading: str = "📋 Daily Picks for Today") -> str:
+               heading: str = HEADING_DAILY,
+               total_prices: Optional[Iterable[float]] = None) -> str:
     """The daily predictions post: one block per pick, then the combined odds.
 
     Top picks are listed first, then the rest of the day's selections, so the
     card reads as a single list of up to ``picks`` entries.
+
+    ``total_prices`` lets a paginated page price the WHOLE accumulator rather
+    than just the five picks visible on that page.
     """
     lines = [f"{heading} {date_label}", ""]
     if not picks:
@@ -108,7 +116,8 @@ def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str]
         lines.extend(pick_lines(p))
         lines.append("")
     if picks:
-        lines.append(f"Combined Odds: {combined_odds([p.price for p in picks]):.4f}")
+        prices = total_prices if total_prices is not None else [p.price for p in picks]
+        lines.append(f"Combined Odds: {combined_odds(prices):.4f}")
     if stats_line:
         lines.append("")
         lines.append(stats_line)

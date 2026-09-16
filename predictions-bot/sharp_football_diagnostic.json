@@ -1,0 +1,39 @@
+{
+  "all": {
+    "rows": 200,
+    "dates": {
+      "2026-09-16": 56,
+      "2026-09-18": 144
+    },
+    "markets": {
+      "conference_winner": 26,
+      "tournament_winner": 30,
+      "1st_half_moneyline": 3,
+      "2nd_half_moneyline": 3,
+      "anytime_goal_scorer": 42,
+      "both_teams_to_score": 2,
+      "double_chance": 3,
+      "draw_no_bet": 2,
+      "first_goal_scorer": 42,
+      "match_result_total_goals": 9,
+      "moneyline": 3,
+      "player_shots": 35
+    },
+    "event_count": 2,
+    "has_more": true
+  },
+  "main": {
+    "rows": 200,
+    "dates": {
+      "2026-09-18": 50,
+      "2026-09-19": 150
+    },
+    "markets": {
+      "moneyline": 24,
+      "point_spread": 73,
+      "total_goals": 103
+    },
+    "event_count": 4,
+    "has_more": true
+  }
+}

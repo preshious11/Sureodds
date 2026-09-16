@@ -1,186 +1,128 @@
-"""UnifiedFetcher: the normalization engine behind write-once-per-day reads.
-
-Execution flow for :meth:`UnifiedFetcher.get_daily_snapshot`
-    1. Cache hit for today's UTC key  -> return immediately. No external call.
-    2. Cache miss -> acquire the per-day mutex:
-         a. double-check the cache (another writer may have just filled it)
-         b. rebuild from the SQLite picks table (zero external calls) whenever
-            today's picks are already published - the normal case, because the
-            08:00 scheduler run persists them and calls refresh_cache_from_db()
-         c. otherwise run the full pipeline once (ProviderChain -> pricing
-            model -> picker), persist the picks for settlement, and normalise
-         d. write the snapshot with TTL = end of the UTC day
-    3. If the mutex is busy, wait for the writer's cache entry instead of
-       dispatching a duplicate API batch.
-"""
+"""Canonical application-day prediction snapshots persisted only in SQLite."""
 from __future__ import annotations
-
 import json
 import logging
-import os
-import threading
-import time
-from datetime import date
-from typing import List, Optional
+from datetime import timedelta
+from typing import Optional
 
-from predbot.cache.manager import CacheManager, ttl_until_end_of_utc_day, utc_day
-from predbot.cache.models import DailySnapshot, PickRecord, StatsSummary
-from predbot.config import Config
+from predbot.cache.models import DailySnapshot, PickRecord, StatsSummary, SCHEMA_VERSION
+from predbot.cache.providers import sport_states
 from predbot.jobs import daily_picks, stats as stats_mod
 from predbot.providers.chain import ProviderChain
-from predbot.storage.db import Database
-from predbot.util.timeutil import iso, to_local, utcnow
+from predbot.util.timeutil import iso, to_local, utcnow, day_bounds, parse_iso
 
 log = logging.getLogger(__name__)
 
-LOCK_TTL_SECONDS = 30.0     # a single build must finish within this window
-LOCK_WAIT_SECONDS = 60.0    # how long a caller waits for the current builder
-CACHE_POLL_SECONDS = 0.5
-
 
 class UnifiedFetcher:
-    """Cache-first facade over the provider chain + pricing model + picker."""
+    def __init__(self, chain, db, cfg):
+        self.chain, self.db, self.cfg = chain, db, cfg
+        self.api_batches = 0
+        if isinstance(chain, ProviderChain):
+            chain.db, chain.cfg = db, cfg
+        log.info('Prediction cache backend=sqlite | Database path=%s | Cache version=%s',
+                 db.path, SCHEMA_VERSION)
 
-    def __init__(self, chain: ProviderChain, db: Database, cfg: Config,
-                 cache: CacheManager) -> None:
-        self.chain = chain
-        self.db = db
-        self.cfg = cfg
-        self.cache = cache
-        self.api_batches = 0  # times the external pipeline actually ran
+    def _key(self, day):
+        return f'daily_predictions:{self.cfg.timezone}:{day}'
 
-    # ------------------------------------------------------------------ API
-    def get_daily_snapshot(self, force_refresh: bool = False) -> DailySnapshot:
-        """Today's snapshot; at most one provider batch per UTC day."""
-        day = utc_day()
-        key = self.cache.daily_key(day)
-        if not force_refresh:
-            cached = self._read_cache(key)
-            if cached is not None:
-                return cached
-
-        lock_key = self.cache.lock_key(day)
-        token = f"{os.getpid()}-{threading.get_ident()}"
-        with self.cache.lock(lock_key, token=token, ttl_seconds=LOCK_TTL_SECONDS,
-                             wait_seconds=LOCK_WAIT_SECONDS) as acquired:
-            if not acquired:
-                # Another writer owns the build; consume its cache entry.
-                waited = self._wait_for_cache(key, LOCK_WAIT_SECONDS)
-                if waited is not None:
-                    return waited
-                return self._build_and_store(day, key)
-            if not force_refresh:
-                cached = self._read_cache(key)  # double-check inside the lock
-                if cached is not None:
-                    return cached
-            return self._build_and_store(day, key)
-
-    def refresh_cache_from_db(self) -> bool:
-        """Scheduler hook after the daily publish: cache today's DB picks.
-
-        Zero external calls. Returns True when the cache was written."""
-        day = utc_day()
-        snapshot = self._snapshot_from_db(day)
-        if snapshot is None or not (snapshot.top_picks or snapshot.daily_picks):
-            return False
-        self._store(day, snapshot)
-        log.info("cache: daily snapshot written (%d top, %d daily) from db",
-                 len(snapshot.top_picks), len(snapshot.daily_picks))
-        return True
-
-    # ------------------------------------------------------------------ flow
-    def _build_and_store(self, day: date, key: str) -> DailySnapshot:
-        snapshot = self._build(day)
-        self._store(day, snapshot)
-        return snapshot
-
-    def _store(self, day: date, snapshot: DailySnapshot) -> None:
-        self.cache.set(self.cache.daily_key(day), snapshot.to_dict(),
-                       ttl_seconds=ttl_until_end_of_utc_day())
-
-    def _build(self, day: date) -> DailySnapshot:
-        snapshot = self._snapshot_from_db(day)
-        if snapshot is not None:
-            return snapshot
-        return self._snapshot_from_providers(day)
-
-    def _read_cache(self, key: str) -> Optional[DailySnapshot]:
-        raw = self.cache.get(key)
-        if raw is None:
-            return None
+    def _read(self, day, now):
+        row = self.db.get_prediction_cache(self._key(day))
+        if not row:
+            return None, None
         try:
-            return DailySnapshot.from_dict(raw)
-        except Exception:  # noqa: BLE001
-            log.exception("unreadable cache entry %s - rebuilding", key)
-            self.cache.delete(key)
-            return None
+            if (row['cache_version'] != SCHEMA_VERSION or row['local_date'] != day or
+                    row['timezone'] != self.cfg.timezone or parse_iso(row['expires_at']) <= now):
+                return None, None
+            snapshot = DailySnapshot.from_dict(json.loads(row['payload_json']))
+            if snapshot.date != day or row['status'] != snapshot.status:
+                return None, None
+            return snapshot, row
+        except (ValueError, TypeError, KeyError):
+            log.warning('Cache STALE | date=%s | invalid payload', day)
+            return None, None
 
-    def _wait_for_cache(self, key: str, timeout: float) -> Optional[DailySnapshot]:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            snapshot = self._read_cache(key)
-            if snapshot is not None:
+    def get_daily_snapshot(self, force_refresh=False):
+        now = utcnow()
+        day = to_local(now, self.cfg.timezone).date().isoformat()
+        # All service instances for the same SQLite file share this in-process lock.
+        with self.db.prediction_lock:
+            cached, row = self._read(day, now)
+            if cached is not None and not force_refresh:
+                retry = parse_iso(row['retry_after'] or '')
+                if row['status'] == 'COMPLETE' or (retry and now < retry):
+                    log.info('Cache HIT | date=%s | status=%s', day, row['status'])
+                    return cached
+            log.info('Cache %s | date=%s', 'PARTIAL' if cached else 'MISS', day)
+            try:
+                self.api_batches += 1
+                if isinstance(self.chain, ProviderChain):
+                    self.chain.force_retry = force_refresh
+                try:
+                    pickset = daily_picks.build_picks(self.chain, self.db, self.cfg, now)
+                finally:
+                    if isinstance(self.chain, ProviderChain):
+                        self.chain.force_retry = False
+                snapshot = self._snapshot_from_pickset(pickset, day)
+                # Keep usable previous selections if a catastrophic model/generator
+                # failure yields no replacement. Successful valid empties may replace.
+                if cached and cached.total_picks() and not snapshot.total_picks() and not pickset.complete:
+                    snapshot.top_picks = cached.top_picks
+                    snapshot.daily_picks = cached.daily_picks
+                with self.db.transaction():
+                    daily_picks.store_picks(pickset, self.db, day)
+                    self._store(snapshot, now)
                 return snapshot
-            time.sleep(CACHE_POLL_SECONDS)
-        return None
+            except Exception as exc:
+                log.warning('Cache refresh failed | date=%s | error=%s', day, type(exc).__name__)
+                if cached is not None:
+                    # Preserve the previous atomic snapshot, and throttle subsequent
+                    # attempts even when failure happened after provider collection.
+                    self.db.defer_prediction_retry(self._key(day), iso(now + timedelta(seconds=self.cfg.cache_retry_seconds)))
+                    return cached
+                snapshot = DailySnapshot(date=day, generated_at=iso(now), origin='sqlite',
+                                         status='PARTIAL', generation={'complete': False,
+                                         'error_type': type(exc).__name__})
+                self._store(snapshot, now)
+                return snapshot
 
+    def _store(self, snapshot, now):
+        _, midnight = day_bounds(now, self.cfg.timezone)
+        retry = iso(now + timedelta(seconds=self.cfg.cache_retry_seconds))
+        self.db.upsert_prediction_cache(dict(
+            cache_key=self._key(snapshot.date), local_date=snapshot.date, timezone=self.cfg.timezone,
+            status=snapshot.status, payload_json=json.dumps(snapshot.to_dict(), sort_keys=True, allow_nan=False),
+            sport_status_json=json.dumps(snapshot.sport_status, sort_keys=True, allow_nan=False),
+            generated_at=snapshot.generated_at, updated_at=iso(now), expires_at=iso(midnight),
+            retry_after=retry if snapshot.status == 'PARTIAL' else None, cache_version=SCHEMA_VERSION))
+        cutoff = (to_local(now, self.cfg.timezone).date() - timedelta(days=self.cfg.cache_retention_days)).isoformat()
+        self.db.prune_prediction_cache(cutoff)
+        log.info('Cache UPDATED | date=%s | status=%s | sports=%s | top=%d | daily=%d',
+                 snapshot.date, snapshot.status, snapshot.sport_status,
+                 len(snapshot.top_picks), len(snapshot.daily_picks))
 
-    # ------------------------------------------------------- normalisation
-    def _candidate_dates(self, day: date) -> List[str]:
-        """UTC date first, then the local publication date when it differs
-        (picks are stored under the bot's configured local date)."""
-        dates = [day.isoformat()]
-        local = to_local(utcnow(), self.cfg.timezone).strftime("%Y-%m-%d")
-        if local not in dates:
-            dates.append(local)
-        return dates
+    def published_snapshot(self):
+        """Today's same canonical snapshot; never yesterday's latest picks table."""
+        return self.get_daily_snapshot()
 
-    def _snapshot_from_db(self, day: date) -> Optional[DailySnapshot]:
-        """Rebuild the snapshot from persisted picks. Zero external calls."""
-        for date_str in self._candidate_dates(day):
-            rows = self.db.picks_for_date(date_str)
-            if rows:
-                return self._snapshot_from_rows(rows, day, origin="db")
-        return None
+    def refresh_cache_from_db(self):
+        # Compatibility hook: the canonical table is already the database cache.
+        return bool(self.get_daily_snapshot().total_picks())
 
-    def _snapshot_from_rows(self, rows: List, day: date, origin: str) -> DailySnapshot:
-        picks = [self._pick_from_row(r) for r in rows]
-        top = sorted((p for p in picks if p.tier == "top"), key=lambda p: p.rank)
-        daily = sorted((p for p in picks if p.tier != "top"), key=lambda p: p.rank)
-        return DailySnapshot(date=day.isoformat(), generated_at=iso(utcnow()),
-                             origin=origin, top_picks=top, daily_picks=daily,
-                             stats=self._stats_summary())
-
-    def _snapshot_from_providers(self, day: date) -> DailySnapshot:
-        """Full pipeline: ProviderChain -> model -> picker -> persist -> normalise.
-
-        This is the once-per-day external API batch, reached only when neither
-        the cache nor the picks table has data for today.
-        """
-        self.api_batches += 1
-        local_date = to_local(utcnow(), self.cfg.timezone).strftime("%Y-%m-%d")
-        pickset = daily_picks.build_picks(self.chain, self.db, self.cfg)
-        if (pickset.top or pickset.daily) and not self.db.has_picks_for_date(local_date):
-            # Persist so the scheduled settlement/recap keeps working.
-            daily_picks.store_picks(pickset, self.db, local_date)
-        if pickset.top or pickset.daily:
-            return self._snapshot_from_pickset(pickset, day)
-        # Empty pipeline result: still prefer any DB rows that appeared.
-        snapshot = self._snapshot_from_db(day)
-        if snapshot is not None:
-            return snapshot
-        return self._snapshot_from_pickset(pickset, day)
-
-    def _snapshot_from_pickset(self, pickset, day: date) -> DailySnapshot:
-        top = [self._pick_from_scored(s, i, "top") for i, s in enumerate(pickset.top, 1)]
-        daily = [self._pick_from_scored(s, i, "daily") for i, s in enumerate(pickset.daily, 1)]
-        return DailySnapshot(date=day.isoformat(), generated_at=iso(utcnow()),
-                             origin="api", top_picks=top, daily_picks=daily,
-                             stats=self._stats_summary())
+    def _snapshot_from_pickset(self, pickset, day):
+        providers = pickset.diagnostics.get('providers', {})
+        return DailySnapshot(date=str(day), generated_at=iso(utcnow()), origin='sqlite',
+            status='COMPLETE' if pickset.complete else 'PARTIAL',
+            sport_status=sport_states(providers), generation=pickset.diagnostics,
+            top_picks=[self._pick_from_scored(s, i, 'top') for i, s in enumerate(pickset.top, 1)],
+            daily_picks=[self._pick_from_scored(s, i, 'daily') for i, s in enumerate(pickset.daily, 1)],
+            stats=self._stats_summary())
 
     def _pick_from_scored(self, scored, rank: int, tier: str) -> PickRecord:
         event, line = scored.event, scored.line
         return PickRecord(
+            provider=event.provider, provider_event_id=event.provider_event_id,
+            provider_odd_id=line.provider_odd_id, period=line.period, stat=line.stat, entity=line.entity,
             pick_id=None, tier=tier, rank=rank, sport=event.sport, league=event.league,
             home=event.home, away=event.away, kickoff_utc=iso(event.start),
             label=scored.label, market=line.market, selection=line.selection,
@@ -199,6 +141,9 @@ class UnifiedFetcher:
         except (ValueError, TypeError):
             sources = []
         return PickRecord(
+            provider=str(row['provider']), provider_event_id=str(row['provider_event_id']),
+            provider_odd_id=str(row['provider_odd_id'] or ''), period=str(row['period']),
+            stat=str(row['stat']), entity=str(row['entity']),
             pick_id=int(row["id"]), tier=str(row["tier"]), rank=int(row["rank"]),
             sport=str(row["sport"]), league=str(row["league"] or ""),
             home=str(row["home"]), away=str(row["away"]),
@@ -214,4 +159,11 @@ class UnifiedFetcher:
     def _stats_summary(self) -> StatsSummary:
         raw = stats_mod.compute(self.db, to_local(utcnow(), self.cfg.timezone))
         return StatsSummary.from_raw(raw)
+
+    def _snapshot_from_rows(self, rows, day, origin):
+        """Legacy row conversion for offline display; never a canonical cache read."""
+        picks = [self._pick_from_row(row) for row in rows]
+        return DailySnapshot(date=str(day), origin=origin,
+                             top_picks=[p for p in picks if p.tier == 'top'],
+                             daily_picks=[p for p in picks if p.tier != 'top'])
 

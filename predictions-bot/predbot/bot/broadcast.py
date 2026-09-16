@@ -1,15 +1,18 @@
 """Subscriber broadcasts: daily picks + results, built from the cached snapshot.
 
-Zero external API calls: both messages are composed from the write-once-per-day
-snapshot (picks) or from the recap job's already-fetched text (results).  Every
-send is de-duplicated per (kind, date, chat) in the ``deliveries`` table, so
+Picks use the same canonical SQLite snapshot as commands; its service may retry
+failed providers after the configured cooldown. Recaps use already-fetched text.  Every
+send is de-duplicated per (kind, card date, chat) in the ``deliveries`` table, so
 restarts and repeated job runs never double-send.
+
+Delivery uses one application-zone instant (09:00 Africa/Lagos by default).
+Subscriber zones affect displayed kickoff times, not delivery eligibility.
 """
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Callable, Optional, Union
 
 from predbot.bot.format import PickLine, kickoff_label, outcome_label, picks_card, sport_name
 from predbot.bot.telegram import Telegram
@@ -17,16 +20,29 @@ from predbot.cache.models import DailySnapshot
 from predbot.markets.catalog import short_selection
 from predbot.providers.base import MarketLine
 from predbot.storage.db import Database
-from predbot.util.timeutil import parse_iso, to_local, utcnow
+from predbot.util.timeutil import resolve_timezone, local_reached, parse_iso, to_local, utcnow
 
 log = logging.getLogger(__name__)
 
+#: Resolves the canonical card to deliver; ``UnifiedFetcher.published_snapshot``.
+SnapshotProvider = Callable[[], Optional[DailySnapshot]]
 
-def _row_timezone(row, fallback: str) -> str:
-    """Subscriber timezone from a sqlite3.Row (which has no .get()), else the fallback."""
-    if "timezone" in row.keys() and row["timezone"]:
-        return str(row["timezone"])
-    return fallback
+
+#: Picks land at 9:30 in each subscriber's OWN zone, not one shared instant.
+BROADCAST_HOUR, BROADCAST_MINUTE = 9, 30
+
+
+def subscriber_tz(row, fallback_tz: str) -> str:
+    """The zone a subscriber's delivery is measured in (stored zone, else config).
+
+    ``row`` is a ``sqlite3.Row``, which has no ``.get()`` - hence the try/except
+    rather than a dict lookup.
+    """
+    try:
+        stored = str(row["timezone"] or "").strip()
+    except (KeyError, IndexError, TypeError):
+        stored = ""
+    return resolve_timezone(stored, fallback_tz)
 
 
 def picks_text(snapshot: DailySnapshot, tz: str) -> str:
@@ -51,11 +67,27 @@ def _record_line(snapshot: DailySnapshot) -> Optional[str]:
     return f"📊 7d: {seven['won']}W-{seven['lost']}L · ROI {seven['roi']:+.1f}%"
 
 
-def deliver_picks(db: Database, cfg, tg: Telegram, snapshot: DailySnapshot) -> int:
-    """Send today's picks to every active subscriber at 9:30 AM their timezone (once per day per user)."""
-    if not (snapshot.top_picks or snapshot.daily_picks):
+def deliver_picks(db: Database, cfg, tg: Telegram,
+                  snapshot: Union[DailySnapshot, SnapshotProvider, None],
+                  now: Optional[datetime] = None) -> int:
+    """Send today's card to each subscriber at 9:30 AM in THEIR OWN timezone.
+
+    Deliberately not one shared broadcast instant: a subscriber in Lagos and one
+    in New York each get the card at their own 9:30, and the ``deliveries`` table
+    keeps it to once per person per day.
+
+    Accepts either a snapshot or a zero-argument provider (``published_snapshot``),
+    so the scheduler can poll without forcing a provider fetch.
+    """
+    if not tg.token:
         return 0
-    return _deliver_per_user_at_time(db, cfg, tg, "picks", snapshot.date, snapshot, 9, 30, "daily picks")
+    if callable(snapshot):
+        snapshot = snapshot()
+    if snapshot is None or not (snapshot.top_picks or snapshot.daily_picks):
+        return 0
+    return _deliver_per_user_at_time(db, cfg, tg, "picks", snapshot.date, snapshot,
+                                     BROADCAST_HOUR, BROADCAST_MINUTE, "daily picks",
+                                     now=now)
 
 
 def deliver_recap(db: Database, cfg, tg: Telegram, text: Optional[str]) -> int:
@@ -84,25 +116,32 @@ def _deliver(db: Database, tg: Telegram, kind: str, date_str: str, text: str, la
 
 def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_str: str,
                               snapshot: DailySnapshot, target_hour: int, target_minute: int,
-                              label: str) -> int:
+                              label: str, now: Optional[datetime] = None) -> int:
     """Send to each subscriber when target time arrives in their timezone (within 2-minute window)."""
     if not tg.token:
         return 0
-    now = utcnow()
+    now = now or utcnow()
     sent = 0
     for row in db.subscribers_active():
         chat_id = str(row["chat_id"])
         if db.delivery_done(kind, date_str, chat_id):
             continue
-        user_tz = _row_timezone(row, cfg.timezone)
+        user_tz = subscriber_tz(row, cfg.timezone)
         local = to_local(now, user_tz)
-        if local.hour == target_hour and target_minute <= local.minute < target_minute + 2:
-            text = picks_text(snapshot, user_tz)
-            if tg.send(text, chat_id=chat_id):
-                db.mark_delivery(kind, date_str, chat_id)
-                sent += 1
+        if local.strftime("%Y-%m-%d") < date_str:
+            continue                      # their day hasn't started yet
+        if (local.hour, local.minute) < (target_hour, target_minute):
+            continue                      # their 9:30 hasn't arrived
+        # Deliberately "at or past" rather than an exact-minute window: the
+        # scheduler polls every few minutes, so a narrow window would silently
+        # skip a subscriber whose minute was never sampled.  delivery_done()
+        # is what keeps this to one card per person per day.
+        if tg.send(picks_text(snapshot, user_tz), chat_id=chat_id):
+            db.mark_delivery(kind, date_str, chat_id)
+            sent += 1
     if sent:
-        log.info("broadcast: %s delivered to %d subscriber(s) at their 9:30 AM", label, sent)
+        log.info("broadcast: %s delivered to %d subscriber(s) at their %02d:%02d",
+                 label, sent, target_hour, target_minute)
     return sent
 
 
@@ -141,7 +180,7 @@ def _deliver_recap_after_fixtures(db: Database, cfg, tg: Telegram, kind: str, da
         chat_id = str(row["chat_id"])
         if db.delivery_done(kind, date_str, chat_id):
             continue
-        user_tz = _row_timezone(row, cfg.timezone)
+        user_tz = subscriber_tz(row, cfg.timezone)
         local = to_local(now, user_tz)
         fixture_end_local = to_local(last_fixture_end, user_tz)
 

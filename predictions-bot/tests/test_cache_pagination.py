@@ -15,7 +15,6 @@ import pytest
 from predbot.bot import pagination
 from predbot.bot.callbacks import handle_callback
 from predbot.cache.fetcher import UnifiedFetcher
-from predbot.cache.manager import CacheManager, ttl_until_end_of_utc_day
 from predbot.cache.models import (DailySnapshot, PickRecord, StatsSummary,
                                   VIEW_DAILY, VIEW_TOP)
 from predbot.config import Config
@@ -72,39 +71,6 @@ def make_snapshot(origin: str = "db") -> DailySnapshot:
                                                       "streak": "W2", "brier": 0.2}))
 
 
-# ------------------------------------------------------------------ cache manager
-def test_daily_key_is_utc_deterministic():
-    cache = CacheManager()
-    day = datetime(2030, 6, 1, 23, 59, tzinfo=timezone.utc).date()
-    assert cache.daily_key(day) == "bot:predictions:daily:2030-06-01"
-    assert cache.lock_key(day) == "bot:predictions:lock:2030-06-01"
-
-
-def test_ttl_ends_at_utc_midnight():
-    now = datetime(2030, 6, 1, 23, 0, 0, tzinfo=timezone.utc)
-    assert ttl_until_end_of_utc_day(now) == 3600
-
-
-def test_set_get_roundtrip_and_expiry():
-    cache = CacheManager()
-    cache.set("k", {"a": 1}, ttl_seconds=60)
-    assert cache.get("k") == {"a": 1}
-    cache._backend.set("k2", '{"b": 2}', ttl_seconds=1)
-    time.sleep(1.1)
-    assert cache.get("k2") is None            # expired at its TTL
-
-
-def test_lock_is_mutually_exclusive_and_releasable():
-    cache = CacheManager()
-    lock_key = cache.lock_key()
-    with cache.lock(lock_key, wait_seconds=0.2) as first:
-        assert first is True
-        with cache.lock(lock_key, wait_seconds=0.1) as second:
-            assert second is False            # held by the first holder
-    with cache.lock(lock_key, wait_seconds=0.2) as third:
-        assert third is True                  # released again
-
-
 # --------------------------------------------------------------------- snapshot
 def test_snapshot_json_roundtrip():
     snap = make_snapshot()
@@ -127,8 +93,7 @@ def test_snapshot_rejects_unknown_schema_version():
 
 # ----------------------------------------------------------------- fetcher flow
 def _fetcher(db, chain=None, cache=None) -> UnifiedFetcher:
-    return UnifiedFetcher(chain or FakeChain(), db, Config(),
-                          cache or CacheManager())
+    return UnifiedFetcher(chain or FakeChain(), db, Config())
 
 
 def _insert_picks(db, date_str: str, count: int = 3):
@@ -144,33 +109,11 @@ def _insert_picks(db, date_str: str, count: int = 3):
         })
 
 
-def test_db_rebuild_is_zero_api_and_populates_cache(db):
-    chain = FakeChain()
-    cache = CacheManager()
-    fetcher = _fetcher(db, chain, cache)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    _insert_picks(db, today)
-
-    snap = fetcher.get_daily_snapshot()
-
-    assert snap.origin == "db"
-    assert chain.calls == 0                       # no external call at all
-    assert snap.total_picks() == 3
-    assert snap.top_picks[0].pick_id is not None
-    assert cache.get(cache.daily_key()) is not None  # written with daily TTL
-
-    again = fetcher.get_daily_snapshot()
-    # origin is provenance ("db": built from the picks table); the second read
-    # is served from the cache entry - proven by zero further chain calls.
-    assert again.origin == "db" and again.total_picks() == 3
-    assert chain.calls == 0
-
-
 def test_double_check_returns_cached_snapshot(db):
     chain = FakeChain()
-    cache = CacheManager()
+    cache = None
     fetcher = _fetcher(db, chain, cache)
-    cache.set(cache.daily_key(), make_snapshot(origin="cache").to_dict(), ttl_seconds=60)
+    _seed(fetcher, make_snapshot(origin="cache"))
 
     snap = fetcher.get_daily_snapshot()
 
@@ -180,19 +123,19 @@ def test_double_check_returns_cached_snapshot(db):
 
 def test_force_refresh_bypasses_cache(db):
     chain = FakeChain()
-    cache = CacheManager()
+    cache = None
     fetcher = _fetcher(db, chain, cache)
-    cache.set(cache.daily_key(), make_snapshot().to_dict(), ttl_seconds=60)
+    _seed(fetcher, make_snapshot())
 
     snap = fetcher.get_daily_snapshot(force_refresh=True)
 
-    assert snap.origin == "api"                   # rebuilt through the pipeline
+    assert snap.origin == "sqlite"                   # rebuilt through the pipeline
     assert chain.calls == 1
 
 
 def test_concurrent_readers_dispatch_single_api_batch(db):
     chain = FakeChain(delay=0.4)
-    cache = CacheManager()
+    cache = None
     fetcher = _fetcher(db, chain, cache)
     results = []
 
@@ -233,7 +176,7 @@ def test_callback_payload_codec():
 def test_render_page_structure_and_keyboard():
     snap = make_snapshot()
     text, markup = pagination.render_page(snap, VIEW_DAILY, 0, 10, "UTC")
-    assert "Daily picks for today" in text and "Page 1/3" in text
+    assert text.startswith("📋 Daily Picks for Today") and "Page 1/3" in text
     nav = markup["inline_keyboard"][0]
     assert nav[0]["text"] == "1/3"                # no ◀️ button on the first page
     assert nav[1]["callback_data"] == "pg|daily|1"
@@ -246,10 +189,31 @@ def test_render_page_structure_and_keyboard():
     assert "◀️" in buttons and "▶️" not in buttons
 
 
-def test_render_stats_shows_the_sureodds_yesterday_card():
+def test_render_stats_matches_the_stats_command(db):
+    """📊 The /stats button and the /stats command must send the exact same card."""
+    from predbot.bot.format import stats_message
+    from predbot.jobs import stats as stats_mod
+    from predbot.util.timeutil import to_local
+
+    now = datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)
+    expected = stats_message(stats_mod.compute(db, to_local(now, "UTC")))
+
+    text, markup = pagination.render_stats(make_snapshot(), db=db, tz="UTC", now=now)
+
+    assert text == expected                     # one renderer, no drift
+    assert "Last 7 days:" in text and "All time:" in text
+    assert markup["inline_keyboard"][-1][0]["text"] == "🏆 Top Picks"
+
+
+def test_render_stats_without_db_falls_back_to_the_snapshot():
     text, markup = pagination.render_stats(make_snapshot())
-    assert "SUREODDS — YESTERDAY" in text and "LAST 7 DAYS" in text
+    assert "Last 7 days: 3W-1L" in text and "ROI +12.5%" in text
     assert markup["inline_keyboard"]
+
+
+def test_render_stats_reports_an_empty_snapshot_plainly():
+    text, _ = pagination.render_stats(DailySnapshot(date="2030-06-01"))
+    assert "No settled picks yet" in text
 
 
 # ------------------------------------------------------------- callback handler
@@ -260,9 +224,9 @@ def _cb(data: str, page_message_id: int = 77) -> dict:
 
 def test_callback_navigation_is_zero_api(db):
     chain = FakeChain()
-    cache = CacheManager()
+    cache = None
     fetcher = _fetcher(db, chain, cache)
-    cache.set(cache.daily_key(), make_snapshot(origin="cache").to_dict(), ttl_seconds=60)
+    _seed(fetcher, make_snapshot(origin="cache"))
     tg = FakeTG()
 
     handle_callback(_cb("pg|daily|1"), service=fetcher, tg=tg,
@@ -272,7 +236,7 @@ def test_callback_navigation_is_zero_api(db):
     assert len(tg.edits) == 1
     edit = tg.edits[0]
     assert edit["chat_id"] == "-100123" and edit["message_id"] == 77
-    assert "Daily picks for today" in edit["text"] and "Page 2/3" in edit["text"]
+    assert edit["text"].startswith("📋 Daily Picks for Today") and "Page 2/3" in edit["text"]
     assert edit["reply_markup"]["inline_keyboard"]
     assert tg.answers and tg.answers[0]["id"] == "cb1"
 
@@ -286,3 +250,10 @@ def test_callback_unknown_payload_is_acked_silently(db):
 
 
 
+
+
+def _seed(service, snapshot):
+    from predbot.util.timeutil import utcnow, to_local
+    now = utcnow()
+    snapshot.date = to_local(now, service.cfg.timezone).date().isoformat()
+    service._store(snapshot, now)

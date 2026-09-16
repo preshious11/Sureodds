@@ -5,10 +5,33 @@ import json
 import os
 import sqlite3
 import threading
+import logging
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS prediction_cache (
+    cache_key TEXT PRIMARY KEY,
+    local_date TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    sport_status_json TEXT NOT NULL,
+    generated_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    retry_after TEXT,
+    cache_version INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS provider_cache (
+    cache_key TEXT PRIMARY KEY,
+    local_date TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    metadata_json TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    cache_version INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS picks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     pick_date TEXT NOT NULL,             -- local date the pick was published for (YYYY-MM-DD)
@@ -88,7 +111,7 @@ CREATE TABLE IF NOT EXISTS subscribers (
     chat_id TEXT PRIMARY KEY,            -- DM chat with the user
     username TEXT,
     first_name TEXT,
-    timezone TEXT,                       -- Auto-detected timezone (IANA format)
+    timezone TEXT NOT NULL DEFAULT '',   -- auto-detected IANA zone ('' = fall back to config TIMEZONE)
     subscribed_at TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1
 );
@@ -108,8 +131,17 @@ def _now() -> str:
 
 
 class Database:
+    _prediction_locks = {}
+    _prediction_locks_guard = threading.Lock()
+
     def __init__(self, path: str):
         self.path = path
+        logging.getLogger(__name__).info("SQLite database path: %s | exists=%s",
+                                        os.path.abspath(path), os.path.isfile(path))
+        with self._prediction_locks_guard:
+            key = os.path.normcase(os.path.abspath(path)) if path != ':memory:' else id(self)
+            self.prediction_lock = self._prediction_locks.setdefault(key, threading.RLock())
+        self._transaction_depth = 0
         d = os.path.dirname(os.path.abspath(path))
         os.makedirs(d, exist_ok=True)
         self._lock = threading.RLock()
@@ -120,13 +152,90 @@ class Database:
         with self._lock:
             self.conn.executescript(SCHEMA)
             self.conn.commit()
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Additive migrations for databases created by older versions."""
+        cols = {str(r["name"]) for r in self.query("PRAGMA table_info(subscribers)")}
+        if "timezone" not in cols:                      # per-subscriber local delivery zone
+            self.conn.execute("ALTER TABLE subscribers ADD COLUMN timezone TEXT NOT NULL DEFAULT ''")
+            self.conn.commit()
 
     # ---- generic ----
     def execute(self, sql: str, params: Iterable = ()) -> sqlite3.Cursor:
         with self._lock:
             cur = self.conn.execute(sql, tuple(params))
-            self.conn.commit()
+            if not self._transaction_depth:
+                self.conn.commit()
             return cur
+
+    @contextmanager
+    def transaction(self):
+        with self._lock:
+            outer = self._transaction_depth == 0
+            if outer:
+                self.conn.execute('BEGIN IMMEDIATE')
+            self._transaction_depth += 1
+            try:
+                yield
+                if outer:
+                    self.conn.commit()
+            except BaseException:
+                if outer:
+                    self.conn.rollback()
+                raise
+            finally:
+                self._transaction_depth -= 1
+
+    def close(self):
+        with self._lock:
+            self.conn.close()
+
+    def get_prediction_cache(self, cache_key):
+        rows = self.query('SELECT * FROM prediction_cache WHERE cache_key=?', (cache_key,))
+        return dict(rows[0]) if rows else None
+
+    def upsert_prediction_cache(self, row):
+        columns = ('cache_key', 'local_date', 'timezone', 'status', 'payload_json',
+                   'sport_status_json', 'generated_at', 'updated_at', 'expires_at',
+                   'retry_after', 'cache_version')
+        with self.transaction():
+            self.execute('INSERT INTO prediction_cache (' + ','.join(columns) + ') VALUES (' +
+                         ','.join('?' for _ in columns) + ') ON CONFLICT(cache_key) DO UPDATE SET ' +
+                         ','.join(c + '=excluded.' + c for c in columns[1:]),
+                         [row.get(c) for c in columns])
+
+    def delete_prediction_cache(self, cache_key):
+        self.execute('DELETE FROM prediction_cache WHERE cache_key=?', (cache_key,))
+
+    def defer_prediction_retry(self, cache_key, retry_after):
+        self.execute('UPDATE prediction_cache SET retry_after=? WHERE cache_key=?',
+                     (retry_after, cache_key))
+
+    def has_pick_selection(self, date, tier, scored):
+        e, m = scored.event, scored.line
+        return bool(self.query('SELECT id FROM picks WHERE pick_date=? AND tier=? AND '
+                              'provider=? AND provider_event_id=? AND market=? AND period=? '
+                              'AND stat=? AND entity=? AND line IS ? AND selection=? LIMIT 1',
+                              (date, tier, e.provider, e.provider_event_id, m.market, m.period,
+                               m.stat, m.entity, m.line, m.selection)))
+
+    def prune_prediction_cache(self, before_date):
+        with self.transaction():
+            self.execute('DELETE FROM prediction_cache WHERE local_date < ?', (before_date,))
+            self.execute('DELETE FROM provider_cache WHERE local_date < ?', (before_date,))
+
+    def get_provider_cache(self, cache_key):
+        rows = self.query('SELECT * FROM provider_cache WHERE cache_key=?', (cache_key,))
+        return dict(rows[0]) if rows else None
+
+    def upsert_provider_cache(self, cache_key, local_date, payload, metadata, expires_at, version=1):
+        self.execute('INSERT INTO provider_cache VALUES(?,?,?,?,?,?) ON CONFLICT(cache_key) '
+                     'DO UPDATE SET local_date=excluded.local_date,payload_json=excluded.payload_json,'
+                     'metadata_json=excluded.metadata_json,expires_at=excluded.expires_at,'
+                     'cache_version=excluded.cache_version',
+                     (cache_key, local_date, json.dumps(payload, sort_keys=True, allow_nan=False),
+                      json.dumps(metadata, sort_keys=True, allow_nan=False), expires_at, version))
 
     def query(self, sql: str, params: Iterable = ()) -> List[sqlite3.Row]:
         with self._lock:
@@ -165,6 +274,11 @@ class Database:
 
     def picks_for_date(self, pick_date: str) -> List[sqlite3.Row]:
         return self.query("SELECT * FROM picks WHERE pick_date=? ORDER BY tier DESC, rank ASC", (pick_date,))
+
+    def latest_pick_date(self) -> str:
+        """The most recent pick_date in the store ('' when nothing is published)."""
+        rows = self.query("SELECT MAX(pick_date) AS d FROM picks")
+        return str(rows[0]["d"] or "") if rows and rows[0]["d"] else ""
 
     def has_picks_for_date(self, pick_date: str) -> bool:
         return bool(self.query("SELECT 1 FROM picks WHERE pick_date=? LIMIT 1", (pick_date,)))
@@ -230,14 +344,16 @@ class Database:
                      (kind, post_date, message_id, _now()))
 
     # ---- subscribers / deliveries ----
-    def subscriber_add(self, chat_id: str, username: str = "", first_name: str = "") -> None:
-        """Register (or re-activate) a subscriber; non-empty names are kept."""
+    def subscriber_add(self, chat_id: str, username: str = "", first_name: str = "",
+                       timezone: str = "") -> None:
+        """Register (or re-activate) a subscriber; non-empty fields are kept/overwritten."""
         self.execute(
-            "INSERT INTO subscribers(chat_id,username,first_name,subscribed_at,active) "
-            "VALUES(?,?,?,?,1) ON CONFLICT(chat_id) DO UPDATE SET active=1, "
+            "INSERT INTO subscribers(chat_id,username,first_name,timezone,subscribed_at,active) "
+            "VALUES(?,?,?,?,?,1) ON CONFLICT(chat_id) DO UPDATE SET active=1, "
             "username=CASE WHEN excluded.username!='' THEN excluded.username ELSE subscribers.username END, "
-            "first_name=CASE WHEN excluded.first_name!='' THEN excluded.first_name ELSE subscribers.first_name END",
-            (str(chat_id), str(username or ""), str(first_name or ""), _now()))
+            "first_name=CASE WHEN excluded.first_name!='' THEN excluded.first_name ELSE subscribers.first_name END, "
+            "timezone=CASE WHEN excluded.timezone!='' THEN excluded.timezone ELSE subscribers.timezone END",
+            (str(chat_id), str(username or ""), str(first_name or ""), str(timezone or ""), _now()))
 
     def subscriber_remove(self, chat_id: str) -> None:
         self.execute("UPDATE subscribers SET active=0 WHERE chat_id=?", (str(chat_id),))
@@ -245,14 +361,21 @@ class Database:
     def subscribers_active(self) -> List[sqlite3.Row]:
         return self.query("SELECT * FROM subscribers WHERE active=1 ORDER BY subscribed_at")
 
-    def get_user_timezone(self, chat_id: str) -> Optional[str]:
-        """Get subscriber's timezone; None if not set."""
+    def subscriber_timezone(self, chat_id: str) -> str:
+        """The subscriber's auto-detected IANA zone ('' when unknown)."""
         rows = self.query("SELECT timezone FROM subscribers WHERE chat_id=?", (str(chat_id),))
-        return rows[0]["timezone"] if rows and rows[0]["timezone"] else None
+        return str(rows[0]["timezone"] or "") if rows else ""
 
-    def set_user_timezone(self, chat_id: str, timezone: str) -> None:
-        """Store subscriber's timezone."""
-        self.execute("UPDATE subscribers SET timezone=? WHERE chat_id=?", (timezone, str(chat_id)))
+    def subscriber_set_timezone(self, chat_id: str, timezone: str) -> None:
+        """Store the IANA zone used for subscriber-local prediction display.
+
+        Creates the subscriber when the chat is unknown, so a zone detected
+        before /start is never silently dropped.
+        """
+        self.execute(
+            "INSERT INTO subscribers(chat_id,timezone,subscribed_at,active) VALUES(?,?,?,1) "
+            "ON CONFLICT(chat_id) DO UPDATE SET timezone=excluded.timezone",
+            (str(chat_id), str(timezone or ""), _now()))
 
     def delivery_done(self, kind: str, post_date: str, chat_id: str) -> bool:
         return bool(self.query("SELECT 1 FROM deliveries WHERE kind=? AND post_date=? AND chat_id=?",
