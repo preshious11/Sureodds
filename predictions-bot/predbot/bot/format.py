@@ -78,7 +78,7 @@ def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str]
         lines.extend(pick_lines(p))
         lines.append("")
     if picks:
-        lines.append(f"Combined Odds: {combined_odds([p.price for p in picks]):.4f}")
+        lines.append(f"Combined Odds: {combined_odds([p.price for p in picks]):.2f}")
     if stats_line:
         lines.append("")
         lines.append(stats_line)

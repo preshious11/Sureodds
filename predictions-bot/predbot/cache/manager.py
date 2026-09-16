@@ -187,7 +187,7 @@ class FileBackend(_Backend):
 
 
 class RedisBackend(_Backend):
-    """Optional cross-process backend (pip install redis)."""
+    """Cross-process backend enabled by REDIS_URL."""
 
     _RELEASE_LUA = (
         "if redis.call('get', KEYS[1]) == ARGV[1] then "
@@ -195,10 +195,10 @@ class RedisBackend(_Backend):
     )
 
     def __init__(self, url: str) -> None:
-        import redis  # lazy: the base install only requires `requests`
+        import redis
 
         self._client = redis.Redis.from_url(url, decode_responses=True,
-                                            socket_connect_timeout=3)
+                                            socket_connect_timeout=3, socket_timeout=5)
         self._client.ping()  # fail fast -> the manager falls back to memory
         self._release_script = self._client.register_script(self._RELEASE_LUA)
 
@@ -233,9 +233,13 @@ class CacheManager:
             try:
                 self._backend = RedisBackend(redis_url)
                 self._backend_name = "redis"
+                log.info("Cache backend: redis (connection verified)")
                 return
             except Exception as exc:  # noqa: BLE001
-                log.warning("Redis unavailable (%s) - trying file cache", exc)
+                log.warning("REDIS_URL is set but Redis initialization failed (%s); "
+                            "Redis caching is inactive, trying file cache. "
+                            "Check the redis dependency, credentials and network reachability.",
+                            type(exc).__name__)
 
         if cache_dir:
             try:
