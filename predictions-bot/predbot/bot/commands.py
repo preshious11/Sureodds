@@ -10,12 +10,12 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Callable, Dict, Optional
 
 from predbot.bot import pagination
 from predbot.bot.callbacks import handle_callback, handle_start
-from predbot.bot.format import RESULT_ICON, stats_message
+from predbot.bot.format import stats_message
 from predbot.bot.telegram import Telegram, esc
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.cache.models import VIEW_DAILY, VIEW_STATS, VIEW_TOP

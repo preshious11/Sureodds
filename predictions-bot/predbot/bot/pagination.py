@@ -139,18 +139,19 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
     return "\n".join(lines), build_keyboard(view, page, pages)
 
 
-def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC") -> Tuple[str, Dict]:
-    """The 📊 Stats button: the ``SUREODDS — YESTERDAY`` summary card.
+def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC", user_tz: Optional[str] = None) -> Tuple[str, Dict]:
+    """The 📊 Stats button: the ``SUREODDS — YESTERDAY`` summary card in user's timezone.
 
     With a Database handle the card is computed fresh (wins/losses/void, hit
     rate, per-sport split, 7-day form, best pick).  Without one it falls back
     to the cached snapshot's stats (same layout, no per-sport rows).
     """
+    display_tz = user_tz or tz
     if db is not None:
         try:
             from predbot.jobs import stats as stats_mod
 
-            local = to_local(utcnow(), tz)
+            local = to_local(utcnow(), display_tz)
             st = stats_mod.compute(db, local)
             yesterday = (local - timedelta(days=1)).strftime("%Y-%m-%d")
             rows = stats_mod.rows_for_recap(db, yesterday)
@@ -169,5 +170,5 @@ def render_view(snapshot: DailySnapshot, view: str, page: int, size: int,
                 tz: str, db=None, user_tz: Optional[str] = None) -> Tuple[str, Dict]:
     """Entry point used by both the /today command and callback navigation."""
     if view == VIEW_STATS:
-        return render_stats(snapshot, db=db, tz=tz)
+        return render_stats(snapshot, db=db, tz=tz, user_tz=user_tz)
     return render_page(snapshot, view, page, size, tz, user_tz)
