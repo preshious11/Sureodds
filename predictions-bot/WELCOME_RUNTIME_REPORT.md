@@ -185,6 +185,62 @@ python -m pytest -q tests/test_welcome_runtime.py tests/test_subscribers_broadca
 python -m pytest -q -p no:cacheprovider --tb=no
 ```
 
-No credentials were rotated and no service was deleted. A code fix cannot evict
-an unknown old hosted consumer; the ownership/deployment checks above remain
-necessary even with the new local lock and diagnostics.
+No credentials were rotated and no service was deleted by this investigation.
+The obsolete consumer was later identified and deleted; see *Resolution* below.
+A code fix cannot evict an unknown old hosted consumer; the ownership/deployment
+checks above remain necessary even with the new local lock and diagnostics.
+
+---
+
+## Resolution (2026-09-16)
+
+The recurring conflict was confirmed in production and closed the same day.
+
+**Root cause.** A **Railway** worker service (`predictions-bot/railway.json` +
+`Procfile: worker: python main.py`) was still deployed and polling with the same
+`TELEGRAM_BOT_TOKEN` while justrunmy.app ran the root-`Dockerfile` image. Both
+consumed `getUpdates` on `@BETTSUREbot`, so the hosted deployment lost ownership
+of the token. The Railway worker had survived a push and was never stopped.
+
+**Production evidence.**
+
+- justrunmy.app logs showed `Telegram polling conflict (409)` at a **60.2 s beat
+  for 91+ minutes** (2026-09-16T13:58Z -> 15:29Z) and never won a cycle.
+- The beat matches this code exactly: the in-flight long-poll in
+  `predbot/bot/telegram.py` (`timeout=20`, request timeout `+10`) terminated with
+  409, plus the 30 s back-off for `PollingError` in `CommandLoop._poll()`
+  (`predbot/bot/commands.py`). A losing duplicate never exits and never recovers.
+- `getWebhookInfo` returned `url=''` (the competitor was a poller, not a webhook)
+  and `pending_update_count=0`, i.e. the competitor was draining the queue, so
+  user commands were being served outside the intended deployment.
+- Scheduled work was unaffected on the hosted side: `deliver` every 5 minutes,
+  the daily job and the snapshot write all succeeded during the conflict.
+
+**Local host ruled out.** Full `Win32_Process` command-line scans taken *during*
+the conflict window found no Python/predbot process; no Docker, WSL, scheduled
+task, service, Run key or Startup entry could launch one either. The
+`%TEMP%\predbot-poll-*.lock` files were inert (OS-held locks released on exit).
+
+**Diagnostic caveat.** `getWebhookInfo` does **not** record `getUpdates`
+conflicts (`last_error_message` stays `None`), so it cannot rule out a duplicate
+poller. Only production logs (409 lines) or a deliberate `getUpdates` call reveal
+this fault, and the latter risks stealing updates from the healthy instance.
+
+**Fix applied.** The service owner deleted the Railway service. No token was
+rotated and no code was changed.
+
+**Verification after the deletion** (hosted logs):
+
+1. Zero new `Telegram polling conflict (409)` lines within two minutes.
+2. Exactly one `Bot instance started` line per deployment, with
+   `service=local`/`deployment=local` for the container host.
+3. A `/start` sent from Telegram produces `start handled | instance=...`.
+
+**Standing rule.** Exactly one polling consumer per token. When moving hosts,
+stop the previous service *before* starting the new one - never redeploy one host
+while an older worker is still running.
+
+**Residual risk.** `CommandLoop.__init__` starts with `offset = None`, so updates
+that the deleted consumer fetched but never confirmed can be delivered once to the
+surviving instance. Expect at most a small number of replayed commands right after
+a cut-over; it self-clears on the next successful poll.
