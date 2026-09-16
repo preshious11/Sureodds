@@ -68,8 +68,9 @@ def _joined_before_target(row, date_str: str, hour: int, minute: int, user_tz: s
     local_date = local.strftime("%Y-%m-%d")
     if local_date > date_str:
         return False                       # joined after the card's day - not due yet
-    if local_date == date_str and (local.hour, local.minute) > (hour, minute):
-        return False                       # joined after their 9:30 today - starts tomorrow
+    if local_date == date_str:
+        due = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return local <= due                # subscribed by, or before, their 9:30
     return True
 
 
