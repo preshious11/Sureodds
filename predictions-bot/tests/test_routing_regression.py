@@ -156,6 +156,27 @@ def test_one_definition_of_every_routing_and_rendering_function():
         assert len(files) == 1, f"{name!r} defined in {len(files)} files: {files}"
 
 
+def test_pagination_has_no_parallel_card_formatter(db):
+    """The merged branch had a second card builder inside pagination; keep one."""
+    from predbot.bot import format as fmt
+    from predbot.cache.models import PickRecord
+
+    pick = PickRecord(pick_id=1, tier="top", rank=1, sport="baseball", league="MLB",
+                      home="Los Angeles Dodgers", away="San Francisco Giants",
+                      kickoff_utc="2030-06-01T18:00:00Z", label="Over 8.5",
+                      market="prop", selection="over", line=8.5, stat="team_hits",
+                      entity="Los Angeles Dodgers", price=1.88, prob=0.7, ev=0.05)
+
+    assert pagination.render_pick(pick, "UTC") == \
+        "\n".join(fmt.pick_lines(fmt.pick_line_from_record(pick, "UTC")))
+    assert pagination._pick_line(pick, "UTC") == fmt.pick_line_from_record(pick, "UTC")
+
+    # Emoji in the *nav* labels is fine; card-only copy must not be re-implemented here.
+    src = Path(pagination.__file__).read_text(encoding="utf-8")
+    for frag in ("Confidence level:", "🎯", "💰", "🏆\ufe0f"):
+        assert frag not in src, f"pagination.py re-implements card copy: {frag!r}"
+
+
 def test_no_onboarding_send_helpers_or_subscribe_callbacks_in_source():
     """Any of these strings in active source means the old behaviour came back."""
     forbidden = ["sub|on", "sub|off", "send_daily_predictions", "send_predictions",

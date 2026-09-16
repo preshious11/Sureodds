@@ -332,6 +332,40 @@ def test_missing_subscribed_at_still_delivers(db):
 
 
 
+# ------------------------------------------------- the gate, as a pure boundary
+def _row(joined, tz: str = "UTC") -> dict:
+    """A subscriber row shaped like the one deliver_picks() inspects."""
+    return {"timezone": tz, "subscribed_at": joined}
+
+
+def test_join_gate_boundaries(db):
+    """Anyone already subscribed when the card came due stays eligible for it."""
+    due = ("2030-06-01", 9, 30, "UTC")
+    assert broadcast._joined_before_target(_row("2030-06-01T08:00:00Z"), *due) is True
+    assert broadcast._joined_before_target(_row("2030-06-01T09:30:00Z"), *due) is True
+    assert broadcast._joined_before_target(_row("2030-06-01T09:30:01Z"), *due) is False
+    assert broadcast._joined_before_target(_row("2030-06-01T23:59:00Z"), *due) is False
+    assert broadcast._joined_before_target(_row("2030-06-02T00:10:00Z"), *due) is False
+
+
+def test_join_gate_defaults_to_eligible_without_a_usable_timestamp(db):
+    """Legacy or malformed rows are not silently starved of the broadcast."""
+    for joined in ("", "not-a-date", None):
+        assert broadcast._joined_before_target(_row(joined), "2030-06-01", 9, 30, "UTC") is True
+    assert broadcast._joined_before_target({}, "2030-06-01", 9, 30, "UTC") is True
+
+
+def test_join_gate_reads_the_clock_in_the_subscribers_own_zone(db):
+    """Same instant, three zones: only the person whose 9:30 had passed misses out."""
+    joined = _row("2030-06-01T00:30:00Z", "Asia/Tokyo")          # 09:30 JST exactly
+    assert broadcast._joined_before_target(joined, "2030-06-01", 9, 30, "Asia/Tokyo") is True
+    lagos = _row("2030-06-01T08:31:00Z", "Africa/Lagos")          # 09:31 WAT
+    assert broadcast._joined_before_target(lagos, "2030-06-01", 9, 30, "Africa/Lagos") is False
+    # and the stored fallback chain is what supplies that zone
+    assert broadcast.subscriber_tz(_row("", "Mars/Olympus"), "Africa/Lagos") == "Africa/Lagos"
+
+
+
 # ---------------------------------------------------------- /start menu routing
 def test_pagination_keyboard_has_no_subscription_button(db):
     """No rendered view may bring the subscribe toggle back."""
