@@ -8,7 +8,7 @@ restarts and repeated job runs never double-send.
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
 from predbot.bot.format import PickLine, kickoff_label, picks_card, sport_name
@@ -75,30 +75,10 @@ def _deliver(db: Database, tg: Telegram, kind: str, date_str: str, text: str, la
     return sent
 
 
-def _deliver_per_user(db: Database, cfg, tg: Telegram, kind: str, date_str: str,
-                      snapshot: DailySnapshot, label: str) -> int:
-    """Send content to each subscriber using their timezone."""
-    if not tg.token:
-        return 0
-    sent = 0
-    for row in db.subscribers_active():
-        chat_id = str(row["chat_id"])
-        if db.delivery_done(kind, date_str, chat_id):
-            continue
-        user_tz = row.get("timezone") or cfg.timezone
-        text = picks_text(snapshot, user_tz)
-        if tg.send(text, chat_id=chat_id):
-            db.mark_delivery(kind, date_str, chat_id)
-            sent += 1
-    if sent:
-        log.info("broadcast: %s delivered to %d subscriber(s)", label, sent)
-    return sent
-
-
 def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_str: str,
                               snapshot: DailySnapshot, target_hour: int, target_minute: int,
                               label: str) -> int:
-    """Send to each subscriber only if it's the target time in their timezone."""
+    """Send to each subscriber when target time arrives in their timezone (within 2-minute window)."""
     if not tg.token:
         return 0
     now = utcnow()
@@ -109,7 +89,7 @@ def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_s
             continue
         user_tz = row.get("timezone") or cfg.timezone
         local = to_local(now, user_tz)
-        if local.hour == target_hour and local.minute == target_minute:
+        if local.hour == target_hour and target_minute <= local.minute < target_minute + 2:
             text = picks_text(snapshot, user_tz)
             if tg.send(text, chat_id=chat_id):
                 db.mark_delivery(kind, date_str, chat_id)
@@ -137,13 +117,16 @@ def _get_last_fixture_end_time(db: Database, pick_date: str) -> Optional[datetim
 
 def _deliver_recap_after_fixtures(db: Database, cfg, tg: Telegram, kind: str, date_str: str,
                                    text: str, label: str) -> int:
-    """Send recap to each subscriber after last fixture ends in their timezone."""
-    if not tg.token:
+    """Send recap to each subscriber after last fixture ends in their timezone, personalized per timezone."""
+    if not tg.token or not text:
         return 0
     last_fixture_end = _get_last_fixture_end_time(db, date_str)
     if not last_fixture_end:
         log.warning("recap: no fixtures found for %s", date_str)
         return 0
+
+    from predbot.bot.format import recap_message
+    from predbot.jobs import stats as stats_mod
 
     now = utcnow()
     sent = 0
@@ -156,7 +139,11 @@ def _deliver_recap_after_fixtures(db: Database, cfg, tg: Telegram, kind: str, da
         fixture_end_local = to_local(last_fixture_end, user_tz)
 
         if local >= fixture_end_local:
-            if tg.send(text, chat_id=chat_id):
+            yesterday_local = (local - timedelta(days=1)).strftime("%Y-%m-%d")
+            recap_rows = stats_mod.rows_for_recap(db, yesterday_local)
+            stats = stats_mod.compute(db, local)
+            personalized_text = recap_message("YESTERDAY", stats_mod.by_sport(recap_rows), stats)
+            if tg.send(personalized_text, chat_id=chat_id):
                 db.mark_delivery(kind, date_str, chat_id)
                 sent += 1
     if sent:

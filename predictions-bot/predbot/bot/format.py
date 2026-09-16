@@ -58,13 +58,10 @@ def combined_odds(prices: Iterable[float]) -> float:
     return total
 
 
-def pick_lines(p: PickLine, user_tz: Optional[str] = None) -> List[str]:
+def pick_lines(p: PickLine) -> List[str]:
     """The six lines one pick occupies: sport, league, match, outcome, confidence | kickoff, odds."""
-    when = p.when
-    if user_tz and p.when != "--:--":
-        when = p.when  # when is pre-rendered in PickLine; would need refactoring for per-user tz
     return [esc(p.sport), esc(p.league), esc(p.match), esc(p.outcome),
-            f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {when}",
+            f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {p.when}",
             f"{p.price:.2f}"]
 
 
