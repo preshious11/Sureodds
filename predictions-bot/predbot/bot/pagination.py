@@ -10,9 +10,9 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from predbot.bot.format import (HEADING_DAILY, HEADING_TOP, PickLine, outcome_label,
-                                pick_lines, picks_card, sport_name, stats_message)
-from predbot.providers.base import MarketLine
+from predbot.bot.format import (HEADING_DAILY, HEADING_TOP, PickLine,
+                                format_outcome, pick_line_from_record, pick_lines,
+                                picks_card, stats_message)
 from predbot.cache.models import (DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STATS,
                                   VIEW_TOP)
 from predbot.util.timeutil import parse_iso, to_local, utcnow
@@ -90,24 +90,18 @@ def _kickoff_hhmm(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> s
     return f"{local.strftime('%I:%M %p').lstrip('0')} {tz_abbr}"
 
 
-def _pick_line(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> PickLine:
-    """A cached pick as the shared PickLine the broadcast card also renders.
+# pick_line_from_record is imported from predbot.bot.format above - the ONE
+# canonical pick-card builder, shared by every view and the broadcast card.
 
-    Nothing is escaped here - ``format.pick_lines`` escapes every field once.
-    """
-    ml = MarketLine(pick.market, pick.selection, pick.price, line=pick.line)
-    return PickLine(sport=sport_name(pick.sport),
-                    match=f"{pick.home} vs {pick.away}",
-                    outcome=outcome_label(pick.label, ml, pick.home, pick.away, pick.sport),
-                    league=pick.league or sport_name(pick.sport),
-                    confidence=pick.prob,
-                    when=_kickoff_hhmm(pick, tz, user_tz),
-                    price=pick.price)
+
+def _pick_line(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> PickLine:
+    """Backwards-compatible alias of format.pick_line_from_record."""
+    return pick_line_from_record(pick, tz, user_tz)
 
 
 def render_pick(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> str:
     """One pick's six-line block - the same renderer the broadcast card uses."""
-    return "\n".join(pick_lines(_pick_line(pick, tz, user_tz)))
+    return "\n".join(pick_lines(pick_line_from_record(pick, tz, user_tz)))
 
 
 def build_keyboard(view: str, page: int, pages: int) -> Dict:
@@ -126,15 +120,25 @@ def build_keyboard(view: str, page: int, pages: int) -> Dict:
 
 def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
                 tz: str, user_tz: Optional[str] = None) -> Tuple[str, Dict]:
+    """One page of a ticket view: cards for the visible picks, then totals for
+    the section those picks come from (Top or the whole Daily ticket).
+
+    ONE source of truth: ``items`` is the section's selection list, the cards
+    are its visible slice, and the combined odds are the product of EXACTLY
+    ``items`` - the same list the cards were sliced from. Nothing is priced
+    from a second, hidden collection.
+    """
     items = snapshot.view_items(view)
     if not items and snapshot.status == 'PARTIAL':
         return ('Predictions are temporarily unavailable. Please try again later.',
                 build_keyboard(view, 0, 1))
+    items = [p for p in items if format_outcome(p)]
     pages = total_pages(len(items), size)
     page = clamp_page(page, len(items), size)
     chunk = slice_page(items, page, size)
 
-    text = picks_card([_pick_line(p, tz, user_tz) for p in chunk], snapshot.date,
+    text = picks_card([pick_line_from_record(p, tz, user_tz) for p in chunk],
+                      snapshot.date,
                       heading=HEADING_TOP if view == VIEW_TOP else HEADING_DAILY,
                       total_prices=[p.price for p in items])
 

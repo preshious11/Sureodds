@@ -51,15 +51,16 @@ def test_card_matches_the_requested_layout():
         "Home1 vs Away1\n"
         "Aston Villa to win\n"
         "Confidence level: <b>72%</b> | 7:45 PM WAT\n"
-        "2.05\n"
+        "Odds: 2.05\n"
         "\n"
         "Football\n"
         "La Liga\n"
         "Home2 vs Away2\n"
         "Over 1.5 Goals\n"
         "Confidence level: <b>84%</b> | 3:00 PM WAT\n"
-        "1.74\n"
+        "Odds: 1.74\n"
         "\n"
+        "Total Picks: 2\n"
         "Combined Odds: 3.5670"
     )
 
@@ -86,8 +87,9 @@ def test_every_pick_gets_the_six_line_block():
         "Home1 vs Away1",
         "Inter to win",
         "Confidence level: <b>66%</b> | 7:45 PM WAT",
-        "1.95",
+        "Odds: 1.95",
         "",
+        "Total Picks: 1",
         "Combined Odds: 1.9500",
     ]
 
@@ -132,19 +134,28 @@ def test_record_footer_stays_last_when_supplied():
 
 
 # ------------------------------------------------------- subscriber DM parity
-def test_subscriber_card_matches_the_channel_card():
-    top = [sc(event(1, "Premier League"), "Aston Villa to win", 0.72, 2.05)]
-    daily = [sc(event(2, "La Liga", kickoff="2026-09-16T14:00:00Z"), "Over 1.5 Goals", 0.84, 1.74,
-                market="total", selection="over", line=1.5)]
+def test_subscriber_summary_is_the_canonical_card_and_matches_the_views():
+    top = [record(1, "top", "Premier League", "Aston Villa to win", 0.72, 2.05)]
+    daily = [record(2, "daily", "La Liga", "Over 1.5 Goals", 0.84, 1.74,
+                    kickoff="2026-09-16T14:00:00Z",
+                    market="total", selection="over", line=1.5)]
     snapshot = DailySnapshot(
         date="2026-09-16",
-        top_picks=[record(1, "top", "Premier League", "Aston Villa to win", 0.72, 2.05)],
-        daily_picks=[record(2, "daily", "La Liga", "Over 1.5 Goals", 0.84, 1.74,
-                            kickoff="2026-09-16T14:00:00Z",
-                            market="total", selection="over", line=1.5)],
+        top_picks=top,
+        daily_picks=daily,
     )
 
-    assert picks_text(snapshot, WAT) == picks_message(top, daily, DAY, WAT, None)
+    card = picks_text(snapshot, WAT)
+
+    # the exact canonical summary structure, one section per ticket
+    assert card.startswith("📊 TODAY'S RESULTS")
+    assert "🔥 TOP PICKS\nCombined Odds: 2.05\nTotal Picks: 1" in card
+    assert "📋 DAILY PICKS\nCombined Odds: 1.74\nTotal Picks: 1" in card
+    # every pick block is byte-identical to the paginated view's card
+    from predbot.bot.pagination import render_pick
+
+    for p in snapshot.top_picks + snapshot.daily_picks:
+        assert render_pick(p, WAT) in card
 
 
 def test_subscriber_card_appends_the_7_day_record_when_history_exists():

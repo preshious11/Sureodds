@@ -51,10 +51,13 @@ class FakeChain:
 def _snapshot() -> DailySnapshot:
     top = [PickRecord(pick_id=1, tier="top", rank=1, sport="football", home="A",
                       away="B", kickoff_utc="2030-06-01T18:00:00Z", label="Over 2.5",
-                      price=1.9, prob=0.7, ev=0.1)]
+                      market="total", selection="over", line=2.5, stat="points",
+                      entity="all", price=1.9, prob=0.7, ev=0.1)]
     daily = [PickRecord(pick_id=i, tier="daily", rank=i, sport="football", home=f"H{i}",
                         away=f"A{i}", kickoff_utc="2030-06-01T20:00:00Z",
-                        label=f"Under {i}.5", price=1.8, prob=0.6, ev=0.05)
+                        label=f"Under {i}.5", market="total", selection="under",
+                        line=i + 0.5, stat="points", entity="all",
+                        price=1.8, prob=0.6, ev=0.05)
              for i in range(1, 4)]
     return DailySnapshot(date="2030-06-01", generated_at="2030-06-01T09:00:00Z",
                          origin="db", top_picks=top, daily_picks=daily,
@@ -136,10 +139,12 @@ def test_deliver_picks_reaches_all_subscribers_once(db, monkeypatch):
     assert sent == 2
     assert [s["chat_id"] for s in tg.sends] == ["42", "77"]
     card = tg.sends[0]["text"]
-    assert card.startswith("📋 Daily Picks for Today 2030-06-01")
-    assert "predictions——" not in card and "Today's" not in card   # old copy stays gone
+    assert card.startswith("📊 TODAY'S RESULTS")            # the canonical summary copy
+    assert "🔥 TOP PICKS" in card and "📋 DAILY PICKS" in card
+    assert "predictions——" not in card                      # old copy stays gone
     assert card.count("Confidence level:") == 4       # 1 top + 3 daily picks, one block each
-    assert "Combined Odds:" in card
+    assert "Total Picks: 1" in card and "Total Picks: 3" in card
+    assert card.count("Combined Odds:") == 2          # one per section, never one stale line
 
     # same day again (e.g. a restart): deliveries are de-duplicated per user
     assert broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot, now=now) == 0
@@ -236,6 +241,95 @@ def test_deliver_picks_ignores_an_unknown_stored_timezone(db):
 
     assert broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot, now=now) == 1
     assert broadcast.subscriber_tz(db.subscribers_active()[0], "UTC") == "UTC"
+
+
+# ------------------------------- joining must never be a prediction-send trigger
+def _join_at(monkeypatch, iso: str) -> None:
+    """Pin the ``subscribed_at`` value db.subscriber_add() records."""
+    import predbot.storage.db as db_mod
+    monkeypatch.setattr(db_mod, "_now", lambda: iso)
+
+
+def test_joining_after_930_never_earns_todays_card(db, monkeypatch):
+    """/start at 10:00 is onboarding, not a delivery: no card until tomorrow."""
+    _join_at(monkeypatch, "2030-06-01T10:00:00Z")
+    handle_start(db, FakeTG(), "42", {"first_name": "Zed"})        # joins after 9:30
+    tg = FakeTG()
+    cfg = Config(timezone="UTC")
+
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 10, 1, tzinfo=timezone.utc)) == 0
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 23, 0, tzinfo=timezone.utc)) == 0
+    assert tg.sends == []                       # joining is not a delivery trigger
+
+    from dataclasses import replace
+    tomorrow = replace(_snapshot(), date="2030-06-02")
+    assert broadcast.deliver_picks(db, cfg, tg, tomorrow,
+                                   now=datetime(2030, 6, 2, 9, 30, tzinfo=timezone.utc)) == 1
+
+
+def test_subscribing_before_930_still_gets_todays_card(db, monkeypatch):
+    """The scheduled broadcast is untouched: join early, be served at 9:30."""
+    _join_at(monkeypatch, "2030-06-01T08:00:00Z")
+    db.subscriber_add("42")
+    tg = FakeTG()
+
+    assert broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)) == 1
+    assert len(tg.sends) == 1
+
+
+def test_the_join_gate_is_measured_in_the_subscribers_own_zone(db, monkeypatch):
+    """Own-zone 9:30: 09:30 UTC is 10:30 WAT (missed) but 08:00 JST (in time)."""
+    _join_at(monkeypatch, "2030-06-01T09:30:00Z")            # Lagos: 10:30 WAT
+    db.subscriber_add("lagos", timezone="Africa/Lagos")
+    _join_at(monkeypatch, "2030-05-31T23:00:00Z")            # Tokyo: 08:00 JST on 1 June
+    db.subscriber_add("tokyo", timezone="Asia/Tokyo")
+    tg = FakeTG()
+
+    sent = broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc))
+    assert sent == 1 and tg.sends[0]["chat_id"] == "tokyo"
+
+
+def test_resubscribing_after_930_does_not_trigger_an_instant_card(db, monkeypatch):
+    """A returning user starts a NEW subscription window, so no catch-up card."""
+    _join_at(monkeypatch, "2030-05-01T10:00:00Z")
+    db.subscriber_add("42")                                 # joined weeks ago
+    db.subscriber_remove("42")
+    _join_at(monkeypatch, "2030-06-01T10:00:00Z")
+    db.subscriber_add("42")                                 # came back mid-day
+    tg = FakeTG()
+
+    assert broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 10, 5, tzinfo=timezone.utc)) == 0
+    assert tg.sends == []
+    assert db.subscribers_active()[0]["subscribed_at"] == "2030-06-01T10:00:00Z"
+
+
+def test_repeat_start_keeps_the_original_subscription_instant(db, monkeypatch):
+    """An active user pinging /start again must not lose a card already owed."""
+    _join_at(monkeypatch, "2030-06-01T08:00:00Z")
+    handle_start(db, FakeTG(), "42", {"first_name": "Zed"})
+    _join_at(monkeypatch, "2030-06-01T12:00:00Z")
+    handle_start(db, FakeTG(), "42", {"first_name": "Zed"})   # pings /start again
+    tg = FakeTG()
+
+    assert db.subscribers_active()[0]["subscribed_at"] == "2030-06-01T08:00:00Z"
+    assert broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 13, 0, tzinfo=timezone.utc)) == 1
+
+
+def test_missing_subscribed_at_still_delivers(db):
+    """Rows predating the gate are not silently starved of the broadcast."""
+    db.subscriber_add("42")
+    db.execute("UPDATE subscribers SET subscribed_at=''")
+    tg = FakeTG()
+
+    assert broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)) == 1
+
 
 
 # ---------------------------------------------------------- /start menu routing

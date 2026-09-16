@@ -5,8 +5,11 @@ failed providers after the configured cooldown. Recaps use already-fetched text.
 send is de-duplicated per (kind, card date, chat) in the ``deliveries`` table, so
 restarts and repeated job runs never double-send.
 
-Delivery uses one application-zone instant (09:00 Africa/Lagos by default).
-Subscriber zones affect displayed kickoff times, not delivery eligibility.
+Picks land at 09:30 in each subscriber's OWN zone (their stored IANA zone, else
+``TIMEZONE``), and only for people whose subscription already existed at that
+moment: joining, /start or re-subscribing after 09:30 is never itself a reason to
+be sent today's card, which arrives with the next scheduled broadcast instead.
+Onboarding is therefore menu-only - it never triggers a prediction send.
 """
 from __future__ import annotations
 
@@ -14,11 +17,9 @@ import logging
 from datetime import datetime, timedelta
 from typing import Callable, Optional, Union
 
-from predbot.bot.format import PickLine, kickoff_label, outcome_label, picks_card, sport_name
+from predbot.bot.format import pick_line_from_record, summary_card
 from predbot.bot.telegram import Telegram
 from predbot.cache.models import DailySnapshot
-from predbot.markets.catalog import short_selection
-from predbot.providers.base import MarketLine
 from predbot.storage.db import Database
 from predbot.util.timeutil import resolve_timezone, local_reached, parse_iso, to_local, utcnow
 
@@ -45,18 +46,50 @@ def subscriber_tz(row, fallback_tz: str) -> str:
     return resolve_timezone(stored, fallback_tz)
 
 
+def _joined_before_target(row, date_str: str, hour: int, minute: int, user_tz: str) -> bool:
+    """True when this subscription existed by the time today's card was due.
+
+    A subscriber who joins AFTER their own 9:30 has already missed today's
+    broadcast, so they start with the next one.  Without this gate, merely sending
+    /start after 9:30 was enough to be handed the day's card on the next poll -
+    onboarding silently became an instant prediction send, and a fresh joiner got
+    a ticket for matches that had already started.
+
+    Falls back to "eligible" when ``subscribed_at`` is missing or unparseable
+    (rows created before this rule existed), i.e. the historical behaviour.
+    """
+    try:
+        joined = parse_iso(str(row["subscribed_at"] or ""))
+    except (KeyError, IndexError, TypeError):
+        return True
+    if joined is None:
+        return True
+    local = to_local(joined, user_tz)
+    local_date = local.strftime("%Y-%m-%d")
+    if local_date > date_str:
+        return False                       # joined after the card's day - not due yet
+    if local_date == date_str and (local.hour, local.minute) > (hour, minute):
+        return False                       # joined after their 9:30 today - starts tomorrow
+    return True
+
+
 def picks_text(snapshot: DailySnapshot, tz: str) -> str:
-    """The daily predictions card (top picks first, then the daily ones) from a snapshot."""
-    picks = []
-    for p in snapshot.top_picks + snapshot.daily_picks:
-        ml = MarketLine(p.market, p.selection, p.price, line=p.line)
-        picks.append(PickLine(sport=sport_name(p.sport),
-                              match=f"{p.home} vs {p.away}",
-                              outcome=outcome_label(p.label, ml, p.home, p.away, p.sport),
-                              league=p.league or sport_name(p.sport),
-                              confidence=p.prob, when=kickoff_label(parse_iso(p.kickoff_utc), tz),
-                              price=p.price))
-    return picks_card(picks, snapshot.date, _record_line(snapshot))
+    """THE subscriber summary card (single canonical renderer, no drift).
+
+    Every pick line is built by ``pagination.pick_line_from_record`` - the same
+    builder the /top and /daily views use - so a pick cannot render one way in
+    the views and another way here. Ambiguous picks (no explicit outcome) are
+    dropped BEFORE any totals are computed.
+    """
+    top = [pick_line_from_record(p, tz) for p in snapshot.top_picks]
+    daily = [pick_line_from_record(p, tz) for p in snapshot.daily_picks]
+    top = [p for p in top if p.outcome]
+    daily = [p for p in daily if p.outcome]
+    if not top and not daily:
+        return ""
+    card = summary_card(top, daily)
+    footer = _record_line(snapshot)
+    return f"{card}\n{footer}" if footer else card
 
 
 def _record_line(snapshot: DailySnapshot) -> Optional[str]:
@@ -117,7 +150,16 @@ def _deliver(db: Database, tg: Telegram, kind: str, date_str: str, text: str, la
 def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_str: str,
                               snapshot: DailySnapshot, target_hour: int, target_minute: int,
                               label: str, now: Optional[datetime] = None) -> int:
-    """Send to each subscriber when target time arrives in their timezone (within 2-minute window)."""
+    """Send to each subscriber once their target time has arrived in their zone.
+
+    "At or past" rather than an exact-minute window: the scheduler polls every few
+    minutes, so a narrow window would silently skip a subscriber whose minute was
+    never sampled.  ``delivery_done()`` keeps it to one card per person per day.
+
+    Subscribers whose subscription started AFTER that moment are skipped for the
+    day (``_joined_before_target``): joining must never be what puts a card in
+    someone's chat, so onboarding cannot cause an instant prediction send.
+    """
     if not tg.token:
         return 0
     now = now or utcnow()
@@ -132,11 +174,16 @@ def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_s
             continue                      # their day hasn't started yet
         if (local.hour, local.minute) < (target_hour, target_minute):
             continue                      # their 9:30 hasn't arrived
+        if not _joined_before_target(row, date_str, target_hour, target_minute, user_tz):
+            continue                      # joined after today's card was due - starts tomorrow
         # Deliberately "at or past" rather than an exact-minute window: the
         # scheduler polls every few minutes, so a narrow window would silently
         # skip a subscriber whose minute was never sampled.  delivery_done()
         # is what keeps this to one card per person per day.
-        if tg.send(picks_text(snapshot, user_tz), chat_id=chat_id):
+        text = picks_text(snapshot, user_tz)
+        if not text:
+            continue                      # nothing explicit to show - never send a blank card
+        if tg.send(text, chat_id=chat_id):
             db.mark_delivery(kind, date_str, chat_id)
             sent += 1
     if sent:

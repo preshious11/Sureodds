@@ -1,12 +1,14 @@
 """Message templates. Deliberately terse: picks, odds, probability, stats."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Dict, Iterable, List, NamedTuple, Optional
 
 from predbot.bot.telegram import esc
 from predbot.markets.catalog import short_selection
-from predbot.util.timeutil import to_local
+from predbot.providers.base import MarketLine
+from predbot.util.timeutil import parse_iso, to_local
 
 BRAND = "SureOdds"
 SPORT_ICON = {"football": "⚽", "basketball": "🏀", "american_football": "🏈", "hockey": "🏒",
@@ -21,7 +23,7 @@ RESULT_ICON = {"won": "✅", "lost": "❌", "push": "↩️", "half_won": "✅½
 HEADING_TOP = "🏆 Top Picks for Today"
 HEADING_DAILY = "📋 Daily Picks for Today"
 # Bare codes a punter should never have to decode; mapped to plain English.
-_TERSE_CODES = {"1": "{home} to win", "2": "{away} to win", "X": "Draw",
+_TERSE_CODES = {"1": "{home} to Win", "2": "{away} to Win", "X": "Draw",
                 "1X": "{home} or Draw", "X2": "{away} or Draw", "12": "{home} or {away}",
                 "1 DNB": "{home} (Draw No Bet)", "2 DNB": "{away} (Draw No Bet)"}
 
@@ -43,24 +45,99 @@ def _looks_internal(text: str) -> bool:
     return " " not in text and (":" in text or "_" in text)
 
 
-def outcome_label(label: Optional[str], ml=None, home: str = "", away: str = "",
-                  sport: str = "football") -> str:
-    """The outcome line: the human-readable label, never a bare code like '1' or 'X'.
+#: Outcomes a punter cannot act on without more context. A bare "Over", an
+#: "Over/Under" without a side, an "Over 1.5" without a unit - all ambiguous.
+_BARE_OUTCOMES = {"over", "under", "over/under", "over-under", "win", "lose",
+                  "yes", "no", "draw", "selection", "even", "odd"}
+_BARE_TOTAL_RE = re.compile(r"(?:over|under)\s+[\d.]+")
+_OVER_UNDER_RE = re.compile(r"\bover\s*/\s*under\b")
 
-    The paginated views render ``pick.label`` directly, so the broadcast card has to
-    resolve to the same text or the two views disagree on the same pick.
+
+def ambiguous_outcome(text: str) -> bool:
+    """True when ``text`` does not state an explicit, complete outcome."""
+    t = " ".join(str(text or "").strip().lower().split())
+    if not t:
+        return True
+    if t in _BARE_OUTCOMES:
+        return True
+    if _looks_internal(t):
+        return True
+    if _OVER_UNDER_RE.search(t):
+        return True
+    if _BARE_TOTAL_RE.fullmatch(t):        # "Over 1.5" - over WHAT?
+        return True
+    return False
+
+
+def outcome_label(label: Optional[str] = None, ml=None, home: str = "",
+                  away: str = "", sport: str = "football") -> str:
+    """ONE canonical outcome formatter: the explicit full prediction, never a
+    bare code or a raw market name. Returns '' when the outcome cannot be
+    stated explicitly - callers skip such candidates instead of guessing.
+
+    Prop markets are ALWAYS rebuilt from the canonical fields (entity, side,
+    line, stat): a provider label like 'Batting_Hits' or 'Hits Over/Under' is
+    never shown. Ambiguous stored labels ('Over 1.5' with no unit, 'Over/Under')
+    fall through to the canonical derivation, and if that fails too the outcome
+    is '' (the pick is hidden) rather than a misleading fragment.
     """
-    text = (label or "").strip()
-    if text and text not in _TERSE_CODES and not _looks_internal(text):
+    text = " ".join(str(label or "").split())
+    derived = (short_selection(ml, home, away, sport) or "").strip() if ml is not None else ""
+    if ml is not None and ml.market == "prop":
+        if derived and not ambiguous_outcome(derived):
+            return derived
+        if text and not ambiguous_outcome(text):
+            return text
+        return ""
+    if text and text not in _TERSE_CODES and not ambiguous_outcome(text):
         return text
-    if ml is not None:
-        short = (short_selection(ml, home, away, sport) or "").strip()
-        if short and short not in _TERSE_CODES:
-            return short
-        named = _TERSE_CODES.get(short or text)
+    if derived:
+        if derived not in _TERSE_CODES and not ambiguous_outcome(derived):
+            return derived
+        named = _TERSE_CODES.get(derived)
         if named:
             return named.format(home=home or "Home", away=away or "Away")
-    return text or "Selection"
+    named = _TERSE_CODES.get(text)
+    if named:
+        return named.format(home=home or "Home", away=away or "Away")
+    return ""
+
+
+def format_outcome(pick, home: str = "", away: str = "") -> str:
+    """The outcome of a cached pick (``PickRecord``-like object) as one explicit
+    prediction, via :func:`outcome_label`. '' when it cannot be represented."""
+    ml = MarketLine(
+        market=str(getattr(pick, "market", "") or ""),
+        selection=str(getattr(pick, "selection", "") or ""),
+        price=float(getattr(pick, "price", 0.0) or 0.0),
+        period=str(getattr(pick, "period", "full") or "full"),
+        stat=str(getattr(pick, "stat", "") or ""),
+        entity=str(getattr(pick, "entity", "") or ""),
+        line=getattr(pick, "line", None),
+        label=str(getattr(pick, "label", "") or ""),
+        market_name=str(getattr(pick, "label", "") or ""),
+    )
+    return outcome_label(ml.label, ml, home or getattr(pick, "home", ""),
+                         away or getattr(pick, "away", ""),
+                         getattr(pick, "sport", "football"))
+
+
+def pick_line_from_record(pick, tz: str, user_tz: Optional[str] = None) -> PickLine:
+    """THE canonical pick-card builder (``format_pick_card`` for a cached pick).
+
+    The ONLY place a cached ``PickRecord`` becomes display text: the /top and
+    /daily views, the broadcast summary and every other path render through
+    this, so a pick cannot show one card in one view and another card elsewhere.
+    The outcome is always explicit (entity + side + line + stat for props);
+    ambiguous picks come back with outcome='' and are skipped by the renderers.
+    """
+    return PickLine(sport=sport_name(pick.sport),
+                    match=f"{pick.home} vs {pick.away}",
+                    outcome=format_outcome(pick),
+                    league=pick.league or sport_name(pick.sport),
+                    confidence=pick.prob,
+                    when=kickoff_label(parse_iso(pick.kickoff_utc), tz, user_tz),
+                    price=pick.price)
 
 
 def kickoff_label(start: Optional[datetime], tz: str, user_tz: Optional[str] = None) -> str:
@@ -95,19 +172,18 @@ def pick_lines(p: PickLine) -> List[str]:
     """The six lines one pick occupies: sport, league, match, outcome, confidence | kickoff, odds."""
     return [esc(p.sport), esc(p.league), esc(p.match), esc(p.outcome),
             f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {p.when}",
-            f"{p.price:.2f}"]
+            f"Odds: {p.price:.2f}"]
 
 
 def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str] = None,
                heading: str = HEADING_DAILY,
                total_prices: Optional[Iterable[float]] = None) -> str:
-    """The daily predictions post: one block per pick, then the combined odds.
+    """The daily predictions post: one block per pick, then the ticket totals.
 
-    Top picks are listed first, then the rest of the day's selections, so the
-    card reads as a single list of up to ``picks`` entries.
-
-    ``total_prices`` lets a paginated page price the WHOLE accumulator rather
-    than just the five picks visible on that page.
+    ``total_prices`` lets a caller price a different collection than the cards
+    shown (legacy callers only); when omitted the combined odds are the product
+    of exactly the picks listed here - displayed picks and combined odds can
+    never come from different lists.
     """
     lines = [f"{heading} {date_label}", ""]
     if not picks:
@@ -116,7 +192,8 @@ def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str]
         lines.extend(pick_lines(p))
         lines.append("")
     if picks:
-        prices = total_prices if total_prices is not None else [p.price for p in picks]
+        prices = list(total_prices) if total_prices is not None else [p.price for p in picks]
+        lines.append(f"Total Picks: {len(picks)}")
         lines.append(f"Combined Odds: {combined_odds(prices):.4f}")
     if stats_line:
         lines.append("")
@@ -135,7 +212,59 @@ def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str])
                               league=e.league or sport_name(e.sport),
                               confidence=s.p_model, when=kickoff_label(e.start, tz),
                               price=s.price))
+    picks = [p for p in picks if p.outcome]
     return picks_card(picks, to_local(day, tz).strftime("%Y-%m-%d"), stats_line)
+
+
+# ------------------------------------------------------------ the summary card
+#: The corrected, canonical summary copy. Every summary/recap path renders THIS
+#: structure; any other wording found at runtime is a stale-path regression.
+SUMMARY_TITLE = "📊 TODAY'S RESULTS"
+TOP_SECTION_TITLE = "🔥 TOP PICKS"
+DAILY_SECTION_TITLE = "📋 DAILY PICKS"
+SECTION_COMBINED = "Combined Odds:"
+SECTION_TOTAL = "Total Picks:"
+
+
+def render_section(title: str, picks: List[PickLine]) -> List[str]:
+    """ONE canonical section renderer: title, Combined Odds, Total Picks, then
+    the pick blocks. Combined odds and Total Picks are computed from EXACTLY
+    the picks rendered here - never from another collection."""
+    lines = [title, f"{SECTION_COMBINED} {combined_odds(p.price for p in picks):.2f}",
+             f"{SECTION_TOTAL} {len(picks)}"]
+    for p in picks:
+        lines.extend(pick_lines(p))
+        lines.append("")
+    return lines
+
+
+def summary_card(top: List[PickLine], daily: List[PickLine]) -> str:
+    """THE canonical results/summary card (one and only one renderer).
+
+        📊 TODAY'S RESULTS
+        🔥 TOP PICKS
+        Combined Odds: X.XX
+        Total Picks: X
+        <pick blocks...>
+        📋 DAILY PICKS
+        Combined Odds: X.XX
+        Total Picks: X
+        <pick blocks...>
+
+    The Daily section's odds/picks cover only the Daily selections; the Top
+    section's only the Top ones. An outcome that cannot be stated explicitly is
+    skipped before anything is computed, so the totals always match the cards.
+    """
+    top = [p for p in top if p.outcome]
+    daily = [p for p in daily if p.outcome]
+    lines = [SUMMARY_TITLE]
+    if top:
+        lines.append("")
+        lines.extend(render_section(TOP_SECTION_TITLE, top))
+    if daily:
+        lines.append("")
+        lines.extend(render_section(DAILY_SECTION_TITLE, daily))
+    return "\n".join(lines).rstrip()
 
 
 def _pct(w: int, l: int) -> str:
