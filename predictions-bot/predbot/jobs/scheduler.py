@@ -81,7 +81,7 @@ class DynamicJob:
             log.exception("job %s failed: %s", self.name, e)
 
 
-def loop(jobs, poll_seconds: int = 30) -> None:
+def loop(jobs, poll_seconds: int = 30, health_check=None) -> None:
     log.info("scheduler running with %d jobs", len(jobs))
     shutdown = False
 
@@ -94,6 +94,8 @@ def loop(jobs, poll_seconds: int = 30) -> None:
     signal.signal(signal.SIGINT, handle_signal)
 
     while not shutdown:
+        if health_check is not None:
+            health_check()
         now = utcnow()
         for j in jobs:
             if j.due(now):

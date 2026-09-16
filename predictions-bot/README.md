@@ -165,7 +165,7 @@ python main.py                   # run the scheduler (what Railway runs)
 
 `main.py` runs the scheduler loop: recap at `RECAP_TIME`, picks at `POST_TIME`,
 settlement every `SETTLE_INTERVAL_MIN` minutes. Set `ENABLE_COMMANDS=true` and
-`TELEGRAM_ADMIN_IDS` to also answer `/stats`, `/today`, `/yesterday` (and admin
+`TELEGRAM_ADMIN_IDS` to also answer `/top`, `/daily`, `/stats`, `/yesterday` (and admin
 `/run`, `/settle`, `/recap`).
 
 ---
@@ -205,20 +205,45 @@ Run `python cli.py budget` any time to see where you stand.
 
 ## Daily cache & zero-API pagination
 
-Interactive Telegram reads never touch the provider APIs:
+`/top` and the Top Picks button show the top ticket (target approximately 2.00).
+`/daily` and the Daily Picks button show the complete daily ticket: top selections
+plus the additional daily selections, which the picker sizes toward 10–20 odds.
+Commands and buttons share the same renderer. Each prediction shows its sport
+icon, fixture, outcome, confidence, subscriber-local kickoff time and odds.
+The footer multiplies all odds in the selected ticket, across every page, and
+displays two decimal places. The saved `/timezone` preference applies to both
+commands and buttons; the configured timezone is the fallback.
 
-- The whole day's data (top picks, daily picks, stats) is normalised into one
-  `DailySnapshot` and cached **once per UTC day** under
-  `bot:predictions:daily:{YYYY-MM-DD}`; the entry expires at UTC midnight.
-- `/today` posts page 0 with inline buttons; ◀️ ▶️ and the Top / Daily / Stats
-  switch all **edit the existing message from the cached snapshot** — zero
-  external API requests per navigation.
-- A cache miss takes the per-day mutex (`bot:predictions:lock:{...}`), re-checks
-  the cache, then rebuilds from the SQLite picks table (still zero API) and only
-  falls back to a full provider fetch when nothing is published yet. Concurrent
-  readers wait for the builder's cache entry instead of duplicating API calls.
-- The default backend is an in-process TTL dictionary; set `REDIS_URL` (and
-  `pip install redis`) to share the cache and lock across replicas.
+Predictions use the existing SQLite database (`DB_PATH`) as the only cache.
+
+- `/top`, `/daily`, their buttons, and scheduled publication all use
+  `UnifiedFetcher.get_daily_snapshot()` and the same `prediction_cache` row.
+- Keys contain the application timezone and calendar date. Subscriber zones affect
+  display only. Rows expire at application-zone midnight (Africa/Lagos by default).
+- COMPLETE snapshots return without provider calls, including after process restart.
+- PARTIAL snapshots remain usable. After `CACHE_RETRY_SECONDS` (default 900), failed
+  providers are retried; successful provider portions in `provider_cache` are reused.
+  Valid empty results count as completed; a failed football source does not.
+- Successful API-Football generation responses are stored in SQLite as well, so
+  retries reuse fixture/odds/prediction requests already fetched that day. Settlement
+  remains separate because results become available after kickoff.
+- `force_refresh=True` rebuilds Top/Daily selection from canonical provider data.
+  Completed source responses remain protected from unnecessary paid refetches.
+- SQLite transactions save both lists/status together; a shared in-process lock
+  prevents command and scheduler threads from duplicating generation. Run one bot
+  process against this database; this is not a multi-host distributed cache.
+- `CACHE_RETENTION_DAYS` defaults to 7. Pruning removes only expired cache history,
+  not subscribers, picks, results, settings or API budget records.
+- No Redis package, URL, server, file-cache directory or external service is required.
+  Previous `REDIS_URL`/`CACHE_DIR` settings are unused and can be removed.
+- Startup logs `Prediction cache backend=sqlite` and the resolved SQLite path.
+  Docker sets `DB_PATH=/data/predbot.db`; mount persistent storage at `/data`.
+  Persistence across container replacement must be verified in JustRunMyApp.
+- `python diagnose_prediction_cache.py` is the single cache diagnostic. It opens the
+  configured SQLite file read-only (no generation, migration or sports API calls) and
+  prints the backend, database path, today's HIT/MISS, COMPLETE/PARTIAL status, sport
+  status, football/baseball/Top/Daily counts, generated/updated times, retry-after when
+  partial and the cache version. See `SQLITE_CACHE_REPORT.md` for deployment verification.
 
 ---
 
@@ -254,3 +279,12 @@ predbot/
   storage/db.py         SQLite persistence
 tests/                  pytest suite + fixtures
 ```
+
+### Shared daily broadcast time
+
+The default is `TIMEZONE=Africa/Lagos` and `POST_TIME=09:00`. All subscribers
+receive the same scheduled broadcast at 09:00 WAT (08:00 UTC), subject to job
+completion and delivery retries. Their saved timezone changes displayed kickoff
+times and the local schedule shown by `/timezone`, not the delivery instant.
+For New York this is 03:00 EST or 04:00 EDT. Set both deployment variables and
+redeploy; existing environment values override code defaults.

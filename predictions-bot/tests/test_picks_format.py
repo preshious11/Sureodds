@@ -109,13 +109,15 @@ def test_league_falls_back_to_the_sport_name_and_unknown_kickoff_is_dashed():
     assert kickoff_label(None, WAT) == "--:--"
 
 
-def test_match_and_league_are_html_escaped():
+def test_match_league_and_outcome_are_html_escaped():
     ev = event(1, league="Copa & Liga", home="Benfica <B>", away="Away & Co")
-    card = picks_message([sc(ev, "x", 0.60, 1.50)], [], DAY, WAT, None)
+    card = picks_message([sc(ev, "Home <win> & draw", 0.60, 1.50)], [], DAY, WAT, None)
 
     lines = card.splitlines()
     assert "Benfica &lt;B&gt; vs Away &amp; Co" in lines  # match line escaped
     assert "Copa &amp; Liga" in lines  # league line escaped
+    assert "Home &lt;win&gt; &amp; draw" in lines  # outcome line escaped
+    assert "<win>" not in card                     # never raw, it would break parse_mode
 
 
 def test_combined_odds_is_the_product_of_every_listed_pick():

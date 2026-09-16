@@ -1,20 +1,11 @@
-"""Unified cache schema: the canonical JSON model written once per UTC day.
-
-Data flow
----------
-provider parsers -> Event / MarketLine (predbot.providers.base) -> pricing model
--> picker (PickSet) -> **this schema** -> daily cache -> Telegram pages.
-
-Everything here JSON-round-trips cleanly: ``to_dict()`` -> ``json.dumps`` ->
-``from_dict()``.  The cache payload is an immutable snapshot for the rest of the
-UTC day; pagination slices it in memory.
-"""
+"""Canonical application-day snapshot JSON, persisted atomically in SQLite."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from math import prod
 from typing import Any, Dict, List, Optional
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 VIEW_TOP = "top"
 VIEW_DAILY = "daily"
@@ -25,6 +16,12 @@ VIEW_STATS = "stats"
 class PickRecord:
     """One selection (top or daily tier), provider-agnostic and cache-ready."""
 
+    provider: str = ""
+    provider_event_id: str = ""
+    provider_odd_id: str = ""
+    period: str = "full"
+    stat: str = "points"
+    entity: str = "all"
     pick_id: Optional[int] = None          # SQLite picks.id once persisted
     tier: str = "daily"                    # top | daily
     rank: int = 0
@@ -127,21 +124,25 @@ class StatsSummary:
 
 @dataclass
 class DailySnapshot:
-    """The whole day's public data in one cache entry (write-once-per-day)."""
+    """Both ticket views from one generation; partial coverage can recover."""
 
-    date: str                              # UTC date "YYYY-MM-DD" this belongs to
+    date: str                              # Application-local date "YYYY-MM-DD"
     generated_at: str = ""                 # ISO-8601 Z build timestamp
     origin: str = "cache"                  # cache | db | api  (how it was produced)
     top_picks: List[PickRecord] = field(default_factory=list)
     daily_picks: List[PickRecord] = field(default_factory=list)
     stats: Optional[StatsSummary] = None
     schema_version: int = SCHEMA_VERSION
+    generation: Dict[str, Any] = field(default_factory=dict)
+    status: str = "COMPLETE"
+    sport_status: Dict[str, Any] = field(default_factory=dict)
 
     def view_items(self, view: str) -> List[PickRecord]:
         if view == VIEW_TOP:
             return self.top_picks
         if view == VIEW_DAILY:
-            return self.daily_picks
+            # The picker builds the daily accumulator by extending the top ticket.
+            return self.top_picks + self.daily_picks
         return []
 
     def total_picks(self) -> int:
@@ -153,6 +154,10 @@ class DailySnapshot:
             "date": self.date,
             "generated_at": self.generated_at,
             "origin": self.origin,
+            "generation": self.generation,
+            "status": self.status,
+            "sport_status": self.sport_status,
+            "top_combined_odds": prod(p.price for p in self.top_picks) if self.top_picks else None,
             "top_picks": [p.to_dict() for p in self.top_picks],
             "daily_picks": [p.to_dict() for p in self.daily_picks],
             "stats": (asdict(self.stats) if self.stats else None),
@@ -163,11 +168,16 @@ class DailySnapshot:
         version = int(data.get("schema_version", 0))
         if version != SCHEMA_VERSION:
             raise ValueError(f"unsupported snapshot schema version: {version}")
+        if data.get('status', 'COMPLETE') not in ('COMPLETE', 'PARTIAL'):
+            raise ValueError('invalid snapshot status')
         stats_raw = data.get("stats")
         return cls(
             date=str(data["date"]),
             generated_at=str(data.get("generated_at", "")),
             origin=str(data.get("origin", "cache")),
+            generation=dict(data.get("generation") or {}),
+            status=str(data.get("status", "COMPLETE")),
+            sport_status=dict(data.get("sport_status") or {}),
             top_picks=[PickRecord.from_dict(p) for p in data.get("top_picks", [])],
             daily_picks=[PickRecord.from_dict(p) for p in data.get("daily_picks", [])],
             stats=(StatsSummary.from_raw(stats_raw) if stats_raw else None),
