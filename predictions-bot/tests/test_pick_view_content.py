@@ -11,7 +11,7 @@ from tests.test_subscribers_broadcast import FakeTG, _cb
 
 @pytest.mark.parametrize('view,expected,absent,total', [
     ('top', 'TOP ONLY', 'DAILY ONLY', '3.57'),
-    ('daily', 'DAILY ONLY', 'TOP ONLY', '15.34'),
+    ('daily', 'DAILY ONLY', 'NEVER INCLUDED', '54.72'),
 ])
 def test_each_route_uses_its_own_picks_and_total(view, expected, absent, total):
     snapshot = DailySnapshot(date='2030-06-01', top_picks=[
@@ -30,7 +30,7 @@ def test_each_route_uses_its_own_picks_and_total(view, expected, absent, total):
     for result in [tg.sends[0], tg.edits[0]]:
         assert expected in result['text']
         assert absent not in result['text']
-        assert f'<b>Total odds: {total}</b>' in result['text']
+        assert f'Combined odds: <b>{total}</b>' in result['text']
 
 
 def test_empty_top_does_not_fall_back_to_daily():
@@ -39,7 +39,7 @@ def test_empty_top_does_not_fall_back_to_daily():
     tg = FakeTG()
     handle_command('/top', '42', service=SimpleNamespace(get_daily_snapshot=lambda: snapshot),
                    tg=tg, cfg=Config())
-    assert 'No picks available.' in tg.sends[0]['text']
+    assert 'No selection cleared the quality bar today.' in tg.sends[0]['text']
     assert 'DAILY ONLY' not in tg.sends[0]['text']
 
 
@@ -47,4 +47,4 @@ def test_empty_top_does_not_fall_back_to_daily():
 def test_broadcast_total_is_multiplied_and_rounded_to_two_places(prices, total):
     picks = [PickLine('Football', 'A vs B', 'Home', 'League', 0.7, '--:--', price)
              for price in prices]
-    assert picks_card(picks, '2030-06-01').endswith(f'Combined Odds: {total}')
+    assert picks_card(picks, '2030-06-01').endswith(f'Combined odds: <b>{total}</b>')

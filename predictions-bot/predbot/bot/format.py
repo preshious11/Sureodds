@@ -58,27 +58,29 @@ def combined_odds(prices: Iterable[float]) -> float:
 
 
 def pick_lines(p: PickLine) -> List[str]:
-    """The six lines one pick occupies: sport, league, match, outcome, confidence | kickoff, odds."""
-    return [esc(p.sport), esc(p.league), esc(p.match), esc(p.outcome),
-            f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {p.when}",
+    """The shared five-line prediction block for commands, buttons and broadcasts."""
+    sport = next((key for key, label in SPORT_LABEL.items() if label == p.sport), "other")
+    return [f"{SPORT_ICON[sport]} {esc(p.sport)}", esc(p.match), esc(p.outcome),
+            f"Confidence: <b>{round(p.confidence * 100)}%</b> | <b>{esc(p.when)}</b>",
             f"{p.price:.2f}"]
 
 
 def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str] = None,
-               heading: str = "📋 Daily Picks for Today") -> str:
+               heading: str = "Today's", total_prices: Optional[Iterable[float]] = None) -> str:
     """The daily predictions post: one block per pick, then the combined odds.
 
     Top picks are listed first, then the rest of the day's selections, so the
     card reads as a single list of up to ``picks`` entries.
     """
-    lines = [f"{heading} {date_label}", ""]
+    lines = [f"<b>{esc(heading)}</b> predictions—— <b>{esc(date_label)}</b>", ""]
     if not picks:
         lines.append("No selection cleared the quality bar today.")
     for p in picks:
         lines.extend(pick_lines(p))
         lines.append("")
     if picks:
-        lines.append(f"Combined Odds: {combined_odds([p.price for p in picks]):.2f}")
+        prices = total_prices if total_prices is not None else [p.price for p in picks]
+        lines.append(f"Combined odds: <b>{combined_odds(prices):.2f}</b>")
     if stats_line:
         lines.append("")
         lines.append(stats_line)
@@ -92,7 +94,7 @@ def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str])
         e = s.event
         picks.append(PickLine(sport=sport_name(e.sport),
                               match=f"{e.home} vs {e.away}",
-                              outcome=short_selection(s.line, e.home, e.away, e.sport),
+                              outcome=s.label or short_selection(s.line, e.home, e.away, e.sport),
                               league=e.league or sport_name(e.sport),
                               confidence=s.p_model, when=kickoff_label(e.start, tz),
                               price=s.price))
