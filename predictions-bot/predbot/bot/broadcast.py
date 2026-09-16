@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from predbot.bot.format import PickLine, kickoff_label, picks_card, sport_name
+from predbot.bot.format import PickLine, kickoff_label, outcome_label, picks_card, sport_name
 from predbot.bot.telegram import Telegram
 from predbot.cache.models import DailySnapshot
 from predbot.markets.catalog import short_selection
@@ -22,6 +22,13 @@ from predbot.util.timeutil import parse_iso, to_local, utcnow
 log = logging.getLogger(__name__)
 
 
+def _row_timezone(row, fallback: str) -> str:
+    """Subscriber timezone from a sqlite3.Row (which has no .get()), else the fallback."""
+    if "timezone" in row.keys() and row["timezone"]:
+        return str(row["timezone"])
+    return fallback
+
+
 def picks_text(snapshot: DailySnapshot, tz: str) -> str:
     """The daily predictions card (top picks first, then the daily ones) from a snapshot."""
     picks = []
@@ -29,7 +36,7 @@ def picks_text(snapshot: DailySnapshot, tz: str) -> str:
         ml = MarketLine(p.market, p.selection, p.price, line=p.line)
         picks.append(PickLine(sport=sport_name(p.sport),
                               match=f"{p.home} vs {p.away}",
-                              outcome=short_selection(ml, p.home, p.away, p.sport) or p.label,
+                              outcome=outcome_label(p.label, ml, p.home, p.away, p.sport),
                               league=p.league or sport_name(p.sport),
                               confidence=p.prob, when=kickoff_label(parse_iso(p.kickoff_utc), tz),
                               price=p.price))
@@ -87,7 +94,7 @@ def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_s
         chat_id = str(row["chat_id"])
         if db.delivery_done(kind, date_str, chat_id):
             continue
-        user_tz = row.get("timezone") or cfg.timezone
+        user_tz = _row_timezone(row, cfg.timezone)
         local = to_local(now, user_tz)
         if local.hour == target_hour and target_minute <= local.minute < target_minute + 2:
             text = picks_text(snapshot, user_tz)
@@ -106,7 +113,7 @@ def _get_last_fixture_end_time(db: Database, pick_date: str) -> Optional[datetim
         return None
     latest_kickoff = None
     for row in rows:
-        if row.get("start_utc"):
+        if row["start_utc"]:
             kt = parse_iso(row["start_utc"])
             if latest_kickoff is None or kt > latest_kickoff:
                 latest_kickoff = kt
@@ -134,7 +141,7 @@ def _deliver_recap_after_fixtures(db: Database, cfg, tg: Telegram, kind: str, da
         chat_id = str(row["chat_id"])
         if db.delivery_done(kind, date_str, chat_id):
             continue
-        user_tz = row.get("timezone") or cfg.timezone
+        user_tz = _row_timezone(row, cfg.timezone)
         local = to_local(now, user_tz)
         fixture_end_local = to_local(last_fixture_end, user_tz)
 

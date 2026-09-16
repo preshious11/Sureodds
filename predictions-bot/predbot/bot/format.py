@@ -16,6 +16,10 @@ SPORT_LABEL = {"football": "Football", "basketball": "Basketball", "american_foo
                "handball": "Handball", "other": "Other"}
 RESULT_ICON = {"won": "✅", "lost": "❌", "push": "↩️", "half_won": "✅½", "half_lost": "❌½",
                "void": "➖", "pending": "⏳"}
+# Bare codes a punter should never have to decode; mapped to plain English.
+_TERSE_CODES = {"1": "{home} to win", "2": "{away} to win", "X": "Draw",
+                "1X": "{home} or Draw", "X2": "{away} or Draw", "12": "{home} or {away}",
+                "1 DNB": "{home} (Draw No Bet)", "2 DNB": "{away} (Draw No Bet)"}
 
 
 class PickLine(NamedTuple):
@@ -30,13 +34,38 @@ class PickLine(NamedTuple):
     price: float
 
 
+def _looks_internal(text: str) -> bool:
+    """True for raw market keys like 'result3:home' that must never reach a user."""
+    return " " not in text and (":" in text or "_" in text)
+
+
+def outcome_label(label: Optional[str], ml=None, home: str = "", away: str = "",
+                  sport: str = "football") -> str:
+    """The outcome line: the human-readable label, never a bare code like '1' or 'X'.
+
+    The paginated views render ``pick.label`` directly, so the broadcast card has to
+    resolve to the same text or the two views disagree on the same pick.
+    """
+    text = (label or "").strip()
+    if text and text not in _TERSE_CODES and not _looks_internal(text):
+        return text
+    if ml is not None:
+        short = (short_selection(ml, home, away, sport) or "").strip()
+        if short and short not in _TERSE_CODES:
+            return short
+        named = _TERSE_CODES.get(short or text)
+        if named:
+            return named.format(home=home or "Home", away=away or "Away")
+    return text or "Selection"
+
+
 def kickoff_label(start: Optional[datetime], tz: str, user_tz: Optional[str] = None) -> str:
     """Local kickoff with its zone abbreviation ("7:45 PM WAT"); "--:--" when unknown."""
     if start is None:
         return "--:--"
     display_tz = user_tz or tz
     local = to_local(start, display_tz)
-    return f"{local.strftime('%I:%M %p')} {local.tzname() or display_tz}"
+    return f"{local.strftime('%I:%M %p').lstrip('0')} {local.tzname() or display_tz}"
 
 
 def combined_odds(prices: Iterable[float]) -> float:
@@ -93,7 +122,7 @@ def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str])
         e = s.event
         picks.append(PickLine(sport=sport_name(e.sport),
                               match=f"{e.home} vs {e.away}",
-                              outcome=short_selection(s.line, e.home, e.away, e.sport),
+                              outcome=outcome_label(s.label, s.line, e.home, e.away, e.sport),
                               league=e.league or sport_name(e.sport),
                               confidence=s.p_model, when=kickoff_label(e.start, tz),
                               price=s.price))

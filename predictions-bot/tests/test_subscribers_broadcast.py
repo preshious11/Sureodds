@@ -1,6 +1,8 @@
 """Tests for subscriber management, daily broadcasts and the /start menu."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from predbot.bot import broadcast
 from predbot.bot.callbacks import handle_callback, handle_start, menu_markup
 from predbot.cache.fetcher import UnifiedFetcher
@@ -68,10 +70,28 @@ def test_start_registers_active_subscriber_and_sends_menu(db):
     handle_start(db, tg, "42", {"username": "zed", "first_name": "Zed"})
     assert len(tg.sends) == 1
     assert tg.sends[0]["chat_id"] == "42"
-    assert "Welcome" in tg.sends[0]["text"]
+    text = tg.sends[0]["text"]
+    assert "Hi, Zed" in text
+    assert "/daily" in text and "/top" in text
     rows = db.subscribers_active()
     assert len(rows) == 1 and rows[0]["chat_id"] == "42"
     assert rows[0]["username"] == "zed"
+
+
+def test_start_sends_menu_only_never_predictions(db):
+    """/start must never fire predictions at the user - menu only."""
+    tg = FakeTG()
+    handle_start(db, tg, "42", {"username": "zed", "first_name": "Zed"})
+    assert len(tg.sends) == 1                       # exactly one message: the menu
+    text = tg.sends[0]["text"]
+    assert "Confidence level:" not in text          # no pick lines
+    assert "Total odds" not in text and "Combined Odds" not in text
+
+
+def test_start_autodetects_timezone_from_locale(db):
+    tg = FakeTG()
+    handle_start(db, tg, "42", {"first_name": "Zed", "language_code": "en_NG"})
+    assert db.get_user_timezone("42") == "Africa/Lagos"
 
 
 def test_subscriber_toggle_on_and_off(db):
@@ -83,33 +103,68 @@ def test_subscriber_toggle_on_and_off(db):
     assert len(rows) == 1 and rows[0]["username"] == "zed"
 
 
-def test_menu_markup_reflects_subscription_state():
-    on = menu_markup(subscribed=True)
-    texts = [b["text"] for row in on["inline_keyboard"] for b in row]
-    assert "🏆 Top Picks" in texts and "🔕 Unsubscribe from daily posts" in texts
-    off = menu_markup(subscribed=False)
-    texts_off = [b["text"] for row in off["inline_keyboard"] for b in row]
-    assert "🔔 Subscribe to daily posts" in texts_off
+def test_menu_has_no_subscription_button():
+    """The subscribe/unsubscribe toggle was removed - it must not come back."""
+    texts = [b["text"] for row in menu_markup()["inline_keyboard"] for b in row]
+    assert texts == ["🏆 Top Picks", "📋 Daily Picks", "📊 Stats"]
+    data = [b["callback_data"] for row in menu_markup()["inline_keyboard"] for b in row]
+    assert not any(d.startswith("sub|") for d in data)
 
 
 # ------------------------------------------------------------------- broadcasts
-def test_deliver_picks_reaches_all_subscribers_once(db):
+def _freeze(monkeypatch, iso: str) -> None:
+    """Pin broadcast.utcnow() so the per-subscriber time gate is deterministic."""
+    frozen = datetime.fromisoformat(iso).replace(tzinfo=timezone.utc)
+    monkeypatch.setattr(broadcast, "utcnow", lambda: frozen)
+
+
+def test_deliver_picks_reaches_all_subscribers_once(db, monkeypatch):
     db.subscriber_add("42")
     db.subscriber_add("77")
     tg = FakeTG()
+    _freeze(monkeypatch, "2030-06-01T09:30:00")      # 9:30am for UTC subscribers
 
     sent = broadcast.deliver_picks(db, Config(), tg, _snapshot())
 
     assert sent == 2
     assert [s["chat_id"] for s in tg.sends] == ["42", "77"]
     card = tg.sends[0]["text"]
-    assert card.startswith("📋 Top Picks for Today")
-    assert card.count("Football") == 4                # 1 top + 3 daily picks (sport line per pick)
+    assert card.startswith("📋 Daily Picks for Today")
+    assert "Top Picks for Today" not in card
+    assert card.count("Confidence level:") == 4       # 1 top + 3 daily picks, one block each
     assert "Combined Odds:" in card
 
     # same day again (e.g. a restart): deliveries are de-duplicated per user
     assert broadcast.deliver_picks(db, Config(), tg, _snapshot()) == 0
     assert len(tg.sends) == 2
+
+
+def test_deliver_picks_waits_until_930_in_subscriber_timezone(db, monkeypatch):
+    db.subscriber_add("42")
+    tg = FakeTG()
+
+    _freeze(monkeypatch, "2030-06-01T06:00:00")      # 6am - too early
+    assert broadcast.deliver_picks(db, Config(), tg, _snapshot()) == 0
+    assert tg.sends == []
+
+    _freeze(monkeypatch, "2030-06-01T09:30:00")      # 9:30am - fires
+    assert broadcast.deliver_picks(db, Config(), tg, _snapshot()) == 1
+
+
+def test_deliver_picks_uses_each_subscribers_own_timezone(db, monkeypatch):
+    db.subscriber_add("lagos")
+    db.set_user_timezone("lagos", "Africa/Lagos")     # UTC+1 -> 9:30am WAT == 08:30 UTC
+    db.subscriber_add("utc")
+    tg = FakeTG()
+
+    _freeze(monkeypatch, "2030-06-01T08:30:00")
+    assert broadcast.deliver_picks(db, Config(), tg, _snapshot()) == 1
+    assert tg.sends[0]["chat_id"] == "lagos"
+    assert "WAT" in tg.sends[0]["text"]               # kickoffs rendered in their zone
+
+    _freeze(monkeypatch, "2030-06-01T09:30:00")
+    assert broadcast.deliver_picks(db, Config(), tg, _snapshot()) == 1
+    assert tg.sends[1]["chat_id"] == "utc"
 
 
 def test_deliver_picks_skips_empty_snapshot(db):
@@ -118,30 +173,14 @@ def test_deliver_picks_skips_empty_snapshot(db):
     assert broadcast.deliver_picks(db, Config(), FakeTG(), empty) == 0
 
 
-def test_deliver_recap_dedupes_per_day(db):
-    db.subscriber_add("42")
-    tg = FakeTG()
-    assert broadcast.deliver_recap(db, Config(), tg, "📊 RESULTS · Sun 01 Jun") == 1
-    assert broadcast.deliver_recap(db, Config(), tg, "📊 RESULTS · Sun 01 Jun") == 0
-    assert len(tg.sends) == 1
-
-
 # ---------------------------------------------------------- /start menu routing
-def test_callback_sub_toggle_updates_db_and_menu(db):
-    cache = CacheManager()
-    fetcher = UnifiedFetcher(FakeChain(), db, Config(), cache)
-    db.subscriber_add("42", "zed", "Zed")
-    tg = FakeTG()
-
-    handle_callback(_cb("sub|off"), service=fetcher, tg=tg, db=db, cfg=Config())
-    assert db.subscribers_active() == []
-    assert "Unsubscribe" not in tg.edits[-1]["text"]       # menu re-rendered
-    assert any(b["callback_data"] == "sub|on"
-               for row in tg.edits[-1]["reply_markup"]["inline_keyboard"] for b in row)
-
-    handle_callback(_cb("sub|on"), service=fetcher, tg=tg, db=db, cfg=Config())
-    assert len(db.subscribers_active()) == 1
-    assert tg.answers[-1]["text"] == "Subscribed ✅"
+def test_pagination_keyboard_has_no_subscription_button(db):
+    """No rendered view may bring the subscribe toggle back."""
+    import predbot.bot.pagination as pg
+    for view in ("top", "daily", "stats"):
+        data = [b["callback_data"]
+                for row in pg.build_keyboard(view, 0, 3)["inline_keyboard"] for b in row]
+        assert not any(d.startswith("sub|") for d in data)
 
 
 def test_page_callbacks_still_work_after_router_change(db):
@@ -152,7 +191,7 @@ def test_page_callbacks_still_work_after_router_change(db):
 
     handle_callback(_cb("pg|top|0"), service=fetcher, tg=tg, db=db, cfg=Config())
 
-    assert len(tg.edits) == 1 and "TOP PICKS" in tg.edits[0]["text"]
+    assert len(tg.edits) == 1 and "Top picks for today" in tg.edits[0]["text"]
 
 
 # ----------------------------------------------------------------- helpers

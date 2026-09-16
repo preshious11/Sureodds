@@ -233,7 +233,7 @@ def test_callback_payload_codec():
 def test_render_page_structure_and_keyboard():
     snap = make_snapshot()
     text, markup = pagination.render_page(snap, VIEW_DAILY, 0, 10, "UTC")
-    assert "DAILY PICKS" in text and "page 1/3" in text
+    assert "Daily picks for today" in text and "Page 1/3" in text
     nav = markup["inline_keyboard"][0]
     assert nav[0]["text"] == "1/3"                # no ◀️ button on the first page
     assert nav[1]["callback_data"] == "pg|daily|1"
@@ -241,7 +241,7 @@ def test_render_page_structure_and_keyboard():
     assert len(markup["inline_keyboard"][-1]) == 3  # switch row: top/daily/stats
 
     text_last, markup_last = pagination.render_page(snap, VIEW_DAILY, 2, 10, "UTC")
-    assert "page 3/3" in text_last
+    assert "Page 3/3" in text_last
     buttons = [b["text"] for b in markup_last["inline_keyboard"][0]]
     assert "◀️" in buttons and "▶️" not in buttons
 
@@ -272,7 +272,7 @@ def test_callback_navigation_is_zero_api(db):
     assert len(tg.edits) == 1
     edit = tg.edits[0]
     assert edit["chat_id"] == "-100123" and edit["message_id"] == 77
-    assert "DAILY PICKS" in edit["text"] and "page 2/3" in edit["text"]
+    assert "Daily picks for today" in edit["text"] and "Page 2/3" in edit["text"]
     assert edit["reply_markup"]["inline_keyboard"]
     assert tg.answers and tg.answers[0]["id"] == "cb1"
 
