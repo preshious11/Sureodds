@@ -197,7 +197,14 @@ rather than failing silently:
   (`SGO_MONTHLY_OBJECT_LIMIT`). The bot spreads the monthly allowance across the
   days remaining in the month and keeps a reserve for settlement.
 - **SharpAPI** — rate-limited to `SHARPAPI_MIN_INTERVAL_SEC` between calls
-  (free tier ≈ 12/min).
+  (free tier ≈ 12/min). Its `/odds` feed is ordered by kick-off and prices each
+  match with dozens of rows, so the fetch is shaped by three knobs:
+  `SHARPAPI_MARKETS` (default `moneyline,spread,total` — drops the season
+  outrights that flood a raw page), `SHARPAPI_SPORTS` (e.g. `soccer`: walks the
+  global kick-off-ordered feed, the cheapest way to today's fixtures without a
+  request per league), `SHARPAPI_LEAGUES` (optional per-league feeds), plus
+  `SHARPAPI_MAX_PAGES` and `SHARPAPI_EVENTS_PER_TARGET` bounds. Paging also
+  stops by itself once a page starts after the pick window ends.
 
 Run `python cli.py budget` any time to see where you stand.
 

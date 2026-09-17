@@ -101,13 +101,37 @@ def build_keyboard(view: str, page: int, pages: int) -> Dict:
               for v in (VIEW_TOP, VIEW_DAILY, VIEW_STATS)]
     return {"inline_keyboard": ([row] if row else []) + [switch]}
 
+def _retry_hint(snapshot: DailySnapshot, tz: str) -> str:
+    """' Retrying around 11:00 Africa/Lagos.' when a partial refresh is scheduled."""
+    raw = (snapshot.generation or {}).get("retry_after")
+    at = parse_iso(raw) if raw else None
+    return f" Retrying around {to_local(at, tz).strftime('%H:%M')} {tz}." if at else ""
+
+
+def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> str:
+    """Why a view has nothing to show - the real reasons, kept distinct.
+
+    * an empty tier of an otherwise fine card: top picks are a quality bar, not a
+      right, so the card's own "no selection cleared" line is the honest answer
+    * provider data is incomplete: say that (with the retry time) instead of the
+      old "temporarily unavailable" that implied the bot itself was down
+    * a PARTIAL day with zero picks (e.g. every provider quota-blocked) gets the
+      assembly message, not the quality-bar line
+    """
+    if snapshot.status == 'PARTIAL' and not snapshot.total_picks():
+        return ("<b>Today's predictions are still being assembled</b> - a data "
+                f"source did not answer.{_retry_hint(snapshot, tz)}\n"
+                "The bot retries automatically; /daily shows the card as soon as it "
+                "is complete.")
+    return picks_card([], snapshot.date, heading="Top" if view == VIEW_TOP else "Today's")
+
+
 
 def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
                 tz: str) -> Tuple[str, Dict]:
     items = snapshot.view_items(view)
-    if not items and snapshot.status == 'PARTIAL':
-        return ('Predictions are temporarily unavailable. Please try again later.',
-                build_keyboard(view, 0, 1))
+    if not items:
+        return empty_view_message(snapshot, view, tz), build_keyboard(view, 0, 1)
     pages = total_pages(len(items), size)
     page = clamp_page(page, len(items), size)
     chunk = slice_page(items, page, size)

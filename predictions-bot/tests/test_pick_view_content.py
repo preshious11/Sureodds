@@ -43,6 +43,39 @@ def test_empty_top_does_not_fall_back_to_daily():
     assert 'DAILY ONLY' not in tg.sends[0]['text']
 
 
+# ------------------------------------------------------------- honest empty states
+def test_partial_card_with_picks_says_quality_bar_not_outage():
+    """A PARTIAL day with picks must not read like the bot itself is down."""
+    from predbot.bot.pagination import render_page
+    snapshot = DailySnapshot(date='2030-06-01', status='PARTIAL', daily_picks=[
+        PickRecord(label='DAILY ONLY', price=2.0)])
+    text, _ = render_page(snapshot, 'top', 0, 5, 'UTC')
+    assert 'No selection cleared the quality bar today.' in text
+    assert 'temporarily unavailable' not in text
+    assert 'DAILY ONLY' not in text          # never a silent fallback to the daily tier
+
+
+def test_partial_day_without_any_picks_reports_incomplete_data():
+    """No picks at all + a failed provider = data problem, not a quality verdict."""
+    from predbot.bot.pagination import render_page
+    snapshot = DailySnapshot(date='2030-06-01', status='PARTIAL', generation={
+        'providers': {'api_football': {'status': 'failed'}},
+        'retry_after': '2030-06-01T18:15:00+00:00'})
+    text, _ = render_page(snapshot, 'daily', 0, 5, 'UTC')
+    assert 'still being assembled' in text
+    assert '18:15 UTC' in text
+    assert 'quality bar' not in text
+    assert 'temporarily unavailable' not in text
+
+
+def test_complete_day_without_picks_keeps_the_quality_bar_line():
+    from predbot.bot.pagination import render_page
+    snapshot = DailySnapshot(date='2030-06-01', status='COMPLETE')
+    text, _ = render_page(snapshot, 'daily', 0, 5, 'UTC')
+    assert 'No selection cleared the quality bar today.' in text
+    assert 'still being assembled' not in text
+
+
 @pytest.mark.parametrize('prices,total', [([2.0, 7.67], '15.34'), ([2.05, 1.74], '3.57'), ([1.5, 2.0], '3.00')])
 def test_broadcast_total_is_multiplied_and_rounded_to_two_places(prices, total):
     picks = [PickLine('Football', 'A vs B', 'Home', 'League', 0.7, '--:--', price)

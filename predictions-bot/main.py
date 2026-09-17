@@ -5,6 +5,7 @@ import logging
 
 from predbot.bot import broadcast
 from predbot.bot.commands import CommandLoop
+from predbot.bot.runtime import CommandLoopSupervisor
 from predbot.bot.telegram import Telegram
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import load_config
@@ -65,6 +66,7 @@ def main() -> None:
     ]
 
     commands = None
+    supervisor = None
     if cfg.enable_commands and cfg.telegram_token:
         # Users DM the bot directly (/start menu); TELEGRAM_CHAT_ID is optional
         # and only mirrors the daily posts to a channel when set.
@@ -73,19 +75,31 @@ def main() -> None:
             "/settle": lambda: f"Settlement: {settle.run(resolver, db, cfg)}",
             "/recap": lambda: recap.run(db, cfg, tg, force=True) or "Nothing to recap.",
         }
-        commands = CommandLoop(tg, db, cfg, actions, service=service, page_size=cfg.page_size)
-        commands.start()
+
+        def start_commands():
+            loop_thread = CommandLoop(tg, db, cfg, actions, service=service,
+                                      page_size=cfg.page_size)
+            loop_thread.start()
+            return loop_thread
+
+        supervisor = CommandLoopSupervisor(start_commands)
+        commands = supervisor.start()
 
     def check_commands():
-        if commands is not None and not commands.is_alive():
-            raise RuntimeError("Telegram command consumer stopped; refusing a scheduler-only zombie process")
+        """A dead Telegram poller costs commands, never picks or delivery.
+
+        It used to raise here and kill the worker: one transient Telegram outage
+        silenced the whole bot.  Now the poller is restarted (with backoff while
+        the restart keeps failing) and the scheduler keeps running.
+        """
+        if supervisor is not None:
+            supervisor.ensure()
 
     try:
         loop(jobs, health_check=check_commands)
     finally:
-        if commands is not None:
-            commands.stop()
-            commands.join(timeout=35)
+        if supervisor is not None:
+            supervisor.stop()
 
 
 if __name__ == "__main__":
