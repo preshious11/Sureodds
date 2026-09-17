@@ -42,7 +42,7 @@ class UnifiedFetcher:
             log.warning('Cache STALE | date=%s | invalid payload', day)
             return None, None
 
-    def get_daily_snapshot(self, force_refresh=False):
+    def get_daily_snapshot(self, force_refresh=False, allow_api_call=True):
         now = utcnow()
         day = to_local(now, self.cfg.timezone).date().isoformat()
         # All service instances for the same SQLite file share this in-process lock.
@@ -54,6 +54,13 @@ class UnifiedFetcher:
                     log.info('Cache HIT | date=%s | status=%s', day, row['status'])
                     return cached
             log.info('Cache %s | date=%s', 'PARTIAL' if cached else 'MISS', day)
+            # If cache miss and API calls disabled (e.g., delivery polling), return empty snapshot
+            if not allow_api_call and not cached:
+                log.info('Skipping API call (delivery polling) | cache_miss=%s', day)
+                snapshot = DailySnapshot(date=day, generated_at=iso(now), origin='sqlite',
+                                         status='PARTIAL', generation={'complete': False,
+                                         'reason': 'awaiting scheduled fetch'})
+                return snapshot
             try:
                 self.api_batches += 1
                 if isinstance(self.chain, ProviderChain):
@@ -103,7 +110,7 @@ class UnifiedFetcher:
 
     def published_snapshot(self):
         """Today's same canonical snapshot; never yesterday's latest picks table."""
-        return self.get_daily_snapshot()
+        return self.get_daily_snapshot(allow_api_call=False)
 
     def refresh_cache_from_db(self):
         # Compatibility hook: the canonical table is already the database cache.
