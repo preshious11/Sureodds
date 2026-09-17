@@ -59,11 +59,27 @@ class Config:
     betminer_leagues: List[str] = field(default_factory=lambda: _list("BETMINER_LEAGUES"))
     provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "api_football,sportsgameodds,sharpapi,betminer"))
     chain_min_events: int = field(default_factory=lambda: _int("CHAIN_MIN_EVENTS", 40))
-    sgo_sports: List[str] = field(default_factory=lambda: _list("SGO_SPORTS", "SOCCER,BASKETBALL,TENNIS,HOCKEY,BASEBALL,FOOTBALL"))
+    sgo_sports: List[str] = field(default_factory=lambda: _list("SGO_SPORTS", "SOCCER,BASKETBALL,TENNIS,HOCKEY"))
     sgo_leagues: List[str] = field(default_factory=lambda: _list("SGO_LEAGUES"))
     sgo_event_limit: int = field(default_factory=lambda: _int("SGO_EVENT_LIMIT", 25))
     sgo_monthly_object_limit: int = field(default_factory=lambda: _int("SGO_MONTHLY_OBJECT_LIMIT", 1000))
     sharpapi_leagues: List[str] = field(default_factory=lambda: _list("SHARPAPI_LEAGUES"))
+    # SHARPAPI_SPORTS walks the kick-off ordered global sport feed(s), e.g. soccer:
+    # one or two pages reach today's fixtures without per-league requests.
+    sharpapi_sports: List[str] = field(default_factory=lambda: _list("SHARPAPI_SPORTS"))
+    # Sport gate: only these canonical sports may ever become predictions. The
+    # chain drops every other event (cached or fresh) before the picker runs.
+    allowed_sports: List[str] = field(default_factory=lambda: _list("ALLOWED_SPORTS", "football,basketball,hockey,tennis"))
+    # League allowlist for the listed sports (default: basketball) - events whose
+    # league matches none of these names/ids are dropped too ("popular leagues").
+    popular_leagues: List[str] = field(default_factory=lambda: _list("POPULAR_LEAGUES", "NBA,WNBA,NCAAB,EUROLEAGUE"))
+    popular_league_sports: List[str] = field(default_factory=lambda: _list("POPULAR_LEAGUE_SPORTS", "basketball"))
+    # Match-market filter: drops the futures/outrights that flood the raw feed.
+    sharpapi_markets: List[str] = field(
+        default_factory=lambda: _list("SHARPAPI_MARKETS", "moneyline,spread,total"))
+    sharpapi_max_pages: int = field(default_factory=lambda: _int("SHARPAPI_MAX_PAGES", 12))
+    sharpapi_events_per_target: int = field(
+        default_factory=lambda: _int("SHARPAPI_EVENTS_PER_TARGET", 40))
     sharpapi_min_interval: float = field(default_factory=lambda: _float("SHARPAPI_MIN_INTERVAL_SEC", 5.5))
     apif_league_ids: List[str] = field(default_factory=lambda: _list("APIF_LEAGUE_IDS"))
     apif_daily_limit: int = field(default_factory=lambda: _int("APIF_DAILY_LIMIT", 100))

@@ -41,17 +41,17 @@ def clock(monkeypatch):
 
 def service(db, monkeypatch, football_error=False):
     football = Provider('football', [ev(i) for i in range(1, 5)])
-    baseball = Provider('baseball', [ev(i, sport='baseball') for i in range(5, 9)])
+    hockey = Provider('hockey', [ev(i, sport='hockey') for i in range(5, 9)])
     if football_error:
         football.fetch_events.side_effect = ProviderError('temporary')
-    chain = ProviderChain({'football': football, 'baseball': baseball}, ['football', 'baseball'], 1)
+    chain = ProviderChain({'football': football, 'hockey': hockey}, ['football', 'hockey'], 1)
     # Exercise real selection and persistence; isolate only the probability model.
     def score(events, *args):
         return [sc(e, 'result3' if e.sport == 'football' else 'result2',
                    'home' if int(e.provider_event_id) % 2 else 'away', .76,
                    1.40 if int(e.provider_event_id) % 2 else 1.45) for e in events]
     monkeypatch.setattr(daily_picks, 'score_events', score)
-    return UnifiedFetcher(chain, db, Config(timezone='Africa/Lagos', cache_retry_seconds=900)), football, baseball
+    return UnifiedFetcher(chain, db, Config(timezone='Africa/Lagos', cache_retry_seconds=900)), football, hockey
 
 
 def all_sports(snapshot):
@@ -61,14 +61,14 @@ def all_sports(snapshot):
 def test_miss_hit_and_restart_roundtrip(tmp_path, monkeypatch, clock):
     path = str(tmp_path / 'bot.db')
     db = Database(path)
-    app, football, baseball = service(db, monkeypatch)
+    app, football, hockey = service(db, monkeypatch)
     first = app.get_daily_snapshot()
     assert first.status == 'COMPLETE'
-    assert all_sports(first) == {'football', 'baseball'}
+    assert all_sports(first) == {'football', 'hockey'}
     assert first.top_picks and first.daily_picks
     assert prod(p.price for p in first.top_picks) == pytest.approx(2.03)
     assert app.get_daily_snapshot().to_dict() == first.to_dict()
-    assert football.fetch_events.call_count == baseball.fetch_events.call_count == 1
+    assert football.fetch_events.call_count == hockey.fetch_events.call_count == 1
     assert db.get_prediction_cache(app._key(first.date))['status'] == 'COMPLETE'
     db.close()
     reopened = Database(path)
@@ -76,7 +76,7 @@ def test_miss_hit_and_restart_roundtrip(tmp_path, monkeypatch, clock):
     f2.fetch_events.side_effect = b2.fetch_events.side_effect = AssertionError('API after restart')
     second = fresh.get_daily_snapshot()
     assert second.to_dict() == first.to_dict()
-    assert all_sports(second) == {'football', 'baseball'}
+    assert all_sports(second) == {'football', 'hockey'}
     assert second.top_picks == first.top_picks
     assert second.daily_picks == first.daily_picks
     assert all(parse_iso(p.kickoff_utc).tzinfo for p in second.view_items('daily'))
@@ -95,32 +95,32 @@ def test_miss_hit_and_restart_roundtrip(tmp_path, monkeypatch, clock):
     reopened.close()
 
 
-def test_partial_football_recovers_without_repeating_baseball(tmp_path, monkeypatch, clock):
+def test_partial_football_recovers_without_repeating_hockey(tmp_path, monkeypatch, clock):
     path = str(tmp_path / 'bot.db')
     db = Database(path)
-    app, football, baseball = service(db, monkeypatch, football_error=True)
+    app, football, hockey = service(db, monkeypatch, football_error=True)
     first = app.get_daily_snapshot()
     assert first.status == 'PARTIAL'
-    assert all_sports(first) == {'baseball'}
+    assert all_sports(first) == {'hockey'}
     assert first.sport_status['football']['status'] == 'failed'
-    assert first.sport_status['baseball']['status'] == 'success'
+    assert first.sport_status['hockey']['status'] == 'success'
     assert db.get_prediction_cache(app._key(first.date))['status'] == 'PARTIAL'
     for _ in range(4):
         assert app.get_daily_snapshot().to_dict() == first.to_dict()
-    assert football.fetch_events.call_count == baseball.fetch_events.call_count == 1
-    # Restart while still partial: completed baseball portion must survive too.
+    assert football.fetch_events.call_count == hockey.fetch_events.call_count == 1
+    # Restart while still partial: completed hockey portion must survive too.
     db.close()
     db = Database(path)
-    app, football, baseball = service(db, monkeypatch)
-    baseball.fetch_events.side_effect = AssertionError('baseball fetched again')
+    app, football, hockey = service(db, monkeypatch)
+    hockey.fetch_events.side_effect = AssertionError('hockey fetched again')
     clock[0] += timedelta(minutes=16)
     recovered = app.get_daily_snapshot()
     assert recovered.status == 'COMPLETE'
     assert recovered.sport_status['football']['status'] == 'success'
-    assert all_sports(recovered) == {'football', 'baseball'}
+    assert all_sports(recovered) == {'football', 'hockey'}
     assert recovered.top_picks and recovered.daily_picks
     football.fetch_events.assert_called_once()
-    baseball.fetch_events.assert_not_called()
+    hockey.fetch_events.assert_not_called()
     assert len(db.query('SELECT * FROM prediction_cache')) == 1
     db.close()
     db = Database(path)
@@ -285,12 +285,12 @@ def test_failed_football_request_can_recover_and_counts_attempts(db, clock):
 
 
 def test_force_refresh_retries_failed_source_early(db, monkeypatch, clock):
-    app, football, baseball = service(db, monkeypatch, football_error=True)
+    app, football, hockey = service(db, monkeypatch, football_error=True)
     assert app.get_daily_snapshot().status == 'PARTIAL'
     football.fetch_events.side_effect = None
     assert app.get_daily_snapshot(force_refresh=True).status == 'COMPLETE'
     assert football.fetch_events.call_count == 2
-    baseball.fetch_events.assert_called_once()
+    hockey.fetch_events.assert_called_once()
 
 
 def test_new_python_process_uses_sqlite_without_provider_calls(tmp_path, monkeypatch, clock):
@@ -380,10 +380,10 @@ def test_diagnostic_reports_complete_cache_without_api_calls(db, monkeypatch, cl
     assert info['prediction_table'] == 'prediction_cache' and info['provider_table'] == 'provider_cache'
     assert info['top_picks_count'] == len(snapshot.top_picks)
     assert info['daily_picks_count'] == len(snapshot.daily_picks)
-    assert info['football_count'] + info['baseball_count'] == snapshot.total_picks()
+    assert info['football_count'] + info['hockey_count'] == snapshot.total_picks()
     assert info['retry_after'] is None and info['cache_version'] == SCHEMA_VERSION
     for label in ('Prediction cache backend=sqlite', 'Database path:', 'Status: COMPLETE', 'Sport status:',
-                  'Football count:', 'Baseball count:', 'Top Picks count:', 'Daily Picks count:',
+                  'Football count:', 'Hockey count:', 'Top Picks count:', 'Daily Picks count:',
                   'Generated time:', 'Updated time:', f'Cache version: {SCHEMA_VERSION}'):
         assert label in out
     assert 'Retry-after' not in out
@@ -394,7 +394,7 @@ def test_diagnostic_reports_partial_cache_with_retry_after(db, monkeypatch, cloc
     assert app.get_daily_snapshot().status == 'PARTIAL'
     info = _diagnose(db, monkeypatch, clock)
     out = capsys.readouterr().out
-    assert info['status'] == 'PARTIAL' and info['football_count'] == 0 and info['baseball_count'] > 0
+    assert info['status'] == 'PARTIAL' and info['football_count'] == 0 and info['hockey_count'] > 0
     assert parse_iso(info['retry_after']) is not None
     assert 'Status: PARTIAL' in out and f"Retry-after: {info['retry_after']}" in out
 

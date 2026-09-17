@@ -1,23 +1,15 @@
 {
-  "date": "2026-09-16",
+  "date": "2026-09-17",
   "window": [
-    "2026-09-16T11:27:11.366070+00:00",
-    "2026-09-16T23:00:00+00:00"
+    "2026-09-17T10:33:19.599180+00:00",
+    "2026-09-17T23:00:00+00:00"
   ],
   "prediction_features_requested": false,
   "providers": {
     "api_football": {
-      "calls": [
-        {
-          "endpoint": "/fixtures",
-          "rows": 0,
-          "sports": {},
-          "leagues": {},
-          "requested_league": null,
-          "error_category": "quota"
-        }
-      ],
-      "error_type": "ProviderError"
+      "calls": [],
+      "events": {},
+      "markets": {}
     },
     "sportsgameodds": {
       "calls": [
@@ -101,13 +93,20 @@
           "sports": {},
           "leagues": {},
           "requested_league": "NHL"
+        },
+        {
+          "endpoint": "/events",
+          "rows": 0,
+          "sports": {},
+          "leagues": {},
+          "requested_league": "MLB"
         }
       ],
       "events": {
         "baseball": 4
       },
       "markets": {
-        "baseball": 3549
+        "baseball": 4234
       }
     },
     "sharpapi": {
@@ -116,73 +115,36 @@
           "endpoint": "/odds",
           "rows": 200,
           "sports": {
-            "baseball": 200
-          },
-          "leagues": {
-            "mlb": 200
-          },
-          "requested_league": "mlb"
-        },
-        {
-          "endpoint": "/odds",
-          "rows": 200,
-          "sports": {
             "soccer": 200
           },
           "leagues": {
-            "usa_-_major_league_soccer": 200
+            "ukrainian_cup": 10,
+            "azerbaijan_-_1st_division": 108,
+            "greece_-_cup": 33,
+            "kazakhstan_-_premier_league": 49
           },
-          "requested_league": "mls"
-        },
-        {
-          "endpoint": "/odds",
-          "rows": 200,
-          "sports": {
-            "basketball": 200
-          },
-          "leagues": {
-            "nba": 200
-          },
-          "requested_league": "nba"
-        },
-        {
-          "endpoint": "/odds",
-          "rows": 200,
-          "sports": {
-            "football": 200
-          },
-          "leagues": {
-            "nfl": 200
-          },
-          "requested_league": "nfl"
-        },
-        {
-          "endpoint": "/odds",
-          "rows": 200,
-          "sports": {
-            "hockey": 200
-          },
-          "leagues": {
-            "nhl": 200
-          },
-          "requested_league": "nhl"
+          "requested_league": null
         }
       ],
-      "events": {},
-      "markets": {}
+      "events": {
+        "football": 7
+      },
+      "markets": {
+        "football": 125
+      }
     }
   },
   "sports": {
     "football": {
-      "normalized_events": 0,
-      "candidates": 0,
-      "gte50": 0,
-      "lt50": 0,
+      "normalized_events": 6,
+      "candidates": 117,
+      "gte50": 44,
+      "lt50": 73,
       "daily_ticket": 0,
       "top": 0,
       "top_gates": {
-        "odds": 0,
-        "confidence": 0,
+        "odds": 29,
+        "confidence": 2,
         "positive_ev": 0,
         "agreement": 0,
         "two_sources": 0,
@@ -191,15 +153,15 @@
     },
     "baseball": {
       "normalized_events": 4,
-      "candidates": 3549,
-      "gte50": 1619,
-      "lt50": 1930,
-      "daily_ticket": 4,
+      "candidates": 4234,
+      "gte50": 2042,
+      "lt50": 2192,
+      "daily_ticket": 3,
       "top": 0,
       "top_gates": {
-        "odds": 2024,
-        "confidence": 346,
-        "positive_ev": 44,
+        "odds": 2446,
+        "confidence": 420,
+        "positive_ev": 55,
         "agreement": 0,
         "two_sources": 0,
         "no_props": 0
@@ -209,19 +171,25 @@
   "top": [],
   "selection_diagnostics": {
     "base_by_sport": {
-      "baseball": 3264
+      "baseball": 3910,
+      "football": 100
+    },
+    "unique_candidates_by_sport": {
+      "baseball": 3910,
+      "football": 100
     },
     "gte50_by_sport": {
-      "baseball": 1334
+      "baseball": 1718,
+      "football": 27
     },
     "top_eligible_by_sport": {},
     "combinations_checked": 0,
     "top_odds": null,
     "daily_eligible_by_sport": {
-      "baseball": 16
+      "baseball": 15
     },
     "daily_ticket_by_sport": {
-      "baseball": 4
+      "baseball": 3
     },
     "top_selected_by_sport": {}
   }

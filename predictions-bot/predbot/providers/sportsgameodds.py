@@ -302,6 +302,11 @@ class SportsGameOddsProvider(BaseProvider):
         params = {"sportID": sgo_sport, "startsAfter": iso(start - timedelta(hours=2)),
                   "startsBefore": iso(start + timedelta(hours=2)), "type": "match",
                   "expandResults": "true", "limit": 50}
+        # The free tier rejects sport-only event queries ("specify either a
+        # leagueID or an eventID"); scoping to the configured leagues keeps the
+        # cross-provider team+time lookup usable instead of a guaranteed 400.
+        if self.leagues:
+            params["leagueID"] = ",".join(self.leagues)
         try:
             data = self.http.get("/events", params)
         except ProviderError as e:

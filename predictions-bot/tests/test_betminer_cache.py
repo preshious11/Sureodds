@@ -84,13 +84,13 @@ def test_other_sports_are_unaffected_by_betminer_failure(db, clock):
     from predbot.providers.base import Event, MarketLine
     from predbot.util.http import ProviderError
 
-    baseball_ev = Event(provider='sgo', provider_event_id='b1', sport='baseball', league='MLB',
-                        home='Mets', away='Cubs', start=NOW.replace(hour=20), sources=['sgo'],
-                        markets=[MarketLine(market='result2', selection='home', price=1.9)])
+    hockey_ev = Event(provider='sgo', provider_event_id='b1', sport='hockey', league='NHL',
+                      home='Mets', away='Cubs', start=NOW.replace(hour=20), sources=['sgo'],
+                      markets=[MarketLine(market='result2', selection='home', price=1.9)])
     other = Mock(spec=['enabled', 'fetch_events', 'sports'])
-    other.sports = ['baseball']
+    other.sports = ['hockey']
     other.enabled.return_value = True
-    other.fetch_events.return_value = [baseball_ev]
+    other.fetch_events.return_value = [hockey_ev]
 
     chain, _ = chain_for(db, FakeHttp(error=ProviderError('boom')),
                          order=('sportsgameodds', 'betminer'), providers={'sportsgameodds': other})

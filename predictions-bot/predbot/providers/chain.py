@@ -42,7 +42,10 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
             event_limit=cfg.sgo_event_limit, monthly_limit=cfg.sgo_monthly_object_limit)
     if cfg.sharpapi_key:
         out["sharpapi"] = SharpApiProvider(cfg.sharpapi_key, budget, leagues=cfg.sharpapi_leagues,
-                                           min_interval=cfg.sharpapi_min_interval)
+                                           min_interval=cfg.sharpapi_min_interval,
+                                           max_pages=cfg.sharpapi_max_pages, markets=cfg.sharpapi_markets,
+                                           sports=cfg.sharpapi_sports,
+                                           events_per_target=cfg.sharpapi_events_per_target)
     if cfg.betminer_key:
         # Complementary source: its odds merge into the shared pool like any other
         # provider. No settlement support (fetch_result/find_result stay None), so
@@ -93,7 +96,7 @@ class ProviderChain:
                 self.last_report[name] = {"status": "failed", "error_type": type(e).__name__}
                 log.warning("provider %s crashed (%s)", name, type(e).__name__)
                 continue
-            events = [e for e in events if start <= e.start < end]
+            events = filter_allowed([e for e in events if start <= e.start < end], self.cfg)
             self.last_report[name] = {"status": "complete" if getattr(prov, 'last_fetch_complete', True) else "partial",
                                       "fetch": getattr(prov, 'fetch_counts', {}),
                                       "normalization": getattr(prov, 'normalization_counts', {}),
@@ -106,6 +109,34 @@ class ProviderChain:
         self._successful = {k: v for k, v in self._successful.items() if k[1] == end.isoformat()}
         log.info("provider collection: %s", self.last_report)
         return pool
+
+
+def filter_allowed(events: List[Event], cfg: Optional[Config]) -> List[Event]:
+    """Sport gate: keep only ALLOWED_SPORTS, and only popular leagues for the
+    sports listed in POPULAR_LEAGUE_SPORTS. Anything else can never become a
+    prediction, fresh or restored from the cache."""
+    if cfg is None:
+        return events
+    allowed = {s.strip().lower() for s in (getattr(cfg, 'allowed_sports', None) or [])}
+    popular = {str(l).strip().lower().replace(' ', '_') for l in (getattr(cfg, 'popular_leagues', None) or [])}
+    popular_sports = {s.strip().lower() for s in (getattr(cfg, 'popular_league_sports', None) or [])}
+    if not allowed and not popular:
+        return events
+    out, blocked = [], Counter()
+    for e in events:
+        if allowed and e.sport not in allowed:
+            blocked[e.sport] += 1
+            continue
+        if popular and e.sport in popular_sports:
+            lid = str(e.league_id or '').lower().replace(' ', '_')
+            name = str(e.league or '').lower().replace(' ', '_')
+            if not any(p == lid or p == name or p in lid or p in name for p in popular):
+                blocked[f'{e.sport}:{e.league or e.league_id or "?"}'] += 1
+                continue
+        out.append(e)
+    if blocked:
+        log.info('Sport gate blocked %d events: %s', sum(blocked.values()), dict(blocked))
+    return out
 
 
 def _has_main_market(e: Event) -> bool:
