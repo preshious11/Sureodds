@@ -396,7 +396,10 @@ def test_diagnostic_reports_partial_cache_with_retry_after(db, monkeypatch, cloc
     out = capsys.readouterr().out
     assert info['status'] == 'PARTIAL' and info['football_count'] == 0 and info['hockey_count'] > 0
     assert parse_iso(info['retry_after']) is not None
-    assert 'Status: PARTIAL' in out and f"Retry-after: {info['retry_after']}" in out
+    assert 'Status: PARTIAL' in out
+    assert 'Retry-after:' in out and info['retry_after'] not in out   # never the raw ISO-Z form
+    import diagnose_prediction_cache as diag
+    assert diag._display_ts(info['retry_after'], info['timezone']) in out
 
 
 def test_diagnostic_reports_missing_database(tmp_path, capsys):
