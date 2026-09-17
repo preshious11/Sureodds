@@ -47,7 +47,7 @@ class Config:
     enable_commands: bool = field(default_factory=lambda: _bool("ENABLE_COMMANDS", True))
 
     # Providers
-    oddsapi_key: str = field(default_factory=lambda: _env("ODDSAPI_KEY"))
+    oddsapi_key: str = field(default_factory=lambda: _env("ODDS_API_KEY") or _env("ODDSAPI_KEY"))
     oddsapi_sports: List[str] = field(default_factory=lambda: _list("ODDSAPI_SPORTS", "football,tennis"))
     api_football_key: str = field(default_factory=lambda: _env("API_FOOTBALL_KEY"))
     api_football_host: str = field(default_factory=lambda: _env("API_FOOTBALL_HOST", "v3.football.api-sports.io"))
