@@ -305,8 +305,18 @@ class SportsGameOddsProvider(BaseProvider):
         # The free tier rejects sport-only event queries ("specify either a
         # leagueID or an eventID"); scoping to the configured leagues keeps the
         # cross-provider team+time lookup usable instead of a guaranteed 400.
+        # Leagues the subscription tier does not cover (EPL etc. on free plans)
+        # make the whole query fail with a 400, so they are dropped here the
+        # same way fetch_events drops them - otherwise every settlement lookup
+        # for a single out-of-tier league would return nothing at all.
         if self.leagues:
-            params["leagueID"] = ",".join(self.leagues)
+            avail = self.available_leagues()
+            usable = [lg for lg in self.leagues if avail is None or lg in avail]
+            if not usable:
+                log.info("SGO find_result: none of the configured leagues (%s) are "
+                         "available at this tier; skipping the lookup", ",".join(self.leagues))
+                return None
+            params["leagueID"] = ",".join(usable)
         try:
             data = self.http.get("/events", params)
         except ProviderError as e:
