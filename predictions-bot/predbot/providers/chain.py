@@ -17,6 +17,7 @@ from predbot.config import Config
 from predbot.providers.api_football import ApiFootballProvider
 from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult
 from predbot.providers.budget import Budget
+from predbot.providers.oddsapi import OddsApiProvider
 from predbot.providers.sharpapi import SharpApiProvider
 from predbot.providers.sportsgameodds import SportsGameOddsProvider
 from predbot.storage.db import Database
@@ -29,6 +30,9 @@ log = logging.getLogger(__name__)
 def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
     budget = Budget(db)
     out: Dict[str, BaseProvider] = {}
+    if cfg.oddsapi_key:
+        out["oddsapi"] = OddsApiProvider(
+            cfg.oddsapi_key, budget, sports=cfg.oddsapi_sports)
     if cfg.api_football_key:
         out["api_football"] = ApiFootballProvider(
             cfg.api_football_key, budget, host=cfg.api_football_host, league_ids=cfg.apif_league_ids,

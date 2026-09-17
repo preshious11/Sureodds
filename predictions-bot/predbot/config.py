@@ -47,11 +47,13 @@ class Config:
     enable_commands: bool = field(default_factory=lambda: _bool("ENABLE_COMMANDS", True))
 
     # Providers
+    oddsapi_key: str = field(default_factory=lambda: _env("ODDSAPI_KEY"))
+    oddsapi_sports: List[str] = field(default_factory=lambda: _list("ODDSAPI_SPORTS", "football,tennis"))
     api_football_key: str = field(default_factory=lambda: _env("API_FOOTBALL_KEY"))
     api_football_host: str = field(default_factory=lambda: _env("API_FOOTBALL_HOST", "v3.football.api-sports.io"))
     sgo_key: str = field(default_factory=lambda: _env("SPORTSGAMEODDS_KEY"))
     sharpapi_key: str = field(default_factory=lambda: _env("SHARPAPI_KEY"))
-    provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "api_football,sportsgameodds,sharpapi"))
+    provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "oddsapi,api_football,sportsgameodds,sharpapi"))
     chain_min_events: int = field(default_factory=lambda: _int("CHAIN_MIN_EVENTS", 40))
     sgo_sports: List[str] = field(default_factory=lambda: _list("SGO_SPORTS", "SOCCER,BASKETBALL,TENNIS,HOCKEY,BASEBALL,FOOTBALL"))
     sgo_leagues: List[str] = field(default_factory=lambda: _list("SGO_LEAGUES"))
