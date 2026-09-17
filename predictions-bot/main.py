@@ -54,7 +54,11 @@ def main() -> None:
 
     def job_deliver():
         """Poll: hand the card to every subscriber whose own 9:30 AM has arrived."""
-        broadcast.deliver_picks(db, cfg, tg, service.published_snapshot)
+        # Prevent API calls during delivery polling; only use cached data.
+        snapshot = service.get_daily_snapshot(allow_api_call=False)
+        if not snapshot.total_picks():
+            return
+        broadcast.deliver_picks(db, cfg, tg, snapshot)
 
     def job_picks():
         daily_picks.run(chain, db, cfg, tg, service=service)          # channel mirror (optional)
