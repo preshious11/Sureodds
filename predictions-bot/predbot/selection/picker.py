@@ -104,17 +104,53 @@ def choose_top(pool: List[Scored], cfg: Config):
 def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
     ps = PickSet(pool_size=len(scored))
     lead = now + timedelta(minutes=cfg.min_lead_minutes)
-    base = [s for s in scored if s.event.start >= lead and _settleable(s) and math.isfinite(s.price) and s.price >= 1.15]
+    base: List[Scored] = []
+    rejection_counts: Counter = Counter()
+    for s in scored:
+        if not s.event.start:
+            rejection_counts["INVALID_KICKOFF"] += 1
+            continue
+        if s.event.start < lead:
+            rejection_counts["WRONG_DATE"] += 1
+            continue
+        if not _settleable(s):
+            rejection_counts["UNSUPPORTED_MARKET"] += 1
+            continue
+        if not math.isfinite(s.price):
+            rejection_counts["INVALID_PRICE"] += 1
+            continue
+        if s.price < 1.15:
+            rejection_counts["INVALID_PRICE"] += 1
+            continue
+        base.append(s)
     ps.eligible = len(base)
     for s in base:
         s.rank_score = _daily_score(s)
 
     # ------------------------------------------------------------ top picks
     # Sized by odds: take the best candidates until the ticket is worth ~2.00.
-    top_pool = [s for s in base
-                if cfg.top_min_odds <= s.price <= cfg.top_max_odds
-                and s.p_model >= cfg.top_min_prob and s.ev >= cfg.top_min_ev
-                and s.agreement >= cfg.top_min_agreement and len(s.sources) >= 2 and s.line.market != "prop"]
+    top_pool: List[Scored] = []
+    top_rejected: Counter = Counter()
+    for s in base:
+        if s.line.market == "prop":
+            top_rejected["PLAYER_PROP"] += 1
+            continue
+        if not (cfg.top_min_odds <= s.price <= cfg.top_max_odds):
+            top_rejected["BELOW_THRESHOLD"] += 1
+            continue
+        if not (s.p_model >= cfg.top_min_prob):
+            top_rejected["BELOW_THRESHOLD"] += 1
+            continue
+        if not (s.ev >= cfg.top_min_ev):
+            top_rejected["BELOW_THRESHOLD"] += 1
+            continue
+        if not (s.agreement >= cfg.top_min_agreement):
+            top_rejected["BELOW_THRESHOLD"] += 1
+            continue
+        if not (len(s.sources) >= 2):
+            top_rejected["INSUFFICIENT_SOURCES"] += 1
+            continue
+        top_pool.append(s)
     top, checked = choose_top(top_pool, cfg)
     top_ids = {id(s) for s in top}
     top_odds = math.prod(s.price for s in top)
@@ -126,20 +162,37 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
                           {(s.event.sport, s.event.dedupe_key(), s.line.key()) for s in base})),
                       "gte50_by_sport": dict(Counter(s.event.sport for s in base if s.p_model >= .5)),
                       "top_eligible_by_sport": dict(Counter(s.event.sport for s in top_pool)),
+                      "selection_rejections": dict(rejection_counts),
+                      "top_pool_rejections": dict(top_rejected),
                       "combinations_checked": checked, "top_odds": top_odds if top else None}
 
     # ---------------------------------------------------------- daily picks
     # One ticket for the whole post: keep filling while it is short of the floor,
     # stop before a pick would break the ceiling or the pick cap.
     cap = cfg.daily_target
-    daily_pool = [s for s in base
-                  if cfg.daily_min_odds <= s.price <= cfg.daily_max_odds
-                  and s.p_model >= cfg.daily_min_prob and s.ev >= cfg.daily_min_ev
-                  and s.agreement >= 0.30 and id(s) not in top_ids]
+    daily_pool: List[Scored] = []
+    daily_rejected: Counter = Counter()
+    for s in base:
+        if id(s) in top_ids:
+            continue
+        if not (cfg.daily_min_odds <= s.price <= cfg.daily_max_odds):
+            daily_rejected["BELOW_THRESHOLD"] += 1
+            continue
+        if not (s.p_model >= cfg.daily_min_prob):
+            daily_rejected["BELOW_THRESHOLD"] += 1
+            continue
+        if not (s.ev >= cfg.daily_min_ev):
+            daily_rejected["BELOW_THRESHOLD"] += 1
+            continue
+        if not (s.agreement >= 0.30):
+            daily_rejected["BELOW_THRESHOLD"] += 1
+            continue
+        daily_pool.append(s)
     preferred = [s for s in daily_pool if s.p_model >= .5]
     if preferred or any(s.p_model >= .5 for s in top):
         daily_pool = preferred
     ps.diagnostics["daily_eligible_by_sport"] = dict(Counter(s.event.sport for s in daily_pool))
+    ps.diagnostics["daily_pool_rejections"] = dict(daily_rejected)
     daily_pool.sort(key=lambda s: s.rank_score, reverse=True)
 
     per_event: Dict[str, int] = {}

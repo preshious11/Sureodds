@@ -59,9 +59,12 @@ def test_sgo_free_tier_requires_leagues_and_marks_exhausted(db):
     http = FakeHttp(result={"data": []})
     p = sgo(http, db, leagues=[])
 
-    out = p.fetch_events(START, END)           # no doomed request, no exception
+    out = p.fetch_events(START, END)           # auto-discovery returns empty -> exhausted
 
-    assert out == [] and http.calls == []
+    assert out == []
+    # When leagues is empty, the provider calls /leagues for auto-discovery.
+    # With an empty catalog response, no /events calls are made.
+    assert all(c[0] != "/events" for c in http.calls)
     assert Budget(db).is_exhausted("sportsgameodds")
 
 

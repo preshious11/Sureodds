@@ -104,31 +104,10 @@ class ProviderChain:
 
 
 def filter_allowed(events: List[Event], cfg: Optional[Config]) -> List[Event]:
-    """Sport gate: keep only ALLOWED_SPORTS, and only popular leagues for the
-    sports listed in POPULAR_LEAGUE_SPORTS. Anything else can never become a
-    prediction, fresh or restored from the cache."""
-    if cfg is None:
-        return events
-    allowed = {s.strip().lower() for s in (getattr(cfg, 'allowed_sports', None) or [])}
-    popular = {str(l).strip().lower().replace(' ', '_') for l in (getattr(cfg, 'popular_leagues', None) or [])}
-    popular_sports = {s.strip().lower() for s in (getattr(cfg, 'popular_league_sports', None) or [])}
-    if not allowed and not popular:
-        return events
-    out, blocked = [], Counter()
-    for e in events:
-        if allowed and e.sport not in allowed:
-            blocked[e.sport] += 1
-            continue
-        if popular and e.sport in popular_sports:
-            lid = str(e.league_id or '').lower().replace(' ', '_')
-            name = str(e.league or '').lower().replace(' ', '_')
-            if not any(p == lid or p == name or p in lid or p in name for p in popular):
-                blocked[f'{e.sport}:{e.league or e.league_id or "?"}'] += 1
-                continue
-        out.append(e)
-    if blocked:
-        log.info('Sport gate blocked %d events: %s', sum(blocked.values()), dict(blocked))
-    return out
+    """No sport/league gate: provider data is the only source of truth.
+    All events returned by providers are kept. Artificial filtering via
+    ALLOWED_SPORTS / POPULAR_LEAGUES has been removed."""
+    return events
 
 
 def _has_main_market(e: Event) -> bool:
@@ -143,6 +122,10 @@ def merge_events(pool: List[Event], new: List[Event]) -> List[Event]:
             if ex.sport != ev.sport:
                 continue
             if abs((ex.start - ev.start).total_seconds()) > 3 * 3600:
+                continue
+            if ex.league_id and ev.league_id and ex.league_id != ev.league_id:
+                continue
+            if ex.league and ev.league and ex.league != ev.league:
                 continue
             if same_team(ex.home, ev.home) and same_team(ex.away, ev.away):
                 match = ex
