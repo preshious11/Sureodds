@@ -201,13 +201,14 @@ def test_render_stats_matches_the_stats_command(db):
     text, markup = pagination.render_stats(make_snapshot(), db=db, tz="UTC", now=now)
 
     assert text == expected                     # one renderer, no drift
-    assert "Last 7 days:" in text and "All time:" in text
+    assert "SUREODDS RESULTS — YESTERDAY" in text and "LAST 7 DAYS" in text
     assert markup["inline_keyboard"][-1][0]["text"] == "🏆 Top Picks"
 
 
 def test_render_stats_without_db_falls_back_to_the_snapshot():
     text, markup = pagination.render_stats(make_snapshot())
-    assert "Last 7 days: 3W-1L" in text and "ROI +12.5%" in text
+    assert "SUREODDS RESULTS — YESTERDAY" in text and "LAST 7 DAYS" in text
+    assert "Wins: 3" in text and "Losses: 1" in text
     assert markup["inline_keyboard"]
 
 
