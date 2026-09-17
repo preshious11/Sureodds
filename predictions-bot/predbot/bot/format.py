@@ -46,11 +46,13 @@ def _looks_internal(text: str) -> bool:
 
 
 #: Outcomes a punter cannot act on without more context. A bare "Over", an
-#: "Over/Under" without a side, an "Over 1.5" without a unit - all ambiguous.
+#: "Over/Under" without a side, an "Over 1.5" without a unit, or bare line
+#: values like "1.5" or "2.0" - all ambiguous.
 _BARE_OUTCOMES = {"over", "under", "over/under", "over-under", "win", "lose",
                   "yes", "no", "draw", "selection", "even", "odd"}
 _BARE_TOTAL_RE = re.compile(r"(?:over|under)\s+[\d.]+")
 _OVER_UNDER_RE = re.compile(r"\bover\s*/\s*under\b")
+_BARE_NUMBER_RE = re.compile(r"^[\d.]+$")  # just a number with no context
 
 
 def ambiguous_outcome(text: str) -> bool:
@@ -65,6 +67,8 @@ def ambiguous_outcome(text: str) -> bool:
     if _OVER_UNDER_RE.search(t):
         return True
     if _BARE_TOTAL_RE.fullmatch(t):        # "Over 1.5" - over WHAT?
+        return True
+    if _BARE_NUMBER_RE.fullmatch(t):       # "1.5" or "2.0" - no context
         return True
     return False
 
