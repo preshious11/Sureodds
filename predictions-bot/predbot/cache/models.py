@@ -26,6 +26,7 @@ class PickRecord:
     tier: str = "daily"                    # top | daily
     rank: int = 0
     sport: str = "other"
+    country: str = ""                      # fixture country (e.g., "England", "Kazakhstan")
     league: str = ""
     home: str = ""
     away: str = ""
