@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from collections import Counter
 from typing import Dict, List, Optional
 
-from predbot.bot.format import picks_message, stats_line
+from predbot.bot.format import stats_line
 from predbot.bot.telegram import Telegram
 from predbot.config import Config
 from predbot.jobs import stats as stats_mod
@@ -89,6 +89,8 @@ def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram],
     if not snapshot.total_picks():
         return snapshot
     text = picks_text(snapshot, cfg.timezone)
+    if not text:
+        return snapshot
     if dry_run:
         print(text)
         return snapshot

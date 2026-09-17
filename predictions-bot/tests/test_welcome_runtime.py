@@ -24,26 +24,51 @@ def test_repeated_start_has_exact_copy_in_every_state(db, state):
     for _ in range(3):
         callbacks.handle_start(db, tg, '42', {'first_name': 'Ada <&>'})
     expected = ('👋 Hi, Ada &lt;&amp;&gt;\n\n'
-                'Tap the menu below or use a command:\n\n'
-                '/top — Strongest picks today\n'
-                '/daily — All predictions today\n'
-                '/stats — Prediction summary')
+                'Use the menu below or these commands:\n\n'
+                '<b>🏆 /top</b> – Top picks of the day\n'
+                '<b>📋 /daily</b> – Daily picks · Accumulator slip\n'
+                '<b>📊 /stats</b> – See prediction results')
     assert all(s['text'] == expected for s in tg.sends)
-    for old in ('Welcome to predbot', 'I price every market', 'You are subscribed to the daily picks'):
+    # every superseded welcome copy, pinned so none of them can come back
+    for old in ('Welcome to predbot', 'I price every market',
+                'You are subscribed to the daily picks', 'Tap the menu below',
+                'Strongest picks today', 'All predictions today', 'Prediction summary'):
         assert all(old not in s['text'] for s in tg.sends)
+    # /start never pushes predictions - the menu is the only thing sent
+    assert all('Confidence level:' not in s['text'] for s in tg.sends)
+    assert all('Combined Odds' not in s['text'] for s in tg.sends)
 
 
-def test_unsubscribe_and_legacy_menu_keep_canonical_welcome_without_service(db):
+def test_menu_callback_keeps_canonical_welcome_without_service(db):
     tg = FakeTG()
     callbacks.handle_start(db, tg, '42', {'first_name': 'Ada'})
     loop = CommandLoop(tg, db, Config(), {}, service=None)
-    for data, active in [('sub|off', False), ('menu', False), ('sub|on', True)]:
+
+    cb = _cb('menu')
+    cb['from'] = {'first_name': 'Ada'}
+    loop._dispatch_callback(cb)
+
+    assert tg.edits[-1]['text'] == callbacks.welcome_message('Ada')
+    assert tg.edits[-1]['reply_markup'] == callbacks.menu_markup()
+    assert db.subscribers_active()                  # /start subscribed, nothing undid it
+
+
+def test_subscription_toggle_callbacks_are_gone(db):
+    """The sub|on / sub|off buttons were removed - they must stay removed."""
+    tg = FakeTG()
+    callbacks.handle_start(db, tg, '42', {'first_name': 'Ada'})
+    loop = CommandLoop(tg, db, Config(), {}, service=None)
+    before = len(tg.edits)
+
+    for data in ('sub|off', 'sub|on'):
         cb = _cb(data)
         cb['from'] = {'first_name': 'Ada'}
         loop._dispatch_callback(cb)
-        assert bool(db.subscribers_active()) == active
-        assert tg.edits[-1]['text'] == callbacks.welcome_message('Ada')
-        assert tg.edits[-1]['reply_markup'] == callbacks.menu_markup(active)
+
+    assert len(tg.edits) == before                  # unknown payloads change nothing
+    assert db.subscribers_active()                  # and cannot unsubscribe anyone
+    buttons = [b for row in callbacks.menu_markup()['inline_keyboard'] for b in row]
+    assert not any(b['callback_data'].startswith('sub|') for b in buttons)
 
 
 @pytest.mark.parametrize('view', ['top', 'daily', 'stats'])

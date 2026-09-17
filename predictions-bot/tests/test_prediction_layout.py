@@ -18,13 +18,15 @@ def snapshot():
     def pick(name, price, tier):
         return PickRecord(home=name, away='Chelsea', label='Over 1.5 Goals',
                           sport='football', league='Hidden League', prob=.84,
-                          kickoff_utc='2030-06-01T18:00:00Z', price=price, tier=tier)
+                          kickoff_utc='2030-06-01T18:00:00Z', price=price, tier=tier,
+                          market='total', selection='over', line=1.5)
     return DailySnapshot(date='2030-06-01', top_picks=[pick('Arsenal', 2.0, 'top')],
                          daily_picks=[pick('Liverpool', 2.0, 'daily'), pick('Villa', 3.98575, 'daily')])
 
 
-@pytest.mark.parametrize('view,heading,total', [('top', 'Top', '2.00'), ('daily', "Today's", '15.94')])
-@pytest.mark.parametrize('zone,time', [('Africa/Lagos', '07:00 PM WAT'), ('America/New_York', '02:00 PM EDT')])
+@pytest.mark.parametrize('view,heading,total', [('top', '🏆 Top Picks for Today', '2.0000'),
+                                                ('daily', '📋 Daily Picks for Today', '15.9430')])
+@pytest.mark.parametrize('zone,time', [('Africa/Lagos', '7:00 PM WAT'), ('America/New_York', '2:00 PM EDT')])
 def test_commands_and_buttons_have_exact_layout_and_subscriber_timezone(db, view, heading, total, zone, time):
     db.subscriber_add('42', timezone=zone)
     service = SimpleNamespace(get_daily_snapshot=snapshot)
@@ -34,11 +36,16 @@ def test_commands_and_buttons_have_exact_layout_and_subscriber_timezone(db, view
     text = tg.sends[0]['text']
     assert text == tg.edits[0]['text']
     assert tg.sends[0]['reply_markup'] == tg.edits[0]['reply_markup']
-    assert text.startswith(f'<b>{heading}</b> predictions—— <b>2030-06-01</b>\n\n'
-                           f'⚽ Football\nArsenal vs Chelsea\nOver 1.5 Goals\n'
-                           f'Confidence: <b>84%</b> | <b>{time}</b>\n2.00\n')
-    assert 'Hidden League' not in text
-    assert text.endswith(f'Combined odds: <b>{total}</b>')
+    # the requested format: sport / league / fixture / market / prediction / odds / confidence | time
+    assert text.startswith(f'{heading} 2030-06-01\n\n'
+                           f'Football\nHidden League\nArsenal vs Chelsea\n'
+                           f'<b>Market:</b> Totals\n'
+                           f'<b>Prediction:</b> Over 1.5 Goals\n'
+                           f'Odds: 2.00\n'
+                           f'Confidence level: <b>84%</b> | {time}\n')
+    assert 'predictions——' not in text          # the superseded copy stays gone
+    picks_in_section = 1 if view == 'top' else 3
+    assert text.endswith(f'Total Picks: {picks_in_section}\nCombined Odds: {total}')
     assert ('Liverpool' in text) == (view == 'daily')
 
 
@@ -46,8 +53,8 @@ def test_every_daily_page_uses_entire_ticket_total():
     for page, fixture in enumerate(['Arsenal', 'Liverpool', 'Villa']):
         text, _ = render_page(snapshot(), 'daily', page, 1, 'UTC')
         assert fixture + ' vs Chelsea' in text
-        assert text.count('Confidence:') == 1
-        assert 'Combined odds: <b>15.94</b>' in text
+        assert text.count('Confidence level:') == 1
+        assert 'Combined Odds: 15.9430' in text     # whole ticket, not just this page
 
 
 @pytest.mark.parametrize('zone', ['', 'Not/AZone'])
@@ -56,7 +63,7 @@ def test_invalid_or_unset_subscriber_timezone_uses_config(db, zone):
     tg = FakeTG()
     handle_command('/top', '42', service=SimpleNamespace(get_daily_snapshot=snapshot),
                    tg=tg, cfg=Config(timezone='Africa/Lagos'), db=db)
-    assert '<b>07:00 PM WAT</b>' in tg.sends[0]['text']
+    assert '7:00 PM WAT' in tg.sends[0]['text']
 
 
 def test_selected_ticket_survives_database_and_cache_with_correct_totals(db):
@@ -74,4 +81,4 @@ def test_selected_ticket_survives_database_and_cache_with_correct_totals(db):
     assert len(restored.view_items('daily')) == len(picks.all())
     for view, total in [('top', top_total), ('daily', daily_total)]:
         text, _ = render_page(restored, view, 0, 1, 'UTC')
-        assert f'Combined odds: <b>{total:.2f}</b>' in text
+        assert f'Combined Odds: {total:.4f}' in text

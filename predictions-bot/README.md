@@ -165,7 +165,7 @@ python main.py                   # run the scheduler (what Railway runs)
 
 `main.py` runs the scheduler loop: recap at `RECAP_TIME`, picks at `POST_TIME`,
 settlement every `SETTLE_INTERVAL_MIN` minutes. Set `ENABLE_COMMANDS=true` and
-`TELEGRAM_ADMIN_IDS` to also answer `/stats`, `/today`, `/yesterday` (and admin
+`TELEGRAM_ADMIN_IDS` to also answer `/top`, `/daily`, `/stats`, `/yesterday` (and admin
 `/run`, `/settle`, `/recap`).
 
 ---

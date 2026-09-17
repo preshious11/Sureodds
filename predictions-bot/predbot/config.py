@@ -51,13 +51,7 @@ class Config:
     api_football_host: str = field(default_factory=lambda: _env("API_FOOTBALL_HOST", "v3.football.api-sports.io"))
     sgo_key: str = field(default_factory=lambda: _env("SPORTSGAMEODDS_KEY"))
     sharpapi_key: str = field(default_factory=lambda: _env("SHARPAPI_KEY"))
-    # BetMiner (RapidAPI): 1 broad /matches/{from}/{to} call per day; leagues are
-    # filtered client-side by competition NAME (BetMiner league ids are unverified).
-    betminer_key: str = field(default_factory=lambda: _env("BETMINER_RAPIDAPI_KEY"))
-    betminer_host: str = field(default_factory=lambda: _env("BETMINER_RAPIDAPI_HOST", "betminer.p.rapidapi.com"))
-    betminer_daily_limit: int = field(default_factory=lambda: _int("BETMINER_DAILY_REQUEST_LIMIT", 5))
-    betminer_leagues: List[str] = field(default_factory=lambda: _list("BETMINER_LEAGUES"))
-    provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "api_football,sportsgameodds,sharpapi,betminer"))
+    provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "api_football,sportsgameodds,sharpapi"))
     chain_min_events: int = field(default_factory=lambda: _int("CHAIN_MIN_EVENTS", 40))
     sgo_sports: List[str] = field(default_factory=lambda: _list("SGO_SPORTS", "SOCCER,BASKETBALL,TENNIS,HOCKEY"))
     sgo_leagues: List[str] = field(default_factory=lambda: _list("SGO_LEAGUES"))
@@ -130,7 +124,6 @@ class Config:
             "api_football": bool(self.api_football_key),
             "sportsgameodds": bool(self.sgo_key),
             "sharpapi": bool(self.sharpapi_key),
-            "betminer": bool(self.betminer_key),
         }
         return [p for p in self.provider_order if keys.get(p)]
 

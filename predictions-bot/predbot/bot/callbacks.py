@@ -29,9 +29,45 @@ from predbot.util.timeutil import resolve_timezone
 
 log = logging.getLogger(__name__)
 
-#: The public commands and the view each one opens.  Buttons are labelled with
-#: these same strings (``pagination.VIEW_COMMAND``), so a tap and a type are the
-#: same action and cannot drift apart.
+#: Telegram hands us the client's ``language_code`` on every update, so the
+#: subscriber's zone is inferred from it - nobody is asked to pick one.
+LOCALE_TO_TIMEZONE = {
+    "en_US": "America/New_York",
+    "en_GB": "Europe/London",
+    "de_DE": "Europe/Berlin",
+    "fr_FR": "Europe/Paris",
+    "it_IT": "Europe/Rome",
+    "es_ES": "Europe/Madrid",
+    "pt_PT": "Europe/Lisbon",
+    "pt_BR": "America/Sao_Paulo",
+    "ru_RU": "Europe/Moscow",
+    "ja_JP": "Asia/Tokyo",
+    "zh_CN": "Asia/Shanghai",
+    "zh_TW": "Asia/Taipei",
+    "ko_KR": "Asia/Seoul",
+    "en_IN": "Asia/Kolkata",
+    "ar_SA": "Asia/Riyadh",
+    "ar_EG": "Africa/Cairo",
+    "en_NG": "Africa/Lagos",
+    "ar_AE": "Asia/Dubai",
+    "en_SG": "Asia/Singapore",
+    "en_AU": "Australia/Sydney",
+    "en_NZ": "Pacific/Auckland",
+}
+
+def _detect_user_timezone(user: Dict[str, Any]) -> Optional[str]:
+    """Detect a subscriber's timezone from the locale Telegram already sends."""
+    if not user:
+        return None
+    locale = user.get("language_code") or user.get("language")
+    if locale:
+        return LOCALE_TO_TIMEZONE.get(locale)
+    return None
+
+
+#: The public commands and the view each one opens.  Buttons open these same
+#: views (``pagination.VIEW_COMMAND``), so a tap and a type are the same action
+#: and cannot drift apart.
 COMMANDS: Dict[str, str] = {
     "/top": VIEW_TOP,        # strongest picks
     "/daily": VIEW_DAILY,    # every prediction for today
@@ -63,35 +99,39 @@ def view_button(view: str) -> Dict[str, str]:
 
 def commands_text() -> str:
     """The three view commands - one definition for the welcome screen and /help."""
-    return "\n".join(f"<b>{VIEW_ICON[v]} {VIEW_COMMAND[v]}</b> — {VIEW_DESC[v]}"
+    return "\n".join(f"<b>{VIEW_ICON[v]} {VIEW_COMMAND[v]}</b> – {VIEW_DESC[v]}"
                      for v in (VIEW_TOP, VIEW_DAILY, VIEW_STATS))
 
 
 def welcome_message(first_name: str = "there") -> str:
     """The /start screen: one greeting line, then the three commands."""
     return (f"{WAVING} Hi, {esc(first_name)}\n\n"
-            "Tap the menu below or use a command:\n\n"
-            "/top — Strongest picks today\n"
-            "/daily — All predictions today\n"
-            "/stats — Prediction summary")
+            "Use the menu below or these commands:\n\n"
+            f"{commands_text()}")
 
 
-def menu_markup(subscribed: bool = True) -> Dict[str, Any]:
-    """Inline keyboard mirroring the commands: every button is its command."""
+def menu_markup() -> Dict[str, Any]:
+    """Inline keyboard mirroring the commands - one button per view.
+
+    There is deliberately no subscribe/unsubscribe toggle: /start subscribes,
+    and picks only ever arrive on the schedule.
+    """
     return {"inline_keyboard": [
-        [{"text": "🏆 Top Picks", "callback_data": "pg|top|0"},
-         {"text": "📋 Daily Picks", "callback_data": "pg|daily|0"}],
-        [{"text": "📊 Stats", "callback_data": "pg|stats|0"}],
-        [{"text": "🔕 Unsubscribe from daily picks" if subscribed else "🔔 Subscribe to daily picks",
-          "callback_data": "sub|off" if subscribed else "sub|on"}],
+        [view_button(VIEW_TOP), view_button(VIEW_DAILY)],
+        [view_button(VIEW_STATS)],
     ]}
 
 
 def handle_start(db: Database, tg: Telegram, chat_id: str, user: Optional[Dict[str, Any]]) -> None:
-    """/start: register (or re-activate) the subscriber, then show the menu."""
+    """/start: subscribe, auto-detect the timezone, then show the menu.
+
+    Predictions are never pushed here - the menu is the only thing sent.  Picks
+    arrive on the schedule, and only then.
+    """
     user = user or {}
     first_name = str(user.get("first_name") or "there")
-    db.subscriber_add(chat_id, str(user.get("username") or ""), first_name)
+    db.subscriber_add(chat_id, str(user.get("username") or ""), first_name,
+                      timezone=_detect_user_timezone(user) or "")
     tg.send(welcome_message(first_name), chat_id=chat_id, reply_markup=menu_markup())
 
 
@@ -142,22 +182,13 @@ def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram
     chat_id = str((message.get("chat") or {}).get("id"))
     message_id = message.get("message_id")
     try:
-        if data in ("menu", "sub|on", "sub|off"):
-            if db is None or chat_id == "None":
-                tg.answer_callback_query(cb_id, text="Unavailable.")
-                return
+        if data == "menu":
             user = cb.get("from") or {}
-            if data == "sub|off":
-                db.subscriber_remove(chat_id)
-            elif data == "sub|on":
-                db.subscriber_add(chat_id, str(user.get("username") or ""),
-                                  str(user.get("first_name") or ""))
-            active = bool(db.query("SELECT 1 FROM subscribers WHERE chat_id=? AND active=1", (chat_id,)))
             if message_id:
                 tg.edit_message_text(chat_id, int(message_id),
                                      welcome_message(str(user.get("first_name") or "there")),
-                                     reply_markup=menu_markup(active))
-            tg.answer_callback_query(cb_id, text={"sub|off": "Unsubscribed", "sub|on": "Subscribed"}.get(data, "Menu"))
+                                     reply_markup=menu_markup())
+            tg.answer_callback_query(cb_id, text="Menu")
             return
         parsed = pagination.decode_callback(data)
         if parsed is None:

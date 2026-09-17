@@ -7,10 +7,12 @@ edits the existing Telegram message via callback buttons.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
-from predbot.bot.format import PickLine, kickoff_label, pick_lines, picks_card, sport_name, stats_message
+from predbot.bot.format import (HEADING_DAILY, HEADING_TOP, PickLine,
+                                format_outcome, pick_line_from_record, pick_lines,
+                                picks_card, stats_message)
 from predbot.cache.models import (DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STATS,
                                   VIEW_TOP)
 from predbot.util.timeutil import parse_iso, to_local, utcnow
@@ -23,19 +25,21 @@ CALLBACK_NOOP = "noop"
 
 VIEW_TITLES = {VIEW_TOP: "🏆 TOP PICKS", VIEW_DAILY: "📋 DAILY PICKS", VIEW_STATS: "📊 STATS"}
 
-#: The three interactive views: the emoji, the command that opens each one and a
-#: one-line description.  Buttons are always labelled with their command, so a
-#: tap and a type are visibly the same action - one definition shared by the
-#: /start menu, the welcome screen, /help and the pagination switch row.
+#: The three interactive views: emoji, button label, the command that opens the
+#: same view, and a one-line description.  One definition shared by the /start
+#: menu, the welcome screen and the pagination switch row, so a tap and a type
+#: are guaranteed to be the same action.
 VIEW_ICON = {VIEW_TOP: "🏆", VIEW_DAILY: "📋", VIEW_STATS: "📊"}
+VIEW_LABEL = {VIEW_TOP: "Top Picks", VIEW_DAILY: "Daily Picks", VIEW_STATS: "Stats"}
 VIEW_COMMAND = {VIEW_TOP: "/top", VIEW_DAILY: "/daily", VIEW_STATS: "/stats"}
-VIEW_DESC = {VIEW_TOP: "strongest picks", VIEW_DAILY: "all predictions today",
-             VIEW_STATS: "quick summary"}
+VIEW_DESC = {VIEW_TOP: "Top picks of the day",
+             VIEW_DAILY: "Daily picks · Accumulator slip",
+             VIEW_STATS: "See prediction results"}
 
 
 def view_button_label(view: str) -> str:
-    """Inline-button label for a view: its emoji plus the command it runs."""
-    return f"{VIEW_ICON[view]} {VIEW_COMMAND[view]}"
+    """Inline-button label for a view."""
+    return f"{VIEW_ICON[view]} {VIEW_LABEL[view]}"
 
 
 # --------------------------------------------------------------- payload codec
@@ -75,17 +79,29 @@ def slice_page(items: List[PickRecord], page: int, size: int) -> List[PickRecord
 
 
 # ----------------------------------------------------------------- rendering
-def _kickoff_hhmm(pick: PickRecord, tz: str) -> str:
-    return kickoff_label(parse_iso(pick.kickoff_utc), tz)
+def _kickoff_hhmm(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> str:
+    """Kickoff in the subscriber's own timezone, falling back to the server's."""
+    start = parse_iso(pick.kickoff_utc)
+    if not start:
+        return "--:--"
+    display_tz = user_tz or tz
+    local = to_local(start, display_tz)
+    tz_abbr = local.tzname() or display_tz
+    return f"{local.strftime('%I:%M %p').lstrip('0')} {tz_abbr}"
 
 
-def render_pick(pick: PickRecord, tz: str) -> str:
-    return "\n".join(pick_lines(_pick_line(pick, tz)))
+# pick_line_from_record is imported from predbot.bot.format above - the ONE
+# canonical pick-card builder, shared by every view and the broadcast card.
 
 
-def _pick_line(pick: PickRecord, tz: str) -> PickLine:
-    return PickLine(sport_name(pick.sport), f"{pick.home} vs {pick.away}",
-                    pick.label, pick.league, pick.prob, _kickoff_hhmm(pick, tz), pick.price)
+def _pick_line(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> PickLine:
+    """Backwards-compatible alias of format.pick_line_from_record."""
+    return pick_line_from_record(pick, tz, user_tz)
+
+
+def render_pick(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> str:
+    """One pick's six-line block - the same renderer the broadcast card uses."""
+    return "\n".join(pick_lines(pick_line_from_record(pick, tz, user_tz)))
 
 
 def build_keyboard(view: str, page: int, pages: int) -> Dict:
@@ -128,16 +144,26 @@ def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> s
 
 
 def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
-                tz: str) -> Tuple[str, Dict]:
+                tz: str, user_tz: Optional[str] = None) -> Tuple[str, Dict]:
+    """One page of a ticket view: cards for the visible picks, then totals for
+    the section those picks come from (Top or the whole Daily ticket).
+
+    ONE source of truth: ``items`` is the section's selection list, the cards
+    are its visible slice, and the combined odds are the product of EXACTLY
+    ``items`` - the same list the cards were sliced from. Nothing is priced
+    from a second, hidden collection.
+    """
     items = snapshot.view_items(view)
+    items = [p for p in items if format_outcome(p)]
     if not items:
         return empty_view_message(snapshot, view, tz), build_keyboard(view, 0, 1)
     pages = total_pages(len(items), size)
     page = clamp_page(page, len(items), size)
     chunk = slice_page(items, page, size)
 
-    text = picks_card([_pick_line(p, tz) for p in chunk], snapshot.date,
-                      heading="Top" if view == VIEW_TOP else "Today's",
+    text = picks_card([pick_line_from_record(p, tz, user_tz) for p in chunk],
+                      snapshot.date,
+                      heading=HEADING_TOP if view == VIEW_TOP else HEADING_DAILY,
                       total_prices=[p.price for p in items])
 
     if pages > 1:
@@ -147,33 +173,36 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
 
 
 def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC",
-                 now: Optional[datetime] = None) -> Tuple[str, Dict]:
+                 now: Optional[datetime] = None,
+                 user_tz: Optional[str] = None) -> Tuple[str, Dict]:
     """The 📊 /stats card - the rolling record the /stats command sends.
 
     One renderer for the command and the button: with a Database handle the
     record is computed fresh (7/30-day and all-time W-L, ROI, best picks,
     calibration, streak), otherwise it falls back to the cached snapshot's
-    stats.  The richer ``SUREODDS — YESTERDAY`` card stays a broadcast (the
-    scheduled recap) instead of becoming a second /stats implementation.
+    stats.
     """
     raw = None
+    sport_breakdown = None
+    display_tz = user_tz or tz          # "today" has to mean the subscriber's today
     if db is not None:
         try:
             from predbot.jobs import stats as stats_mod
 
-            raw = stats_mod.compute(db, to_local(now or utcnow(), tz))
+            raw = stats_mod.compute(db, to_local(now or utcnow(), display_tz))
+            sport_breakdown = stats_mod.by_sport(db.picks_for_date((to_local(now or utcnow(), display_tz) - timedelta(days=1)).strftime("%Y-%m-%d")))
         except Exception as e:  # noqa: BLE001
             log.warning("stats view DB render failed, using snapshot: %s", e)
     if raw is None:
         if snapshot.stats is None:
             return "📊 STATS\nNo settled picks yet.", build_keyboard(VIEW_STATS, 0, 1)
         raw = snapshot.stats.to_raw()
-    return stats_message(raw), build_keyboard(VIEW_STATS, 0, 1)
+    return stats_message(raw, sport_breakdown=sport_breakdown), build_keyboard(VIEW_STATS, 0, 1)
 
 
 def render_view(snapshot: DailySnapshot, view: str, page: int, size: int,
-                tz: str, db=None) -> Tuple[str, Dict]:
-    """Entry point used by both the /today command and callback navigation."""
+                tz: str, db=None, user_tz: Optional[str] = None) -> Tuple[str, Dict]:
+    """Entry point used by both the /daily command and callback navigation."""
     if view == VIEW_STATS:
-        return render_stats(snapshot, db=db, tz=tz)
-    return render_page(snapshot, view, page, size, tz)
+        return render_stats(snapshot, db=db, tz=tz, user_tz=user_tz)
+    return render_page(snapshot, view, page, size, tz, user_tz)

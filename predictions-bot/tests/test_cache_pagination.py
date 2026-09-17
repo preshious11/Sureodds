@@ -176,7 +176,7 @@ def test_callback_payload_codec():
 def test_render_page_structure_and_keyboard():
     snap = make_snapshot()
     text, markup = pagination.render_page(snap, VIEW_DAILY, 0, 10, "UTC")
-    assert "<b>Today's</b> predictions" in text and "Page 1/3" in text
+    assert text.startswith("📋 Daily Picks for Today") and "Page 1/3" in text
     nav = markup["inline_keyboard"][0]
     assert nav[0]["text"] == "1/3"                # no ◀️ button on the first page
     assert nav[1]["callback_data"] == "pg|daily|1"
@@ -201,13 +201,14 @@ def test_render_stats_matches_the_stats_command(db):
     text, markup = pagination.render_stats(make_snapshot(), db=db, tz="UTC", now=now)
 
     assert text == expected                     # one renderer, no drift
-    assert "Last 7 days:" in text and "All time:" in text
-    assert markup["inline_keyboard"][-1][0]["text"] == "🏆 /top"
+    assert "SUREODDS RESULTS — YESTERDAY" in text and "LAST 7 DAYS" in text
+    assert markup["inline_keyboard"][-1][0]["text"] == "🏆 Top Picks"
 
 
 def test_render_stats_without_db_falls_back_to_the_snapshot():
     text, markup = pagination.render_stats(make_snapshot())
-    assert "Last 7 days: 3W-1L" in text and "ROI +12.5%" in text
+    assert "SUREODDS RESULTS — YESTERDAY" in text and "LAST 7 DAYS" in text
+    assert "Wins: 3" in text and "Losses: 1" in text
     assert markup["inline_keyboard"]
 
 
@@ -236,7 +237,7 @@ def test_callback_navigation_is_zero_api(db):
     assert len(tg.edits) == 1
     edit = tg.edits[0]
     assert edit["chat_id"] == "-100123" and edit["message_id"] == 77
-    assert "<b>Today's</b> predictions" in edit["text"] and "Page 2/3" in edit["text"]
+    assert edit["text"].startswith("📋 Daily Picks for Today") and "Page 2/3" in edit["text"]
     assert edit["reply_markup"]["inline_keyboard"]
     assert tg.answers and tg.answers[0]["id"] == "cb1"
 

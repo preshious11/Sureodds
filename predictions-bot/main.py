@@ -44,15 +44,26 @@ def main() -> None:
     def job_recap():
         job_settle()               # make sure yesterday is graded first
         text = recap.run(db, cfg, tg)                # channel mirror (optional)
-        broadcast.deliver_recap(db, cfg, tg, text)   # DM yesterday's results to subscribers
+        if text:
+            db.set_kv("recap_text", text)            # cache recap for broadcast job
+
+    def job_broadcast_recap():
+        """Send recap to each subscriber after last fixture ends in their timezone."""
+        text = db.get_kv("recap_text")
+        if text:
+            broadcast.deliver_recap(db, cfg, tg, text)
 
     def job_deliver():
-        # One broadcast instant; kickoff times are localized per subscriber.
-        broadcast.deliver_picks(db, cfg, tg, service.published_snapshot)
+        """Poll: hand the card to every subscriber whose own 9:30 AM has arrived."""
+        # Prevent API calls during delivery polling; only use cached data.
+        snapshot = service.get_daily_snapshot(allow_api_call=False)
+        if not snapshot.total_picks():
+            return
+        broadcast.deliver_picks(db, cfg, tg, snapshot)
 
     def job_picks():
         daily_picks.run(chain, db, cfg, tg, service=service)          # channel mirror (optional)
-        job_deliver()                    # serve all subscribers after the shared POST_TIME
+        service.refresh_cache_from_db()  # write-once-per-day: feed the interactive cache
 
     def compute_settle_deadline(now):
         today = to_local(now, cfg.timezone).strftime("%Y-%m-%d")
@@ -61,7 +72,9 @@ def main() -> None:
     jobs = [
         DailyJob("recap", cfg.recap_time, cfg.timezone, job_recap),
         DailyJob("picks", cfg.post_time, cfg.timezone, job_picks),
-        IntervalJob("deliver", DELIVERY_POLL_MINUTES, job_deliver),
+        # Per-subscriber local-time gates, so both must poll rather than fire once.
+        IntervalJob("deliver", DELIVERY_POLL_MINUTES, job_deliver),   # each subscriber's 9:30 AM
+        IntervalJob("broadcast_recap", 5, job_broadcast_recap),       # their last fixture ending
         DynamicJob("settle", cfg.timezone, compute_settle_deadline, job_settle),
     ]
 
