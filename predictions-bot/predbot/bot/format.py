@@ -327,16 +327,41 @@ def recap_message(day_label: str, sport_breakdown: List[Dict], s: Dict) -> str:
     return "\n".join(lines)
 
 
-def stats_message(s: Dict) -> str:
-    seven, thirty, alltime = s["last7"], s["last30"], s["all"]
-    lines = ["<b>📊 STATS</b>"]
-    for name, blk in (("Last 7 days", seven), ("Last 30 days", thirty), ("All time", alltime)):
-        lines.append(f"{name}: {blk['won']}W-{blk['lost']}L" + (f"-{blk['push']}P" if blk['push'] else "")
-                     + f" ({_pct(blk['won'], blk['lost'])}) · ROI {blk['roi']:+.1f}%")
-    t = s["top_all"]
-    lines.append(f"Top picks all time: {t['won']}W-{t['lost']}L ({_pct(t['won'], t['lost'])}) · ROI {t['roi']:+.1f}%")
-    if s.get("brier") is not None:
-        lines.append(f"Calibration (Brier): {s['brier']:.3f}")
-    if s.get("streak"):
-        lines.append(f"Streak: {s['streak']}")
+def stats_message(s: Dict, sport_breakdown: Optional[List[Dict]] = None) -> str:
+    """Yesterday's results card formatted like broadcast recap.
+
+    Uses the same format as recap_message but for the /stats command view.
+    If sport_breakdown is None, computes it from the stats dict.
+    """
+    y, seven = s.get("yesterday", {}), s.get("last7", {})
+    if not y:
+        y = {"won": 0, "lost": 0, "void": 0, "push": 0, "best_win": None}
+
+    lines = [f"📊 {BRAND.upper()} RESULTS — YESTERDAY", ""]
+    lines.append(f"✅ Wins: {y.get('won', 0)}")
+    lines.append(f"❌ Losses: {y.get('lost', 0)}")
+    lines.append(f"➖ Void: {y.get('void', 0)}")
+    if y.get("push"):
+        lines.append(f"↩️ Push: {y['push']}")
+    lines.append("")
+    lines.append(f"🎯 Hit Rate: {_hit_rate(y.get('won', 0), y.get('lost', 0))}")
+
+    if sport_breakdown:
+        lines.append("")
+        for b in sport_breakdown:
+            icon = SPORT_ICON.get(b["sport"], SPORT_ICON["other"])
+            lines.append(f"{icon} {sport_name(b['sport'])}: {b['won']}/{b['n']}")
+
+    lines.append("")
+    lines.append("📈 LAST 7 DAYS")
+    lines.append(f"Wins: {seven.get('won', 0)}")
+    lines.append(f"Losses: {seven.get('lost', 0)}")
+    lines.append(f"Hit Rate: {_hit_rate(seven.get('won', 0), seven.get('lost', 0))}")
+
+    best = y.get("best_win")
+    if best:
+        lines.append("")
+        lines.append("🔥 BEST PICK")
+        lines.append(f"{esc(best['label'])} @ {best['price']:.2f} ✅")
+
     return "\n".join(lines)

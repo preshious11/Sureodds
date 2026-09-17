@@ -7,7 +7,7 @@ edits the existing Telegram message via callback buttons.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from predbot.bot.format import (HEADING_DAILY, HEADING_TOP, PickLine,
@@ -156,23 +156,24 @@ def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC",
     One renderer for the command and the button: with a Database handle the
     record is computed fresh (7/30-day and all-time W-L, ROI, best picks,
     calibration, streak), otherwise it falls back to the cached snapshot's
-    stats.  The richer ``SUREODDS — YESTERDAY`` card stays a broadcast (the
-    scheduled recap) instead of becoming a second /stats implementation.
+    stats.
     """
     raw = None
+    sport_breakdown = None
     display_tz = user_tz or tz          # "today" has to mean the subscriber's today
     if db is not None:
         try:
             from predbot.jobs import stats as stats_mod
 
             raw = stats_mod.compute(db, to_local(now or utcnow(), display_tz))
+            sport_breakdown = stats_mod.by_sport(db.picks_for_date((to_local(now or utcnow(), display_tz) - timedelta(days=1)).strftime("%Y-%m-%d")))
         except Exception as e:  # noqa: BLE001
             log.warning("stats view DB render failed, using snapshot: %s", e)
     if raw is None:
         if snapshot.stats is None:
             return "📊 STATS\nNo settled picks yet.", build_keyboard(VIEW_STATS, 0, 1)
         raw = snapshot.stats.to_raw()
-    return stats_message(raw), build_keyboard(VIEW_STATS, 0, 1)
+    return stats_message(raw, sport_breakdown=sport_breakdown), build_keyboard(VIEW_STATS, 0, 1)
 
 
 def render_view(snapshot: DailySnapshot, view: str, page: int, size: int,
