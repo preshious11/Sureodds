@@ -12,16 +12,22 @@ from predbot.util.http import Http, ProviderError
 log = logging.getLogger(__name__)
 
 SPORT_MAPPING = {
+    # Football - Major European leagues
     "soccer_epl": "football",
-    "soccer_liga": "football",
-    "soccer_serie_a": "football",
-    "soccer_bundesliga": "football",
-    "soccer_ligue_1": "football",
-    "soccer_champions_league": "football",
-    "soccer_europa_league": "football",
-    "soccer_world_cup": "football",
-    "tennis_atp": "tennis",
-    "tennis_wta": "tennis",
+    "soccer_france_ligue_one": "football",
+    "soccer_germany_bundesliga": "football",
+    "soccer_italy_serie_a": "football",
+    "soccer_spain_la_liga": "football",
+    # Football - European competitions
+    "soccer_uefa_champs_league": "football",
+    "soccer_uefa_europa_league": "football",
+    # Football - Other major leagues
+    "soccer_usa_mls": "football",
+    "soccer_brazil_campeonato": "football",
+    "soccer_mexico_ligamx": "football",
+    "soccer_japan_j_league": "football",
+    # Tennis
+    "tennis_wta_guadalajara_open": "tennis",
 }
 
 BOOKMAKER_ODDS_KEYS = {
