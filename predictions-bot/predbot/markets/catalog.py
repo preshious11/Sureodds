@@ -7,6 +7,7 @@ cards...) are graded from the provider's `score` field when it exists.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -86,10 +87,82 @@ def _fmt_line(line: Optional[float], signed: bool = False) -> str:
     return s
 
 
+# Raw provider stat ids a punter should never have to decode ("Batting_Hits",
+# "totalBases", "player_hits_over_under"...) mapped to plain-English words.
+PROP_STAT_WORDS: Dict[str, str] = {
+    "hits": "Hits", "batting_hits": "Hits", "total_bases": "Total Bases",
+    "totalbases": "Total Bases", "runs": "Runs", "rbi": "RBIs",
+    "runs_batted_in": "RBIs", "home_runs": "Home Runs", "homeruns": "Home Runs",
+    "strikeouts": "Strikeouts", "strikeouts_thrown": "Strikeouts",
+    "pitcher_strikeouts": "Strikeouts", "batter_strikeouts": "Strikeouts",
+    "walks": "Walks", "doubles": "Doubles", "triples": "Triples",
+    "rbi": "RBIs", "rbis": "RBIs",
+    "earned_runs": "Earned Runs", "points": "Points", "rebounds": "Rebounds",
+    "assists": "Assists", "three_pointers": "Three-Pointers",
+    "threepointers": "Three-Pointers", "three_pointers_made": "Three-Pointers",
+    "steals": "Steals", "blocks": "Blocks", "goals": "Goals", "shots": "Shots",
+    "shots_on_target": "Shots on Target", "corners": "Corners", "cards": "Cards",
+    "saves": "Saves", "touchdowns": "Touchdowns", "passing_yards": "Passing Yards",
+    "rushing_yards": "Rushing Yards", "receiving_yards": "Receiving Yards",
+    "receptions": "Receptions", "passing_tds": "Passing TDs",
+    "field_goals": "Field Goals", "made_field_goals": "Field Goals",
+}
+
+
+def readable_stat(stat: str) -> str:
+    """A raw stat id as readable text: 'Batting_Hits' -> 'Hits',
+    'totalBases' -> 'Total Bases'. Unknown ids are split into words, never
+    shown with underscores or camelCase."""
+    s = str(stat or "").strip()
+    if not s:
+        return ""
+    key = re.sub(r"[\s\-]+", "_", s).lower()
+    if key in PROP_STAT_WORDS:
+        return PROP_STAT_WORDS[key]
+    if key in STAT_NAMES and STAT_NAMES[key]:
+        return STAT_NAMES[key]
+    words = re.sub(r"(?<!^)(?=[A-Z])", " ", s).replace("_", " ").split()
+    out = " ".join(w for w in words if w).strip()
+    return out.title() if out else s
+
+
+def prop_outcome(ml: MarketLine, home: str = "", away: str = "") -> str:
+    """ONE canonical outcome builder for prop markets.
+
+    Player props carry the player's name; team props carry the team; both end
+    with the explicit side, line and stat: 'Alec Bohm Over 1.5 Hits',
+    'Los Angeles Dodgers Over 8.5 Team Hits'. Returns '' when the canonical
+    fields cannot produce an explicit outcome - an ambiguous candidate is
+    skipped by the renderers, never shown as a bare 'Over'/'Yes'.
+    """
+    s = " ".join(str(ml.selection or "").split()).lower()
+    team = {"home": home, "away": away}
+    entity = str(ml.entity or "").strip()
+    who = team.get(entity, entity)
+    word = readable_stat(ml.stat)
+    if s in ("over", "under"):
+        if ml.line is None or not word or not who:
+            return ""
+        if entity in ("home", "away") and word.lower() == "hits":
+            word = "Team Hits"          # a team's hit total, not a single player's
+        return f"{who} {s.title()} {_fmt_line(ml.line)} {word}".strip()
+    if s in ("yes", "no"):
+        if not word and ml.label:
+            word = readable_stat(ml.label)
+        if not word or not who:
+            return ""
+        return f"{who} {word} {s.title()}"
+    if s in ("even", "odd") and word and who:
+        return f"{who} {word} {s.title()}"
+    return ""
+
+
 def selection_label(ml: MarketLine, home: str, away: str, sport: str = "football") -> str:
-    """Human readable, e.g. 'Arsenal Win', 'Over 2.5 Goals', 'Lakers -4.5', 'BTTS Yes'."""
-    if ml.label and ml.market == "prop":
-        return ml.label
+    """Human readable, e.g. 'Arsenal to Win', 'Over 2.5 Goals', 'Lakers -4.5', 'BTTS Yes'."""
+    if ml.market == "prop":
+        # Built from the canonical fields; the provider's market name is only a
+        # last-resort STORAGE fallback, never an ambiguous user-facing outcome.
+        return prop_outcome(ml, home, away) or str(ml.label or ml.market_name or "").strip()
     m, s = ml.market, ml.selection
     team = {"home": home, "away": away}
     pts = SPORT_POINTS_WORD.get(sport, "Points")
@@ -98,7 +171,7 @@ def selection_label(ml: MarketLine, home: str, away: str, sport: str = "football
     suffix = f" ({per})" if per else ""
 
     if m in ("result3", "result2"):
-        core = "Draw" if s == "draw" else f"{team.get(s, s)} Win"
+        core = "Draw" if s == "draw" else f"{team.get(s, s)} to Win"
     elif m == "dnb":
         core = f"{team.get(s, s)} (DNB)"
     elif m == "dc":
@@ -142,9 +215,14 @@ def selection_label(ml: MarketLine, home: str, away: str, sport: str = "football
 
 
 def short_selection(ml: MarketLine, home: str = "", away: str = "", sport: str = "football") -> str:
-    """Compact outcome code for the picks card: '1', 'X2', 'Over 2.5 Goals', 'BTTS Yes'."""
-    if ml.label and ml.market == "prop":
-        return ml.label
+    """Compact outcome code for the picks card: '1', 'X2', 'Over 2.5 Goals', 'BTTS Yes'.
+
+    Props are ALWAYS built from the canonical fields here (never the provider's
+    market name); an ambiguous prop - no line, no stat, no entity - returns ''
+    so the renderer can skip it instead of showing a bare 'Over'/'Under'.
+    """
+    if ml.market == "prop":
+        return prop_outcome(ml, home, away)
     m, s = ml.market, ml.selection
     team = {"home": home, "away": away}
     pts = SPORT_POINTS_WORD.get(sport, "Points")

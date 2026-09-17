@@ -6,6 +6,7 @@ handling (no repeated match outcome across sections), and section total counts.
 from __future__ import annotations
 
 import math
+import re
 
 import pytest
 
@@ -134,5 +135,6 @@ def test_total_counts_are_reported_per_section():
     ps = select(pool, cfg(), now)
     assert len(ps.top) + len(ps.daily) == len(ps.all())
     card = picks_message(ps.top, ps.daily, DAY, "UTC", None)
-    assert card.count("\nConfidence:") == len(ps.all())
-    assert card.count("\n1.45\n") == len(ps.all())
+    odds_lines = [ln for ln in card.splitlines() if re.fullmatch(r"Odds: \d+\.\d{2}", ln)]
+    assert len(odds_lines) == len(ps.all())                   # one odds line per pick
+    assert card.count("Confidence level:") == len(ps.all())   # one block per pick

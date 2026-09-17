@@ -4,8 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from predbot.bot.broadcast import picks_text, subscriber_tz
-from predbot.bot.callbacks import handle_callback, handle_command
-from predbot.bot.commands import CommandLoop
+from predbot.bot.callbacks import handle_callback, handle_command, handle_start
 from predbot.bot.format import kickoff_label
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
@@ -17,15 +16,15 @@ from tests.test_subscribers_broadcast import FakeTG, _cb
 
 
 @pytest.mark.parametrize('stamp,zone,expected', [
-    ('2030-06-01T01:38:00Z', 'Africa/Lagos', '02:38 AM WAT'),
-    ('2030-06-01T19:07:00Z', 'Africa/Lagos', '08:07 PM WAT'),
+    ('2030-06-01T01:38:00Z', 'Africa/Lagos', '2:38 AM WAT'),
+    ('2030-06-01T19:07:00Z', 'Africa/Lagos', '8:07 PM WAT'),
     ('2030-06-01T23:38:00Z', 'Africa/Lagos', '12:38 AM WAT'),
-    ('2030-01-01T18:00:00Z', 'America/New_York', '01:00 PM EST'),
-    ('2030-06-01T18:00:00Z', 'America/New_York', '02:00 PM EDT'),
-    ('2030-01-01T18:00:00Z', 'Europe/London', '06:00 PM GMT'),
-    ('2030-06-01T18:00:00Z', 'Europe/London', '07:00 PM BST'),
-    ('2026-03-08T06:59:00Z', 'America/New_York', '01:59 AM EST'),
-    ('2026-03-08T07:00:00Z', 'America/New_York', '03:00 AM EDT'),
+    ('2030-01-01T18:00:00Z', 'America/New_York', '1:00 PM EST'),
+    ('2030-06-01T18:00:00Z', 'America/New_York', '2:00 PM EDT'),
+    ('2030-01-01T18:00:00Z', 'Europe/London', '6:00 PM GMT'),
+    ('2030-06-01T18:00:00Z', 'Europe/London', '7:00 PM BST'),
+    ('2026-03-08T06:59:00Z', 'America/New_York', '1:59 AM EST'),
+    ('2026-03-08T07:00:00Z', 'America/New_York', '3:00 AM EDT'),
 ])
 @pytest.mark.parametrize('view', ['top', 'daily'])
 def test_utc_storage_to_local_command_button_and_broadcast(db, stamp, zone, expected, view):
@@ -46,7 +45,7 @@ def test_utc_storage_to_local_command_button_and_broadcast(db, stamp, zone, expe
     handle_callback(_cb('pg|' + view + '|0'), service=service, tg=tg, db=db, cfg=Config(timezone='UTC'))
     broadcast = picks_text(snapshot, subscriber_tz(db.subscribers_active()[0], 'UTC'))
     for text in (tg.sends[0]['text'], tg.edits[0]['text'], broadcast):
-        assert f'Confidence: <b>81%</b> | <b>{expected}</b>' in text
+        assert f'Confidence level: <b>81%</b> | {expected}' in text
         assert 'UTC' not in text
         if zone != 'Africa/Lagos':
             assert 'WAT' not in text
@@ -70,14 +69,25 @@ def test_timezone_resolution_is_shared(stored, configured, expected):
     assert subscriber_tz({'timezone': stored}, configured) == expected
 
 
-def test_timezone_command_sets_and_reports_existing_preference(db):
-    loop = CommandLoop(FakeTG(), db, Config(timezone='UTC'), {})
-    loop.handle('/timezone', '42', '42', ['Africa/Lagos'])
-    assert db.subscriber_timezone('42') == 'Africa/Lagos'
-    assert 'Africa/Lagos' in loop.handle('/timezone', '42', '42')
+@pytest.mark.parametrize('locale,zone', [
+    ('en_NG', 'Africa/Lagos'),
+    ('en_GB', 'Europe/London'),
+    ('ja_JP', 'Asia/Tokyo'),
+    ('pt_BR', 'America/Sao_Paulo'),
+])
+def test_start_detects_the_zone_from_the_telegram_locale(db, locale, zone):
+    """Nobody is ever asked to pick a zone - it comes from the update payload."""
+    handle_start(db, FakeTG(), '42', {'first_name': 'Zed', 'language_code': locale})
+    assert db.subscriber_timezone('42') == zone
+
+
+def test_an_unknown_locale_falls_back_to_the_configured_zone(db):
+    handle_start(db, FakeTG(), '42', {'first_name': 'Zed', 'language_code': 'xx_XX'})
+    assert db.subscriber_timezone('42') == ''                       # nothing guessed
+    assert subscriber_tz(db.subscribers_active()[0], 'Africa/Lagos') == 'Africa/Lagos'
 
 
 def test_offset_input_is_normalized_to_utc_before_local_display():
     parsed = parse_iso('2030-06-01T03:38:00+02:00')
     assert iso(parsed) == '2030-06-01T01:38:00Z'
-    assert kickoff_label(parsed, 'Africa/Lagos') == '02:38 AM WAT'
+    assert kickoff_label(parsed, 'Africa/Lagos') == '2:38 AM WAT'

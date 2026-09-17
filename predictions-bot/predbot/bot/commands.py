@@ -2,8 +2,11 @@
 
 Typed /top, /daily (alias /today) and /stats are dispatched to
 ``callbacks.handle_command`` - the very handler the inline menu buttons use, so a
-tap and a type produce identical output.  /start shows the menu, /timezone picks
-the delivery zone, /stop unsubscribes; admins also get /run, /settle and /recap.
+tap and a type produce identical output.  /start shows the menu and subscribes,
+/stop unsubscribes; admins also get /run, /settle and /recap.
+
+Timezones are never asked for: they are detected from the locale Telegram sends
+with every update (``callbacks._detect_user_timezone``).
 """
 from __future__ import annotations
 
@@ -15,16 +18,15 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from predbot.bot import callbacks, pagination
 from predbot.bot.callbacks import handle_callback, handle_start
-from predbot.bot.telegram import Telegram, esc, PollingError
+from predbot.bot.telegram import Telegram, PollingError
 from predbot.bot.runtime import PollingLease, log_identity
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
 from predbot.jobs import stats as stats_mod
 from predbot.storage.db import Database
-from predbot.util.timeutil import is_valid_tz, resolve_timezone, to_local, utcnow, parse_hhmm
+from predbot.util.timeutil import resolve_timezone, to_local, utcnow, parse_hhmm
 
 log = logging.getLogger(__name__)
-
 
 def _retry_get_updates(tg: Telegram, offset: Optional[int], timeout: int, max_retries: int = 3) -> list:
     """Retry get_updates with exponential backoff on transient failures."""
@@ -149,7 +151,7 @@ class CommandLoop(threading.Thread):
             _retry_send(self.tg, "That view is unavailable right now.", chat_id)
 
     def _dispatch_callback(self, cb: Dict) -> None:
-        if self.service is None and cb.get("data") not in ("menu", "sub|on", "sub|off"):
+        if self.service is None and cb.get("data") != "menu":
             self.tg.answer_callback_query(str(cb.get("id") or ""), text="Unavailable.")
             return
         try:
@@ -161,17 +163,15 @@ class CommandLoop(threading.Thread):
     def handle(self, cmd: str, user_id: str, chat_id: str = "",
                args: Optional[List[str]] = None) -> Optional[str]:
         """Text-only commands; the three views go through ``_send_view``."""
-        args = args or []
         local = to_local(utcnow(), self.cfg.timezone)
         if cmd == "/help":
             extra = ("\n\n🛠 <b>Admin</b>: /run · /settle · /recap"
                      if user_id in self.cfg.telegram_admin_ids else "")
+            zone = resolve_timezone(self.db.subscriber_timezone(chat_id or user_id),
+                                    self.cfg.timezone)
             return ("👋 <b>Commands</b>\n\n" + callbacks.commands_text() + "\n\n"
-                    "🕒 /timezone — your delivery zone\n"
-                    f"{self._schedule_text(resolve_timezone(self.db.subscriber_timezone(chat_id or user_id), self.cfg.timezone))}\n"
+                    f"{self._schedule_text(zone)}\n"
                     "🛑 /stop — unsubscribe" + extra)
-        if cmd == "/timezone":
-            return self._timezone(chat_id or user_id, args)
         if cmd == "/stop":
             self.db.subscriber_remove(chat_id or user_id)
             return ("🛑 Unsubscribed — no more daily picks. "
@@ -184,24 +184,6 @@ class CommandLoop(threading.Thread):
             fn = self.actions.get(cmd)
             return fn() if fn else "Unavailable."
         return None
-
-    def _timezone(self, chat_id: str, args: List[str]) -> str:
-        """Show or set the IANA zone this subscriber's daily picks are timed in."""
-        current = resolve_timezone(self.db.subscriber_timezone(chat_id), self.cfg.timezone)
-        if not args:
-            return (f"🕒 Delivery zone: <b>{esc(current)}</b>\n"
-                    f"{self._schedule_text(current)}\n"
-                    "Change it with /timezone Africa/Lagos — an IANA name such as "
-                    "Africa/Lagos, Europe/London, America/New_York or Asia/Tokyo.")
-        requested = args[0].strip()
-        if not is_valid_tz(requested):
-            return (f"Unknown timezone <b>{esc(requested)}</b>.\n"
-                    "Use an IANA name, e.g. Africa/Lagos or Asia/Tokyo.")
-        self.db.subscriber_set_timezone(chat_id, requested)
-        now_local = to_local(utcnow(), requested)
-        return (f"✅ Delivery zone set to <b>{esc(requested)}</b> — "
-                f"your local time is now {now_local.strftime('%H:%M')}.\n"
-                + self._schedule_text(requested))
 
     def _schedule_text(self, zone: str) -> str:
         now = utcnow()

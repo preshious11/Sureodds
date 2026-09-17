@@ -16,7 +16,6 @@ from typing import Dict, List, Optional
 from predbot.config import Config
 from predbot.providers.api_football import ApiFootballProvider
 from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult
-from predbot.providers.betminer import BetMinerProvider
 from predbot.providers.budget import Budget
 from predbot.providers.sharpapi import SharpApiProvider
 from predbot.providers.sportsgameodds import SportsGameOddsProvider
@@ -46,13 +45,6 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
                                            max_pages=cfg.sharpapi_max_pages, markets=cfg.sharpapi_markets,
                                            sports=cfg.sharpapi_sports,
                                            events_per_target=cfg.sharpapi_events_per_target)
-    if cfg.betminer_key:
-        # Complementary source: its odds merge into the shared pool like any other
-        # provider. No settlement support (fetch_result/find_result stay None), so
-        # it is deliberately absent from ResultsResolver's cross-provider tuple.
-        out["betminer"] = BetMinerProvider(
-            cfg.betminer_key, budget, host=cfg.betminer_host, leagues=cfg.betminer_leagues,
-            daily_limit=cfg.betminer_daily_limit, timezone=cfg.timezone)
     return out
 
 

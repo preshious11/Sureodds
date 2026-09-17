@@ -34,13 +34,21 @@ class Http:
     def __init__(self, base_url: str, headers: Optional[Dict[str, str]] = None, timeout: int = 25,
                  rate: Optional[RateLimiter] = None, retries: int = 2):
         self.base_url = base_url.rstrip("/")
-        self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "predbot/2.0", "Accept": "application/json"})
+        self._session: Optional[requests.Session] = None
+        self._headers = {"User-Agent": "predbot/2.0", "Accept": "application/json"}
         if headers:
-            self.session.headers.update(headers)
+            self._headers.update(headers)
         self.timeout = timeout
         self.rate = rate
         self.retries = retries
+
+    @property
+    def session(self) -> requests.Session:
+        """Lazy-initialize requests.Session on first use to speed up startup."""
+        if self._session is None:
+            self._session = requests.Session()
+            self._session.headers.update(self._headers)
+        return self._session
 
     def get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
         url = path if path.startswith("http") else f"{self.base_url}/{path.lstrip('/')}"
