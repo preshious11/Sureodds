@@ -123,7 +123,8 @@ class UnifiedFetcher:
         return PickRecord(
             provider=event.provider, provider_event_id=event.provider_event_id,
             provider_odd_id=line.provider_odd_id, period=line.period, stat=line.stat, entity=line.entity,
-            pick_id=None, tier=tier, rank=rank, sport=event.sport, league=event.league,
+            pick_id=None, tier=tier, rank=rank, sport=event.sport,
+            country=str(event.extra.get("country") or ""), league=event.league,
             home=event.home, away=event.away, kickoff_utc=iso(event.start),
             label=scored.label, market=line.market, selection=line.selection,
             line=line.line, price=float(scored.price), prob=float(scored.p_model),
@@ -145,7 +146,7 @@ class UnifiedFetcher:
             provider_odd_id=str(row['provider_odd_id'] or ''), period=str(row['period']),
             stat=str(row['stat']), entity=str(row['entity']),
             pick_id=int(row["id"]), tier=str(row["tier"]), rank=int(row["rank"]),
-            sport=str(row["sport"]), league=str(row["league"] or ""),
+            sport=str(row["sport"]), country="", league=str(row["league"] or ""),
             home=str(row["home"]), away=str(row["away"]),
             kickoff_utc=str(row["start_utc"]), label=str(row["label"]),
             market=str(row["market"]), selection=str(row["selection"]),
