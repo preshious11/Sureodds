@@ -16,6 +16,12 @@ SPORT_ICON = {"football": "⚽", "basketball": "🏀", "american_football": "�
 SPORT_LABEL = {"football": "Football", "basketball": "Basketball", "american_football": "American Football",
                "hockey": "Hockey", "baseball": "Baseball", "tennis": "Tennis", "mma": "MMA",
                "handball": "Handball", "other": "Other"}
+MARKET_LABEL = {"result3": "Match Result", "result2": "Moneyline", "dnb": "Draw No Bet",
+                "dc": "Double Chance", "total": "Totals", "handicap": "Handicap",
+                "btts": "Both Teams to Score", "odd_even": "Odd/Even", "ht_ft": "Halftime/Fulltime",
+                "correct_score": "Correct Score", "result_total": "Result & Totals",
+                "result_btts": "Result & BTTS", "clean_sheet": "Clean Sheet", "win_to_nil": "Win To Nil",
+                "team_to_score": "Team To Score", "winning_margin": "Winning Margin", "prop": "Prop"}
 RESULT_ICON = {"won": "✅", "lost": "❌", "push": "↩️", "half_won": "✅½", "half_lost": "❌½",
                "void": "➖", "pending": "⏳"}
 # The two card headings. Defined once here so the broadcast card, the /top and
@@ -33,12 +39,13 @@ class PickLine(NamedTuple):
 
     sport: str             # "Football", "Basketball", etc.
     match: str             # "Chelsea vs Man United"
-    outcome: str           # short code, e.g. "1X", "Over 2.5 Goals"
+    outcome: str           # explicit outcome, e.g. "Over 2.5 Goals", "Chelsea to Win"
     league: str            # "Premier League", "La Liga", etc.
     confidence: float      # model probability, 0..1
     when: str              # local kickoff with its zone, e.g. "19:45 WAT"
     price: float
     country: str = ""      # "England", "Kazakhstan", etc.
+    market_type: str = ""  # "Over/Under", "Match Result", etc.
 
 
 def _looks_internal(text: str) -> bool:
@@ -143,7 +150,8 @@ def pick_line_from_record(pick, tz: str, user_tz: Optional[str] = None) -> PickL
                     confidence=pick.prob,
                     when=kickoff_label(parse_iso(pick.kickoff_utc), tz, user_tz),
                     price=pick.price,
-                    country=getattr(pick, "country", ""))
+                    country=getattr(pick, "country", ""),
+                    market_type=MARKET_LABEL.get(pick.market, pick.market))
 
 
 def kickoff_label(start: Optional[datetime], tz: str, user_tz: Optional[str] = None) -> str:
@@ -175,13 +183,23 @@ def combined_odds(prices: Iterable[float]) -> float:
 
 
 def pick_lines(p: PickLine) -> List[str]:
-    """The six lines one pick occupies: sport, league with country, match, outcome, confidence | kickoff, odds."""
+    """Pick display: sport, league+country, fixture, market type, prediction, odds, confidence, kickoff."""
     league_label = esc(p.league)
     if hasattr(p, 'country') and p.country:
         league_label = f"{esc(p.country)} • {league_label}" if league_label else esc(p.country)
-    return [esc(p.sport), league_label, esc(p.match), esc(p.outcome),
-            f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {p.when}",
-            f"Odds: {p.price:.2f}"]
+
+    market_label = getattr(p, 'market_type', '')
+    lines = [esc(p.sport), league_label, esc(p.match)]
+
+    if market_label:
+        lines.append(f"<b>Market:</b> {market_label}")
+
+    lines.extend([
+        f"<b>Prediction:</b> {esc(p.outcome)}",
+        f"Odds: {p.price:.2f}",
+        f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {p.when}"
+    ])
+    return lines
 
 
 def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str] = None,
@@ -221,7 +239,8 @@ def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str])
                               league=e.league or sport_name(e.sport),
                               confidence=s.p_model, when=kickoff_label(e.start, tz),
                               price=s.price,
-                              country=str(e.extra.get("country") or "")))
+                              country=str(e.extra.get("country") or ""),
+                              market_type=MARKET_LABEL.get(s.line.market, s.line.market)))
     picks = [p for p in picks if p.outcome]
     return picks_card(picks, to_local(day, tz).strftime("%Y-%m-%d"), stats_line)
 

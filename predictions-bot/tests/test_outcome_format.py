@@ -146,13 +146,17 @@ def test_every_card_has_league_match_outcome_confidence_time_and_odds():
     snap = _summary_snapshot()
     for p in snap.view_items(VIEW_DAILY):
         block = pagination.render_pick(p, WAT).splitlines()
-        assert len(block) == 6
+        assert len(block) >= 6                               # sport, league, match, market, prediction, odds, confidence
         assert block[0] in ("Football", "Baseball")          # sport
         assert block[1]                                      # league
         assert " vs " in block[2]                            # match
-        assert block[3] and " " in block[3]                  # explicit outcome
-        assert block[4].startswith("Confidence level: <b>")  # confidence + time
-        assert block[5].startswith("Odds: ")                 # individual odds
+        assert block[3] and " " in block[3]                  # market or prediction
+        # Find odds line (should be present)
+        odds_line = [ln for ln in block if ln.startswith("Odds: ")]
+        assert odds_line                                     # individual odds must exist
+        # Find confidence line (should be present)
+        confidence_line = [ln for ln in block if ln.startswith("Confidence level: <b>")]
+        assert confidence_line                               # confidence + time must exist
 
 
 def test_no_raw_identifiers_anywhere_in_user_copy():

@@ -49,16 +49,18 @@ def test_card_matches_the_requested_layout():
         "Football\n"
         "Premier League\n"
         "Home1 vs Away1\n"
-        "Aston Villa to win\n"
-        "Confidence level: <b>72%</b> | 7:45 PM WAT\n"
+        "<b>Market:</b> Match Result\n"
+        "<b>Prediction:</b> Aston Villa to win\n"
         "Odds: 2.05\n"
+        "Confidence level: <b>72%</b> | 7:45 PM WAT\n"
         "\n"
         "Football\n"
         "La Liga\n"
         "Home2 vs Away2\n"
-        "Over 1.5 Goals\n"
-        "Confidence level: <b>84%</b> | 3:00 PM WAT\n"
+        "<b>Market:</b> Totals\n"
+        "<b>Prediction:</b> Over 1.5 Goals\n"
         "Odds: 1.74\n"
+        "Confidence level: <b>84%</b> | 3:00 PM WAT\n"
         "\n"
         "Total Picks: 2\n"
         "Combined Odds: 3.5670"
@@ -85,9 +87,10 @@ def test_every_pick_gets_the_six_line_block():
         "Football",
         "Serie A",
         "Home1 vs Away1",
-        "Inter to win",
-        "Confidence level: <b>66%</b> | 7:45 PM WAT",
+        "<b>Market:</b> Match Result",
+        "<b>Prediction:</b> Inter to win",
         "Odds: 1.95",
+        "Confidence level: <b>66%</b> | 7:45 PM WAT",
         "",
         "Total Picks: 1",
         "Combined Odds: 1.9500",
@@ -118,7 +121,8 @@ def test_match_league_and_outcome_are_html_escaped():
     lines = card.splitlines()
     assert "Benfica &lt;B&gt; vs Away &amp; Co" in lines  # match line escaped
     assert "Copa &amp; Liga" in lines  # league line escaped
-    assert "Home &lt;win&gt; &amp; draw" in lines  # outcome line escaped
+    # Outcome is now in prediction line
+    assert any("Home &lt;win&gt; &amp; draw" in line for line in lines)  # outcome line escaped
     assert "<win>" not in card                     # never raw, it would break parse_mode
 
 
