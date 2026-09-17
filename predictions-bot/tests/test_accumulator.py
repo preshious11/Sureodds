@@ -64,7 +64,7 @@ def test_empty_pool_returns_empty_sections_and_placeholder_card():
     ps = select([], cfg(), dt())
     assert ps.top == [] and ps.daily == []
     card = picks_message([], [], DAY, "UTC", None)
-    assert "No selection cleared the quality bar today." in card
+    assert "Predictions being analyzed" in card
     assert "Combined odds" not in card
 
 

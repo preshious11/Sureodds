@@ -100,7 +100,7 @@ def test_every_pick_gets_the_six_line_block():
 def test_empty_day_has_a_placeholder_and_no_combined_odds():
     card = picks_message([], [], DAY, WAT, None)
 
-    assert "No selection cleared the quality bar today." in card
+    assert "Predictions being analyzed" in card
     assert "Combined Odds" not in card
 
 

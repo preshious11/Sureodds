@@ -39,7 +39,7 @@ def test_empty_top_does_not_fall_back_to_daily():
     tg = FakeTG()
     handle_command('/top', '42', service=SimpleNamespace(get_daily_snapshot=lambda: snapshot),
                    tg=tg, cfg=Config())
-    assert 'No selection cleared the quality bar today.' in tg.sends[0]['text']
+    assert 'Predictions being analyzed' in tg.sends[0]['text']
     assert 'DAILY ONLY' not in tg.sends[0]['text']
 
 

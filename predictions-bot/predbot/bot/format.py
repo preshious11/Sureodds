@@ -214,7 +214,12 @@ def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str]
     """
     lines = [f"{heading} {date_label}", ""]
     if not picks:
-        lines.append("No selection cleared the quality bar today.")
+        lines.append("⏳ <i>Predictions being analyzed...</i>")
+        lines.append("")
+        lines.append("Our model is carefully reviewing today's fixtures to find the best value selections. "
+                    "We only recommend picks that meet our strict quality standards.")
+        lines.append("")
+        lines.append("✅ Check back soon! Predictions typically available by 09:00 AM Lagos time.")
     for p in picks:
         lines.extend(pick_lines(p))
         lines.append("")
