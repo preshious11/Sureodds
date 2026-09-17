@@ -204,13 +204,16 @@ def pick_lines(p: PickLine) -> List[str]:
 
 def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str] = None,
                heading: str = HEADING_DAILY,
-               total_prices: Optional[Iterable[float]] = None) -> str:
+               total_prices: Optional[Iterable[float]] = None,
+               user_tz: Optional[str] = None) -> str:
     """The daily predictions post: one block per pick, then the ticket totals.
 
     ``total_prices`` lets a caller price a different collection than the cards
     shown (legacy callers only); when omitted the combined odds are the product
     of exactly the picks listed here - displayed picks and combined odds can
     never come from different lists.
+
+    ``user_tz`` is the user's timezone for the "check back" message; defaults to UTC.
     """
     lines = [f"{heading} {date_label}", ""]
     if not picks:
@@ -219,7 +222,8 @@ def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str]
         lines.append("Our model is carefully reviewing today's fixtures to find the best value selections. "
                     "We only recommend picks that meet our strict quality standards.")
         lines.append("")
-        lines.append("✅ Check back soon! Predictions typically available by 09:00 AM Lagos time.")
+        tz_label = user_tz or "UTC"
+        lines.append(f"✅ Check back soon! Predictions typically available by 09:00 AM {tz_label}.")
     for p in picks:
         lines.extend(pick_lines(p))
         lines.append("")
@@ -247,7 +251,7 @@ def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str])
                               country=str(e.extra.get("country") or ""),
                               market_type=MARKET_LABEL.get(s.line.market, s.line.market)))
     picks = [p for p in picks if p.outcome]
-    return picks_card(picks, to_local(day, tz).strftime("%Y-%m-%d"), stats_line)
+    return picks_card(picks, to_local(day, tz).strftime("%Y-%m-%d"), stats_line, user_tz=tz)
 
 
 # ------------------------------------------------------------ the summary card
