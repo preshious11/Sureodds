@@ -160,7 +160,7 @@ class SharpApiProvider(BaseProvider):
         self.db = getattr(budget, "db", None)      # capability cache storage
         self.http = Http("https://api.sharpapi.io/api/v1", headers={"X-API-Key": api_key},
                          rate=RateLimiter(min_interval))
-        self.sport_status: Dict[str, bool] = {}    # per-sport fetch outcome
+        self.sport_status: Dict[str, Dict] = {}    # per-canonical-sport fetch outcome
         self.parse_counts: Counter = Counter()     # row -> MarketLine rejection reasons
 
     def enabled(self) -> bool:
@@ -200,10 +200,12 @@ class SharpApiProvider(BaseProvider):
         self.parse_counts = Counter()
         self.sport_status = {}
         target_status: Dict[str, set] = defaultdict(set)
+        feeds: Counter = Counter()            # how many targets walked per sport
         rows: List[Dict] = []
         for target in self._targets():
             label = target.get("league") or target.get("sport") or "all"
             sport = self._target_sport(target)
+            feeds[sport] += 1
             cursor = None
             pages = 0
             seen: set = set()
@@ -256,13 +258,25 @@ class SharpApiProvider(BaseProvider):
                 self.last_fetch_complete = False
             if pages:
                 target_status[sport].add("fetched")
-        # A sport is complete when every feed we walked for it answered; feeds we
-        # never walked for a sport simply do not appear in the map.
-        for sport, outcomes in target_status.items():
-            self.sport_status[sport] = "failed" not in outcomes
         events = self._rows_to_events(rows, start, end)
-        log.info("SharpAPI: %d rows -> %d events in window | parse rejections: %s",
-                 len(rows), len(events), dict(self.parse_counts))
+        sport_events = Counter(e.sport for e in events)
+        # A sport is FAILED when every feed we walked for it failed, PARTIAL when
+        # at least one feed failed but another answered, EMPTY when all feeds
+        # answered with nothing in-window, SUCCESS otherwise.  Feeds we never
+        # walked for a sport do not put that sport in the map.
+        for sport, outcomes in target_status.items():
+            if "failed" in outcomes and "fetched" not in outcomes:
+                state = "failed"
+            elif "failed" in outcomes:
+                state = "partial"
+            elif not sport_events.get(sport):
+                state = "empty"
+            else:
+                state = "success"
+            self.sport_status[sport] = {"status": state, "events": sport_events.get(sport, 0),
+                                        "feeds": feeds[sport]}
+        log.info("SharpAPI: %d rows -> %d events in window | parse rejections: %s | sport status: %s",
+                 len(rows), len(events), dict(self.parse_counts), self.sport_status)
         return events
 
     # ------------------------------------------------------------------ parse
@@ -419,7 +433,13 @@ class SharpApiProvider(BaseProvider):
         else:
             return None
 
+        prob = r.get("odds_probability")
+        try:
+            prob = float(prob) if prob is not None else None
+        except (TypeError, ValueError):
+            prob = None
+
         return MarketLine(market=market, selection=selection, price=price, period=period, stat=stat,
                           entity=entity, line=line, bookmaker=str(r.get("sportsbook", "")), n_books=1,
                           provider_odd_id=str(r.get("id", "")), market_name=mtype.replace("_", " ").title(),
-                          book_prices=[price])
+                          book_prices=[price], provider_prob=prob)

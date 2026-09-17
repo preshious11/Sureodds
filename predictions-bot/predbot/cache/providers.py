@@ -47,9 +47,6 @@ def expected_sports(name, provider, cfg=None):
         sports = sorted(found) or ['other']
     else:
         sports = list(getattr(provider, 'sports', [])) or ['other']
-    allowed = {s.strip().lower() for s in (getattr(cfg, 'allowed_sports', None) or [])} if cfg else None
-    if allowed:
-        sports = [s for s in sports if s in allowed]
     return sports or ['other']
 
 
@@ -99,7 +96,9 @@ def collect_persisted(chain, start, end):
                     report.update(status='complete' if complete else 'partial',
                                   outcome=('success' if events else 'empty') if complete else 'failed',
                                   fetch=getattr(provider, 'fetch_counts', {}),
-                                  normalization=getattr(provider, 'normalization_counts', {}))
+                                  normalization=getattr(provider, 'normalization_counts', {}),
+                                  rejections=dict(getattr(provider, 'parse_counts', {}) or {}),
+                                  sport_status=getattr(provider, 'sport_status', None))
                 except Exception as exc:
                     events = previous
                     report.update(outcome='failed', error_type=type(exc).__name__)
@@ -114,19 +113,51 @@ def collect_persisted(chain, start, end):
 
 
 def sport_states(providers):
+    """Per-sport coverage state (SUCCESS/EMPTY/PARTIAL/FAILED) across providers.
+
+    Providers that report a per-sport ``sport_status`` (api_football,
+    sportsgameodds, sharpapi) drive the aggregation: one provider's failed
+    Basketball fetch must not mark Football complete or vice versa.  Mock/stub
+    providers without per-sport status fall back to the coarse whole-provider
+    state so the same shape stays available in tests.
+    """
     states = {}
     for name, report in providers.items():
         counts = report.get('events', {})
+        per_sport = report.get('sport_status') or {}
+        if per_sport:
+            for sport, info in per_sport.items():
+                if isinstance(info, str):
+                    info = {'status': info}
+                st = str(info.get('status') or 'empty')
+                item = states.setdefault(sport, {'status': None, 'events': 0, 'providers': {}, 'reason': ''})
+                item['providers'][name] = st
+                item['events'] += int(info.get('events') or 0)
+            continue
         for sport in set(report.get('expected_sports', [])) | set(counts):
-            item = states.setdefault(sport, {'status': 'empty', 'events': 0, 'providers': {}})
-            failed = report['status'] != 'complete'
             count = counts.get(sport, 0)
-            state = 'failed' if failed else ('success' if count else 'empty')
-            item['providers'][name] = state
+            failed = report['status'] != 'complete'
+            st = 'failed' if failed else ('success' if count else 'empty')
+            item = states.setdefault(sport, {'status': None, 'events': 0, 'providers': {}, 'reason': ''})
+            item['providers'][name] = st
             item['events'] += count
             if failed:
-                item['status'] = 'failed'
                 item['reason'] = 'provider_incomplete'
-            elif count and item['status'] != 'failed':
-                item['status'] = 'success'
+    for sport, item in states.items():
+        item['status'] = _aggregate_sport_state(item['providers'])
     return states
+
+
+def _aggregate_sport_state(providers):
+    """One FAILED provider fails the sport; else PARTIAL wins; else SUCCESS
+    once any provider actually fetched events; else EMPTY."""
+    values = list(providers.values())
+    if not values:
+        return 'empty'
+    if 'failed' in values:
+        return 'failed'
+    if 'partial' in values:
+        return 'partial'
+    if 'success' in values:
+        return 'success'
+    return 'empty'

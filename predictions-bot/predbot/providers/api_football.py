@@ -13,6 +13,7 @@ import logging
 import json
 import hashlib
 import re
+from collections import Counter
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
@@ -61,6 +62,8 @@ class ApiFootballProvider(BaseProvider):
         self.odds_pages = odds_pages
         self.settlement_reserve = settlement_reserve
         self.timezone = timezone
+        self.sport_status: Dict[str, Dict] = {}    # football -> status/events
+        self.parse_counts: Counter = Counter()     # bet -> MarketLine rejection reasons
         self._cache_scope = hashlib.sha256((host + api_key).encode()).hexdigest()[:20]
         if "rapidapi" in host:
             headers = {"x-rapidapi-key": api_key, "x-rapidapi-host": host}
@@ -104,6 +107,7 @@ class ApiFootballProvider(BaseProvider):
     # ------------------------------------------------------------------ fetch
     def fetch_events(self, start: datetime, end: datetime) -> List[Event]:
         self.last_fetch_complete = True
+        self.parse_counts = Counter()
         self.fetch_counts = {"raw_fixtures": 0, "in_window": 0, "league_rejected": 0,
                              "odds_rows": 0, "events_with_markets": 0}
         fixtures: Dict[int, Dict] = {}
@@ -132,6 +136,8 @@ class ApiFootballProvider(BaseProvider):
                 fixtures[int(fx["fixture"]["id"])] = fx
             d += timedelta(days=1)
         if not fixtures:
+            self.sport_status["football"] = {
+                "status": "failed" if not self.last_fetch_complete else "empty", "events": 0}
             return []
 
         # Odds for the date(s) - paginated, every bookmaker & bet type.
@@ -191,8 +197,19 @@ class ApiFootballProvider(BaseProvider):
         finally:
             if self.http.rate and fast is not None:
                 self.http.rate.min_interval = fast
-        log.info("API-Football: %d fixtures with odds, %d predictions (used %d/%d today)",
-                 len(out), n, self.budget.used_today(self.name), self.daily_limit)
+        if not self.last_fetch_complete and not out:
+            state = "failed"
+        elif not self.last_fetch_complete:
+            state = "partial"
+        elif out:
+            state = "success"
+        else:
+            state = "empty"
+        self.sport_status["football"] = {"status": state, "events": len(out)}
+        log.info("API-Football: %d fixtures with odds, %d predictions (used %d/%d today) | "
+                 "rejections: %s | sport status: %s",
+                 len(out), n, self.budget.used_today(self.name), self.daily_limit,
+                 dict(self.parse_counts), self.sport_status["football"])
         return out
 
     def _fixture_to_event(self, fx: Dict) -> Event:
@@ -230,6 +247,7 @@ class ApiFootballProvider(BaseProvider):
     def _parse_value(self, bet_name: str, bet_id: int, value: str, odd) -> Optional[MarketLine]:
         price = parse_decimal(odd)
         if not price:
+            self.parse_counts["MISSING_PRICE"] += 1
             return None
         name = bet_name.strip().lower()
         v = value.strip()
@@ -248,17 +266,21 @@ class ApiFootballProvider(BaseProvider):
                               entity=ent, line=line, n_books=1, provider_odd_id=f"{bet_id}:{value}",
                               market_name=bet_name, book_prices=[price])
 
+        def reject(reason: str = "UNKNOWN_SELECTION") -> None:
+            self.parse_counts[reason] += 1
+            return None
+
         # --- result markets ------------------------------------------------
         if name in ("match winner", "1x2", "first half winner", "second half winner", "corners 1x2", "cards 1x2"):
             s = _side(v)
-            return mk("result3", s) if s else None
+            return mk("result3", s) if s else reject()
         if name in ("home/away", "draw no bet", "draw no bet (1st half)", "draw no bet (2nd half)"):
             s = _side(v)
-            return mk("dnb", s) if s in ("home", "away") else None
+            return mk("dnb", s) if s in ("home", "away") else reject()
         if name.startswith("double chance"):
             key = {"home/draw": "home_draw", "draw/away": "away_draw", "home/away": "home_away",
                    "1x": "home_draw", "x2": "away_draw", "12": "home_away"}.get(v.lower().replace(" ", ""))
-            return mk("dc", key) if key else None
+            return mk("dc", key) if key else reject()
         # --- totals ---------------------------------------------------------
         m = _OU.match(v)
         if m and ("over/under" in name or "over under" in name or name.startswith("total")):
@@ -267,64 +289,64 @@ class ApiFootballProvider(BaseProvider):
         if name.startswith("goals over/under") or name in ("total goals",):
             if m:
                 return mk("total", m.group(1).lower(), float(m.group(2)))
-            return None
+            return reject()
         # --- handicaps ------------------------------------------------------
         if "asian handicap" in name or name in ("handicap", "corners asian handicap", "cards asian handicap"):
             t = _TEAM_LINE.match(v)
             if not t:
-                return None
+                return reject("MISSING_LINE")
             return mk("handicap", t.group(1).lower(), float(t.group(2)))
         # --- BTTS -----------------------------------------------------------
         if name.startswith("both teams score") or name.startswith("both teams to score"):
             s = v.lower()
-            return mk("btts", s) if s in ("yes", "no") else None
+            return mk("btts", s) if s in ("yes", "no") else reject()
         # --- odd/even -------------------------------------------------------
         if "odd/even" in name or "odd / even" in name:
             s = v.lower()
             ent = "home" if name.startswith("home") else "away" if name.startswith("away") else "all"
-            return mk("odd_even", s, ent=ent) if s in ("odd", "even") else None
+            return mk("odd_even", s, ent=ent) if s in ("odd", "even") else reject()
         # --- combos ---------------------------------------------------------
         if name in ("ht/ft double", "halftime/fulltime", "ht/ft"):
             parts = [_side(p) for p in v.split("/")]
             if len(parts) == 2 and all(parts):
                 return mk("ht_ft", f"{parts[0]}/{parts[1]}")
-            return None
+            return reject()
         if name in ("exact score", "correct score", "correct score - first half"):
             mm = re.match(r"^(\d+)[:-](\d+)$", v)
-            return mk("correct_score", f"{mm.group(1)}-{mm.group(2)}") if mm else None
+            return mk("correct_score", f"{mm.group(1)}-{mm.group(2)}") if mm else reject()
         if name in ("results/both teams score", "result/both teams score", "result & btts"):
             parts = v.split("/")
             if len(parts) == 2 and _side(parts[0]) and parts[1].strip().lower() in ("yes", "no"):
                 return mk("result_btts", f"{_side(parts[0])}_{parts[1].strip().lower()}")
-            return None
+            return reject()
         if name in ("result/total goals", "result & over/under", "match result and over/under"):
             parts = v.split("/")
             if len(parts) == 2 and _side(parts[0]):
                 mm = _OU.match(parts[1].strip())
                 if mm:
                     return mk("result_total", f"{_side(parts[0])}_{mm.group(1).lower()}", float(mm.group(2)))
-            return None
+            return reject()
         if name.startswith("clean sheet"):
             ent = "home" if "home" in name else "away" if "away" in name else None
             s = v.lower()
-            return mk("clean_sheet", s, ent=ent) if ent and s in ("yes", "no") else None
+            return mk("clean_sheet", s, ent=ent) if ent and s in ("yes", "no") else reject()
         if name.startswith("win to nil"):
             ent = "home" if "home" in name else "away" if "away" in name else None
             s = v.lower()
-            return mk("win_to_nil", s, ent=ent) if ent and s in ("yes", "no") else None
+            return mk("win_to_nil", s, ent=ent) if ent and s in ("yes", "no") else reject()
         if name in ("home team score a goal", "away team score a goal", "home team to score", "away team to score"):
             ent = "home" if name.startswith("home") else "away"
             s = v.lower()
-            return mk("team_to_score", s, ent=ent) if s in ("yes", "no") else None
+            return mk("team_to_score", s, ent=ent) if s in ("yes", "no") else reject()
         if name == "winning margin":
             if v.lower() == "draw":
                 return mk("winning_margin", "draw_0")
             mm = _MARGIN.match(v)
             if not mm:
-                return None
+                return reject()
             band = mm.group(2) + ("+" if mm.group(3) == "+" else f"-{mm.group(4)}" if mm.group(4) else "")
             return mk("winning_margin", f"{mm.group(1).lower()}_{band}")
-        return None
+        return reject("UNKNOWN_MARKET")
 
     # ---------------------------------------------------------------- results
     def fetch_results_batch(self, fixture_ids: List[str]) -> Dict[str, MatchResult]:

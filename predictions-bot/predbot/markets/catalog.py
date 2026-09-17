@@ -180,6 +180,8 @@ def selection_label(ml: MarketLine, home: str, away: str, sport: str = "football
     elif m == "btts":
         core = f"BTTS {s.title()}"
     elif m == "total":
+        if ml.line is None:
+            return ""
         ent = "" if ml.entity == "all" else f"{team.get(ml.entity, ml.entity)} "
         core = f"{ent}{s.title()} {_fmt_line(ml.line)} {stat_word}".strip()
     elif m == "handicap":
@@ -239,11 +241,10 @@ def short_selection(ml: MarketLine, home: str = "", away: str = "", sport: str =
     elif m == "btts":
         core = f"BTTS {s.title()}"
     elif m == "total":
-        if ml.line is not None:
-            ent = f"{team.get(ml.entity, ml.entity)} " if ml.entity != "all" else ""
-            core = f"{ent}{s.title()} {_fmt_line(ml.line)} {stat_word}".strip()
-        else:
-            core = ml.label or s.title()  # fallback: use label or selection if no line
+        if ml.line is None:
+            return ""  # no line -> ambiguous outcome, must be skipped not guessed
+        ent = f"{team.get(ml.entity, ml.entity)} " if ml.entity != "all" else ""
+        core = f"{ent}{s.title()} {_fmt_line(ml.line)} {stat_word}".strip()
     elif m == "handicap" and ml.line is not None:
         core = f"{team.get(s, s)} {_fmt_line(ml.line, signed=True)}".strip()
         if ml.stat not in ("points",):

@@ -53,21 +53,17 @@ class Config:
     sharpapi_key: str = field(default_factory=lambda: _env("SHARPAPI_KEY"))
     provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "api_football,sportsgameodds,sharpapi"))
     chain_min_events: int = field(default_factory=lambda: _int("CHAIN_MIN_EVENTS", 40))
-    sgo_sports: List[str] = field(default_factory=lambda: _list("SGO_SPORTS", "SOCCER,BASKETBALL,TENNIS,HOCKEY"))
+    sgo_sports: List[str] = field(default_factory=lambda: _list("SGO_SPORTS", ""))
     sgo_leagues: List[str] = field(default_factory=lambda: _list("SGO_LEAGUES"))
-    sgo_event_limit: int = field(default_factory=lambda: _int("SGO_EVENT_LIMIT", 25))
+    sgo_event_limit: int = field(default_factory=lambda: _int("SGO_EVENT_LIMIT", 200))
     sgo_monthly_object_limit: int = field(default_factory=lambda: _int("SGO_MONTHLY_OBJECT_LIMIT", 1000))
     sharpapi_leagues: List[str] = field(default_factory=lambda: _list("SHARPAPI_LEAGUES"))
     # SHARPAPI_SPORTS walks the kick-off ordered global sport feed(s), e.g. soccer:
     # one or two pages reach today's fixtures without per-league requests.
-    sharpapi_sports: List[str] = field(default_factory=lambda: _list("SHARPAPI_SPORTS"))
-    # Sport gate: only these canonical sports may ever become predictions. The
-    # chain drops every other event (cached or fresh) before the picker runs.
-    allowed_sports: List[str] = field(default_factory=lambda: _list("ALLOWED_SPORTS", "football,basketball,hockey,tennis"))
-    # League allowlist for the listed sports (default: basketball) - events whose
-    # league matches none of these names/ids are dropped too ("popular leagues").
-    popular_leagues: List[str] = field(default_factory=lambda: _list("POPULAR_LEAGUES", "NBA,WNBA,NCAAB,EUROLEAGUE"))
-    popular_league_sports: List[str] = field(default_factory=lambda: _list("POPULAR_LEAGUE_SPORTS", "basketball"))
+    sharpapi_sports: List[str] = field(default_factory=lambda: _list("SHARPAPI_SPORTS", "auto"))
+    # Provider capability discovery (no artificial sport/league gates)
+    # Provider metadata and actual API responses determine what is available
+    # The Odds API is intentionally restricted to Football/Tennis only
     # Match-market filter: drops the futures/outrights that flood the raw feed.
     sharpapi_markets: List[str] = field(
         default_factory=lambda: _list("SHARPAPI_MARKETS", "moneyline,spread,total"))

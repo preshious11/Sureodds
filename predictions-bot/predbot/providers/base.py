@@ -34,6 +34,7 @@ class MarketLine:
     entity: str = "all"
     line: Optional[float] = None
     fair_price: Optional[float] = None   # provider de-vigged price when supplied
+    provider_prob: Optional[float] = None   # provider-supplied probability (0..1) when present, e.g. SharpAPI odds_probability
     bookmaker: str = ""
     n_books: int = 1
     provider_odd_id: str = ""            # SGO oddID / SharpAPI row id / APIF "bet:value"
