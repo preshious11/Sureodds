@@ -18,7 +18,8 @@ def snapshot():
     def pick(name, price, tier):
         return PickRecord(home=name, away='Chelsea', label='Over 1.5 Goals',
                           sport='football', league='Hidden League', prob=.84,
-                          kickoff_utc='2030-06-01T18:00:00Z', price=price, tier=tier)
+                          kickoff_utc='2030-06-01T18:00:00Z', price=price, tier=tier,
+                          market='total', selection='over', line=1.5)
     return DailySnapshot(date='2030-06-01', top_picks=[pick('Arsenal', 2.0, 'top')],
                          daily_picks=[pick('Liverpool', 2.0, 'daily'), pick('Villa', 3.98575, 'daily')])
 
@@ -35,10 +36,13 @@ def test_commands_and_buttons_have_exact_layout_and_subscriber_timezone(db, view
     text = tg.sends[0]['text']
     assert text == tg.edits[0]['text']
     assert tg.sends[0]['reply_markup'] == tg.edits[0]['reply_markup']
-    # the requested six-line block: sport / league / fixture / outcome / confidence | time / odds
+    # the requested format: sport / league / fixture / market / prediction / odds / confidence | time
     assert text.startswith(f'{heading} 2030-06-01\n\n'
-                           f'Football\nHidden League\nArsenal vs Chelsea\nOver 1.5 Goals\n'
-                           f'Confidence level: <b>84%</b> | {time}\nOdds: 2.00\n')
+                           f'Football\nHidden League\nArsenal vs Chelsea\n'
+                           f'<b>Market:</b> Totals\n'
+                           f'<b>Prediction:</b> Over 1.5 Goals\n'
+                           f'Odds: 2.00\n'
+                           f'Confidence level: <b>84%</b> | {time}\n')
     assert 'predictions——' not in text          # the superseded copy stays gone
     picks_in_section = 1 if view == 'top' else 3
     assert text.endswith(f'Total Picks: {picks_in_section}\nCombined Odds: {total}')
