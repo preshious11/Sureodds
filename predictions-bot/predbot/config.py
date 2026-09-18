@@ -59,6 +59,9 @@ class Config:
     odds_api_min_interval: float = field(default_factory=lambda: _float("ODDS_API_MIN_INTERVAL_SEC", 1.1))
     odds_api_max_leagues_per_sport: int = field(default_factory=lambda: _int("ODDS_API_MAX_LEAGUES_PER_SPORT", 8))
     odds_api_monthly_limit: int = field(default_factory=lambda: _int("ODDS_API_MONTHLY_LIMIT", 500))
+    #: Hard cap on Odds API credits (regions x markets per odds request) spent
+    #: in one generation cycle. At ~15/day that is ~450/month on a 500 quota.
+    oddsapi_max_credits_per_cycle: int = field(default_factory=lambda: _int("ODDSAPI_MAX_CREDITS_PER_CYCLE", 15))
     provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "api_football,sportsgameodds,sharpapi"))
     #: Provider tried first for the Top ticket only; falls back to
     #: ``provider_order`` when it can't supply enough qualifying picks.
@@ -94,22 +97,32 @@ class Config:
     daily_odds_min: float = field(default_factory=lambda: _float("DAILY_COMBINED_MIN_ODDS", 10.0))
     daily_odds_max: float = field(default_factory=lambda: _float("DAILY_COMBINED_MAX_ODDS", 20.0))
     pick_window_hours: int = field(default_factory=lambda: _int("PICK_WINDOW_HOURS", 24))
+    #: The day window ends at local midnight + this many hours, so late-evening
+    #: kickoffs (e.g. 23:30 Lagos) stay in scope; dedupe against the previous
+    #: day's stored picks stops a fixture from being posted twice.
+    day_window_end_offset_hours: int = field(default_factory=lambda: _int("DAY_WINDOW_END_OFFSET_HOURS", 3))
     min_lead_minutes: int = field(default_factory=lambda: _int("MIN_LEAD_MINUTES", 30))
     daily_min_odds: float = field(default_factory=lambda: _float("DAILY_MIN_ODDS", 1.30))
     daily_max_odds: float = field(default_factory=lambda: _float("DAILY_MAX_ODDS", 5.00))
     #: Top Picks is an accumulator: the search tries every 2..3-leg combination
-    #: of different fixtures and keeps the one closest to top_odds_target.
-    #: top_odds_max is a HARD reject on the combined ticket - distinct from
-    #: top_max_odds above, which bounds each individual leg's own price.
+    #: of different fixtures and keeps the one with the highest product of
+    #: p_model inside top_odds_target..top_odds_max. top_odds_max is a HARD
+    #: reject on the combined ticket. Per-leg odds do not matter for this
+    #: confidence product - top_leg_odds_min is only a data-sanity floor.
     top_legs_min: int = field(default_factory=lambda: _int("TOP_LEGS_MIN", 2))
     top_legs_max: int = field(default_factory=lambda: _int("TOP_LEGS_MAX", 3))
     top_odds_max: float = field(default_factory=lambda: _float("TOP_ODDS_MAX", 2.50))
-    daily_min_ev: float = field(default_factory=lambda: _float("DAILY_MIN_EV", 0.02))
+    #: EV is no longer an edge requirement - this is a confidence product. A
+    #: candidate with an independent signal (apif/elo) is rejected only when
+    #: the signal says the market is MATERIALLY overpricing it (ev below the
+    #: NEG floor, default -0.05). Market-only candidates skip the gate
+    #: entirely: their p_model is de-vigged market probability, so their EV
+    #: is negative by construction and carries no information.
+    daily_max_neg_ev: float = field(default_factory=lambda: _float("DAILY_MAX_NEG_EV", -0.05))
     daily_min_prob: float = field(default_factory=lambda: _float("DAILY_MIN_PROB", 0.30))
-    top_min_odds: float = field(default_factory=lambda: _float("TOP_MIN_ODDS", 1.35))
-    top_max_odds: float = field(default_factory=lambda: _float("TOP_MAX_ODDS", 2.60))
+    top_leg_odds_min: float = field(default_factory=lambda: _float("TOP_LEG_ODDS_MIN", 1.05))
     top_min_prob: float = field(default_factory=lambda: _float("TOP_MIN_PROB", 0.62))
-    top_min_ev: float = field(default_factory=lambda: _float("TOP_MIN_EV", 0.02))
+    top_max_neg_ev: float = field(default_factory=lambda: _float("TOP_MAX_NEG_EV", -0.05))
     #: How closely the model's own signals must agree with each other before a
     #: selection may enter the Top ticket (0.50 = the historical bar). Lowering
     #: it admits model-vs-market disagreement picks; the default is unchanged.
@@ -152,16 +165,18 @@ class Config:
         checks = [
             ("DAILY_COMBINED_MIN_ODDS/MAX", self.daily_odds_min <= self.daily_odds_max),
             ("DAILY_MIN_ODDS/MAX_ODDS", self.daily_min_odds <= self.daily_max_odds),
-            ("TOP_MIN_ODDS/MAX_ODDS", self.top_min_odds <= self.top_max_odds),
             ("TOP_COMBINED_ODDS > 1.0", self.top_odds_target > 1.0),
+            ("TOP_ODDS_MAX >= TOP_COMBINED_ODDS", self.top_odds_max >= self.top_odds_target),
             ("DAILY_MIN_ODDS > 1.0", self.daily_min_odds > 1.0),
+            ("TOP_LEG_ODDS_MIN >= 1.0 (sanity floor)", self.top_leg_odds_min >= 1.0),
             ("TOP_MIN_PROB in [0,1]", 0.0 <= self.top_min_prob <= 1.0),
             ("DAILY_MIN_PROB in [0,1]", 0.0 <= self.daily_min_prob <= 1.0),
+            ("DAILY_MAX_NEG_EV in [-1,0.5]", -1.0 <= self.daily_max_neg_ev <= 0.5),
+            ("TOP_MAX_NEG_EV in [-1,0.5]", -1.0 <= self.top_max_neg_ev <= 0.5),
             ("TOP_MIN_AGREEMENT in [0,1]", 0.0 <= self.top_min_agreement <= 1.0),
             ("MODEL_SHRINK_TO_MARKET in [0,1]", 0.0 <= self.model_shrink <= 1.0),
             ("TOP_LEGS_MIN >= 1", self.top_legs_min >= 1),
             ("TOP_LEGS_MAX >= TOP_LEGS_MIN", self.top_legs_max >= self.top_legs_min),
-            ("TOP_ODDS_MAX >= TOP_COMBINED_ODDS", self.top_odds_max >= self.top_odds_target),
             ("MAX_PICKS_PER_EVENT >= 1", self.max_picks_per_event >= 1),
             ("DAILY_MAX_MARKET_SHARE in (0,1]", 0.0 < self.daily_max_market_share <= 1.0),
             ("DAILY_MAX_STAT_SHARE in (0,1]", 0.0 < self.daily_max_stat_share <= 1.0),

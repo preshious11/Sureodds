@@ -116,12 +116,14 @@ def test_top_picks_meet_quality_bar():
     now = dt()
     # 1.42 so a 2-leg combo (1.42 * 1.42 = 2.02) lands inside the 2.00-2.50
     # accumulator band; 1.8 would make every pairing exceed the 2.50 ceiling.
+    # 1.42 so a 2-leg combo (1.42 * 1.42 = 2.02) lands inside the 2.00-2.50
+    # accumulator band; 1.8 would make every pairing exceed the 2.50 ceiling.
     pool = [sc(ev(i), "result3", "home", 0.70, 1.42, sources=3) for i in range(20)]
     ps = select(pool, cfg(), now)
     c = cfg()
     for t in ps.top:
         assert t.p_model >= c.top_min_prob
-        assert t.ev >= c.top_min_ev
+        assert t.ev >= c.top_max_neg_ev      # disagreement floor, not an edge requirement
         assert len(t.sources) >= 2
     ticket = math.prod(t.price for t in ps.top)
     assert ps.top and ticket >= c.top_odds_target
@@ -246,8 +248,10 @@ _MIXED = [("result3", "home", "points", None), ("total", "over", "corners", 8.0)
 
 def _mixed(i, sport="football", league=None):
     market, sel, stat, line = _MIXED[i % len(_MIXED)]
-    # 1.30 is below top_min_odds, so everything competes for Daily only
-    s = sc(ev(i, sport=sport, league=league), market, sel, 0.66, 1.30, line=line)
+    # p_model 0.55 is below top_min_prob (0.62) but above daily_min_prob (0.30):
+    # these candidates compete for Daily only, so the daily diversity quotas
+    # are exercised in isolation. 1.30 keeps the odds window happy.
+    s = sc(ev(i, sport=sport, league=league), market, sel, 0.55, 1.30, line=line)
     s.line.stat = stat
     return s
 
@@ -328,3 +332,28 @@ def test_corners_across_several_markets_cannot_take_the_list():
     assert len(ps.daily) >= 4
     assert corners <= max(1, math.ceil(c.daily_max_stat_share * len(ps.daily)))
     assert corners / len(ps.daily) <= c.daily_max_stat_share + 1e-9
+
+
+# ------------------------------------------------------------ EV gate branches
+def test_market_only_candidates_skip_the_ev_gate():
+    """A market-only candidate's p_model is de-vigged market probability, so
+    its EV is negative by construction - it must NOT be rejected for that."""
+    now = dt()
+    # tennis-flavoured: only "market" in sources, EV strongly negative
+    pool = [sc(ev(i, sport="tennis"), "result2", "home", 0.65, 1.50,
+               sources=1, ev_val=-0.05, agreement=0.5) for i in range(12)]
+    ps = select(pool, cfg(), now)
+    assert ps.daily                                  # admitted despite negative EV
+
+
+def test_independent_signal_candidates_have_a_disagreement_floor_not_an_edge_requirement():
+    """With an independent signal (apif/elo), a candidate is rejected only when
+    that signal says the market is MATERIALLY overpricing it (ev < -0.05);
+    mildly negative EV no longer disqualifies."""
+    now = dt()
+    mildly_negative = sc(ev(1), "result3", "home", 0.70, 1.50, sources=2, ev_val=-0.03)
+    strongly_overpriced = sc(ev(2), "result3", "home", 0.70, 1.50, sources=2, ev_val=-0.10)
+    ps = select([mildly_negative, strongly_overpriced], cfg(), now)
+    assert mildly_negative.event.dedupe_key() in {s.event.dedupe_key() for s in ps.all()}
+    assert strongly_overpriced.event.dedupe_key() not in {s.event.dedupe_key() for s in ps.all()}
+    assert ps.diagnostics["daily_pool_rejections"].get("BELOW_THRESHOLD", 0) == 1

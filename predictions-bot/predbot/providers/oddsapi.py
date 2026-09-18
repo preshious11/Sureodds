@@ -66,7 +66,7 @@ class OddsApiProvider(BaseProvider):
     def __init__(self, api_key: str, budget: Budget, min_interval: float = 1.1,
                  bookmakers: Optional[List[str]] = None, odds_format: str = "decimal",
                  regions: Optional[List[str]] = None, max_leagues_per_sport: int = 8,
-                 monthly_limit: int = 500):
+                 monthly_limit: int = 500, max_credits_per_cycle: int = 15):
         self.key = api_key
         self.budget = budget
         self.min_interval = min_interval
@@ -75,8 +75,13 @@ class OddsApiProvider(BaseProvider):
         # Odds API's bookmaker set drifts (new books, per-locale variants like
         # "winamax_de"/"winamax_fr") so an allowlist would silently starve markets.
         self.bookmakers = bookmakers
-        self.regions = regions or ["us", "eu"]
+        self.regions = regions or ["eu"]
+        # The markets we actually use: h2h -> result markets, spreads ->
+        # handicaps, totals -> over/under. Credit cost is 1 x regions x markets
+        # per odds request, so one region and these three = 3 credits per key.
+        self.markets = ["h2h", "spreads", "totals"]
         self.max_leagues_per_sport = max(1, max_leagues_per_sport)
+        self.max_credits_per_cycle = max(1, max_credits_per_cycle)
         # Free tier is ~500 requests/month; enforced here (not just paced by
         # RateLimiter) so a busy day can't burn the whole month's quota.
         self.monthly_limit = monthly_limit
@@ -99,21 +104,24 @@ class OddsApiProvider(BaseProvider):
         merged.update(params or {})
         return self.http.get(path, merged)
 
+    @property
+    def credits_per_key(self) -> int:
+        """Odds API pricing: an odds request costs 1 credit x regions x markets."""
+        return len(self.regions) * len(self.markets)
+
     def _discover_sports(self) -> Dict[str, List[str]]:
-        """In-season football/tennis league keys from GET /sports (default
-        ``all=false``, i.e. skips leagues that are out of season), football
+        """In-season football/tennis league keys from GET /sports.
+
+        Per the Odds API docs this endpoint does NOT count against the usage
+        quota, so it is not charged to the budget here. Football is
         prioritized by FOOTBALL_LEAGUE_PRIORITY, tennis by whatever is active
-        (there is no "the" tennis league - tournaments rotate through the year).
-        Every other sport reported by this key is dropped: football/tennis only.
+        (tournaments rotate through the year). Every other sport reported by
+        this key is dropped: football/tennis only.
         """
         if self.sport_keys:
             return self.sport_keys
-        if not self.budget.can_spend(self.name, 1, monthly_limit=self.monthly_limit):
-            log.warning("OddsAPI: monthly quota exhausted, skipping sport discovery")
-            return {}
         try:
             data = self._get("/sports")
-            self.budget.spend(self.name, 1)
         except ProviderError as e:
             log.warning("OddsAPI: sport discovery failed (%s)", e)
             return {}
@@ -121,6 +129,8 @@ class OddsApiProvider(BaseProvider):
         football_keys, tennis_keys = [], []
         for row in data if isinstance(data, list) else []:
             if not isinstance(row, dict):
+                continue
+            if not row.get("active", True):
                 continue
             key = row.get("key", "").strip()
             sport = sport_key_to_canonical(key)
@@ -131,9 +141,9 @@ class OddsApiProvider(BaseProvider):
 
         out: Dict[str, List[str]] = {}
         if football_keys:
-            out["football"] = _prioritized(football_keys, FOOTBALL_LEAGUE_PRIORITY)[:self.max_leagues_per_sport]
+            out["football"] = _prioritized(football_keys, FOOTBALL_LEAGUE_PRIORITY)
         if tennis_keys:
-            out["tennis"] = sorted(tennis_keys)[:self.max_leagues_per_sport]
+            out["tennis"] = sorted(tennis_keys)
 
         self.sport_keys = out
         log.info("OddsAPI: discovered in-season leagues: %s", self.sport_keys)
@@ -146,38 +156,90 @@ class OddsApiProvider(BaseProvider):
         if not sports:
             log.warning("OddsAPI: no football/tennis leagues discovered in season")
             return []
+        in_season = {key for keys in sports.values() for key in keys}
+        canonical_of = {key: canonical for canonical, keys in sports.items() for key in keys}
 
-        rows: List[Dict] = []
-        for canonical, league_keys in sports.items():
-            leagues_ok, events_seen = 0, 0
-            for league_key in league_keys:
-                if not self.budget.can_spend(self.name, 1, monthly_limit=self.monthly_limit):
-                    log.warning("OddsAPI: monthly quota exhausted, stopping league fetch early")
+        # ---- free enumeration (GET /sports/{key}/events costs 0 credits per
+        #      the Odds API docs; the odds endpoint is the paid one)
+        rows_by_key: Dict[str, List[Dict]] = {}
+        for key in sorted(in_season):
+            try:
+                data = self._get(f"/sports/{key}/events", {"dateFormat": "iso"})
+            except ProviderError as e:
+                log.warning("OddsAPI: event listing failed for %s (%s)", key, e)
+                continue
+            n = 0
+            for row in data if isinstance(data, list) else []:
+                if not isinstance(row, dict):
+                    continue
+                start_ts = parse_iso(row.get("commence_time", ""))
+                if start_ts and start <= start_ts < end:
+                    rows_by_key.setdefault(key, []).append(row)
+                    n += 1
+            self.parse_counts["events_in_window"] += n
+        self.parse_counts["keys_enumerated"] = len(in_season)
+
+        # ---- spend credits only on keys that have events in the window,
+        #      prioritised by event count (football league priority breaks
+        #      ties), under a hard per-cycle credit cap. One odds request
+        #      costs 1 credit x regions x markets, so one region + 3 markets
+        #      = 3 credits per key -> cap 15 = up to 5 keys per cycle.
+        per_key = self.credits_per_key
+        max_keys = max(1, self.max_credits_per_cycle // per_key)
+        chosen = sorted(rows_by_key.items(),
+                        key=lambda kv: (FOOTBALL_LEAGUE_PRIORITY.index(kv[0])
+                                        if kv[0] in FOOTBALL_LEAGUE_PRIORITY else 999,
+                                        -len(kv[1]), kv[0]))[:max_keys]
+        log.info("OddsAPI: %d in-season keys, %d with events in window, spending <=%d credits "
+                 "(%d/key) on %d keys: %s",
+                 len(in_season), len(rows_by_key), max_keys * per_key, per_key,
+                 len(chosen), {k: len(v) for k, v in chosen})
+
+        rows: List[Tuple[str, Dict]] = []
+        spent = 0
+        for canonical in ("football", "tennis"):
+            keys = sports.get(canonical, [])
+            chosen_keys = {k for k, _ in chosen}
+            ok = 0
+            for league_key in keys:
+                if not rows_by_key.get(league_key):
+                    continue  # 0 events -> never spend credits on this key
+                if league_key not in chosen_keys:
+                    continue
+                if spent + per_key > self.max_credits_per_cycle:
+                    log.warning("OddsAPI: per-cycle credit cap %d reached - skipping %s",
+                                self.max_credits_per_cycle, league_key)
+                    break
+                if not self.budget.can_spend(self.name, per_key, monthly_limit=self.monthly_limit):
+                    log.warning("OddsAPI: monthly quota exhausted, stopping odds fetch early")
                     break
                 try:
                     data = self._get(f"/sports/{league_key}/odds", {
                         "oddsFormat": self.odds_format,
                         "regions": ",".join(self.regions),
-                        "markets": "h2h,spreads,totals",
+                        "markets": ",".join(self.markets),
                     })
-                    self.budget.spend(self.name, 1)
-                    batch = data if isinstance(data, list) else []
-                    rows.extend([(canonical, e) for e in batch])
-                    events_seen += len(batch)
-                    leagues_ok += 1
+                    self.budget.spend(self.name, per_key)
+                    spent += per_key
                 except ProviderError as e:
                     log.warning("OddsAPI: fetch failed for %s (%s)", league_key, e)
+                    continue
+                batch = data if isinstance(data, list) else []
+                rows.extend([(canonical, e) for e in batch])
+                ok += 1
             self.sport_status[canonical] = {
-                "status": "success" if leagues_ok else "failed",
-                "status_detail": "partial" if 0 < leagues_ok < len(league_keys) else None,
-                "leagues_fetched": leagues_ok, "leagues_total": len(league_keys),
-                "events": events_seen,
+                "status": "success" if ok else ("empty" if keys else "failed"),
+                "status_detail": "partial" if 0 < ok < len(keys) else None,
+                "leagues_fetched": ok, "leagues_total": len(keys),
+                "keys_with_events": sum(1 for k in keys if rows_by_key.get(k)),
+                "events": sum(1 for _, e in rows),
             }
 
         events = self._rows_to_events(rows, start, end)
-        log.info("OddsAPI: %d odds rows -> %d events in window | "
+        log.info("OddsAPI: %d odds rows -> %d events in window (%d credits spent, cap %d) | "
                  "parse rejections: %s | sport status: %s",
-                 len(rows), len(events), dict(self.parse_counts), self.sport_status)
+                 len(rows), len(events), spent, self.max_credits_per_cycle,
+                 dict(self.parse_counts), self.sport_status)
         return events
 
     def _rows_to_events(self, rows: List[Tuple[str, Dict]], start: datetime, end: datetime) -> List[Event]:

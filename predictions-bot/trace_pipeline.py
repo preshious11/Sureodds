@@ -135,8 +135,8 @@ for s in all_scored:
     reasons = []
     if s.p_model < cfg.daily_min_prob:
         reasons.append(f"prob={s.p_model:.2f}<{cfg.daily_min_prob}")
-    if s.ev < cfg.daily_min_ev:
-        reasons.append(f"ev={s.ev:.3f}<{cfg.daily_min_ev}")
+    if set(s.sources) - {"market"} and s.ev < cfg.daily_max_neg_ev:
+        reasons.append(f"ev={s.ev:.3f}<{cfg.daily_max_neg_ev}")
     if s.price < cfg.daily_min_odds:
         reasons.append(f"price={s.price:.2f}<{cfg.daily_min_odds}")
     if s.price > cfg.daily_max_odds:
