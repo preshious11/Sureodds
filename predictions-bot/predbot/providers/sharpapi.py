@@ -388,6 +388,16 @@ class SharpApiProvider(BaseProvider):
             if side not in ("home", "away") or ou not in ("over", "under"):
                 return None
             entity, selection = side, ou
+        elif mtype in ("match_result_total_goals", "result_total"):
+            # Must be checked before the generic "total" in mtype fallback
+            # below: "match_result_total_goals" contains the substring
+            # "total", so that fallback would otherwise catch it first and
+            # misfile this result+total combo market (selections like
+            # "home_over") as a plain full-match Over/Under line, merging its
+            # combo-market price into the real total's book_prices.
+            if line is None or "_" not in stype:
+                return None
+            market = "result_total"
         elif "total" in mtype:
             if stype not in ("over", "under") or line is None:
                 return None
@@ -402,10 +412,6 @@ class SharpApiProvider(BaseProvider):
                 stat = "sets"
             elif "round" in mtype:
                 stat = "rounds"
-        elif mtype in ("match_result_total_goals", "result_total"):
-            if line is None or "_" not in stype:
-                return None
-            market = "result_total"
         elif mtype in ("match_result_both_teams_to_score", "result_btts"):
             if "_" not in stype:
                 return None

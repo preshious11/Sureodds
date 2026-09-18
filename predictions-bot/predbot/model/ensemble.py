@@ -35,6 +35,22 @@ SCORE_MODEL_WEIGHT = {"football": 0.60, "hockey": 0.45, "baseball": 0.35, "handb
                       "basketball": 0.50, "american_football": 0.45}
 
 
+def _reliable_pair(prices: Dict[str, float]) -> bool:
+    """True when these selections' implied probabilities sum past 100%, i.e.
+    a real bookmaker margin - the only case devig() can safely remove.
+
+    Each price here is a *cross-book average* (_mean_price): the two sides of
+    a pair can be averaged from different, non-identical sets of bookmakers,
+    so their implied probabilities are not guaranteed to sum above 1 even for
+    a perfectly healthy market - on thin lines this dips under 100% purely
+    from book-to-book disagreement, not genuine arbitrage. devig() then
+    trusts that as-is and normalises it, extremising the split into an
+    overconfident probability on one side. When the sum doesn't clear 100%
+    the caller skips devig() and lets each line fall back to
+    single_side_prob() below, which prices it off its own price alone."""
+    return sum(1.0 / p for p in prices.values() if p and p > 1.0) > 1.0
+
+
 @dataclass
 class Scored:
     event: Event
@@ -120,7 +136,10 @@ class EventModel:
                     mirror = next((a for a in aways if a.line == -h.line), None)
                     if mirror is None:
                         continue
-                    probs = devig({"home": self._mean_price(h), "away": self._mean_price(mirror)})
+                    prices = {"home": self._mean_price(h), "away": self._mean_price(mirror)}
+                    if not _reliable_pair(prices):
+                        continue
+                    probs = devig(prices)
                     if "home" in probs:
                         self.p_market[h.key()] = probs["home"]
                         self.market_complete[h.key()] = True
@@ -137,11 +156,13 @@ class EventModel:
                 elif market == "dc":
                     complete = False  # derive from result3 instead
                 if complete:
-                    probs = devig({ml.selection: self._mean_price(ml) for ml in lines})
-                    for ml in lines:
-                        if ml.selection in probs:
-                            self.p_market[ml.key()] = probs[ml.selection]
-                            self.market_complete[ml.key()] = True
+                    prices = {ml.selection: self._mean_price(ml) for ml in lines}
+                    if _reliable_pair(prices):
+                        probs = devig(prices)
+                        for ml in lines:
+                            if ml.selection in probs:
+                                self.p_market[ml.key()] = probs[ml.selection]
+                                self.market_complete[ml.key()] = True
             for ml in lines:
                 if ml.key() in self.p_market:
                     continue
