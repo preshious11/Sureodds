@@ -299,6 +299,51 @@ def _other_stat(i):
     return s
 
 
+def test_points_stat_is_not_capped_by_the_stat_share():
+    """'points' is the DEFAULT stat for main markets (result/total/handicap) in
+    every sport - basketball has nothing else. Capping it silently blocked
+    every basketball candidate, so the stat cap must apply to DERIVED stats
+    (corners/cards/games) only."""
+    now = dt()
+    markets = [("result3", "home", None), ("result3", "away", None),
+               ("total", "over", 2.5), ("total", "under", 3.5)]
+    pool = []
+    for i in range(16):
+        market, sel, line = markets[i % len(markets)]
+        s = sc(ev(i, sport="basketball"), market, sel, 0.55, 1.30, line=line,
+               agreement=0.5, ev_val=-0.06)
+        s.line.stat = "points"
+        pool.append(s)
+    c = cfg()
+    ps = select(pool, c, now)
+
+    points_picks = [s for s in ps.daily if s.line.stat == "points"]
+    assert points_picks                                    # basketball-style slate exists
+    assert len(points_picks) > math.ceil(c.daily_max_stat_share * len(ps.daily))
+    assert "stat" not in (ps.diagnostics.get("daily_caps_relaxed") or {}).get("exceeded", {})
+
+
+def test_trace_records_the_rule_that_stopped_each_candidate():
+    now = dt()
+    pool = [sc(ev(i), "result3", "home", 0.70 if i < 4 else 0.20, 1.45) for i in range(8)]
+    trace: dict = {}
+    c = cfg()
+    ps = select(pool, c, now, trace=trace)
+    assert trace
+    # the weak candidates are recorded as failing the probability floor
+    weak = [s for s in pool if s.p_model < 0.30]
+    assert all(id(s) in trace for s in weak)
+    assert all("p_model" in trace[id(s)] for s in weak)
+    # daily picks are never marked as blocked; a Top leg legitimately carries
+    # the "already a Top leg" note, and a candidate admitted via the relaxed
+    # pass keeps its strict-pass note but setdefault keeps only the first one.
+    daily_ids = {id(s) for s in ps.daily}
+    for chosen in ps.all():
+        if id(chosen) in daily_ids:
+            continue
+        assert id(chosen) not in trace or trace[id(chosen)] == "daily: already a Top leg"
+
+
 def test_corners_across_several_markets_cannot_take_the_list():
     """The (market, stat) cap sees corners totals and Corners 1X2 as two
     different markets, so a pool dominated by corners lines - spread over
@@ -346,13 +391,28 @@ def test_market_only_candidates_skip_the_ev_gate():
     assert ps.daily                                  # admitted despite negative EV
 
 
+def test_market_derived_score_model_does_not_trigger_the_disagreement_floor():
+    """score_model is fitted to the market's own lines, so a
+    {market, score_model} candidate carries no independent edge - its EV is
+    just the bookmaker margin and it must skip the EV gate (this is what kept
+    every basketball candidate out of the slate)."""
+    now = dt()
+    s = sc(ev(1, sport="basketball"), "result3", "home", 0.50, 1.87, sources=1,
+           ev_val=-0.065, agreement=0.5)
+    s.sources = {"market": 0.50, "score_model": 0.50}
+    ps = select([s], cfg(), now)
+    assert ps.daily
+
+
 def test_independent_signal_candidates_have_a_disagreement_floor_not_an_edge_requirement():
     """With an independent signal (apif/elo), a candidate is rejected only when
     that signal says the market is MATERIALLY overpricing it (ev < -0.05);
     mildly negative EV no longer disqualifies."""
     now = dt()
-    mildly_negative = sc(ev(1), "result3", "home", 0.70, 1.50, sources=2, ev_val=-0.03)
-    strongly_overpriced = sc(ev(2), "result3", "home", 0.70, 1.50, sources=2, ev_val=-0.10)
+    mildly_negative = sc(ev(1), "result3", "home", 0.70, 1.50, sources=1, ev_val=-0.03)
+    mildly_negative.sources = {"market": 0.68, "apif": 0.72}
+    strongly_overpriced = sc(ev(2), "result3", "home", 0.70, 1.50, sources=1, ev_val=-0.10)
+    strongly_overpriced.sources = {"market": 0.68, "apif": 0.72}
     ps = select([mildly_negative, strongly_overpriced], cfg(), now)
     assert mildly_negative.event.dedupe_key() in {s.event.dedupe_key() for s in ps.all()}
     assert strongly_overpriced.event.dedupe_key() not in {s.event.dedupe_key() for s in ps.all()}

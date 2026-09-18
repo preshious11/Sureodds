@@ -83,7 +83,7 @@ def main():
             'top': sum(s.event.sport == sport for s in picks.top)}
         gates = [('odds', lambda s: s.price >= cfg.top_leg_odds_min),
                  ('confidence', lambda s: s.p_model >= cfg.top_min_prob),
-                 ('disagreement_floor', lambda s: not (set(s.sources) - {"market"})
+                 ('disagreement_floor', lambda s: not ({"apif", "elo"} & set(s.sources))
                   or s.ev >= cfg.top_max_neg_ev),
                  ('agreement', lambda s: s.agreement >= .5),
                  ('two_sources', lambda s: len(s.sources) >= 2),

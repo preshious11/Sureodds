@@ -56,10 +56,14 @@ def empty_events():
     return []
 
 
-def make_provider(budget, responses, max_leagues_per_sport=8):
-    p = OddsApiProvider("k", budget, max_leagues_per_sport=max_leagues_per_sport)
+def make_provider(budget, responses, max_leagues_per_sport=8, reserve_credits=50):
+    p = OddsApiProvider("k", budget, max_leagues_per_sport=max_leagues_per_sport,
+                        reserve_credits=reserve_credits)
     p.http = Mock()
     p.http.get = Mock(side_effect=responses)
+    # The Mock http never ran a real call, so no response headers exist: the
+    # quota gate must then fall back to the local monthly counter (allowed).
+    p.http.last_headers = {}
     return p
 
 
@@ -143,6 +147,7 @@ def test_credit_cap_limits_keys_fetched_per_cycle(budget):
                  "home_team": f"H{i}", "away_team": f"A{i}"} for i in range(8)]
     p = OddsApiProvider("k", budget, max_credits_per_cycle=15)   # 15 // 3 = 5 keys
     p.http = Mock()
+    p.http.last_headers = {}   # no real headers -> gate falls back to the local counter
     p.http.get = Mock(side_effect=[many]
                       + [[{"id": f"e{i}", "sport_key": f"soccer_x{i}",
                            "commence_time": "2030-06-01T19:00:00Z",
@@ -152,6 +157,54 @@ def test_credit_cap_limits_keys_fetched_per_cycle(budget):
     odds_calls = p.http.get.call_count - 9   # minus /sports and 8 free /events calls
     assert odds_calls == 5
     assert p.budget.used_month("oddsapi") == 15
+
+
+def test_quota_gate_refuses_when_header_remaining_is_below_reserve(budget):
+    """The header is authoritative: x-requests-remaining=10 with reserve=50
+    refuses every odds request and spends nothing."""
+    p = make_provider(budget, [
+        sports_payload(),
+        [{"id": "e1", "sport_key": "soccer_epl", "commence_time": "2030-06-01T19:00:00Z",
+          "home_team": "Arsenal", "away_team": "Chelsea"}],
+        [{"id": "t1", "sport_key": "tennis_atp_us_open", "commence_time": "2030-06-01T20:00:00Z",
+          "home_team": "Alcaraz", "away_team": "Sinner"}],
+    ])
+    p.track_calls = []
+    orig = OddsApiProvider._track_quota
+
+    def fake_track(self, path=""):
+        self.track_calls.append(path)
+        self.requests_remaining = 10
+        self.requests_used = 490
+
+    OddsApiProvider._track_quota = fake_track
+    try:
+        events = p.fetch_events(dt(), dt(hh=23))
+    finally:
+        OddsApiProvider._track_quota = orig
+    assert events == []
+    assert p.http.get.call_count == 3          # /sports + 2 free /events only
+    assert p.budget.used_month("oddsapi") == 0
+    assert p.can_spend_credits(3) is False
+
+
+def test_quota_gate_allows_spend_when_headers_have_headroom(budget):
+    """x-requests-remaining=100 with reserve=50 allows the 3-credit fetch."""
+    p = make_provider(budget, [
+        sports_payload(),
+        [{"id": "e1", "sport_key": "soccer_epl", "commence_time": "2030-06-01T19:00:00Z",
+          "home_team": "Arsenal", "away_team": "Chelsea"}],
+        [],
+        odds_payload(),
+    ], reserve_credits=50)
+    orig = OddsApiProvider._track_quota
+    OddsApiProvider._track_quota = lambda self, path="": setattr(self, "requests_remaining", 100)
+    try:
+        events = p.fetch_events(dt(), dt(hh=23))
+    finally:
+        OddsApiProvider._track_quota = orig
+    assert len(events) == 1
+    assert p.budget.used_month("oddsapi") == 3
 
 
 def test_zero_event_keys_never_cost_credits(budget):

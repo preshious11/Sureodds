@@ -66,7 +66,8 @@ class OddsApiProvider(BaseProvider):
     def __init__(self, api_key: str, budget: Budget, min_interval: float = 1.1,
                  bookmakers: Optional[List[str]] = None, odds_format: str = "decimal",
                  regions: Optional[List[str]] = None, max_leagues_per_sport: int = 8,
-                 monthly_limit: int = 500, max_credits_per_cycle: int = 15):
+                 monthly_limit: int = 500, max_credits_per_cycle: int = 15,
+                 reserve_credits: int = 50):
         self.key = api_key
         self.budget = budget
         self.min_interval = min_interval
@@ -82,6 +83,12 @@ class OddsApiProvider(BaseProvider):
         self.markets = ["h2h", "spreads", "totals"]
         self.max_leagues_per_sport = max(1, max_leagues_per_sport)
         self.max_credits_per_cycle = max(1, max_credits_per_cycle)
+        # Authoritative quota signal: x-requests-remaining from every response,
+        # persisted so the gate survives restarts. The bot never spends below
+        # reserve_credits of the remaining balance.
+        self.reserve_credits = max(0, reserve_credits)
+        self.requests_remaining: Optional[int] = None
+        self.requests_used: Optional[int] = None
         # Free tier is ~500 requests/month; enforced here (not just paced by
         # RateLimiter) so a busy day can't burn the whole month's quota.
         self.monthly_limit = monthly_limit
@@ -102,7 +109,70 @@ class OddsApiProvider(BaseProvider):
         """The Odds API authenticates via an ``apiKey`` query parameter, not a header."""
         merged = {"apiKey": self.key}
         merged.update(params or {})
-        return self.http.get(path, merged)
+        try:
+            return self.http.get(path, merged)
+        finally:
+            self._track_quota(path)
+
+    # ------------------------------------------------------------ quota headers
+    def _track_quota(self, path: str = "") -> None:
+        """Read x-requests-remaining / x-requests-used from the response just
+        made, log them, and persist the latest values.
+
+        These headers are the authoritative quota signal: the local budget
+        counter only sees this process's spends, so it drifts from reality
+        (dev cycles, restarts, other tools sharing the key)."""
+        headers = getattr(self.http, "last_headers", {}) or {}
+        rem, used = headers.get("x-requests-remaining"), headers.get("x-requests-used")
+        if rem is None and used is None:
+            return
+        try:
+            if rem is not None:
+                self.requests_remaining = int(rem)
+            if used is not None:
+                self.requests_used = int(used)
+        except (TypeError, ValueError):
+            return
+        log.info("OddsAPI quota | %s | x-requests-remaining=%s x-requests-used=%s "
+                 "reserve=%d local_month=%d", path or "-", self.requests_remaining,
+                 self.requests_used, self.reserve_credits,
+                 self.budget.used_month(self.name) if self.budget else -1)
+        if self.db is not None:
+            try:
+                if self.requests_remaining is not None:
+                    self.db.set_kv("oddsapi:requests_remaining", str(self.requests_remaining))
+                if self.requests_used is not None:
+                    self.db.set_kv("oddsapi:requests_used", str(self.requests_used))
+            except Exception:  # noqa: BLE001 - telemetry must never break a fetch
+                log.debug("OddsAPI: could not persist quota headers", exc_info=True)
+
+    def _remaining_credits(self) -> Optional[int]:
+        """Latest known x-requests-remaining: in-memory, else persisted, else
+        None when this key has never answered (gate then falls back to the
+        local monthly counter)."""
+        if self.requests_remaining is not None:
+            return self.requests_remaining
+        if self.db is not None:
+            raw = self.db.get_kv("oddsapi:requests_remaining")
+            if raw not in (None, ""):
+                try:
+                    self.requests_remaining = int(raw)
+                except ValueError:
+                    return None
+        return self.requests_remaining
+
+    def can_spend_credits(self, n: int) -> bool:
+        """True when ``n`` credits may be spent without dipping below
+        ODDSAPI_RESERVE_CREDITS of the remaining balance (or, before any
+        header has been seen, without breaking the local monthly limit)."""
+        remaining = self._remaining_credits()
+        if remaining is None:
+            return self.budget.can_spend(self.name, n, monthly_limit=self.monthly_limit)
+        if remaining - n < self.reserve_credits:
+            log.warning("OddsAPI: x-requests-remaining=%d, reserve=%d - refusing to spend %d credits",
+                        remaining, self.reserve_credits, n)
+            return False
+        return True
 
     @property
     def credits_per_key(self) -> int:
@@ -210,8 +280,10 @@ class OddsApiProvider(BaseProvider):
                     log.warning("OddsAPI: per-cycle credit cap %d reached - skipping %s",
                                 self.max_credits_per_cycle, league_key)
                     break
-                if not self.budget.can_spend(self.name, per_key, monthly_limit=self.monthly_limit):
-                    log.warning("OddsAPI: monthly quota exhausted, stopping odds fetch early")
+                if not self.can_spend_credits(per_key):
+                    log.warning("OddsAPI: quota/reserve gate stopped the odds fetch at %s "
+                                "(remaining=%s, reserve=%d)", league_key,
+                                self._remaining_credits(), self.reserve_credits)
                     break
                 try:
                     data = self._get(f"/sports/{league_key}/odds", {
@@ -236,9 +308,10 @@ class OddsApiProvider(BaseProvider):
             }
 
         events = self._rows_to_events(rows, start, end)
-        log.info("OddsAPI: %d odds rows -> %d events in window (%d credits spent, cap %d) | "
-                 "parse rejections: %s | sport status: %s",
+        log.info("OddsAPI: %d odds rows -> %d events in window (%d credits spent, cap %d, "
+                 "reserve %d, x-requests-remaining=%s) | parse rejections: %s | sport status: %s",
                  len(rows), len(events), spent, self.max_credits_per_cycle,
+                 self.reserve_credits, self._remaining_credits(),
                  dict(self.parse_counts), self.sport_status)
         return events
 
