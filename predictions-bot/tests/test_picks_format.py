@@ -63,7 +63,7 @@ def test_card_matches_the_requested_layout():
         "Confidence level: <b>84%</b> | 3:00 PM WAT\n"
         "\n"
         "Total Picks: 2\n"
-        "Combined Odds: 3.5670"
+        "Combined Odds: 3.57"
     )
 
 
@@ -93,7 +93,7 @@ def test_every_pick_gets_the_six_line_block():
         "Confidence level: <b>66%</b> | 7:45 PM WAT",
         "",
         "Total Picks: 1",
-        "Combined Odds: 1.9500",
+        "Combined Odds: 1.95",
     ]
 
 

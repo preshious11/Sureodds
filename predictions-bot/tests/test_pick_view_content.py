@@ -10,8 +10,8 @@ from tests.test_subscribers_broadcast import FakeTG, _cb
 
 
 @pytest.mark.parametrize('view,expected,absent,total', [
-    ('top', 'TOP ONLY', 'DAILY ONLY', '3.5670'),
-    ('daily', 'DAILY ONLY', 'NEVER INCLUDED', '54.7178'),
+    ('top', 'TOP ONLY', 'DAILY ONLY', '3.57'),
+    ('daily', 'DAILY ONLY', 'NEVER INCLUDED', '54.72'),
 ])
 def test_each_route_uses_its_own_picks_and_total(view, expected, absent, total):
     snapshot = DailySnapshot(date='2030-06-01', top_picks=[
@@ -76,7 +76,7 @@ def test_complete_day_without_picks_keeps_the_quality_bar_line():
     assert 'still being assembled' not in text
 
 
-@pytest.mark.parametrize('prices,total', [([2.0, 7.67], '15.3400'), ([2.05, 1.74], '3.5670'), ([1.5, 2.0], '3.0000')])
+@pytest.mark.parametrize('prices,total', [([2.0, 7.67], '15.34'), ([2.05, 1.74], '3.57'), ([1.5, 2.0], '3.00')])
 def test_broadcast_total_is_the_product_of_every_pick(prices, total):
     picks = [PickLine('Football', 'A vs B', 'Home', 'League', 0.7, '--:--', price)
              for price in prices]

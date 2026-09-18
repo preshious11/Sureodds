@@ -101,7 +101,8 @@ def choose_top(pool: List[Scored], cfg: Config):
     return best, checked
 
 
-def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
+def select(scored: List[Scored], cfg: Config, now: datetime,
+           top_priority_source: Optional[str] = None) -> PickSet:
     ps = PickSet(pool_size=len(scored))
     lead = now + timedelta(minutes=cfg.min_lead_minutes)
     base: List[Scored] = []
@@ -151,7 +152,19 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
             top_rejected["INSUFFICIENT_SOURCES"] += 1
             continue
         top_pool.append(s)
-    top, checked = choose_top(top_pool, cfg)
+    # Odds API is tried first for the Top ticket: only fall back to the full
+    # pool (the other providers) when it can't reach the combined odds target.
+    used_priority_pool = False
+    if top_priority_source:
+        priority_pool = [s for s in top_pool if top_priority_source in s.event.sources]
+        top, checked = choose_top(priority_pool, cfg)
+        reached = math.prod(s.price for s in top) if top else 0.0
+        if top and reached >= cfg.top_odds_target:
+            used_priority_pool = True
+        else:
+            top, checked = choose_top(top_pool, cfg)
+    else:
+        top, checked = choose_top(top_pool, cfg)
     top_ids = {id(s) for s in top}
     top_odds = math.prod(s.price for s in top)
     for s in top:
@@ -164,7 +177,9 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
                       "top_eligible_by_sport": dict(Counter(s.event.sport for s in top_pool)),
                       "selection_rejections": dict(rejection_counts),
                       "top_pool_rejections": dict(top_rejected),
-                      "combinations_checked": checked, "top_odds": top_odds if top else None}
+                      "combinations_checked": checked, "top_odds": top_odds if top else None,
+                      "top_priority_source": top_priority_source,
+                      "top_priority_used": used_priority_pool}
 
     # ---------------------------------------------------------- daily picks
     # One ticket for the whole post: keep filling while it is short of the floor,
@@ -174,6 +189,11 @@ def select(scored: List[Scored], cfg: Config, now: datetime) -> PickSet:
     daily_rejected: Counter = Counter()
     for s in base:
         if id(s) in top_ids:
+            continue
+        # The Daily ticket stays the three-provider ticket it has always been;
+        # an Odds API event that no other provider also saw is reserved for Top.
+        if top_priority_source and s.event.sources == [top_priority_source]:
+            daily_rejected["RESERVED_FOR_TOP_PRIORITY_SOURCE"] += 1
             continue
         if not (cfg.daily_min_odds <= s.price <= cfg.daily_max_odds):
             daily_rejected["BELOW_THRESHOLD"] += 1

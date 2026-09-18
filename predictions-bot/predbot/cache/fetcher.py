@@ -49,11 +49,14 @@ class UnifiedFetcher:
         with self.db.prediction_lock:
             cached, row = self._read(day, now)
             if cached is not None and not force_refresh:
-                retry = parse_iso(row['retry_after'] or '')
-                if row['status'] == 'COMPLETE' or (retry and now < retry):
-                    log.info('Cache HIT | date=%s | status=%s', day, row['status'])
-                    return cached
-            log.info('Cache %s | date=%s', 'PARTIAL' if cached else 'MISS', day)
+                # Once today's snapshot is cached (COMPLETE or PARTIAL), serve it
+                # for every subsequent read. retry_after only throttles the error
+                # path (defer_prediction_retry on refresh failure); it must NOT
+                # trigger provider API calls from user views like /top, /daily,
+                # button taps, delivery polling or post-restart reads.
+                log.info('Cache HIT | date=%s | status=%s', day, row['status'])
+                return cached
+            log.info('Cache %s | date=%s', 'PARTIAL (force refresh)' if cached else 'MISS', day)
             # If cache miss and API calls disabled (e.g., delivery polling), return empty snapshot
             if not allow_api_call and not cached:
                 log.info('Skipping API call (delivery polling) | cache_miss=%s', day)

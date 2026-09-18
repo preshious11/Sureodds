@@ -24,8 +24,8 @@ def snapshot():
                          daily_picks=[pick('Liverpool', 2.0, 'daily'), pick('Villa', 3.98575, 'daily')])
 
 
-@pytest.mark.parametrize('view,heading,total', [('top', '🏆 Top Picks for Today', '2.0000'),
-                                                ('daily', '📋 Daily Picks for Today', '15.9430')])
+@pytest.mark.parametrize('view,heading,total', [('top', '🏆 Top Picks for Today', '2.00'),
+                                                ('daily', '📋 Daily Picks for Today', '15.94')])
 @pytest.mark.parametrize('zone,time', [('Africa/Lagos', '7:00 PM WAT'), ('America/New_York', '2:00 PM EDT')])
 def test_commands_and_buttons_have_exact_layout_and_subscriber_timezone(db, view, heading, total, zone, time):
     db.subscriber_add('42', timezone=zone)
@@ -54,7 +54,7 @@ def test_every_daily_page_uses_entire_ticket_total():
         text, _ = render_page(snapshot(), 'daily', page, 1, 'UTC')
         assert fixture + ' vs Chelsea' in text
         assert text.count('Confidence level:') == 1
-        assert 'Combined Odds: 15.9430' in text     # whole ticket, not just this page
+        assert 'Combined Odds: 15.94' in text       # whole ticket, not just this page
 
 
 @pytest.mark.parametrize('zone', ['', 'Not/AZone'])
@@ -81,4 +81,4 @@ def test_selected_ticket_survives_database_and_cache_with_correct_totals(db):
     assert len(restored.view_items('daily')) == len(picks.all())
     for view, total in [('top', top_total), ('daily', daily_total)]:
         text, _ = render_page(restored, view, 0, 1, 'UTC')
-        assert f'Combined Odds: {total:.4f}' in text
+        assert f'Combined Odds: {total:.2f}' in text
