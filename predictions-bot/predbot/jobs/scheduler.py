@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import signal
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Callable, Optional
@@ -16,6 +17,13 @@ log = logging.getLogger(__name__)
 def _parse_hhmm(s: str):
     h, m = s.split(":")
     return int(h), int(m)
+
+
+def _run_fn(name: str, fn: Callable[[], None]) -> None:
+    try:
+        fn()
+    except Exception as e:  # noqa: BLE001
+        log.exception("job %s failed: %s", name, e)
 
 
 class DailyJob:
@@ -32,11 +40,15 @@ class DailyJob:
         return (local.hour, local.minute) >= (self.h, self.m)
 
     def run(self, now: datetime) -> None:
+        # Marking "ran today" happens synchronously (so the scheduler's next
+        # tick never double-dispatches this job); the job body itself - which
+        # can mean provider API calls, scoring, or a settlement scan - runs on
+        # its own thread so a catch-up run due right at process start (e.g.
+        # after a redeploy that lands past post_time) can never compete with
+        # or delay the Telegram polling thread.
         self.last_run_date = to_local(now, self.tz).strftime("%Y-%m-%d")
-        try:
-            self.fn()
-        except Exception as e:  # noqa: BLE001
-            log.exception("job %s failed: %s", self.name, e)
+        threading.Thread(target=_run_fn, args=(self.name, self.fn),
+                         name=f"job-{self.name}", daemon=True).start()
 
 
 class IntervalJob:
@@ -49,10 +61,8 @@ class IntervalJob:
 
     def run(self, now: datetime) -> None:
         self.next = now + self.every
-        try:
-            self.fn()
-        except Exception as e:  # noqa: BLE001
-            log.exception("job %s failed: %s", self.name, e)
+        threading.Thread(target=_run_fn, args=(self.name, self.fn),
+                         name=f"job-{self.name}", daemon=True).start()
 
 
 class DynamicJob:
@@ -75,10 +85,8 @@ class DynamicJob:
     def run(self, now: datetime) -> None:
         self.last_run_date = to_local(now, self.tz).strftime("%Y-%m-%d")
         self.next = None
-        try:
-            self.fn()
-        except Exception as e:  # noqa: BLE001
-            log.exception("job %s failed: %s", self.name, e)
+        threading.Thread(target=_run_fn, args=(self.name, self.fn),
+                         name=f"job-{self.name}", daemon=True).start()
 
 
 def loop(jobs, poll_seconds: int = 30, health_check=None) -> None:

@@ -2,9 +2,12 @@
 runs with just a Telegram token and at least one API key."""
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import List
+
+log = logging.getLogger(__name__)
 
 
 def _env(name: str, default: str = "") -> str:
@@ -55,6 +58,7 @@ class Config:
     odds_api_regions: List[str] = field(default_factory=lambda: _list("ODDS_API_REGIONS", "us,eu"))
     odds_api_min_interval: float = field(default_factory=lambda: _float("ODDS_API_MIN_INTERVAL_SEC", 1.1))
     odds_api_max_leagues_per_sport: int = field(default_factory=lambda: _int("ODDS_API_MAX_LEAGUES_PER_SPORT", 8))
+    odds_api_monthly_limit: int = field(default_factory=lambda: _int("ODDS_API_MONTHLY_LIMIT", 500))
     provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "api_football,sportsgameodds,sharpapi"))
     #: Provider tried first for the Top ticket only; falls back to
     #: ``provider_order`` when it can't supply enough qualifying picks.
@@ -121,6 +125,29 @@ class Config:
     # Storage / logging
     db_path: str = field(default_factory=lambda: _env("DB_PATH", "./data/predbot.db"))
     log_level: str = field(default_factory=lambda: _env("LOG_LEVEL", "INFO"))
+
+    def __post_init__(self) -> None:
+        """A malformed env var already falls back to its default in _float/_int;
+        this catches the other failure mode - a *valid* but nonsensical value
+        (min > max, an odds target <= 1.0, a probability outside [0,1]) that
+        would otherwise only surface downstream as an empty/broken selection
+        pipeline with nothing pointing back at the config."""
+        checks = [
+            ("DAILY_COMBINED_MIN_ODDS/MAX", self.daily_odds_min <= self.daily_odds_max),
+            ("DAILY_MIN_ODDS/MAX_ODDS", self.daily_min_odds <= self.daily_max_odds),
+            ("TOP_MIN_ODDS/MAX_ODDS", self.top_min_odds <= self.top_max_odds),
+            ("TOP_COMBINED_ODDS > 1.0", self.top_odds_target > 1.0),
+            ("DAILY_MIN_ODDS > 1.0", self.daily_min_odds > 1.0),
+            ("TOP_MIN_PROB in [0,1]", 0.0 <= self.top_min_prob <= 1.0),
+            ("DAILY_MIN_PROB in [0,1]", 0.0 <= self.daily_min_prob <= 1.0),
+            ("TOP_MIN_AGREEMENT in [0,1]", 0.0 <= self.top_min_agreement <= 1.0),
+            ("MODEL_SHRINK_TO_MARKET in [0,1]", 0.0 <= self.model_shrink <= 1.0),
+            ("TOP_MAX_PICKS >= 1", self.top_max_picks >= 1),
+            ("MAX_PICKS_PER_EVENT >= 1", self.max_picks_per_event >= 1),
+        ]
+        for name, ok in checks:
+            if not ok:
+                log.warning("Config: %s does not hold - selection may behave unexpectedly", name)
 
     def enabled_providers(self) -> List[str]:
         keys = {

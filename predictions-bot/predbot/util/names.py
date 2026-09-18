@@ -6,9 +6,16 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 
+#: Generic club-name affixes only, never a word that distinguishes one real
+#: club from another (e.g. "united"/"city"/"real"/"atletico" must stay OUT of
+#: this list - stripping them made "Manchester United" == "Manchester City"
+#: and "Real Madrid" == "Atletico Madrid" under same_team()).
 _STOP = {"fc", "cf", "sc", "afc", "club", "de", "the", "cd", "ac", "as", "us", "ss", "bk", "if", "sk",
-         "fk", "cs", "rc", "sv", "vfb", "vfl", "tsg", "1", "sporting", "athletic", "atletico", "united",
-         "city", "real"}
+         "fk", "cs", "rc", "sv", "vfb", "vfl", "tsg", "1", "sporting"}
+
+#: A reserve/youth-team qualifier is never noise to strip: "Barcelona" and
+#: "Barcelona B" are different clubs, not the same club spelled differently.
+_RESERVE_SUFFIXES = {"b", "ii", "iii", "reserves", "reserve", "u23", "u21", "u20", "u19", "u18", "youth"}
 
 
 def normalize(name: str) -> str:
@@ -28,7 +35,10 @@ def similarity(a: str, b: str) -> float:
     if na == nb:
         return 1.0
     ta, tb = set(na.split()), set(nb.split())
-    if ta and tb and (ta <= tb or tb <= ta):
+    extra = (ta - tb) | (tb - ta)
+    if extra and extra <= _RESERVE_SUFFIXES:
+        return 0.0
+    if ta and tb and len(ta) > 1 and len(tb) > 1 and (ta <= tb or tb <= ta):
         return 0.92
     return SequenceMatcher(None, na, nb).ratio()
 

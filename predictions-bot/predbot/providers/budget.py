@@ -33,8 +33,12 @@ class Budget:
         return self.db.budget_used(provider, self._month())
 
     def spend(self, provider: str, n: int = 1) -> None:
-        self.db.budget_add(provider, self._day(), n)
-        self.db.budget_add(provider, self._month(), n)
+        # Both buckets commit together so a crash between the two calls can't
+        # leave the daily count updated but the monthly count stale (which
+        # would let the monthly quota silently drift over its real usage).
+        with self.db.transaction():
+            self.db.budget_add(provider, self._day(), n)
+            self.db.budget_add(provider, self._month(), n)
 
     def can_spend(self, provider: str, n: int, daily_limit: int = 0, monthly_limit: int = 0) -> bool:
         if daily_limit and self.used_today(provider) + n > daily_limit:

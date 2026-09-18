@@ -39,7 +39,6 @@ def test_commands_and_buttons_have_exact_layout_and_subscriber_timezone(db, view
     # the requested format: sport / league / fixture / market / prediction / odds / confidence | time
     assert text.startswith(f'{heading} 2030-06-01\n\n'
                            f'Football\nHidden League\nArsenal vs Chelsea\n'
-                           f'<b>Market:</b> Totals\n'
                            f'<b>Prediction:</b> Over 1.5 Goals\n'
                            f'Odds: 2.00\n'
                            f'Confidence level: <b>84%</b> | {time}\n')

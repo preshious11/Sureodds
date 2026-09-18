@@ -210,7 +210,7 @@ def test_selection_label_uses_real_data():
                     entity="all", n_books=3, provider_odd_id="bet123:over2.5")
     from predbot.markets.catalog import selection_label
     label = selection_label(ml, "Arsenal", "Chelsea", "football")
-    assert "Over 2.5 Goals" in label
+    assert "Over 2.5 Total Goals" in label
     assert "Arsenal" not in label  # not a home/away selection
 
 

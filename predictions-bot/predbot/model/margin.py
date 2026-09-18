@@ -62,14 +62,14 @@ class MarginModel:
         mu: Optional[float] = None
         if spread_home is not None:
             # P(margin + spread > 0) = p_cover -> mu = -spread + sm * z
-            z = _inv_phi(p_cover_home) if p_cover_home else 0.0
+            z = _inv_phi(p_cover_home) if p_cover_home is not None else 0.0
             mu = -spread_home + sm * z
         elif p_home_ml is not None:
             mu = sm * _inv_phi(p_home_ml)
         if mu is None:
             mu = 0.0
         if total_line is not None:
-            z = _inv_phi(p_over) if p_over else 0.0
+            z = _inv_phi(p_over) if p_over is not None else 0.0
             mu_t = total_line + st * z
         else:
             mu_t = PRIOR_TOTAL.get(sport, 200.0)
@@ -77,7 +77,12 @@ class MarginModel:
 
     # continuous scores: a "push" happens only on integer lines; we use a
     # continuity correction of +-0.5 to approximate discrete pushes.
-    def _line_prob(self, mean: float, sigma: float, line: float, side: str) -> float:
+    def _line_prob(self, mean: float, sigma: float, line: float, side: str) -> Optional[float]:
+        if sigma <= 0:
+            # SIGMA_MARGIN/SIGMA_TOTAL has no real spread configured for this
+            # sport (e.g. tennis, which MarginModel isn't meant to price) -
+            # fail loudly to None rather than dividing by zero.
+            return None
         frac = round(abs(line - math.floor(line)), 2)
         if frac in (0.25, 0.75):
             return 0.5 * (self._line_prob(mean, sigma, line - 0.25, side) + self._line_prob(mean, sigma, line + 0.25, side))

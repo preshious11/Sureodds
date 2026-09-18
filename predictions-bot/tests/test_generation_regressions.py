@@ -65,11 +65,13 @@ def test_top_search_finds_better_pair_than_greedy_single():
 
 
 def test_top_search_bounds_count_and_unique_matches():
+    # top_max_picks is honored up to the hard safety cap of 5 (sizes above 3
+    # search a trimmed pool to keep the combinatorial search bounded).
     pool = [sc(ev(i // 2), 'result3', 'home', .75, 1.25 + i / 1000) for i in range(120)]
     result = select(pool, Config(top_min_odds=1.2, top_max_picks=10), dt())
-    assert 1 <= len(result.top) <= 3
+    assert 1 <= len(result.top) <= 5
     assert len({s.event.dedupe_key() for s in result.top}) == len(result.top)
-    assert result.diagnostics['combinations_checked'] <= 36050
+    assert result.diagnostics['combinations_checked'] <= 60000
 
 
 def test_top_three_pick_combination():

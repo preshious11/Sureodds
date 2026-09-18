@@ -7,6 +7,7 @@ edits the existing Telegram message via callback buttons.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
@@ -154,7 +155,10 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
     from a second, hidden collection.
     """
     items = snapshot.view_items(view)
-    items = [p for p in items if format_outcome(p)]
+    # A pick with unusable odds (<=1.0, non-finite) would make combined_odds()
+    # raise and blank the whole page; drop it the same way an ambiguous
+    # outcome is dropped, instead of failing the entire view.
+    items = [p for p in items if format_outcome(p) and math.isfinite(p.price) and p.price > 1.0]
     if not items:
         return empty_view_message(snapshot, view, tz), build_keyboard(view, 0, 1)
     pages = total_pages(len(items), size)

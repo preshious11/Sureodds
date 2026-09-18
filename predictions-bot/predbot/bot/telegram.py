@@ -34,7 +34,14 @@ class Telegram:
                 "disable_web_page_preview": True}
             if reply_markup:
                 body["reply_markup"] = reply_markup
-            r = self.session.post(f"{self.base}/sendMessage", json=body, timeout=20)
+            try:
+                r = self.session.post(f"{self.base}/sendMessage", json=body, timeout=20)
+            except requests.RequestException as e:
+                # A transport failure here must fail like a bad HTTP status
+                # (return, don't raise) - callers throughout the bot treat
+                # send() as a plain success/failure signal, never an exception.
+                log.error("telegram send transport failure: %s", type(e).__name__)
+                return last_id
             if r.status_code != 200:
                 log.error("telegram send failed %s: %s", r.status_code, r.text[:200])
                 return last_id
@@ -48,10 +55,14 @@ class Telegram:
 
         Returns True on success; Telegram's 'message is not modified' error
         (same text + same keyboard) is treated as success."""
-        r = self.session.post(f"{self.base}/editMessageText", json={
-            "chat_id": chat_id, "message_id": int(message_id), "text": text,
-            "parse_mode": parse_mode, "disable_web_page_preview": True,
-            **({"reply_markup": reply_markup} if reply_markup else {})}, timeout=20)
+        try:
+            r = self.session.post(f"{self.base}/editMessageText", json={
+                "chat_id": chat_id, "message_id": int(message_id), "text": text,
+                "parse_mode": parse_mode, "disable_web_page_preview": True,
+                **({"reply_markup": reply_markup} if reply_markup else {})}, timeout=20)
+        except requests.RequestException as e:
+            log.error("editMessageText transport failure: %s", type(e).__name__)
+            return False
         if r.status_code == 200 or "message is not modified" in r.text:
             return True
         log.error("editMessageText failed %s: %s", r.status_code, r.text[:200])
