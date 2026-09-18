@@ -50,6 +50,14 @@ def expected_sports(name, provider, cfg=None):
     return sports or ['other']
 
 
+def _quota_state(provider):
+    """Provider-reported quota/gate state (Odds API), or None. Anything that is
+    not a plain dict (e.g. a mock) is ignored so the report stays serialisable."""
+    fn = getattr(provider, 'quota_state', None)
+    state = fn() if callable(fn) else None
+    return state if isinstance(state, dict) else None
+
+
 def collect_persisted(chain, start, end):
     from predbot.providers.chain import merge_events
     now = utcnow()
@@ -104,7 +112,8 @@ def collect_persisted(chain, start, end):
                                   fetch=getattr(provider, 'fetch_counts', {}),
                                   normalization=getattr(provider, 'normalization_counts', {}),
                                   rejections=dict(getattr(provider, 'parse_counts', {}) or {}),
-                                  sport_status=getattr(provider, 'sport_status', None))
+                                  sport_status=getattr(provider, 'sport_status', None),
+                                  quota=_quota_state(provider))
                 except Exception as exc:
                     events = previous
                     report.update(outcome='failed', error_type=type(exc).__name__)

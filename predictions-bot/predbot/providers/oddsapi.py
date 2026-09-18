@@ -91,6 +91,7 @@ class OddsApiProvider(BaseProvider):
         # reserve_credits of the remaining balance.
         self.reserve_credits = max(0, reserve_credits)
         self.requests_remaining: Optional[int] = None
+        self.last_refusal: Optional[str] = None
         self.requests_used: Optional[int] = None
         # Free tier is ~500 requests/month; enforced here (not just paced by
         # RateLimiter) so a busy day can't burn the whole month's quota.
@@ -174,8 +175,17 @@ class OddsApiProvider(BaseProvider):
         if remaining - n < self.reserve_credits:
             log.warning("OddsAPI: x-requests-remaining=%d, reserve=%d - refusing to spend %d credits",
                         remaining, self.reserve_credits, n)
+            self.last_refusal = (f"x-requests-remaining={remaining}, reserve={self.reserve_credits} "
+                                 f"- refused to spend {n} credits")
             return False
         return True
+
+    def quota_state(self) -> Dict:
+        """What the quota gate saw on the last fetch - stored with the provider
+        report so it can be read back next to the slate it produced."""
+        return {"requests_remaining": self._remaining_credits(), "requests_used": self.requests_used,
+                "reserve_credits": self.reserve_credits, "refused_to_spend": self.last_refusal is not None,
+                "refusal": self.last_refusal}
 
     @property
     def credits_per_key(self) -> int:
@@ -225,6 +235,7 @@ class OddsApiProvider(BaseProvider):
     def fetch_events(self, start: datetime, end: datetime) -> List[Event]:
         self.parse_counts = Counter()
         self.sport_status = {}
+        self.last_refusal = None
         sports = self._discover_sports()
         if not sports:
             log.warning("OddsAPI: no football/tennis leagues discovered in season")
