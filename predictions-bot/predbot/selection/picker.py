@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from collections import Counter
 from itertools import combinations
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from predbot.config import Config
 from predbot.markets.catalog import contradicts, is_equivalent, selection_family, spec
@@ -107,18 +107,22 @@ def choose_top(pool: List[Scored], cfg: Config):
         options = options[:30] + sorted(options[30:], key=lambda s: (s.price, -_top_score(s), s.event.dedupe_key()))[:30]
     target = cfg.top_odds_target
     best, best_key, checked = [], None, 0
+    # Top Picks is a 2-3 leg accumulator: legs below top_legs_min are never
+    # tried, so a single strong-priced candidate can no longer win outright.
     # Ticket sizes above 3 explode combinatorially, so the search pool is
-    # trimmed further for those sizes rather than silently ignoring a
-    # cfg.top_max_picks above 3 like before.
-    max_size = min(5, max(1, cfg.top_max_picks))
-    for size in range(1, max_size + 1):
+    # trimmed further for those sizes.
+    min_size = max(1, cfg.top_legs_min)
+    max_size = max(min_size, cfg.top_legs_max)
+    for size in range(min_size, max_size + 1):
         pool = options if size <= 3 else options[:20]
         for group in combinations(pool, size):
             if len({s.event.dedupe_key() for s in group}) != size:
                 continue
             checked += 1
             price = math.prod(s.price for s in group)
-            if price > target * 1.7:
+            if price > cfg.top_odds_max:
+                # Hard reject: never just deprioritized. A combo over the
+                # ceiling is not a worse option, it is not an option.
                 continue
             band = 0 if target <= price <= target * 1.05 else 1 if price >= target else 2
             key = (band, abs(price - target), -sum(_top_score(s) for s in group) / size,
@@ -249,12 +253,32 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     for t in top:
         per_event[t.event.dedupe_key()] = per_event.get(t.event.dedupe_key(), 0) + 1
     family_count: Dict[str, int] = {}
-    market_count: Dict[str, int] = {}
+    # Keyed by (market, stat): corners totals and goals totals are both
+    # market="total", and a share cap that can't tell them apart is exactly
+    # how one of them ends up filling the whole list.
+    market_count: Dict[Tuple[str, str], int] = {}
+    stat_count: Dict[str, int] = {}
     sport_count: Dict[str, int] = {}
+    league_count: Dict[str, int] = {}
     favs = props = exotics = 0
     sports_available = {s.event.sport for s in daily_pool}
-    caps = {"family": _cap(0.45, cap), "market": _cap(0.50, cap), "favs": _cap(0.50, cap),
-            "exotic": _cap(0.25, cap), "sport": _cap(0.75, cap) if len(sports_available) > 1 else cap}
+    caps = {"family": _cap(0.45, cap), "favs": _cap(0.50, cap), "exotic": _cap(0.25, cap),
+            "league": cfg.daily_max_per_league}
+    # The list is sized by combined odds, not by a count, so a 25% market
+    # share has to be measured against the list as it is actually being
+    # built - a share of daily_target (20) would still let one market take
+    # 5 of a 6-pick slate.
+    market_share = cfg.daily_max_market_share
+    # Same measurement basis for the stat share: corners reach the list through
+    # several markets (totals AND 1X2), so the (market, stat) cap alone still
+    # lets "corners, corners, corners" happen.
+    stat_share = cfg.daily_max_stat_share
+    sport_share = cfg.daily_max_sport_share if len(sports_available) > 1 else 1.0
+    relaxed_hits: Counter = Counter()
+
+    def share_exceeded(count: int, share: float) -> bool:
+        n_after = len(chosen) + 1
+        return count + 1 > max(1, math.ceil(share * n_after))
 
     chosen: List[Scored] = []
     chosen_ids: set = set()
@@ -267,11 +291,17 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
                 return True
         return False
 
-    def try_add(s: Scored, enforce_sport_cap: bool) -> bool:
+    def try_add(s: Scored, relaxed: bool) -> bool:
+        """The strict pass enforces every quota. The relaxed pass - run only
+        when the strict ticket is short of DAILY_COMBINED_MIN_ODDS - waives
+        the market/sport/league shares (never the per-event, conflict,
+        family, favourite, prop or exotic limits) and records which quota
+        each admitted pick would otherwise have broken."""
         nonlocal favs, props, exotics
         ek = s.event.dedupe_key()
         fam = selection_family(s.line)
         mk = s.line.market
+        mkey = (mk, s.line.stat)
         grp = spec(mk).group
         if per_event.get(ek, 0) >= cfg.max_picks_per_event:
             return False
@@ -279,22 +309,31 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             return False
         if family_count.get(fam, 0) >= caps["family"] and fam != "other":
             return False
-        if market_count.get(mk, 0) >= caps["market"]:
-            return False
         if s.price < 1.50 and favs >= caps["favs"]:
             return False
         if mk == "prop" and props >= cfg.max_player_props:
             return False
         if grp == "exotic" and exotics >= caps["exotic"]:
             return False
-        if enforce_sport_cap and sport_count.get(s.event.sport, 0) >= caps["sport"]:
-            return False
+        over = {"market": share_exceeded(market_count.get(mkey, 0), market_share),
+                "stat": bool(s.line.stat) and share_exceeded(stat_count.get(s.line.stat, 0), stat_share),
+                "sport": share_exceeded(sport_count.get(s.event.sport, 0), sport_share),
+                "league": bool(s.event.league) and league_count.get(s.event.league, 0) >= caps["league"]}
+        if any(over.values()):
+            if not relaxed:
+                return False
+            for name, hit in over.items():
+                if hit:
+                    relaxed_hits[name] += 1
         chosen.append(s)
         chosen_ids.add(id(s))
         per_event[ek] = per_event.get(ek, 0) + 1
         family_count[fam] = family_count.get(fam, 0) + 1
-        market_count[mk] = market_count.get(mk, 0) + 1
+        market_count[mkey] = market_count.get(mkey, 0) + 1
+        if s.line.stat:
+            stat_count[s.line.stat] = stat_count.get(s.line.stat, 0) + 1
         sport_count[s.event.sport] = sport_count.get(s.event.sport, 0) + 1
+        league_count[s.event.league] = league_count.get(s.event.league, 0) + 1
         favs += 1 if s.price < 1.50 else 0
         props += 1 if mk == "prop" else 0
         exotics += 1 if grp == "exotic" else 0
@@ -316,16 +355,25 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             break
         if not fits(s.price):
             continue
-        if try_add(s, enforce_sport_cap=True):
+        if try_add(s, relaxed=False):
             ticket *= s.price
+    strict_ticket, strict_picks = ticket, len(chosen)
     if ticket < cfg.daily_odds_min:
         for s in daily_pool:
             if not under_cap():
                 break
             if id(s) in chosen_ids or not fits(s.price):
                 continue
-            if try_add(s, enforce_sport_cap=False):
+            if try_add(s, relaxed=True):
                 ticket *= s.price
+        if relaxed_hits:
+            ps.diagnostics["daily_caps_relaxed"] = {
+                "reason": "strict pass could not reach DAILY_COMBINED_MIN_ODDS",
+                "strict_ticket": round(strict_ticket, 2), "strict_picks": strict_picks,
+                "daily_pool": len(daily_pool), "exceeded": dict(relaxed_hits)}
+            log.warning("picker: diversity quotas relaxed %s - strict ticket %.2f from %d picks was "
+                        "below the %.2f floor with a qualifying pool of %d",
+                        dict(relaxed_hits), strict_ticket, strict_picks, cfg.daily_odds_min, len(daily_pool))
 
     for s in chosen:
         s.tier = "daily"
@@ -333,6 +381,8 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     log.info("picker: pool=%d eligible=%d top_pool=%d daily_pool=%d -> top=%d daily=%d ticket=%.2f",
              ps.pool_size, ps.eligible, len(top_pool), len(daily_pool), len(top), len(chosen), ticket)
     ps.diagnostics["daily_ticket_by_sport"] = dict(Counter(s.event.sport for s in ps.all()))
+    ps.diagnostics["daily_by_market"] = dict(Counter(f"{s.line.market}/{s.line.stat}" for s in ps.daily))
+    ps.diagnostics["daily_by_league"] = dict(Counter(s.event.league for s in ps.daily))
     ps.diagnostics["top_selected_by_sport"] = dict(Counter(s.event.sport for s in ps.top))
     log.info("selection diagnostics: %s", ps.diagnostics)
     return ps

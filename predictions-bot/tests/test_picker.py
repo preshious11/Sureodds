@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import math
+from collections import Counter
 from datetime import timedelta
+
+import pytest
 
 from predbot.config import Config
 from predbot.markets.catalog import contradicts, is_equivalent, selection_family
@@ -13,9 +16,11 @@ from predbot.selection.picker import select
 from tests.conftest import dt
 
 
-def ev(i, home=None, away=None, sport="football", start=None):
+def ev(i, home=None, away=None, sport="football", start=None, league=None):
+    # Each event gets its own league unless a test asks for a shared one, so
+    # the per-league quota only bites in the tests written to exercise it.
     return Event(provider="test", provider_event_id=str(i), sport=sport,
-                 league="L", home=home or f"Home{i}", away=away or f"Away{i}",
+                 league=league or f"L{i}", home=home or f"Home{i}", away=away or f"Away{i}",
                  start=start or dt(hh=22), sources=["a", "b"])
 
 
@@ -81,18 +86,26 @@ def test_same_fixture_same_outcome_from_different_providers_never_leaks_into_dai
     assert top_event.dedupe_key() != other_provider_event.dedupe_key()
 
     top_candidate = sc(top_event, "result3", "home", 0.75, 1.60, ev_val=0.10)
+    # Top is a 2-leg minimum accumulator: top_candidate needs a partner leg
+    # under the 2.50 combined-odds ceiling (1.60 * 1.36 = 2.18) to be
+    # selectable at all - a single leg can no longer win on its own.
+    partner_event = Event(provider="oddsapi", provider_event_id="oa2", sport="football",
+                          league="L", home="Porto", away="Braga", start=dt(hh=21), sources=["oddsapi"])
+    partner_candidate = sc(partner_event, "result3", "home", 0.70, 1.36, ev_val=0.08)
     # Below top_min_odds (1.35 default) so it can never combinatorially join
     # Top itself - the only way it could reach the ticket is via Daily, which
     # is exactly the leak this test guards against.
     duplicate_candidate = sc(other_provider_event, "result3", "home", 0.70, 1.32, ev_val=0.08)
     # Distinct, dissimilar team names so the fuzzy same_team() match used by
-    # _same_fixture() can't confuse one filler fixture for another.
+    # _same_fixture() can't confuse one filler fixture for another. Priced
+    # above the 2.50 ceiling in any pairing so they can't outscore the
+    # intended top_candidate/partner_candidate combo.
     filler_names = ["Bayern", "Feyenoord", "Sporting", "Galatasaray", "Benfica",
                     "Napoli", "Sevilla", "Ajax", "Lazio", "Monaco"]
     filler = [sc(ev(10 + i, home=name, away=f"Opponent{i}"), "result3", "home", 0.62, 1.80)
              for i, name in enumerate(filler_names)]
 
-    ps = select([top_candidate, duplicate_candidate] + filler, cfg(), now)
+    ps = select([top_candidate, partner_candidate, duplicate_candidate] + filler, cfg(), now)
 
     assert top_candidate in ps.top
     assert duplicate_candidate not in ps.daily
@@ -101,7 +114,9 @@ def test_same_fixture_same_outcome_from_different_providers_never_leaks_into_dai
 
 def test_top_picks_meet_quality_bar():
     now = dt()
-    pool = [sc(ev(i), "result3", "home", 0.70, 1.8, sources=3) for i in range(20)]
+    # 1.42 so a 2-leg combo (1.42 * 1.42 = 2.02) lands inside the 2.00-2.50
+    # accumulator band; 1.8 would make every pairing exceed the 2.50 ceiling.
+    pool = [sc(ev(i), "result3", "home", 0.70, 1.42, sources=3) for i in range(20)]
     ps = select(pool, cfg(), now)
     c = cfg()
     for t in ps.top:
@@ -161,12 +176,18 @@ def test_top_ticket_is_sized_by_odds_not_by_a_count():
     assert math.prod(t.price for t in ps.top) >= cfg().top_odds_target
 
 
-def test_one_big_price_closes_the_top_ticket_on_its_own():
+def test_two_legs_already_at_target_beat_adding_a_third():
     now = dt()
-    pool = [sc(ev(1), "result3", "home", 0.70, 2.05), sc(ev(2), "result3", "home", 0.70, 1.45)]
+    # 1.43 * 1.40 = 2.002, already inside the tight target band; a third leg
+    # at 1.36 would push any 3-leg combo (2.723) past the 2.50 hard ceiling,
+    # so it's physically excluded, not just deprioritized.
+    pool = [sc(ev(1), "result3", "home", 0.70, 1.43),
+            sc(ev(2), "result3", "home", 0.70, 1.40),
+            sc(ev(3), "result3", "home", 0.70, 1.36)]
     ps = select(pool, cfg(), now)
 
-    assert len(ps.top) == 1                                # 2.05 is already worth ~2.00
+    assert len(ps.top) == 2
+    assert math.prod(s.price for s in ps.top) == pytest.approx(2.002)
 
 
 def test_daily_list_is_sized_by_the_combined_odds_window():
@@ -187,3 +208,123 @@ def test_pick_count_never_passes_the_cap():
     ps = select(pool, c, now)
 
     assert len(ps.all()) <= c.daily_target
+
+
+# ------------------------------------------------------------- diversity quotas
+def _corners(i, sel, price=1.45):
+    s = sc(ev(i), "total", sel, 0.66, price, line=8.0)
+    s.line.stat = "corners"
+    return s
+
+
+def test_single_market_pool_cannot_fill_the_daily_list():
+    """100 strong candidates that are ALL corners totals: the market-share
+    quota must stop one market taking the list. Selections alternate
+    over/under so the per-outcome family cap is not what stops them."""
+    now = dt()
+    pool = [_corners(i, "over" if i % 2 == 0 else "under") for i in range(100)]
+    c = cfg()
+    ps = select(pool, c, now)
+
+    corners = sum(1 for s in ps.daily if (s.line.market, s.line.stat) == ("total", "corners"))
+    strict_cap = math.ceil(c.daily_max_market_share * c.daily_target)
+    assert len(ps.daily) < c.daily_target
+    # the quota may only be exceeded when the pool could not otherwise reach
+    # the combined-odds floor, and then the relaxation must be on record
+    assert corners <= strict_cap or ps.diagnostics.get("daily_caps_relaxed")
+
+
+# Five distinct (market, stat) combinations spanning four distinct stats
+# ("points" no more than 2 of 5, everything else 1 of 5): under the 25%
+# market share AND 40% stat share, the strict pass needs the full spread on
+# offer to keep growing the ticket, so a pool this varied must reach the
+# combined-odds floor WITHOUT relaxing.
+_MIXED = [("result3", "home", "points", None), ("total", "over", "corners", 8.0),
+          ("odd_even", "even", "cards", None), ("btts", "yes", "points", None),
+          ("total", "under", "rounds", 2.5)]
+
+
+def _mixed(i, sport="football", league=None):
+    market, sel, stat, line = _MIXED[i % len(_MIXED)]
+    # 1.30 is below top_min_odds, so everything competes for Daily only
+    s = sc(ev(i, sport=sport, league=league), market, sel, 0.66, 1.30, line=line)
+    s.line.stat = stat
+    return s
+
+
+def test_mixed_pool_spreads_markets_and_sports():
+    now = dt()
+    pool = [_mixed(i, sport="football" if i % 2 == 0 else "basketball") for i in range(30)]
+    c = cfg()
+    ps = select(pool, c, now)
+
+    markets = Counter((s.line.market, s.line.stat) for s in ps.daily)
+    sports = Counter(s.event.sport for s in ps.daily)
+    assert len(ps.daily) >= 4
+    assert len(markets) >= 3 and len(sports) >= 2
+    assert max(markets.values()) <= math.ceil(c.daily_max_market_share * len(ps.daily))
+    assert max(sports.values()) <= math.ceil(c.daily_max_sport_share * len(ps.daily))
+    assert not ps.diagnostics.get("daily_caps_relaxed")
+
+
+def test_league_cap_limits_picks_from_one_competition():
+    now = dt()
+    # the Serie A block sorts first (equal rank, stable sort), so without the
+    # league cap it would take every slot before the other competitions
+    same = [_mixed(i, league="Serie A") for i in range(10)]
+    others = [_mixed(100 + i) for i in range(20)]
+    c = cfg()
+    ps = select(same + others, c, now)
+
+    assert sum(1 for s in ps.daily if s.event.league == "Serie A") <= c.daily_max_per_league
+    assert len({s.event.league for s in ps.daily}) > 1
+    assert not ps.diagnostics.get("daily_caps_relaxed")
+
+
+# ------------------------------------------------------------- stat share cap
+def _corners_stat(i, stat, market, sel, line):
+    s = sc(ev(i), market, sel, 0.66, 1.45, line=line)
+    s.line.stat = stat
+    return s
+
+
+def _other_stat(i):
+    market, sel, stat, line = _MIXED[i % len(_MIXED)]
+    s = sc(ev(i), market, sel, 0.66, 1.30, line=line)
+    s.line.stat = stat
+    return s
+
+
+def test_corners_across_several_markets_cannot_take_the_list():
+    """The (market, stat) cap sees corners totals and Corners 1X2 as two
+    different markets, so a pool dominated by corners lines - spread over
+    several corners markets and selections to sidestep the outcome-family cap
+    - used to fill the list with corners-stat picks anyway. The stat share
+    cap must hold corners-stat to DAILY_MAX_STAT_SHARE (0.40) even when
+    corners dominate the pool across different corners markets."""
+    now = dt()
+    corners_pool = []
+    i = 0
+    for stat, market, sels, line in (
+        ("corners", "total", ("over", "under"), 8.0),          # Corners totals
+        ("corners", "result3", ("home", "away"), None),        # Corners 1X2
+        ("corners", "odd_even", ("odd", "even"), None),        # Corners odd/even
+    ):
+        for sel in sels:
+            # fresh events per (market, selection) so per-event/league caps
+            # and cross-market contradiction checks never interfere
+            for _ in range(20):
+                corners_pool.append(_corners_stat(i, stat, market, sel, line))
+                i += 1
+    # Distinct non-corners markets priced below top_min_odds so everything
+    # competes for Daily: enough variety that the ticket can reach the floor
+    # while every cap is obeyed.
+    others = [_other_stat(1000 + j) for j in range(40)]
+
+    c = cfg()
+    ps = select(corners_pool + others, c, now)
+
+    corners = sum(1 for s in ps.daily if s.line.stat == "corners")
+    assert len(ps.daily) >= 4
+    assert corners <= max(1, math.ceil(c.daily_max_stat_share * len(ps.daily)))
+    assert corners / len(ps.daily) <= c.daily_max_stat_share + 1e-9

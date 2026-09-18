@@ -172,8 +172,14 @@ def selection_label(ml: MarketLine, home: str, away: str, sport: str = "football
 
     if m in ("result3", "result2"):
         core = "Draw" if s == "draw" else f"{team.get(s, s)} to Win"
+        if ml.stat not in ("points",):
+            # "Corners 1X2" / "Cards 1X2" settle on a count, not the score -
+            # a bare "X to Win" would read as the match result.
+            core += f" ({stat_word})"
     elif m == "dnb":
         core = f"{team.get(s, s)} (DNB)"
+        if ml.stat not in ("points",):
+            core += f" ({stat_word})"
     elif m == "dc":
         core = {"home_draw": f"{home} or Draw", "away_draw": f"{away} or Draw",
                 "home_away": f"{home} or {away}"}.get(s, s)
@@ -238,8 +244,12 @@ def short_selection(ml: MarketLine, home: str = "", away: str = "", sport: str =
 
     if m in ("result3", "result2"):
         core = {"home": "1", "draw": "X", "away": "2"}.get(s, s)
+        if ml.stat not in ("points",):
+            core += f" {stat_word}"
     elif m == "dnb":
         core = {"home": "1", "away": "2"}.get(s, s) + " DNB"
+        if ml.stat not in ("points",):
+            core += f" {stat_word}"
     elif m == "dc":
         core = {"home_draw": "1X", "away_draw": "X2", "home_away": "12"}.get(s, s)
     elif m == "btts":
