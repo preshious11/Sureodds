@@ -137,9 +137,18 @@ def unselected(cfg, scored, ps, now, trace):
               f"(corners-stat candidates: {n_corners})")
 
 
-def top_view(cfg, scored, ps, trace):
+def top_view(cfg, scored, ps, trace, exclude_sources=()):
     """Why Top is empty (or what it picked): the whole pool's highest-p legs,
-    the Top bar, and the best 2/3-leg products inside the 2.00-2.50 band."""
+    the Top bar, and the best 2/3-leg products inside the 2.00-2.50 band.
+
+    ``exclude_sources`` simulates a provider being out of quota: candidates
+    whose event.sources are EXACTLY that provider are dropped from the pool
+    first (an Odds API-only event can never be a fallback leg)."""
+    if exclude_sources:
+        n0 = len(scored)
+        scored = [s for s in scored if list(s.event.sources) != list(exclude_sources)]
+        print(f"\n== provider simulation: dropped events seen ONLY by "
+              f"{','.join(exclude_sources)} ({n0 - len(scored)} of {n0} candidates)")
     print("\n== TOP picks view")
     print(f"   bar: p_model>={cfg.top_min_prob}, len(sources)>=2, "
           f"agreement>={cfg.top_min_agreement}, price>={cfg.top_leg_odds_min}, no props")
@@ -175,6 +184,12 @@ def top_view(cfg, scored, ps, trace):
         seen_fx.add(fx)
         uniq.append(s)
     print(f"\n   -- candidates clearing the TOP bar (excl. ticket band): {len(uniq)} --")
+    fx = {(s.event.sport, s.event.home, s.event.away) for s in uniq}
+    psport = Counter(s.event.sport for s in uniq)
+    print(f"     across {len(fx)} distinct fixtures; by sport {dict(psport)}")
+    keep = [s for s in uniq if s.agreement >= cfg.top_min_agreement]
+    print(f"     surviving TOP_MIN_AGREEMENT ({cfg.top_min_agreement}): {len(keep)} "
+          f"across {len({(s.event.sport, s.event.home, s.event.away) for s in keep})} fixtures")
     for s in uniq[:10]:
         print(f"     p={s.p_model:.3f} {s.event.sport:10s} {s.label[:32]:32s} odds={s.price:.2f} "
               f"ev={s.ev:+.3f} agr={s.agreement:.2f}")
@@ -186,17 +201,24 @@ def top_view(cfg, scored, ps, trace):
     print(f"   combo search pool: {len(search)} legs priced >= 1.20 "
           f"(bar-pool price range {min((s.price for s in uniq), default=0):.2f}.."
           f"{max((s.price for s in uniq), default=0):.2f})")
+    n_fixtures = len({(s.event.sport, s.event.home, s.event.away) for s in uniq})
+    from predbot.selection.picker import _same_fixture as _picker_same_fixture
     best = []
     for size in (2, 3):
         for combo in combinations(search, size):
+            if any(_picker_same_fixture(a.event, b.event) for a, b in combinations(combo, 2)):
+                continue
             price = math.prod(s.price for s in combo)
             if cfg.top_odds_target <= price <= cfg.top_odds_max:
                 best.append((-math.prod(s.p_model for s in combo), size, price, combo))
     best.sort()
+    print(f"   realistic fallback-ticket search over {len(search)} legs priced >= 1.20: "
+          f"{len(best)} in-band combos found over {n_fixtures} distinct fixtures")
     if best:
-        print(f"   -- best in-band combos: {len(best)} --")
+        print(f"   -- best in-band combos in the {len(search)}-leg search pool: {len(best)} --")
         for _, size, price, combo in best[:5]:
-            legs = " | ".join(f"{s.label[:22]} {s.price:.2f}" for s in combo)
+            legs = " | ".join(f"{s.event.provider[:9]} {s.label[:24]} p={s.p_model:.3f} "
+                              f"odds={s.price:.2f} src={sorted(s.sources)}" for s in combo)
             print(f"     {size} legs ticket={price:.2f} p-product={math.prod(s.p_model for s in combo):.3f}: {legs}")
     else:
         print("   -- NO combination inside the 2.00-2.50 band from the bar-clearing pool --")
@@ -262,6 +284,10 @@ def main():
     ps = select(scored, cfg, now, top_priority_source=top_priority_source, trace=trace)
     unselected(cfg, scored, ps, now, trace)
     top_view(cfg, scored, ps, trace)
+    # The October scenario: Odds API out of quota. Cached oddsapi events are
+    # gone, so its legs can't enter; re-check what the FALLBACK pool alone
+    # can build before pushing.
+    top_view(cfg, scored, ps, trace, exclude_sources=("oddsapi",))
     ablation(cfg, scored, now)
 
 

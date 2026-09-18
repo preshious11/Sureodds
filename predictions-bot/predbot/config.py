@@ -106,7 +106,7 @@ class Config:
     #: day's stored picks stops a fixture from being posted twice.
     day_window_end_offset_hours: int = field(default_factory=lambda: _int("DAY_WINDOW_END_OFFSET_HOURS", 3))
     min_lead_minutes: int = field(default_factory=lambda: _int("MIN_LEAD_MINUTES", 30))
-    daily_min_odds: float = field(default_factory=lambda: _float("DAILY_MIN_ODDS", 1.30))
+    daily_min_odds: float = field(default_factory=lambda: _float("DAILY_MIN_ODDS", 1.20))
     daily_max_odds: float = field(default_factory=lambda: _float("DAILY_MAX_ODDS", 5.00))
     #: Top Picks is an accumulator: the search tries every 2..3-leg combination
     #: of different fixtures and keeps the one with the highest product of
@@ -142,7 +142,7 @@ class Config:
     #: Cross-market cap on one stat ("corners" can appear as totals AND 1X2
     #: result3 lines; the (market, stat) cap above sees them as two markets).
     daily_max_stat_share: float = field(default_factory=lambda: _float("DAILY_MAX_STAT_SHARE", 0.40))
-    daily_max_sport_share: float = field(default_factory=lambda: _float("DAILY_MAX_SPORT_SHARE", 0.50))
+    daily_max_sport_share: float = field(default_factory=lambda: _float("DAILY_MAX_SPORT_SHARE", 0.60))
     daily_max_per_league: int = field(default_factory=lambda: _int("DAILY_MAX_PER_LEAGUE", 3))
     model_shrink: float = field(default_factory=lambda: _float("MODEL_SHRINK_TO_MARKET", 0.80))
 
