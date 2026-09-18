@@ -221,7 +221,7 @@ def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str]
     if picks:
         prices = list(total_prices) if total_prices is not None else [p.price for p in picks]
         lines.append(f"Total Picks: {len(picks)}")
-        lines.append(f"Combined Odds: {combined_odds(prices):.4f}")
+        lines.append(f"Combined Odds: {combined_odds(prices):.2f}")
     if stats_line:
         lines.append("")
         lines.append(stats_line)

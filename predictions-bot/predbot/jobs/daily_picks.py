@@ -14,7 +14,7 @@ from predbot.model.calibration import Calibrator
 from predbot.model.elo import Elo
 from predbot.model.ensemble import EventModel, Scored
 from predbot.providers.base import Event
-from predbot.providers.chain import ProviderChain
+from predbot.providers.chain import ProviderChain, merge_events
 from predbot.selection.picker import PickSet, select
 from predbot.storage.db import Database
 from predbot.util.timeutil import iso, to_local, utcnow, day_bounds
@@ -44,12 +44,35 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     if start >= end:
         return PickSet()
     events = chain.collect(start, end)
+
+    # Top ticket priority source: The Odds API is tried first for the Top
+    # picks combo (kept out of provider_order so it never joins the Daily
+    # ticket's three-provider pool on its own). Its events are merged into the
+    # shared pool purely so a match it shares with the other three still
+    # dedupes/enriches normally; picker.select() decides who gets to build Top.
+    top_priority_source: Optional[str] = None
+    top_priority_report: Dict = {}
+    providers_map = chain.providers if isinstance(chain, ProviderChain) else None
+    oddsapi = providers_map.get("oddsapi") if providers_map else None
+    if oddsapi is not None and oddsapi.enabled() and cfg.top_provider_priority:
+        top_chain = ProviderChain(providers_map, cfg.top_provider_priority, cfg.chain_min_events)
+        top_chain.db, top_chain.cfg = chain.db, chain.cfg
+        oddsapi_events = top_chain.collect(start, end)
+        top_priority_report = getattr(top_chain, "last_report", {})
+        if oddsapi_events:
+            events = merge_events(events, oddsapi_events)
+            top_priority_source = "oddsapi"
+
     log.info("collected %d events (%d markets)", len(events), sum(len(e.markets) for e in events))
     scored = score_events(events, db, cfg)
-    ps = select(scored, cfg, now)
+    ps = select(scored, cfg, now, top_priority_source=top_priority_source)
+    # Completeness is judged on the three-provider Daily chain only, unchanged
+    # from before the Odds API existed; the Top-priority source has its own
+    # fallback (picker.select) so its own outages never flip the snapshot to PARTIAL.
     providers = getattr(chain, "last_report", {})
     ps.complete = bool(providers) and all(p["status"] == "complete" for p in providers.values())
     ps.diagnostics.update({"providers": providers,
+                           "top_priority_provider_report": top_priority_report,
                            "events_by_sport": dict(Counter(e.sport for e in events)),
                            "markets_by_sport": dict(Counter(e.sport for e in events for m in e.markets)),
                            "scored_by_sport": dict(Counter(s.event.sport for s in scored)),

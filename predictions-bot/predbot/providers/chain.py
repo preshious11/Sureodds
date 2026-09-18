@@ -17,6 +17,7 @@ from predbot.config import Config
 from predbot.providers.api_football import ApiFootballProvider
 from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult
 from predbot.providers.budget import Budget
+from predbot.providers.oddsapi import OddsApiProvider
 from predbot.providers.sharpapi import SharpApiProvider
 from predbot.providers.sportsgameodds import SportsGameOddsProvider
 from predbot.storage.db import Database
@@ -45,6 +46,10 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
                                            max_pages=cfg.sharpapi_max_pages, markets=cfg.sharpapi_markets,
                                            sports=cfg.sharpapi_sports,
                                            events_per_target=cfg.sharpapi_events_per_target)
+    if cfg.odds_api_key:
+        out["oddsapi"] = OddsApiProvider(cfg.odds_api_key, budget, min_interval=cfg.odds_api_min_interval,
+                                         regions=cfg.odds_api_regions,
+                                         max_leagues_per_sport=cfg.odds_api_max_leagues_per_sport)
     return out
 
 

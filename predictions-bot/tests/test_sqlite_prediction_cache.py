@@ -95,7 +95,9 @@ def test_miss_hit_and_restart_roundtrip(tmp_path, monkeypatch, clock):
     reopened.close()
 
 
-def test_partial_football_recovers_without_repeating_hockey(tmp_path, monkeypatch, clock):
+def test_partial_cache_served_after_restart_without_api_calls(tmp_path, monkeypatch, clock):
+    """PARTIAL cache is served for all non-force reads, even after restart and
+    retry_after expiry. Only force_refresh retries failed providers."""
     path = str(tmp_path / 'bot.db')
     db = Database(path)
     app, football, hockey = service(db, monkeypatch, football_error=True)
@@ -105,29 +107,34 @@ def test_partial_football_recovers_without_repeating_hockey(tmp_path, monkeypatc
     assert first.sport_status['football']['status'] == 'failed'
     assert first.sport_status['hockey']['status'] == 'success'
     assert db.get_prediction_cache(app._key(first.date))['status'] == 'PARTIAL'
+    # Multiple reads return identical snapshot
     for _ in range(4):
         assert app.get_daily_snapshot().to_dict() == first.to_dict()
     assert football.fetch_events.call_count == hockey.fetch_events.call_count == 1
-    # Restart while still partial: completed hockey portion must survive too.
+    # Restart while partial — same cached snapshot, zero provider calls.
     db.close()
     db = Database(path)
     app, football, hockey = service(db, monkeypatch)
-    hockey.fetch_events.side_effect = AssertionError('hockey fetched again')
-    clock[0] += timedelta(minutes=16)
+    hockey.fetch_events.side_effect = AssertionError('hockey must not be re-fetched')
+    football.fetch_events.side_effect = AssertionError('football must not be re-fetched without force')
+    clock[0] += timedelta(minutes=16)  # retry_after well expired
+    # Non-force read returns cached PARTIAL — no provider calls, even after retry expiry
     recovered = app.get_daily_snapshot()
-    assert recovered.status == 'COMPLETE'
-    assert recovered.sport_status['football']['status'] == 'success'
-    assert all_sports(recovered) == {'football', 'hockey'}
-    assert recovered.top_picks and recovered.daily_picks
+    assert recovered.status == 'PARTIAL'
+    assert recovered.to_dict() == first.to_dict()
+    assert recovered.sport_status['football']['status'] == 'failed'
+    assert all_sports(recovered) == {'hockey'}
+    hockey.fetch_events.assert_not_called()
+    football.fetch_events.assert_not_called()
+    assert len(db.query('SELECT * FROM prediction_cache')) == 1
+    # Only force_refresh retries the failed provider (hockey reused from provider_cache)
+    football.fetch_events.side_effect = None
+    forced = app.get_daily_snapshot(force_refresh=True)
+    assert forced.status == 'COMPLETE'
+    assert all_sports(forced) == {'football', 'hockey'}
+    assert forced.top_picks and forced.daily_picks
     football.fetch_events.assert_called_once()
     hockey.fetch_events.assert_not_called()
-    assert len(db.query('SELECT * FROM prediction_cache')) == 1
-    db.close()
-    db = Database(path)
-    fresh, f, b = service(db, monkeypatch)
-    assert fresh.get_daily_snapshot().to_dict() == recovered.to_dict()
-    f.fetch_events.assert_not_called()
-    b.fetch_events.assert_not_called()
     db.close()
 
 
@@ -214,15 +221,55 @@ def test_atomic_failure_keeps_previous_snapshot_and_picks(db, monkeypatch, clock
     assert len(db.picks_for_date(original.date)) == count
 
 
-def test_partial_refresh_exception_falls_back_and_throttles(db, monkeypatch, clock):
+def test_partial_cache_served_without_api_calls_after_retry_expiry(db, monkeypatch, clock):
+    """PARTIAL cache is served indefinitely (until force_refresh or new day),
+    even after retry_after expires. No automatic provider refresh on user views."""
     app, f, b = service(db, monkeypatch, football_error=True)
     first = app.get_daily_snapshot()
-    clock[0] += timedelta(minutes=16)
-    build = Mock(side_effect=RuntimeError('temporary model failure'))
+    assert first.status == 'PARTIAL'
+    f.fetch_events.reset_mock(); b.fetch_events.reset_mock()
+    clock[0] += timedelta(minutes=16)  # retry_after well expired
+    # build_picks must NOT be called for non-force reads, even after retry expiry
+    build = Mock(side_effect=RuntimeError('should never be called without force_refresh'))
     monkeypatch.setattr(daily_picks, 'build_picks', build)
     assert app.get_daily_snapshot().to_dict() == first.to_dict()
     assert app.get_daily_snapshot().to_dict() == first.to_dict()
-    build.assert_called_once()
+    build.assert_not_called()
+    f.fetch_events.assert_not_called()  # no provider calls
+    b.fetch_events.assert_not_called()
+
+
+def test_top_and_daily_views_return_identical_cached_picks(db, monkeypatch, clock):
+    """Scenario: /top and /daily button taps return identical cached picks.
+    Second call on each view = 0 provider API calls."""
+    app, f, b = service(db, monkeypatch)
+    first = app.get_daily_snapshot()
+    assert first.total_picks() > 0
+    f.fetch_events.assert_called_once()
+    b.fetch_events.assert_called_once()
+    # Reset mocks to measure subsequent (should-be-zero) calls
+    f.fetch_events.reset_mock(); b.fetch_events.reset_mock()
+    # /top twice — second returns identical snapshot, 0 API calls
+    from predbot.bot.callbacks import handle_command
+    from tests.test_subscribers_broadcast import FakeTG
+    tg = FakeTG()
+    first_calls_f, first_calls_b = f.fetch_events.call_count, b.fetch_events.call_count
+    handle_command('/top', '42', service=app, tg=tg, cfg=app.cfg)
+    assert f.fetch_events.call_count == first_calls_f
+    assert b.fetch_events.call_count == first_calls_b
+    text_first = tg.sends[-1]['text']
+    batches_after_first = app.api_batches
+    handle_command('/top', '42', service=app, tg=tg, cfg=app.cfg)
+    assert app.api_batches == batches_after_first  # 0 new API batches
+    assert f.fetch_events.call_count == first_calls_f
+    assert b.fetch_events.call_count == first_calls_b
+    assert tg.sends[-1]['text'] == text_first  # identical output
+    # /daily twice — second returns identical snapshot, 0 API calls
+    handle_command('/daily', '42', service=app, tg=tg, cfg=app.cfg)
+    daily_text = tg.sends[-1]['text']
+    handle_command('/daily', '42', service=app, tg=tg, cfg=app.cfg)
+    assert tg.sends[-1]['text'] == daily_text  # identical output
+    assert app.api_batches == batches_after_first  # still 0 new batches
 
 
 def test_concurrent_services_share_single_generation(tmp_path, monkeypatch, clock):

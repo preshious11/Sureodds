@@ -206,7 +206,7 @@ def test_view_combined_odds_come_from_the_same_list_as_the_cards():
                         (VIEW_DAILY, snap.top_picks + snap.daily_picks)):
         text, _ = pagination.render_page(snap, view, 0, 20, WAT)
         expected = combined_odds(p.price for p in items if format_outcome(p))
-        assert f"Combined Odds: {expected:.4f}" in text
+        assert f"Combined Odds: {expected:.2f}" in text
 
 
 # ================================================ 14/15: command == button parity
