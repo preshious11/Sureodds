@@ -50,7 +50,8 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
         out["oddsapi"] = OddsApiProvider(cfg.odds_api_key, budget, min_interval=cfg.odds_api_min_interval,
                                          regions=cfg.odds_api_regions,
                                          max_leagues_per_sport=cfg.odds_api_max_leagues_per_sport,
-                                         monthly_limit=cfg.odds_api_monthly_limit)
+                                         monthly_limit=cfg.odds_api_monthly_limit,
+                                         max_credits_per_cycle=cfg.oddsapi_max_credits_per_cycle)
     return out
 
 

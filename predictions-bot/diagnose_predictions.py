@@ -81,9 +81,10 @@ def main():
             'lt50': sum(s.p_model < .5 for s in candidates),
             'daily_ticket': sum(s.event.sport == sport for s in picks.all()),
             'top': sum(s.event.sport == sport for s in picks.top)}
-        gates = [('odds', lambda s: cfg.top_min_odds <= s.price <= cfg.top_max_odds),
+        gates = [('odds', lambda s: s.price >= cfg.top_leg_odds_min),
                  ('confidence', lambda s: s.p_model >= cfg.top_min_prob),
-                 ('positive_ev', lambda s: s.ev >= cfg.top_min_ev),
+                 ('disagreement_floor', lambda s: not (set(s.sources) - {"market"})
+                  or s.ev >= cfg.top_max_neg_ev),
                  ('agreement', lambda s: s.agreement >= .5),
                  ('two_sources', lambda s: len(s.sources) >= 2),
                  ('no_props', lambda s: s.line.market != 'prop')]

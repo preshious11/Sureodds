@@ -69,7 +69,7 @@ def test_top_search_bounds_count_and_unique_matches():
     # never selected, and sizes above 3 (when configured) search a trimmed
     # pool to keep the combinatorial search bounded.
     pool = [sc(ev(i // 2), 'result3', 'home', .75, 1.25 + i / 1000) for i in range(120)]
-    result = select(pool, Config(top_min_odds=1.2, top_legs_max=5), dt())
+    result = select(pool, Config(top_leg_odds_min=1.0, top_legs_max=5), dt())
     assert 2 <= len(result.top) <= 5
     assert len({s.event.dedupe_key() for s in result.top}) == len(result.top)
     assert result.diagnostics['combinations_checked'] <= 60000
@@ -77,7 +77,7 @@ def test_top_search_bounds_count_and_unique_matches():
 
 def test_top_three_pick_combination():
     result = select([sc(ev(i), 'result3', 'home', .8, 1.27) for i in range(3)],
-                    Config(top_min_odds=1.2), dt())
+                    Config(top_leg_odds_min=1.2), dt())
     assert len(result.top) == 3
     assert prod(s.price for s in result.top) == pytest.approx(1.27 ** 3)
 
@@ -108,6 +108,8 @@ def test_generation_uses_lagos_day_including_utc_previous_date(db, monkeypatch):
     assert result.top
     start, end = chain.collect.call_args.args
     assert start <= event.start < end
+    # end = min(local midnight + DAY_WINDOW_END_OFFSET_HOURS, now + 24h):
+    # with PICK_WINDOW_HOURS=24 the +24h bound binds here.
     assert end == datetime(2030, 6, 2, 23, tzinfo=timezone.utc)
 
 

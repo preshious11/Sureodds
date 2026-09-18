@@ -40,10 +40,25 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     day = to_local(now, cfg.timezone).date().isoformat()
     start = now + timedelta(minutes=cfg.min_lead_minutes)
     _, midnight = day_bounds(now, cfg.timezone)
-    end = min(midnight, now + timedelta(hours=cfg.pick_window_hours))
+    midnight_end = midnight + timedelta(hours=max(0, cfg.day_window_end_offset_hours))
+    end = min(midnight_end, now + timedelta(hours=cfg.pick_window_hours))
     if start >= end:
         return PickSet()
     events = chain.collect(start, end)
+
+    # Dedupe against PREVIOUS days' stored picks: the window now runs to local
+    # midnight +3h, so a fixture picked late yesterday would otherwise
+    # re-enter today's generation. Same-day regeneration is not deduped here
+    # (store_picks already refuses duplicate selections per day).
+    matched = {(r["sport"], str(r["home"]), str(r["away"]))
+               for r in db.previous_pick_fixtures(day)}
+    if matched:
+        before = len(events)
+        events = [e for e in events
+                  if (e.sport, e.home, e.away) not in matched]
+        dropped = before - len(events)
+        if dropped:
+            log.info("dropped %d events already picked on a previous day", dropped)
 
     # Top ticket priority source: The Odds API is tried first for the Top
     # picks combo (kept out of provider_order so it never joins the Daily

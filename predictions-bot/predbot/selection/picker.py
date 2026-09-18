@@ -55,13 +55,20 @@ def _settleable(s: Scored) -> bool:
     return ml.market == "prop" and "sportsgameodds" in s.event.sources and bool(ml.provider_odd_id)
 
 
+def _ev_tiebreak(ev: float) -> float:
+    """EV mapped to [0, 1] over [-0.05, +0.10] - only ever a small tiebreaker,
+    since this is a confidence product, not an edge product."""
+    return min(max(ev, -0.05), 0.10) + 0.05
+
+
 def _top_score(s: Scored) -> float:
-    return 0.70 * s.p_model + 0.20 * min(max(s.ev, 0.0), 0.12) / 0.12 + 0.10 * s.agreement
+    """Confidence-first: p_model dominates; EV is only a tiebreaker."""
+    return 0.80 * s.p_model + 0.20 * s.agreement + 0.02 * _ev_tiebreak(s.ev)
 
 
 def _daily_score(s: Scored) -> float:
-    base = 0.50 * s.p_model + 0.30 * min(max(s.ev, 0.0), 0.15) / 0.15 + 0.20 * s.agreement
-    base -= 0.05 * (1 - s.liquidity)
+    base = 0.60 * s.p_model + 0.25 * s.agreement + 0.10 * s.liquidity
+    base += 0.05 * (_ev_tiebreak(s.ev) / 0.15)
     if s.line.market == "prop":
         base -= 0.05
     return base
@@ -118,14 +125,22 @@ def choose_top(pool: List[Scored], cfg: Config):
         for group in combinations(pool, size):
             if len({s.event.dedupe_key() for s in group}) != size:
                 continue
+            if any(_same_fixture(a.event, b.event) for a, b in combinations(group, 2)):
+                # Same real fixture via two providers (fuzzy team/time match)
+                # is still one bet twice - never two legs of one ticket.
+                continue
             checked += 1
             price = math.prod(s.price for s in group)
             if price > cfg.top_odds_max:
                 # Hard reject: never just deprioritized. A combo over the
                 # ceiling is not a worse option, it is not an option.
                 continue
-            band = 0 if target <= price <= target * 1.05 else 1 if price >= target else 2
-            key = (band, abs(price - target), -sum(_top_score(s) for s in group) / size,
+            if price < cfg.top_odds_target:
+                # The ticket must reach the 2.00 floor - shorter combos that
+                # fall under it are simply not the product.
+                continue
+            key = (-math.prod(s.p_model for s in group),      # confidence first
+                   abs(price - target),                       # then closeness to 2.0
                    -len({selection_family(s.line) for s in group}), size)
             if best_key is None or key < best_key:
                 best, best_key = list(group), key
@@ -167,13 +182,17 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         if s.line.market == "prop":
             top_rejected["PLAYER_PROP"] += 1
             continue
-        if not (cfg.top_min_odds <= s.price <= cfg.top_max_odds):
+        if not (s.price >= cfg.top_leg_odds_min):     # data-sanity floor only
             top_rejected["BELOW_THRESHOLD"] += 1
             continue
         if not (s.p_model >= cfg.top_min_prob):
             top_rejected["BELOW_THRESHOLD"] += 1
             continue
-        if not (s.ev >= cfg.top_min_ev):
+        # Confidence product, not an edge product: market-only candidates skip
+        # the EV gate (their EV is negative by construction); candidates with
+        # an independent signal are rejected only when that signal says the
+        # market is materially overpricing the selection.
+        if set(s.sources) - {"market"} and s.ev < cfg.top_max_neg_ev:
             top_rejected["BELOW_THRESHOLD"] += 1
             continue
         if not (s.agreement >= cfg.top_min_agreement):
@@ -235,7 +254,11 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         if not (s.p_model >= cfg.daily_min_prob):
             daily_rejected["BELOW_THRESHOLD"] += 1
             continue
-        if not (s.ev >= cfg.daily_min_ev):
+        if set(s.sources) - {"market"} and s.ev < cfg.daily_max_neg_ev:
+            # Confidence product: market-only candidates (EV negative by
+            # construction) skip the EV gate entirely; candidates with an
+            # independent signal are rejected only when that signal says the
+            # market is materially overpricing the selection.
             daily_rejected["BELOW_THRESHOLD"] += 1
             continue
         if not (s.agreement >= 0.30):

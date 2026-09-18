@@ -84,7 +84,7 @@ class UnifiedFetcher:
                     self._store(snapshot, now)
                 return snapshot
             except Exception as exc:
-                log.warning('Cache refresh failed | date=%s | error=%s', day, type(exc).__name__)
+                log.warning('Cache refresh failed | date=%s | error=%s', day, type(exc).__name__, exc_info=exc)
                 if cached is not None:
                     # Preserve the previous atomic snapshot, and throttle subsequent
                     # attempts even when failure happened after provider collection.

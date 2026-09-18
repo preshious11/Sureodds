@@ -311,7 +311,12 @@ class Database:
 
     def recent_pick_keys(self, days: int = 1) -> List[sqlite3.Row]:
         since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
-        return self.query("SELECT provider_event_id, market, period, stat, entity, line, selection, home, away FROM picks WHERE pick_date>=?", (since,))
+        return self.query("SELECT provider_event_id, sport, market, period, stat, entity, line, selection, home, away FROM picks WHERE pick_date>=?", (since,))
+
+    def previous_pick_fixtures(self, before_date: str) -> List[sqlite3.Row]:
+        """sport/home/away of picks stored on strictly earlier days - used to
+        keep a late-evening fixture from being posted on two consecutive days."""
+        return self.query("SELECT DISTINCT sport, home, away FROM picks WHERE pick_date<?", (before_date,))
 
     # ---- ratings ----
     def get_rating(self, sport: str, team: str):

@@ -46,6 +46,16 @@ def odds_payload(sport_title="EPL", commence="2030-06-01T19:00:00Z"):
     }]
 
 
+def event_list_payload(commence="2030-06-01T19:00:00Z", sport_key="soccer_epl"):
+    # GET /sports/{key}/events (free): bare event rows, no odds.
+    return [{"id": "evt-1", "sport_key": sport_key, "commence_time": commence,
+             "home_team": "Arsenal", "away_team": "Chelsea"}]
+
+
+def empty_events():
+    return []
+
+
 def make_provider(budget, responses, max_leagues_per_sport=8):
     p = OddsApiProvider("k", budget, max_leagues_per_sport=max_leagues_per_sport)
     p.http = Mock()
@@ -71,8 +81,9 @@ def test_discover_sports_drops_non_football_tennis(budget):
 def test_fetch_events_normalizes_h2h_totals_and_spreads_into_market_lines(budget):
     p = make_provider(budget, [
         sports_payload(),
-        odds_payload(),   # football league feed
-        [],                # tennis league feed, empty
+        event_list_payload(),   # soccer_epl events (free)
+        empty_events(),          # tennis events (free, none)
+        odds_payload(),          # football league odds (spends 3 credits)
     ])
     events = p.fetch_events(dt(), dt(hh=23))
     assert len(events) == 1
@@ -90,32 +101,70 @@ def test_fetch_events_normalizes_h2h_totals_and_spreads_into_market_lines(budget
     assert markets[("total", "under", 2.5)] == 1.95
 
 
-def test_fetch_events_drops_events_outside_window(budget):
+def test_fetch_events_drops_events_outside_window_without_spending_credits(budget):
     p = make_provider(budget, [
         sports_payload(),
-        odds_payload(commence="2030-06-05T19:00:00Z"),  # far outside window
-        [],
+        event_list_payload(commence="2030-06-05T19:00:00Z"),  # far outside window
+        empty_events(),
     ])
     events = p.fetch_events(dt(), dt(hh=23))
     assert events == []
+    # Only the free endpoints were called: /sports and per-key /events.
+    assert p.http.get.call_count == 3
+    assert p.budget.used_month("oddsapi") == 0
 
 
-def test_discover_sports_prioritizes_major_leagues_and_caps_count(budget):
+def test_sport_keys_prioritized_but_not_capped_at_discovery(budget):
     payload = [{"key": "soccer_league_of_ireland"}, {"key": "soccer_epl"},
                {"key": "soccer_spain_la_liga"}, {"key": "soccer_china_superleague"}]
-    p = make_provider(budget, [payload], max_leagues_per_sport=2)
+    p = make_provider(budget, [payload])
     discovered = p._discover_sports()
-    # EPL/La Liga are in FOOTBALL_LEAGUE_PRIORITY, so they win the 2-league cap
-    # even though the unranked leagues appeared first in the raw feed.
-    assert discovered["football"] == ["soccer_epl", "soccer_spain_la_liga"]
+    # EPL/La Liga come first via FOOTBALL_LEAGUE_PRIORITY; the credit cap (not
+    # a discovery cap) decides how many of them are actually fetched.
+    assert discovered["football"] == ["soccer_epl", "soccer_spain_la_liga",
+                                      "soccer_china_superleague", "soccer_league_of_ireland"]
 
 
 def test_fetch_events_accepts_any_bookmaker_by_default(budget):
     payload = odds_payload()
     payload[0]["bookmakers"][0]["key"] = "winamax_de"  # not in any hardcoded allowlist
-    p = make_provider(budget, [sports_payload(), payload, []])
+    p = make_provider(budget, [sports_payload(), event_list_payload(), empty_events(), payload])
     events = p.fetch_events(dt(), dt(hh=23))
     assert events and events[0].markets
+
+
+def test_credit_cap_limits_keys_fetched_per_cycle(budget):
+    """Every key has in-window events, but the per-cycle credit cap (15 at
+    3 credits/key) means only 5 odds requests are ever made."""
+    many = [{"key": f"soccer_x{i}", "title": f"X{i}", "group": "Soccer"}
+            for i in range(8)]
+    upcoming = [{"id": f"e{i}", "sport_key": f"soccer_x{i}",
+                 "commence_time": "2030-06-01T19:00:00Z",
+                 "home_team": f"H{i}", "away_team": f"A{i}"} for i in range(8)]
+    p = OddsApiProvider("k", budget, max_credits_per_cycle=15)   # 15 // 3 = 5 keys
+    p.http = Mock()
+    p.http.get = Mock(side_effect=[many]
+                      + [[{"id": f"e{i}", "sport_key": f"soccer_x{i}",
+                           "commence_time": "2030-06-01T19:00:00Z",
+                           "home_team": f"H{i}", "away_team": f"A{i}"}] for i in range(8)]
+                      + [odds_payload()] * 8)
+    p.fetch_events(dt(), dt(hh=23))
+    odds_calls = p.http.get.call_count - 9   # minus /sports and 8 free /events calls
+    assert odds_calls == 5
+    assert p.budget.used_month("oddsapi") == 15
+
+
+def test_zero_event_keys_never_cost_credits(budget):
+    p = make_provider(budget, [
+        sports_payload(),
+        empty_events(),          # soccer_epl: no in-window events -> no odds request
+        event_list_payload(commence="2030-06-01T20:00:00Z", sport_key="tennis_atp_us_open"),
+        odds_payload(),          # tennis odds fetch (3 credits)
+    ])
+    events = p.fetch_events(dt(), dt(hh=23))
+    # football key had no in-window events -> no odds request for it
+    assert p.http.get.call_count == 4
+    assert p.budget.used_month("oddsapi") == 3
 
 
 def test_fetch_result_and_find_result_return_none(budget):
@@ -132,8 +181,13 @@ def test_enabled_requires_key(budget):
 # ------------------------------------------------------- Top-picks priority
 
 def oddsapi_football_event(price=1.60, i=1):
+    # Genuinely distinct club names: same_team() fuzzily matches names that
+    # differ only by a trailing digit, and choose_top now refuses two legs
+    # from the same real fixture even across providers.
+    clubs = [("Real Madrid", "Valencia"), ("Ajax", "Feyenoord"), ("Porto", "Braga")]
+    home, away = clubs[(i - 1) % len(clubs)]
     e = Event(provider="oddsapi", provider_event_id=f"oa{i}", sport="football", league="L",
-              home=f"OddsHome{i}", away=f"OddsAway{i}", start=dt(hh=22), sources=["oddsapi"])
+              home=home, away=away, start=dt(hh=22), sources=["oddsapi"])
     e.markets = [MarketLine("result3", "home", price)]
     return e
 
