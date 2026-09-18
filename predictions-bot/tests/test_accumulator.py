@@ -92,13 +92,15 @@ def test_no_duplicate_outcome_between_top_and_daily_sections():
                 assert not is_equivalent(t.line, d.line)
 
 
-def test_same_match_with_different_outcomes_is_allowed():
+def test_same_match_with_different_outcomes_is_capped_at_one_pick():
+    """MAX_PICKS_PER_EVENT=1: two legs on one match are correlated, so even
+    genuinely different outcomes never both make the slate."""
     now = dt()
     e = ev(1)
     pool = [sc(e, "result3", "home", 0.70, 1.80),
             sc(e, "total", "over", 0.64, 1.80, line=2.5)]
     ps = select(pool, cfg(), now)
-    assert len(ps.all()) == 2        # both survive, distinct outcomes
+    assert len(ps.all()) == 1
 
 
 # -------------------------------------------------- section total counts

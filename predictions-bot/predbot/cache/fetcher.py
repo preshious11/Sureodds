@@ -42,7 +42,14 @@ class UnifiedFetcher:
             log.warning('Cache STALE | date=%s | invalid payload', day)
             return None, None
 
-    def get_daily_snapshot(self, force_refresh=False, allow_api_call=True):
+    def get_daily_snapshot(self, force_refresh=False, allow_api_call=True, persist=True):
+        """Today's snapshot, generating it when missing.
+
+        ``persist=False`` is the read-only mode for dry runs and diagnostics: the
+        snapshot is generated and returned but NOTHING is written - not the
+        prediction_cache row (what /top and /daily serve), not the picks table
+        (what settlement, recaps and /stats read). A test tool must never change
+        what subscribers are served."""
         now = utcnow()
         day = to_local(now, self.cfg.timezone).date().isoformat()
         # All service instances for the same SQLite file share this in-process lock.
@@ -79,21 +86,24 @@ class UnifiedFetcher:
                 if cached and cached.total_picks() and not snapshot.total_picks() and not pickset.complete:
                     snapshot.top_picks = cached.top_picks
                     snapshot.daily_picks = cached.daily_picks
-                with self.db.transaction():
-                    daily_picks.store_picks(pickset, self.db, day)
-                    self._store(snapshot, now)
+                if persist:
+                    with self.db.transaction():
+                        daily_picks.store_picks(pickset, self.db, day)
+                        self._store(snapshot, now)
                 return snapshot
             except Exception as exc:
                 log.warning('Cache refresh failed | date=%s | error=%s', day, type(exc).__name__, exc_info=exc)
                 if cached is not None:
                     # Preserve the previous atomic snapshot, and throttle subsequent
                     # attempts even when failure happened after provider collection.
-                    self.db.defer_prediction_retry(self._key(day), iso(now + timedelta(seconds=self.cfg.cache_retry_seconds)))
+                    if persist:
+                        self.db.defer_prediction_retry(self._key(day), iso(now + timedelta(seconds=self.cfg.cache_retry_seconds)))
                     return cached
                 snapshot = DailySnapshot(date=day, generated_at=iso(now), origin='sqlite',
                                          status='PARTIAL', generation={'complete': False,
                                          'error_type': type(exc).__name__})
-                self._store(snapshot, now)
+                if persist:
+                    self._store(snapshot, now)
                 return snapshot
 
     def _store(self, snapshot, now):

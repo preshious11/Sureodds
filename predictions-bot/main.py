@@ -24,7 +24,7 @@ DELIVERY_POLL_MINUTES = 5
 
 def main() -> None:
     cfg = load_config()
-    setup_logging(cfg.log_level)
+    setup_logging(cfg.log_level, cfg.log_file)
     db = Database(cfg.db_path)
     providers = build_providers(cfg, db)
     if not providers:

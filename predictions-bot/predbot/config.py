@@ -38,6 +38,15 @@ def _list(name: str, default: str = "") -> List[str]:
     return [x.strip() for x in raw.split(",") if x.strip()]
 
 
+def _default_log_file() -> str:
+    raw = _env("LOG_FILE", "")
+    if raw.lower() in ("none", "off", "false", "0"):
+        return ""
+    if raw:
+        return raw
+    return os.path.join(os.path.dirname(_env("DB_PATH", "./data/predbot.db")) or ".", "predbot.log")
+
+
 @dataclass
 class Config:
     cache_retry_seconds: int = field(default_factory=lambda: max(60, _int("CACHE_RETRY_SECONDS", 900)))
@@ -135,7 +144,9 @@ class Config:
     #: selection may enter the Top ticket (0.50 = the historical bar). Lowering
     #: it admits model-vs-market disagreement picks; the default is unchanged.
     top_min_agreement: float = field(default_factory=lambda: _float("TOP_MIN_AGREEMENT", 0.50))
-    max_picks_per_event: int = field(default_factory=lambda: _int("MAX_PICKS_PER_EVENT", 2))
+    #: One selection per real fixture across Top + Daily: two legs on one match are
+    #: correlated, so the slate never carries both.
+    max_picks_per_event: int = field(default_factory=lambda: _int("MAX_PICKS_PER_EVENT", 1))
     max_player_props: int = field(default_factory=lambda: _int("MAX_PLAYER_PROPS", 2))
     #: Daily-list diversity quotas, so one market (e.g. corners totals), one
     #: sport or one league can never take over the single daily ticket. Shares
@@ -163,6 +174,9 @@ class Config:
     # Storage / logging
     db_path: str = field(default_factory=lambda: _env("DB_PATH", "./data/predbot.db"))
     log_level: str = field(default_factory=lambda: _env("LOG_LEVEL", "INFO"))
+    #: Rotating log file (2 MB x 5). Default: predbot.log next to the database.
+    #: LOG_FILE=none disables it.
+    log_file: str = field(default_factory=lambda: _default_log_file())
 
     def __post_init__(self) -> None:
         """A malformed env var already falls back to its default in _float/_int;

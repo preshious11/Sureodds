@@ -61,7 +61,7 @@ def test_top_search_finds_better_pair_than_greedy_single():
     result = select(pool, Config(), dt())
     assert sorted(s.price for s in result.top) == [1.38, 1.5]
     assert prod(s.price for s in result.top) == pytest.approx(2.07)
-    assert result.diagnostics['combinations_checked'] > 1
+    assert result.diagnostics['combinations_checked'] >= 1     # complete in-band tickets evaluated
 
 
 def test_top_search_bounds_count_and_unique_matches():

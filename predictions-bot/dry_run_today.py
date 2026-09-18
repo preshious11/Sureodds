@@ -1,7 +1,14 @@
 """Full dry run for today: Daily Picks (per-sport / per-stat counts) and Top
 Picks, each leg with provider, league, market, p_model, odds and ev.
 
-Usage: python dry_run_today.py [--force]   (--force re-fetches live providers)
+Usage: python dry_run_today.py [--force] [--persist]
+
+READ-ONLY by default: generates the slate and prints it, but writes NOTHING to
+the prediction cache or the picks table, so it can never change what /top and
+/daily serve. Pass --persist to store the result exactly like the first
+request of the day would. (Provider fetches still warm the provider cache and
+count against API budgets - that bookkeeping reflects real API spend.)
+--force additionally re-fetches live providers.
 """
 from __future__ import annotations
 
@@ -34,22 +41,29 @@ def fmt(ps, cfg):
     return "\n".join(lines)
 
 
-def main():
-    force = "--force" in sys.argv
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    force, persist = "--force" in argv, "--persist" in argv
     cfg = load_config()
     db = Database(cfg.db_path)
     from predbot.providers.chain import build_providers, ProviderChain
     providers = build_providers(cfg, db)
     chain = ProviderChain(providers, cfg.provider_order, cfg.chain_min_events)
     service = UnifiedFetcher(chain, db, cfg)
-    ps = service.get_daily_snapshot(force_refresh=force)
+    print("MODE: " + ("PERSIST - the result WILL be stored and served" if persist
+                      else "READ-ONLY - nothing is written to the snapshot or picks tables"))
+    if persist:
+        snap = service.get_daily_snapshot(force_refresh=force, persist=True)
+    else:
+        # what subscribers are being served right now (no generation, no writes)
+        snap = service.get_daily_snapshot(allow_api_call=False, persist=False)
     # re-run the picker over the same pool to show per-leg detail (snapshot rows
-    # don't carry sources dicts)
+    # don't carry sources dicts); build_picks itself never persists
     from predbot.jobs.daily_picks import build_picks
     pickset = build_picks(chain, db, cfg)
     print(fmt(pickset, cfg))
-    print(f"\n== stored snapshot: top={len(ps.top_picks)} daily={len(ps.daily_picks)} "
-          f"status={ps.status}")
+    label = "stored snapshot" if persist else "snapshot currently served (unchanged)"
+    print(f"\n== {label}: top={len(snap.top_picks)} daily={len(snap.daily_picks)} status={snap.status}")
     return 0
 
 

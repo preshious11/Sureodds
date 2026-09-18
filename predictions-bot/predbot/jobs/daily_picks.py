@@ -15,6 +15,7 @@ from predbot.model.calibration import Calibrator
 from predbot.model.elo import Elo
 from predbot.model.ensemble import EventModel, Scored
 from predbot.providers.base import Event
+from predbot.providers.budget import Budget
 from predbot.providers.chain import ProviderChain, merge_events
 from predbot.selection.picker import PickSet, same_fixture, select
 from predbot.storage.db import Database
@@ -36,6 +37,28 @@ def score_events(events: List[Event], db: Database, cfg: Config) -> List[Scored]
     return scored
 
 
+def _api_usage(chain, before=None):
+    """Per-provider API calls used today. Called before collection for a
+    baseline, then again with that baseline to get {provider: {cycle, today,
+    limit}} - the calls THIS generation cycle spent, measured from the budget
+    table rather than guessed."""
+    out = {}
+    providers = getattr(chain, "providers", None)
+    if not isinstance(providers, dict):
+        return out
+    for name, prov in providers.items():
+        budget = getattr(prov, "budget", None)
+        if not isinstance(budget, Budget):
+            continue
+        today = budget.used_today(name)
+        if before is None:
+            out[name] = today
+        else:
+            out[name] = {"cycle": today - before.get(name, today), "today": today,
+                         "limit": getattr(prov, "daily_limit", None)}
+    return out
+
+
 def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[datetime] = None) -> PickSet:
     now = now or utcnow()
     day = to_local(now, cfg.timezone).date().isoformat()
@@ -45,6 +68,7 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     end = min(midnight_end, now + timedelta(hours=cfg.pick_window_hours))
     if start >= end:
         return PickSet()
+    usage_before = _api_usage(chain)
     events = chain.collect(start, end)
 
     # Dedupe against PREVIOUS days' stored picks: the window runs to local
@@ -88,6 +112,9 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
             events = merge_events(events, priority_events)
             top_priority_source = top_chain.order[0] if top_chain.order else None
 
+    api_usage = _api_usage(chain, usage_before)
+    log.info("API usage this cycle: %s", {n: f"+{u['cycle']} ({u['today']}/{u['limit'] or '?'} today)"
+                                          for n, u in api_usage.items()})
     log.info("collected %d events (%d markets)", len(events), sum(len(e.markets) for e in events))
     scored = score_events(events, db, cfg)
     ps = select(scored, cfg, now, top_priority_source=top_priority_source)
@@ -96,7 +123,7 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     # fallback (picker.select) so its own outages never flip the snapshot to PARTIAL.
     providers = getattr(chain, "last_report", {})
     ps.complete = bool(providers) and all(p["status"] == "complete" for p in providers.values())
-    ps.diagnostics.update({"providers": providers,
+    ps.diagnostics.update({"providers": providers, "api_usage": api_usage,
                            "top_priority_provider_report": top_priority_report,
                            "events_by_sport": dict(Counter(e.sport for e in events)),
                            "markets_by_sport": dict(Counter(e.sport for e in events for m in e.markets)),
@@ -133,7 +160,9 @@ def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram],
     from predbot.cache.fetcher import UnifiedFetcher
     from predbot.bot.broadcast import picks_text
     service = service or UnifiedFetcher(chain, db, cfg)
-    snapshot = service.get_daily_snapshot(force_refresh=force)
+    # dry_run must be genuinely read-only: it used to skip only the Telegram send
+    # while still writing the snapshot and picks that /daily serves.
+    snapshot = service.get_daily_snapshot(force_refresh=force, persist=not dry_run)
     if not snapshot.total_picks():
         return snapshot
     text = picks_text(snapshot, cfg.timezone)

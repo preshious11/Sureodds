@@ -20,9 +20,9 @@ from __future__ import annotations
 
 import logging
 import math
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from collections import Counter
-from itertools import combinations
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
@@ -104,6 +104,17 @@ def same_fixture(a, b) -> bool:
     return same_team(a.home, b.home) and same_team(a.away, b.away)
 
 
+#: Hard ceiling on complete tickets evaluated by choose_top(). Real pools have
+#: continuous probabilities, so pruning finishes after a handful (4 on a
+#: 1,255-leg pool); this only matters for pathological ties (hundreds of legs
+#: with identical p_model), where the best ticket found so far is returned.
+MAX_TOP_TICKETS_EVALUATED = 50_000
+
+
+class _SearchBudgetSpent(Exception):
+    pass
+
+
 def fixture_conflicts(events) -> List[set]:
     """For each event, the set of OTHER indices that are the same real-world
     match: an identical dedupe_key(), or the fuzzy same_fixture() match (one
@@ -135,53 +146,126 @@ def _duplicates_a_top_pick(s: Scored, top: List[Scored]) -> bool:
 
 
 def choose_top(pool: List[Scored], cfg: Config):
-    """Bounded deterministic search, retaining quality bars and unique matches.
+    """Exact, band-aware search for the Top accumulator: the 2..3-leg combination
+    of DIFFERENT fixtures whose combined odds sit in [TOP_COMBINED_ODDS,
+    TOP_ODDS_MAX] with the highest joint confidence (product of p_model), ties
+    broken by closeness to the target, outcome-family variety, then fewer legs.
 
-    Collapse identical match/price options to the strongest, then reserve half
-    the 60-option budget for strength and half for low-odds combination options.
-    """
-    ranked = sorted(pool, key=lambda s: (-_top_score(s), s.event.dedupe_key(), s.line.key().__repr__()))
+    No shortlist: a pre-trim by score/price silently discarded every leg priced
+    high enough to reach the band (confident legs are short-priced, so the 60
+    "best" legs could never multiply to 2.00 - Top came back empty with 1,255
+    qualifying legs). Instead the legs are sorted by price and a depth-first
+    search only ever visits partners inside the band's interval - a leg at odds
+    o needs the rest of the ticket in [target/o, ceiling/o] - found by bisect,
+    and a branch is cut as soon as its best possible joint confidence cannot
+    beat the best ticket found so far. Sizes are searched smallest first, so a
+    2-leg answer seeds the pruning of the 3-leg search.
+
+    Returns (legs, combinations_checked) where combinations_checked counts the
+    complete tickets actually evaluated (bounded by MAX_TOP_TICKETS_EVALUATED)."""
+    target, ceiling = cfg.top_odds_target, cfg.top_odds_max
+    min_size = max(1, cfg.top_legs_min)
+    max_size = max(min_size, cfg.top_legs_max)
+
+    # Identical fixture + price collapses to the most confident leg.
+    ranked = sorted(pool, key=lambda s: (-s.p_model, -_top_score(s), s.event.dedupe_key(), repr(s.line.key())))
     unique = {}
     for s in ranked:
         unique.setdefault((s.event.dedupe_key(), round(s.price, 4)), s)
-    options = list(unique.values())
-    if len(options) > 60:
-        options = options[:30] + sorted(options[30:], key=lambda s: (s.price, -_top_score(s), s.event.dedupe_key()))[:30]
-    target = cfg.top_odds_target
-    best, best_key, checked = [], None, 0
-    # Which legs are the same real fixture, computed once (not per combination).
-    index = {id(s): i for i, s in enumerate(options)}
-    conflicts = fixture_conflicts([s.event for s in options])
-    # Top Picks is a 2-3 leg accumulator: legs below top_legs_min are never
-    # tried, so a single strong-priced candidate can no longer win outright.
-    # Ticket sizes above 3 explode combinatorially, so the search pool is
-    # trimmed further for those sizes.
-    min_size = max(1, cfg.top_legs_min)
-    max_size = max(min_size, cfg.top_legs_max)
-    for size in range(min_size, max_size + 1):
-        pool = options if size <= 3 else options[:20]
-        for group in combinations(pool, size):
-            legs = {index[id(s)] for s in group}
-            if any(conflicts[i] & legs for i in legs):
-                # Two legs on one real fixture (incl. the same match seen via
-                # two providers) is one bet twice - never two legs of a ticket.
+    options = sorted(unique.values(),
+                     key=lambda s: (s.price, -s.p_model, s.event.dedupe_key(), repr(s.line.key())))
+    n = len(options)
+    if n < min_size:
+        return [], 0
+    prices = [s.price for s in options]
+    qs = [s.p_model for s in options]
+    families = [selection_family(s.line) for s in options]
+    pmax, qmax = prices[-1], max(qs)
+
+    # Which legs are the same real fixture: computed once, at EVENT level (a
+    # match has many legs but is one event), never per combination.
+    event_pos: Dict[str, int] = {}
+    events = []
+    leg_event = []
+    for s in options:
+        key = s.event.dedupe_key()
+        if key not in event_pos:
+            event_pos[key] = len(events)
+            events.append(s.event)
+        leg_event.append(event_pos[key])
+    conflicts = fixture_conflicts(events)
+
+    def clash(a: int, b: int) -> bool:
+        ea, eb = leg_event[a], leg_event[b]
+        return ea == eb or eb in conflicts[ea]
+
+    # Sparse table over p_model: the most confident leg in any price window in
+    # O(1), so a whole window is discarded when even it cannot beat the best.
+    table = [qs]
+    span = 1
+    while span * 2 <= n:
+        prev = table[-1]
+        table.append([max(prev[i], prev[i + span]) for i in range(n - 2 * span + 1)])
+        span *= 2
+
+    def window_max(lo: int, hi: int) -> float:
+        k = (hi - lo).bit_length() - 1
+        row = table[k]
+        return max(row[lo], row[hi - (1 << k)])
+
+    EPS = 1e-9
+    best: List[int] = []
+    best_key = None
+    checked = 0
+    chosen: List[int] = []
+
+    def rec(size: int, start: int, price: float, conf: float) -> None:
+        nonlocal best, best_key, checked
+        rem = size - len(chosen)
+        if rem == 1:
+            lo = bisect_left(prices, target / price - EPS, start)
+            hi = bisect_right(prices, ceiling / price + EPS, start)
+        else:
+            # Legs are taken in ascending price: this one is the cheapest of the
+            # remaining `rem`, so its price is at most (ceiling/price)^(1/rem),
+            # and at least what still lets the rest (each <= pmax) reach target.
+            lo = bisect_left(prices, target / (price * pmax ** (rem - 1)) - EPS, start)
+            hi = bisect_right(prices, (ceiling / price) ** (1.0 / rem) + EPS, start)
+        if lo >= hi:
+            return
+        rest_bound = qmax ** (rem - 1)
+        if best_key is not None and conf * window_max(lo, hi) * rest_bound < -best_key[0] - 1e-12:
+            return                            # nothing in this price window can beat the best
+        for j in range(lo, hi):
+            if best_key is not None and conf * qs[j] * rest_bound < -best_key[0] - 1e-12:
+                continue                      # cannot beat the best ticket so far
+            if any(clash(j, c) for c in chosen):
                 continue
-            checked += 1
-            price = math.prod(s.price for s in group)
-            if price > cfg.top_odds_max:
-                # Hard reject: never just deprioritized. A combo over the
-                # ceiling is not a worse option, it is not an option.
-                continue
-            if price < cfg.top_odds_target:
-                # The ticket must reach the 2.00 floor - shorter combos that
-                # fall under it are simply not the product.
-                continue
-            key = (-math.prod(s.p_model for s in group),      # confidence first
-                   abs(price - target),                       # then closeness to 2.0
-                   -len({selection_family(s.line) for s in group}), size)
-            if best_key is None or key < best_key:
-                best, best_key = list(group), key
-    return best, checked
+            chosen.append(j)
+            if rem == 1:
+                checked += 1
+                if checked > MAX_TOP_TICKETS_EVALUATED:
+                    chosen.pop()
+                    raise _SearchBudgetSpent
+                total = price * prices[j]
+                if target <= total <= ceiling:
+                    key = (-(conf * qs[j]), abs(total - target),
+                           -len({families[i] for i in chosen}), size)
+                    if best_key is None or key < best_key:
+                        best_key, best = key, list(chosen)
+            else:
+                rec(size, j + 1, price * prices[j], conf * qs[j])
+            chosen.pop()
+
+    try:
+        for size in range(min_size, max_size + 1):
+            rec(size, 0, 1.0, 1.0)
+    except _SearchBudgetSpent:
+        log.warning("choose_top: evaluation budget (%d tickets) spent on a pool of %d legs - "
+                    "returning the best ticket found so far", MAX_TOP_TICKETS_EVALUATED, n)
+    legs = [options[i] for i in best]
+    legs.sort(key=lambda s: -_top_score(s))
+    return legs, checked
 
 
 def select(scored: List[Scored], cfg: Config, now: datetime,
@@ -348,9 +432,37 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     ps.diagnostics["daily_pool_rejections"] = dict(daily_rejected)
     daily_pool.sort(key=lambda s: s.rank_score, reverse=True)
 
-    per_event: Dict[str, int] = {}
+    # One real fixture = one event position, however many providers/legs describe
+    # it. fixture_conflicts() links the same match seen under different names or
+    # kickoffs, so MAX_PICKS_PER_EVENT cannot be sidestepped by provider naming,
+    # and Top legs count too: a Daily pick never repeats a Top fixture.
+    slate_events: List = []
+    slate_pos: Dict[str, int] = {}
+
+    def event_pos(e) -> int:
+        key = e.dedupe_key()
+        if key not in slate_pos:
+            slate_pos[key] = len(slate_events)
+            slate_events.append(e)
+        return slate_pos[key]
+
     for t in top:
-        per_event[t.event.dedupe_key()] = per_event.get(t.event.dedupe_key(), 0) + 1
+        event_pos(t.event)
+    for s in daily_pool:
+        event_pos(s.event)
+    fixture_links = fixture_conflicts(slate_events)
+
+    def same_slate_fixture(a, b) -> bool:
+        pa, pb = event_pos(a), event_pos(b)
+        return pa == pb or pb in fixture_links[pa]
+
+    per_event: Dict[int, int] = {}
+    for t in top:
+        per_event[event_pos(t.event)] = per_event.get(event_pos(t.event), 0) + 1
+
+    def picks_on_fixture(s: Scored) -> int:
+        pos = event_pos(s.event)
+        return per_event.get(pos, 0) + sum(per_event.get(o, 0) for o in fixture_links[pos])
     family_count: Dict[str, int] = {}
     # Keyed by (market, stat): corners totals and goals totals are both
     # market="total", and a share cap that can't tell them apart is exactly
@@ -384,7 +496,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
 
     def conflicts(s: Scored) -> bool:
         for other in top + chosen:
-            if other.event.dedupe_key() != s.event.dedupe_key():
+            if not same_slate_fixture(other.event, s.event):
                 continue
             if is_equivalent(other.line, s.line) or contradicts(other.line, s.line):
                 return True
@@ -397,12 +509,12 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         family, favourite, prop or exotic limits) and records which quota
         each admitted pick would otherwise have broken."""
         nonlocal favs, props, exotics
-        ek = s.event.dedupe_key()
+        ek = event_pos(s.event)
         fam = selection_family(s.line)
         mk = s.line.market
         mkey = (mk, s.line.stat)
         grp = spec(mk).group
-        if per_event.get(ek, 0) >= cfg.max_picks_per_event:
+        if picks_on_fixture(s) >= cfg.max_picks_per_event:
             _note(s, f"cap: per-event (MAX_PICKS_PER_EVENT={cfg.max_picks_per_event})")
             return False
         if conflicts(s):

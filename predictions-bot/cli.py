@@ -20,7 +20,7 @@ def main(argv):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")   # emoji-safe terminal output on Windows
     cfg = load_config()
-    setup_logging(cfg.log_level)
+    setup_logging(cfg.log_level, cfg.log_file)
     db = Database(cfg.db_path)
     providers = build_providers(cfg, db)
     chain = ProviderChain(providers, cfg.provider_order, cfg.chain_min_events)
