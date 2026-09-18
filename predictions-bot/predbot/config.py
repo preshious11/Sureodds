@@ -66,6 +66,10 @@ class Config:
     #: Odds API's x-requests-remaining response header (the authoritative
     #: quota signal), so a handful of picks never eats the whole month.
     oddsapi_reserve_credits: int = field(default_factory=lambda: _int("ODDSAPI_RESERVE_CREDITS", 50))
+    #: Each allowed Odds API sport (football, tennis) that has >= 1 event in the
+    #: window is guaranteed this many odds keys per cycle before the remaining
+    #: credits are ranked by event count, so one busy sport can't starve another.
+    oddsapi_min_keys_per_sport: int = field(default_factory=lambda: _int("ODDSAPI_MIN_KEYS_PER_SPORT", 1))
     provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "api_football,sportsgameodds,sharpapi"))
     #: Provider tried first for the Top ticket only; falls back to
     #: ``provider_order`` when it can't supply enough qualifying picks.

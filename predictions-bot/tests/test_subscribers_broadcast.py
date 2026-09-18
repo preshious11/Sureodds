@@ -1,6 +1,8 @@
 """Tests for subscriber management, daily broadcasts and the /start menu."""
 from __future__ import annotations
 
+import pytest
+
 from datetime import datetime, timezone
 
 from predbot.bot import broadcast, callbacks
@@ -119,6 +121,19 @@ def test_menu_has_no_subscription_button():
     assert not any(b["callback_data"].startswith("sub|") for b in buttons)
     assert [view_button_label(v) for v in ("top", "daily", "stats")] == \
         [b["text"] for b in buttons]          # menu and switch row share one definition
+
+
+@pytest.fixture(autouse=True)
+def _subscribers_joined_before_the_fixtures(monkeypatch):
+    """Pin subscribed_at for every test in this module.
+
+    db.subscriber_add() stamps subscribed_at from the REAL clock, and the delivery
+    gate skips anyone who "joined after today's 9:30 card was due" by comparing it
+    with the fixtures' date (2030-06-01). Left unpinned these tests pass only
+    while the real date is before 2030-06-01 and start failing the day after.
+    Tests that care about the join time override this with _join_at()."""
+    import predbot.storage.db as db_mod
+    monkeypatch.setattr(db_mod, "_now", lambda: "2030-01-01T00:00:00Z")
 
 
 # ------------------------------------------------------------------- broadcasts

@@ -68,8 +68,10 @@ def has_independent_signal(s: "Scored") -> bool:
 
 
 def _ev_tiebreak(ev: float) -> float:
-    """EV mapped to [0, 1] over [-0.05, +0.10] - only ever a small tiebreaker,
-    since this is a confidence product, not an edge product."""
+    """EV clamped to [-0.05, +0.10] and shifted to [0, 0.15] - only ever a small
+    tiebreaker, since this is a confidence product, not an edge product.
+    _daily_score divides by 0.15 to normalise it to [0, 1]; _top_score uses it
+    raw, so its contribution there is at most 0.02 * 0.15 = 0.003."""
     return min(max(ev, -0.05), 0.10) + 0.05
 
 
@@ -90,7 +92,7 @@ def _cap(frac: float, target: int) -> int:
     return max(1, int(math.ceil(frac * target)))
 
 
-def _same_fixture(a, b) -> bool:
+def same_fixture(a, b) -> bool:
     """True when two Scored candidates' events are the same real-world match,
     even if they came from different providers as two distinct Event objects
     (event.dedupe_key()/provider ids can differ across providers, so identity
@@ -102,13 +104,34 @@ def _same_fixture(a, b) -> bool:
     return same_team(a.home, b.home) and same_team(a.away, b.away)
 
 
+def fixture_conflicts(events) -> List[set]:
+    """For each event, the set of OTHER indices that are the same real-world
+    match: an identical dedupe_key(), or the fuzzy same_fixture() match (one
+    match seen through two providers with slightly different names/kickoffs).
+
+    Computed ONCE for a set of legs, so a combination search tests "different
+    fixtures" by set membership instead of re-running the fuzzy matcher for
+    every combination. Deliberately pairwise, not clustered: fuzzy matching is
+    not transitive (A~B and B~C does not make A~C), and merging chains of
+    near-matches would collapse genuinely different fixtures into one."""
+    n = len(events)
+    keys = [e.dedupe_key() for e in events]
+    conflicts: List[set] = [set() for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if keys[i] == keys[j] or same_fixture(events[i], events[j]):
+                conflicts[i].add(j)
+                conflicts[j].add(i)
+    return conflicts
+
+
 def _duplicates_a_top_pick(s: Scored, top: List[Scored]) -> bool:
     """True when ``s`` is the same fixture AND the same normalized outcome
     (label) as an already-chosen Top pick - blocked from Daily regardless of
     which provider each candidate came from. Same fixture with a genuinely
     different outcome is left to the existing conflicts()/contradicts() and
     per-event caps, exactly as before."""
-    return any(s.label == t.label and _same_fixture(s.event, t.event) for t in top)
+    return any(s.label == t.label and same_fixture(s.event, t.event) for t in top)
 
 
 def choose_top(pool: List[Scored], cfg: Config):
@@ -126,6 +149,9 @@ def choose_top(pool: List[Scored], cfg: Config):
         options = options[:30] + sorted(options[30:], key=lambda s: (s.price, -_top_score(s), s.event.dedupe_key()))[:30]
     target = cfg.top_odds_target
     best, best_key, checked = [], None, 0
+    # Which legs are the same real fixture, computed once (not per combination).
+    index = {id(s): i for i, s in enumerate(options)}
+    conflicts = fixture_conflicts([s.event for s in options])
     # Top Picks is a 2-3 leg accumulator: legs below top_legs_min are never
     # tried, so a single strong-priced candidate can no longer win outright.
     # Ticket sizes above 3 explode combinatorially, so the search pool is
@@ -135,11 +161,10 @@ def choose_top(pool: List[Scored], cfg: Config):
     for size in range(min_size, max_size + 1):
         pool = options if size <= 3 else options[:20]
         for group in combinations(pool, size):
-            if len({s.event.dedupe_key() for s in group}) != size:
-                continue
-            if any(_same_fixture(a.event, b.event) for a, b in combinations(group, 2)):
-                # Same real fixture via two providers (fuzzy team/time match)
-                # is still one bet twice - never two legs of one ticket.
+            legs = {index[id(s)] for s in group}
+            if any(conflicts[i] & legs for i in legs):
+                # Two legs on one real fixture (incl. the same match seen via
+                # two providers) is one bet twice - never two legs of a ticket.
                 continue
             checked += 1
             price = math.prod(s.price for s in group)

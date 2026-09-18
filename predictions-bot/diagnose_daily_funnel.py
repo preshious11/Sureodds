@@ -202,7 +202,7 @@ def top_view(cfg, scored, ps, trace, exclude_sources=()):
           f"(bar-pool price range {min((s.price for s in uniq), default=0):.2f}.."
           f"{max((s.price for s in uniq), default=0):.2f})")
     n_fixtures = len({(s.event.sport, s.event.home, s.event.away) for s in uniq})
-    from predbot.selection.picker import _same_fixture as _picker_same_fixture
+    from predbot.selection.picker import same_fixture as _picker_same_fixture
     best = []
     for size in (2, 3):
         for combo in combinations(search, size):

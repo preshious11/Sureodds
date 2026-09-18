@@ -23,7 +23,7 @@ from predbot.util.http import Http, ProviderError, RateLimiter
 from predbot.util.names import same_team
 from predbot.util.odds import parse_decimal
 from predbot.util.timeutil import parse_iso
-from predbot.util.timeutil import iso, utcnow, to_local, day_bounds
+from predbot.util.timeutil import utcnow, to_local, day_bounds
 
 log = logging.getLogger(__name__)
 
@@ -183,7 +183,6 @@ class ApiFootballProvider(BaseProvider):
         # The free plan allows 10 requests/minute, so pace this phase to stay
         # under the limit and restore the fast rate when done.
         n = 0
-        cached_hits = 0
         fast = self.http.rate.min_interval if self.http.rate else None
         if self.http.rate:
             self.http.rate.min_interval = max(self.http.rate.min_interval, 7.0)
@@ -192,19 +191,6 @@ class ApiFootballProvider(BaseProvider):
                 if n >= self.predictions_per_run:
                     break
                 n += 1
-                # Per-fixture 24h cache: a retry cycle after a partial fetch
-                # must not re-spend quota on fixtures already predicted today.
-                ck = f"apif:prediction:{self._cache_scope}:{ev.provider_event_id}"
-                row = self.budget.db.get_provider_cache(ck) if self.budget.db is not None else None
-                if row and row.get("cache_version") == 1:
-                    try:
-                        exp = parse_iso(row["expires_at"])
-                        if exp and exp > utcnow():
-                            ev.extra["prediction"] = json.loads(row["payload_json"])
-                            cached_hits += 1
-                            continue
-                    except (ValueError, TypeError, KeyError):
-                        pass
                 try:
                     data = self._call("/predictions", {"fixture": ev.provider_event_id}, reserve=self.settlement_reserve)
                 except ProviderError as e:
@@ -215,11 +201,6 @@ class ApiFootballProvider(BaseProvider):
                 resp = data.get("response") or []
                 if resp:
                     ev.extra["prediction"] = resp[0]
-                    if self.budget.db is not None:
-                        self.budget.db.upsert_provider_cache(
-                            ck, datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                            resp[0], {"fixture": ev.provider_event_id},
-                            iso(utcnow() + timedelta(hours=24)), version=1)
         finally:
             if self.http.rate and fast is not None:
                 self.http.rate.min_interval = fast
@@ -232,10 +213,9 @@ class ApiFootballProvider(BaseProvider):
         else:
             state = "empty"
         self.sport_status["football"] = {"status": state, "events": len(out)}
-        log.info("API-Football: %d fixtures with odds, %d predictions (%d from cache) "
-                 "(used %d/%d today) | "
+        log.info("API-Football: %d fixtures with odds, %d predictions (used %d/%d today) | "
                  "rejections: %s | sport status: %s",
-                 len(out), n - cached_hits, cached_hits, self.budget.used_today(self.name), self.daily_limit,
+                 len(out), n, self.budget.used_today(self.name), self.daily_limit,
                  dict(self.parse_counts), self.sport_status["football"])
         return out
 

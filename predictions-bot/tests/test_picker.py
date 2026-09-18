@@ -97,7 +97,7 @@ def test_same_fixture_same_outcome_from_different_providers_never_leaks_into_dai
     # is exactly the leak this test guards against.
     duplicate_candidate = sc(other_provider_event, "result3", "home", 0.70, 1.32, ev_val=0.08)
     # Distinct, dissimilar team names so the fuzzy same_team() match used by
-    # _same_fixture() can't confuse one filler fixture for another. Priced
+    # same_fixture() can't confuse one filler fixture for another. Priced
     # above the 2.50 ceiling in any pairing so they can't outscore the
     # intended top_candidate/partner_candidate combo.
     filler_names = ["Bayern", "Feyenoord", "Sporting", "Galatasaray", "Benfica",
@@ -417,3 +417,69 @@ def test_independent_signal_candidates_have_a_disagreement_floor_not_an_edge_req
     assert mildly_negative.event.dedupe_key() in {s.event.dedupe_key() for s in ps.all()}
     assert strongly_overpriced.event.dedupe_key() not in {s.event.dedupe_key() for s in ps.all()}
     assert ps.diagnostics["daily_pool_rejections"].get("BELOW_THRESHOLD", 0) == 1
+
+
+# ------------------------------------------------- canonical fixture ids (#4)
+def test_fixture_conflicts_link_the_same_match_seen_through_two_providers():
+    from predbot.selection.picker import fixture_conflicts
+    a1 = Event(provider="oddsapi", provider_event_id="1", sport="football", league="L",
+               home="Arsenal", away="Chelsea", start=dt(hh=21), sources=["oddsapi"])
+    a2 = Event(provider="sharpapi", provider_event_id="2", sport="football", league="L",
+               home="Arsenal FC", away="Chelsea", start=dt(hh=22, mm=30), sources=["sharpapi"])
+    b = Event(provider="oddsapi", provider_event_id="3", sport="football", league="L",
+              home="Porto", away="Braga", start=dt(hh=21), sources=["oddsapi"])
+
+    conflicts = fixture_conflicts([a1, a2, b])
+
+    assert conflicts == [{1}, {0}, set()]
+
+
+def test_top_ticket_never_uses_two_providers_view_of_one_fixture_as_two_legs():
+    arsenal_a = Event(provider="oddsapi", provider_event_id="1", sport="football", league="L",
+                      home="Arsenal", away="Chelsea", start=dt(hh=21), sources=["oddsapi", "x"])
+    arsenal_b = Event(provider="sharpapi", provider_event_id="2", sport="football", league="L",
+                      home="Arsenal FC", away="Chelsea", start=dt(hh=22, mm=30), sources=["sharpapi", "x"])
+    porto = Event(provider="oddsapi", provider_event_id="3", sport="football", league="L",
+                  home="Porto", away="Braga", start=dt(hh=21), sources=["oddsapi", "x"])
+    pool = [sc(arsenal_a, "result3", "home", 0.80, 1.45), sc(arsenal_b, "result3", "home", 0.80, 1.45),
+            sc(porto, "result3", "home", 0.70, 1.45)]
+    from predbot.selection.picker import choose_top
+
+    top, _ = choose_top(pool, cfg())
+
+    assert len(top) == 2
+    assert porto in [s.event for s in top]                       # the only legal partner for either Arsenal view
+    assert sum(1 for s in top if s.event.home.startswith("Arsenal")) == 1
+
+
+def test_choose_top_runs_the_fuzzy_matcher_once_per_leg_pair_not_once_per_combination(monkeypatch):
+    """40 options -> ~10k 3-leg combinations. The matcher may only run for the
+    780 leg PAIRS (once, up front); a per-combination check would be 30k+ calls."""
+    import predbot.selection.picker as picker
+    calls = {"n": 0}
+    real = picker.same_fixture
+
+    def counting(a, b):
+        calls["n"] += 1
+        return real(a, b)
+
+    monkeypatch.setattr(picker, "same_fixture", counting)
+    pool = [sc(ev(i, home=f"Club{chr(65 + i % 26)}{i}x", away=f"Rival{chr(90 - i % 26)}{i}y"), "result3", "home",
+               0.66 + (i % 10) / 100, 1.20 + (i % 15) / 100, sources=3) for i in range(40)]
+
+    top, checked = picker.choose_top(pool, cfg())
+
+    assert checked > 5000                                         # the search really did explore combinations
+    assert calls["n"] <= 40 * 39 // 2
+    assert 2 <= len(top) <= 3
+
+
+def test_chained_near_matches_do_not_collapse_distinct_fixtures_into_one():
+    """Fuzzy matching is not transitive: Home10~Home11, Home11~Home12 ... must
+    not make every one of them "the same fixture" and leave no legal 2-leg ticket."""
+    pool = [sc(ev(i), "result3", "home", 0.70, 1.42, sources=3) for i in range(20)]
+    from predbot.selection.picker import choose_top
+
+    top, checked = choose_top(pool, cfg())
+
+    assert len(top) == 2 and checked > 0
