@@ -37,6 +37,13 @@ FINAL_STATUS = {"FT", "AET", "PEN"}
 VOID_STATUS = {"PST", "CANC", "ABD", "AWD", "WO", "SUSP", "INT"}
 
 _OU = re.compile(r"^(over|under)\s*([0-9.]+)$", re.I)
+#: Minute-window props ("Over/Under 15m-30m", "Goals 30m-45m") describe goals
+#: scored within a specific interval of the match clock - not "full", "1h" or
+#: "2h" as this codebase's `period` vocabulary understands them. The bet name
+#: still contains "over/under", so without this guard it is silently
+#: misfiled as a full-match total (see _parse_value) and its price gets
+#: merged into the match-total pool as if it were the same market.
+_MINUTE_WINDOW = re.compile(r"\d+\s*m\s*-\s*\d+\s*m", re.I)
 _TEAM_LINE = re.compile(r"^(home|away)\s*([+-]?[0-9.]+)$", re.I)
 _MARGIN = re.compile(r"^(home|away)\s*(?:by)?\s*(\d+)(\+|\s*-\s*(\d+))?$", re.I)
 
@@ -251,6 +258,9 @@ class ApiFootballProvider(BaseProvider):
             return None
         name = bet_name.strip().lower()
         v = value.strip()
+        if _MINUTE_WINDOW.search(name):
+            self.parse_counts["UNSUPPORTED_PERIOD"] += 1
+            return None
         period, stat, entity = "full", "points", "all"
         if "first half" in name or "1st half" in name or "(1st half)" in name:
             period = "1h"
