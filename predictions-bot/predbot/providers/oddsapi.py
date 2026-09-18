@@ -67,7 +67,7 @@ class OddsApiProvider(BaseProvider):
                  bookmakers: Optional[List[str]] = None, odds_format: str = "decimal",
                  regions: Optional[List[str]] = None, max_leagues_per_sport: int = 8,
                  monthly_limit: int = 500, max_credits_per_cycle: int = 15,
-                 reserve_credits: int = 50):
+                 reserve_credits: int = 50, min_keys_per_sport: int = 1):
         self.key = api_key
         self.budget = budget
         self.min_interval = min_interval
@@ -83,6 +83,9 @@ class OddsApiProvider(BaseProvider):
         self.markets = ["h2h", "spreads", "totals"]
         self.max_leagues_per_sport = max(1, max_leagues_per_sport)
         self.max_credits_per_cycle = max(1, max_credits_per_cycle)
+        # Every allowed sport with events in the window gets at least this many
+        # odds keys per cycle before leftover credits are ranked by event count.
+        self.min_keys_per_sport = max(0, min_keys_per_sport)
         # Authoritative quota signal: x-requests-remaining from every response,
         # persisted so the gate survives restarts. The bot never spends below
         # reserve_credits of the remaining balance.
@@ -249,62 +252,75 @@ class OddsApiProvider(BaseProvider):
             self.parse_counts["events_in_window"] += n
         self.parse_counts["keys_enumerated"] = len(in_season)
 
-        # ---- spend credits only on keys that have events in the window,
-        #      prioritised by event count (football league priority breaks
-        #      ties), under a hard per-cycle credit cap. One odds request
-        #      costs 1 credit x regions x markets, so one region + 3 markets
-        #      = 3 credits per key -> cap 15 = up to 5 keys per cycle.
+        # ---- spend credits only on keys that have events in the window, under
+        #      a hard per-cycle credit cap. One odds request costs 1 credit x
+        #      regions x markets, so one region + 3 markets = 3 credits per key
+        #      -> cap 15 = up to 5 keys per cycle.
+        #
+        #      Allocation is per SPORT first, then by event count: every allowed
+        #      sport that has >= 1 event in the window is guaranteed
+        #      ``min_keys_per_sport`` keys before any leftover credit is ranked.
+        #      Ranking all keys in one list let a busy football day take every
+        #      slot and silently starve tennis.
         per_key = self.credits_per_key
         max_keys = max(1, self.max_credits_per_cycle // per_key)
-        chosen = sorted(rows_by_key.items(),
-                        key=lambda kv: (FOOTBALL_LEAGUE_PRIORITY.index(kv[0])
-                                        if kv[0] in FOOTBALL_LEAGUE_PRIORITY else 999,
-                                        -len(kv[1]), kv[0]))[:max_keys]
+
+        def rank(key: str) -> Tuple:
+            # busiest first; football league priority, then name, break ties
+            return (-len(rows_by_key[key]),
+                    FOOTBALL_LEAGUE_PRIORITY.index(key) if key in FOOTBALL_LEAGUE_PRIORITY else 999, key)
+
+        chosen: List[str] = []
+        for canonical in self.sports:
+            live = sorted((k for k in sports.get(canonical, []) if rows_by_key.get(k)), key=rank)
+            chosen.extend(live[:self.min_keys_per_sport])
+        chosen = chosen[:max_keys]
+        rest = sorted((k for k in rows_by_key if k not in chosen), key=rank)
+        chosen.extend(rest[:max_keys - len(chosen)])
         log.info("OddsAPI: %d in-season keys, %d with events in window, spending <=%d credits "
                  "(%d/key) on %d keys: %s",
                  len(in_season), len(rows_by_key), max_keys * per_key, per_key,
-                 len(chosen), {k: len(v) for k, v in chosen})
+                 len(chosen), {k: len(rows_by_key[k]) for k in chosen})
 
         rows: List[Tuple[str, Dict]] = []
         spent = 0
-        for canonical in ("football", "tennis"):
+        rows_by_sport: Counter = Counter()
+        fetched_by_sport: Counter = Counter()
+        for league_key in chosen:          # guaranteed per-sport keys come first
+            canonical = canonical_of[league_key]
+            if spent + per_key > self.max_credits_per_cycle:
+                log.warning("OddsAPI: per-cycle credit cap %d reached - skipping %s",
+                            self.max_credits_per_cycle, league_key)
+                break
+            if not self.can_spend_credits(per_key):
+                log.warning("OddsAPI: quota/reserve gate stopped the odds fetch at %s "
+                            "(remaining=%s, reserve=%d)", league_key,
+                            self._remaining_credits(), self.reserve_credits)
+                break
+            try:
+                data = self._get(f"/sports/{league_key}/odds", {
+                    "oddsFormat": self.odds_format,
+                    "regions": ",".join(self.regions),
+                    "markets": ",".join(self.markets),
+                })
+                self.budget.spend(self.name, per_key)
+                spent += per_key
+            except ProviderError as e:
+                log.warning("OddsAPI: fetch failed for %s (%s)", league_key, e)
+                continue
+            batch = data if isinstance(data, list) else []
+            rows.extend((canonical, e) for e in batch)
+            rows_by_sport[canonical] += len(batch)
+            fetched_by_sport[canonical] += 1
+        for canonical in self.sports:
             keys = sports.get(canonical, [])
-            chosen_keys = {k for k, _ in chosen}
-            ok = 0
-            for league_key in keys:
-                if not rows_by_key.get(league_key):
-                    continue  # 0 events -> never spend credits on this key
-                if league_key not in chosen_keys:
-                    continue
-                if spent + per_key > self.max_credits_per_cycle:
-                    log.warning("OddsAPI: per-cycle credit cap %d reached - skipping %s",
-                                self.max_credits_per_cycle, league_key)
-                    break
-                if not self.can_spend_credits(per_key):
-                    log.warning("OddsAPI: quota/reserve gate stopped the odds fetch at %s "
-                                "(remaining=%s, reserve=%d)", league_key,
-                                self._remaining_credits(), self.reserve_credits)
-                    break
-                try:
-                    data = self._get(f"/sports/{league_key}/odds", {
-                        "oddsFormat": self.odds_format,
-                        "regions": ",".join(self.regions),
-                        "markets": ",".join(self.markets),
-                    })
-                    self.budget.spend(self.name, per_key)
-                    spent += per_key
-                except ProviderError as e:
-                    log.warning("OddsAPI: fetch failed for %s (%s)", league_key, e)
-                    continue
-                batch = data if isinstance(data, list) else []
-                rows.extend([(canonical, e) for e in batch])
-                ok += 1
+            ok = fetched_by_sport[canonical]
             self.sport_status[canonical] = {
                 "status": "success" if ok else ("empty" if keys else "failed"),
                 "status_detail": "partial" if 0 < ok < len(keys) else None,
                 "leagues_fetched": ok, "leagues_total": len(keys),
                 "keys_with_events": sum(1 for k in keys if rows_by_key.get(k)),
-                "events": sum(1 for _, e in rows),
+                "events": rows_by_sport[canonical],
             }
 
         events = self._rows_to_events(rows, start, end)

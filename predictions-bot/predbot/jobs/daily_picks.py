@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 from collections import Counter
+from types import SimpleNamespace
 from typing import Dict, List, Optional
 
 from predbot.bot.format import stats_line
@@ -15,9 +16,9 @@ from predbot.model.elo import Elo
 from predbot.model.ensemble import EventModel, Scored
 from predbot.providers.base import Event
 from predbot.providers.chain import ProviderChain, merge_events
-from predbot.selection.picker import PickSet, select
+from predbot.selection.picker import PickSet, same_fixture, select
 from predbot.storage.db import Database
-from predbot.util.timeutil import iso, to_local, utcnow, day_bounds
+from predbot.util.timeutil import iso, parse_iso, to_local, utcnow, day_bounds
 
 log = logging.getLogger(__name__)
 
@@ -46,19 +47,24 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
         return PickSet()
     events = chain.collect(start, end)
 
-    # Dedupe against PREVIOUS days' stored picks: the window now runs to local
-    # midnight +3h, so a fixture picked late yesterday would otherwise
-    # re-enter today's generation. Same-day regeneration is not deduped here
-    # (store_picks already refuses duplicate selections per day).
-    matched = {(r["sport"], str(r["home"]), str(r["away"]))
-               for r in db.previous_pick_fixtures(day)}
-    if matched:
+    # Dedupe against PREVIOUS days' stored picks: the window runs to local
+    # midnight + DAY_WINDOW_END_OFFSET_HOURS, so a fixture picked late
+    # yesterday would otherwise re-enter today's generation. Uses the same
+    # fuzzy fixture matcher as the Top search (sport + kickoff within 3h +
+    # same_team on both sides), so a match named differently by another
+    # provider is still recognised - and a genuine rematch at another time is
+    # not. Same-day regeneration is not deduped here (store_picks already
+    # refuses duplicate selections per day).
+    prior = []
+    for r in db.previous_pick_fixtures(day):
+        st = parse_iso(r["start_utc"])
+        if st:
+            prior.append(SimpleNamespace(sport=r["sport"], home=r["home"], away=r["away"], start=st))
+    if prior:
         before = len(events)
-        events = [e for e in events
-                  if (e.sport, e.home, e.away) not in matched]
-        dropped = before - len(events)
-        if dropped:
-            log.info("dropped %d events already picked on a previous day", dropped)
+        events = [e for e in events if not any(same_fixture(e, p) for p in prior)]
+        if before - len(events):
+            log.info("dropped %d events already picked on a previous day", before - len(events))
 
     # Top ticket priority source: The Odds API is tried first for the Top
     # picks combo (kept out of provider_order so it never joins the Daily

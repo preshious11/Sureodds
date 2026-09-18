@@ -52,7 +52,8 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
                                          max_leagues_per_sport=cfg.odds_api_max_leagues_per_sport,
                                          monthly_limit=cfg.odds_api_monthly_limit,
                                          max_credits_per_cycle=cfg.oddsapi_max_credits_per_cycle,
-                                         reserve_credits=cfg.oddsapi_reserve_credits)
+                                         reserve_credits=cfg.oddsapi_reserve_credits,
+                                         min_keys_per_sport=cfg.oddsapi_min_keys_per_sport)
     return out
 
 

@@ -325,3 +325,97 @@ def test_build_picks_tries_oddsapi_chain_first_for_top(db, monkeypatch):
     assert all(s.event.provider == "oddsapi" for s in result.top)
     oddsapi_provider.fetch_events.assert_called_once()
     daily_provider.fetch_events.assert_called_once()
+
+
+# ------------------------------------------------- per-sport credit allocation
+def _alloc_provider(budget, football_events, tennis_events, max_credits=15):
+    """Fake Odds API where every key has the given number of in-window events.
+    Returns (provider, list of odds keys actually requested)."""
+    keys = {**{k: n for k, n in football_events.items()}, **{k: n for k, n in tennis_events.items()}}
+    listing = [{"key": k, "title": k, "group": "Tennis" if k.startswith("tennis") else "Soccer"} for k in keys]
+    odds_requested = []
+
+    def rows_for(key):
+        n = keys[key]
+        return [{"id": f"{key}-{i}", "sport_key": key, "commence_time": "2030-06-01T19:00:00Z",
+                 "home_team": f"{key}-H{i}", "away_team": f"{key}-A{i}"} for i in range(n)]
+
+    def odds_for(key):
+        out = []
+        for row in rows_for(key):
+            row = dict(row)
+            row["bookmakers"] = [{"key": "pin", "markets": [{"key": "h2h", "outcomes": [
+                {"name": row["home_team"], "price": 1.9}, {"name": row["away_team"], "price": 1.9}]}]}]
+            out.append(row)
+        return out
+
+    def get(path, params=None):
+        if path == "/sports":
+            return listing
+        key = path.split("/")[2]
+        if path.endswith("/events"):
+            return rows_for(key)
+        if path.endswith("/odds"):
+            odds_requested.append(key)
+            return odds_for(key)
+        raise AssertionError(path)
+
+    p = OddsApiProvider("k", budget, max_credits_per_cycle=max_credits)   # 3 credits/key
+    p.http = Mock()
+    p.http.last_headers = {}
+    p.http.get = Mock(side_effect=get)
+    return p, odds_requested
+
+
+PRIORITY_FOOTBALL = ["soccer_epl", "soccer_spain_la_liga", "soccer_italy_serie_a", "soccer_germany_bundesliga",
+                     "soccer_france_ligue_one", "soccer_uefa_champs_league", "soccer_usa_mls"]
+
+
+def test_credit_cap_never_starves_tennis_on_a_busy_football_day(budget):
+    """7 football leagues + 2 tennis tournaments, 15 credits (= 5 keys): the old
+    single ranking gave all 5 keys to football. Tennis must get at least one."""
+    p, requested = _alloc_provider(budget, {k: 6 for k in PRIORITY_FOOTBALL},
+                                   {"tennis_atp_us_open": 3, "tennis_wta_us_open": 3})
+
+    p.fetch_events(dt(), dt(hh=23))
+
+    assert len(requested) == 5 and p.budget.used_month("oddsapi") == 15
+    assert any(k.startswith("tennis") for k in requested)
+    assert any(k.startswith("soccer") for k in requested)
+
+
+def test_sport_status_events_count_only_that_sports_rows(budget):
+    """1 guaranteed key per sport, then the 3 leftover keys go to football
+    (6 events each beats tennis's 3): football = 4 keys x 6 rows, tennis = 3 rows."""
+    p, requested = _alloc_provider(budget, {k: 6 for k in PRIORITY_FOOTBALL},
+                                   {"tennis_atp_us_open": 3, "tennis_wta_us_open": 3})
+
+    p.fetch_events(dt(), dt(hh=23))
+
+    assert p.sport_status["football"]["events"] == 24
+    assert p.sport_status["tennis"]["events"] == 3
+    assert p.sport_status["tennis"]["leagues_fetched"] == 1
+
+
+def test_leftover_credits_go_by_event_count_not_league_priority(budget):
+    """After each sport's guaranteed key, a busy non-priority league beats a
+    quiet priority league for the remaining slot."""
+    p, requested = _alloc_provider(
+        budget, {"soccer_epl": 1, "soccer_busy_a": 10, "soccer_busy_b": 10},
+        {"tennis_atp_us_open": 2}, max_credits=9)                      # 9 // 3 = 3 keys
+
+    p.fetch_events(dt(), dt(hh=23))
+
+    assert sorted(requested) == ["soccer_busy_a", "soccer_busy_b", "tennis_atp_us_open"]
+
+
+def test_min_keys_per_sport_is_configurable_and_zero_event_sports_cost_nothing(budget):
+    p, requested = _alloc_provider(budget, {k: 6 for k in PRIORITY_FOOTBALL}, {})   # no tennis today
+    p.fetch_events(dt(), dt(hh=23))
+    assert len(requested) == 5 and all(k.startswith("soccer") for k in requested)
+
+    p2, requested2 = _alloc_provider(budget, {k: 6 for k in PRIORITY_FOOTBALL},
+                                     {"tennis_atp_us_open": 3, "tennis_wta_us_open": 3})
+    p2.min_keys_per_sport = 2
+    p2.fetch_events(dt(), dt(hh=23))
+    assert sum(1 for k in requested2 if k.startswith("tennis")) == 2

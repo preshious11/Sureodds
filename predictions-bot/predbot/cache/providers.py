@@ -55,6 +55,12 @@ def collect_persisted(chain, start, end):
     now = utcnow()
     day = to_local(now, chain.cfg.timezone).date().isoformat()
     day_start, midnight = day_bounds(now, chain.cfg.timezone)
+    # Providers must be asked for the SAME window build_picks() filters to:
+    # local midnight + DAY_WINDOW_END_OFFSET_HOURS. Fetching only to midnight
+    # made the extended window inert on this (production) path - late-evening
+    # kickoffs were never fetched, so the wider filter downstream had nothing
+    # to find. The cache row still expires at midnight (a new day = a new key).
+    fetch_end = midnight + timedelta(hours=max(0, chain.cfg.day_window_end_offset_hours))
     pool = []
     chain.last_report = {}
     cfg = chain.cfg
@@ -84,7 +90,7 @@ def collect_persisted(chain, start, end):
                 log.info('Cache RETRY | provider=%s | date=%s', name, day)
                 try:
                     provider.last_fetch_complete = True
-                    fetched = provider.fetch_events(day_start, midnight)
+                    fetched = provider.fetch_events(day_start, fetch_end)
                     # Validate before calling a malformed response complete.
                     events = filter_allowed(decode_events(encode_events(fetched)), cfg)
                     complete = bool(getattr(provider, 'last_fetch_complete', True))

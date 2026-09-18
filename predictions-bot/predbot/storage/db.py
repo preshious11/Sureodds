@@ -7,7 +7,7 @@ import sqlite3
 import threading
 import logging
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 SCHEMA = """
@@ -313,10 +313,14 @@ class Database:
         since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
         return self.query("SELECT provider_event_id, sport, market, period, stat, entity, line, selection, home, away FROM picks WHERE pick_date>=?", (since,))
 
-    def previous_pick_fixtures(self, before_date: str) -> List[sqlite3.Row]:
-        """sport/home/away of picks stored on strictly earlier days - used to
-        keep a late-evening fixture from being posted on two consecutive days."""
-        return self.query("SELECT DISTINCT sport, home, away FROM picks WHERE pick_date<?", (before_date,))
+    def previous_pick_fixtures(self, before_date: str, lookback_days: int = 2) -> List[sqlite3.Row]:
+        """sport/home/away/start_utc of picks stored on the ``lookback_days``
+        days strictly before ``before_date`` - used to keep a late-evening
+        fixture from being posted on two consecutive days. Bounded on purpose:
+        an all-time lookup would also drop a genuine rematch months later."""
+        since = (date.fromisoformat(before_date) - timedelta(days=lookback_days)).isoformat()
+        return self.query("SELECT DISTINCT sport, home, away, start_utc FROM picks "
+                          "WHERE pick_date<? AND pick_date>=?", (before_date, since))
 
     # ---- ratings ----
     def get_rating(self, sport: str, team: str):
