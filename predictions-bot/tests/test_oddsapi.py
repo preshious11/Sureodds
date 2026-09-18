@@ -181,7 +181,13 @@ def test_oddsapi_only_events_excluded_from_daily_ticket():
 def test_build_picks_tries_oddsapi_chain_first_for_top(db, monkeypatch):
     now = dt()
     oa_event = oddsapi_football_event(price=1.50, i=1)
+    # Real fixture builds go through ProviderChain.collect() -> merge_events(),
+    # unlike the picker-only tests above. same_team() fuzzily matches names
+    # that differ only by a trailing digit (e.g. "OddsHome1"/"OddsHome2"), so
+    # this second event needs a genuinely distinct club name or merge_events()
+    # folds both legs into one fixture before scoring ever sees two.
     oa_event2 = oddsapi_football_event(price=1.45, i=2)
+    oa_event2.home, oa_event2.away = "Sporting", "Feyenoord"
     api_football_event = ev(3)
 
     oddsapi_provider = Mock()

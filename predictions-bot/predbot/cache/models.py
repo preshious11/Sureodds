@@ -5,7 +5,11 @@ from dataclasses import asdict, dataclass, field
 from math import prod
 from typing import Any, Dict, List, Optional
 
-SCHEMA_VERSION = 2
+#: Bump whenever selection/scoring logic changes: UnifiedFetcher._read() treats
+#: a snapshot written under an older version as a cache miss, so a slate built
+#: by superseded code is regenerated instead of being served for the rest of
+#: the day. 3 = per-(market, stat) / sport / league diversity quotas.
+SCHEMA_VERSION = 3
 
 VIEW_TOP = "top"
 VIEW_DAILY = "daily"

@@ -97,7 +97,13 @@ class Config:
     min_lead_minutes: int = field(default_factory=lambda: _int("MIN_LEAD_MINUTES", 30))
     daily_min_odds: float = field(default_factory=lambda: _float("DAILY_MIN_ODDS", 1.30))
     daily_max_odds: float = field(default_factory=lambda: _float("DAILY_MAX_ODDS", 5.00))
-    top_max_picks: int = field(default_factory=lambda: _int("TOP_MAX_PICKS", 3))
+    #: Top Picks is an accumulator: the search tries every 2..3-leg combination
+    #: of different fixtures and keeps the one closest to top_odds_target.
+    #: top_odds_max is a HARD reject on the combined ticket - distinct from
+    #: top_max_odds above, which bounds each individual leg's own price.
+    top_legs_min: int = field(default_factory=lambda: _int("TOP_LEGS_MIN", 2))
+    top_legs_max: int = field(default_factory=lambda: _int("TOP_LEGS_MAX", 3))
+    top_odds_max: float = field(default_factory=lambda: _float("TOP_ODDS_MAX", 2.50))
     daily_min_ev: float = field(default_factory=lambda: _float("DAILY_MIN_EV", 0.02))
     daily_min_prob: float = field(default_factory=lambda: _float("DAILY_MIN_PROB", 0.30))
     top_min_odds: float = field(default_factory=lambda: _float("TOP_MIN_ODDS", 1.35))
@@ -110,6 +116,17 @@ class Config:
     top_min_agreement: float = field(default_factory=lambda: _float("TOP_MIN_AGREEMENT", 0.50))
     max_picks_per_event: int = field(default_factory=lambda: _int("MAX_PICKS_PER_EVENT", 2))
     max_player_props: int = field(default_factory=lambda: _int("MAX_PLAYER_PROPS", 2))
+    #: Daily-list diversity quotas, so one market (e.g. corners totals), one
+    #: sport or one league can never take over the single daily ticket. Shares
+    #: are of daily_target. They are relaxed only when the qualifying pool is
+    #: genuinely too small to reach DAILY_COMBINED_MIN_ODDS, and that relaxation
+    #: is recorded in the selection diagnostics.
+    daily_max_market_share: float = field(default_factory=lambda: _float("DAILY_MAX_MARKET_SHARE", 0.25))
+    #: Cross-market cap on one stat ("corners" can appear as totals AND 1X2
+    #: result3 lines; the (market, stat) cap above sees them as two markets).
+    daily_max_stat_share: float = field(default_factory=lambda: _float("DAILY_MAX_STAT_SHARE", 0.40))
+    daily_max_sport_share: float = field(default_factory=lambda: _float("DAILY_MAX_SPORT_SHARE", 0.50))
+    daily_max_per_league: int = field(default_factory=lambda: _int("DAILY_MAX_PER_LEAGUE", 3))
     model_shrink: float = field(default_factory=lambda: _float("MODEL_SHRINK_TO_MARKET", 0.80))
 
     # Schedule
@@ -142,8 +159,14 @@ class Config:
             ("DAILY_MIN_PROB in [0,1]", 0.0 <= self.daily_min_prob <= 1.0),
             ("TOP_MIN_AGREEMENT in [0,1]", 0.0 <= self.top_min_agreement <= 1.0),
             ("MODEL_SHRINK_TO_MARKET in [0,1]", 0.0 <= self.model_shrink <= 1.0),
-            ("TOP_MAX_PICKS >= 1", self.top_max_picks >= 1),
+            ("TOP_LEGS_MIN >= 1", self.top_legs_min >= 1),
+            ("TOP_LEGS_MAX >= TOP_LEGS_MIN", self.top_legs_max >= self.top_legs_min),
+            ("TOP_ODDS_MAX >= TOP_COMBINED_ODDS", self.top_odds_max >= self.top_odds_target),
             ("MAX_PICKS_PER_EVENT >= 1", self.max_picks_per_event >= 1),
+            ("DAILY_MAX_MARKET_SHARE in (0,1]", 0.0 < self.daily_max_market_share <= 1.0),
+            ("DAILY_MAX_STAT_SHARE in (0,1]", 0.0 < self.daily_max_stat_share <= 1.0),
+            ("DAILY_MAX_SPORT_SHARE in (0,1]", 0.0 < self.daily_max_sport_share <= 1.0),
+            ("DAILY_MAX_PER_LEAGUE >= 1", self.daily_max_per_league >= 1),
         ]
         for name, ok in checks:
             if not ok:

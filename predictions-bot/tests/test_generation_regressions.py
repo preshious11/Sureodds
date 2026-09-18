@@ -65,11 +65,12 @@ def test_top_search_finds_better_pair_than_greedy_single():
 
 
 def test_top_search_bounds_count_and_unique_matches():
-    # top_max_picks is honored up to the hard safety cap of 5 (sizes above 3
-    # search a trimmed pool to keep the combinatorial search bounded).
+    # Top Picks is a 2-3 leg accumulator (TOP_LEGS_MIN/MAX): a single leg is
+    # never selected, and sizes above 3 (when configured) search a trimmed
+    # pool to keep the combinatorial search bounded.
     pool = [sc(ev(i // 2), 'result3', 'home', .75, 1.25 + i / 1000) for i in range(120)]
-    result = select(pool, Config(top_min_odds=1.2, top_max_picks=10), dt())
-    assert 1 <= len(result.top) <= 5
+    result = select(pool, Config(top_min_odds=1.2, top_legs_max=5), dt())
+    assert 2 <= len(result.top) <= 5
     assert len({s.event.dedupe_key() for s in result.top}) == len(result.top)
     assert result.diagnostics['combinations_checked'] <= 60000
 
@@ -97,10 +98,12 @@ def test_below50_only_used_when_no_eligible_preferred_candidates():
 def test_generation_uses_lagos_day_including_utc_previous_date(db, monkeypatch):
     now = datetime(2030, 6, 1, 23, 0, tzinfo=timezone.utc)  # June 2 in Lagos
     event = ev(1, start=now + timedelta(minutes=45))
+    event2 = ev(2, start=now + timedelta(minutes=45))  # Top is a 2-leg minimum accumulator
     chain = provider()
-    chain.collect = Mock(return_value=[event])
+    chain.collect = Mock(return_value=[event, event2])
     chain.last_report = {}
-    monkeypatch.setattr(daily_picks, 'score_events', lambda *args: [sc(event, 'result3', 'home', .75, 2.0)])
+    monkeypatch.setattr(daily_picks, 'score_events', lambda *args: [
+        sc(event, 'result3', 'home', .75, 1.45), sc(event2, 'result3', 'home', .75, 1.45)])
     result = daily_picks.build_picks(chain, db, Config(timezone='Africa/Lagos'), now)
     assert result.top
     start, end = chain.collect.call_args.args
@@ -112,10 +115,11 @@ def test_partial_generation_keeps_valid_picks(db, monkeypatch):
     now = dt()
     monkeypatch.setattr('predbot.cache.fetcher.utcnow', lambda: now)
     monkeypatch.setattr(daily_picks, 'utcnow', lambda: now)
-    candidates = [sc(ev(1), 'result3', 'home', .75, 2.0)]
+    # Top is a 2-leg minimum accumulator, so two independent candidates are needed.
+    candidates = [sc(ev(1), 'result3', 'home', .75, 1.45), sc(ev(2), 'result3', 'home', .75, 1.45)]
     monkeypatch.setattr(daily_picks, 'score_events', lambda *args: candidates)
     chain = Mock()
-    chain.collect.return_value = [candidates[0].event]
+    chain.collect.return_value = [c.event for c in candidates]
     chain.last_report = {'football': {'status': 'failed'}}
     # Old retry exhaustion must no longer prevent usable providers from running.
     db.set_kv('generation:' + now.date().isoformat(), '{"complete": false, "attempts": 3}')
