@@ -162,7 +162,7 @@ def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram],
     service = service or UnifiedFetcher(chain, db, cfg)
     # dry_run must be genuinely read-only: it used to skip only the Telegram send
     # while still writing the snapshot and picks that /daily serves.
-    snapshot = service.get_daily_snapshot(force_refresh=force, persist=not dry_run)
+    snapshot = service.get_daily_snapshot(force_refresh=force, persist=not dry_run, scheduled=True)
     if not snapshot.total_picks():
         return snapshot
     text = picks_text(snapshot, cfg.timezone)

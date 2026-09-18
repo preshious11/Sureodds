@@ -3,7 +3,7 @@
 Typed /top, /daily (alias /today) and /stats are dispatched to
 ``callbacks.handle_command`` - the very handler the inline menu buttons use, so a
 tap and a type produce identical output.  /start shows the menu and subscribes,
-/stop unsubscribes; admins also get /run, /settle and /recap.
+/stop unsubscribes; admins also get /run, /settle, /recap and /lastrun.
 
 Timezones are never asked for: they are detected from the locale Telegram sends
 with every update (``callbacks._detect_user_timezone``).
@@ -16,7 +16,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional, Tuple
 
-from predbot.bot import callbacks, pagination
+from predbot.bot import callbacks, lastrun, pagination
 from predbot.bot.callbacks import handle_callback, handle_start
 from predbot.bot.telegram import Telegram, PollingError
 from predbot.bot.runtime import PollingLease, log_identity
@@ -176,7 +176,7 @@ class CommandLoop(threading.Thread):
         """Text-only commands; the three views go through ``_send_view``."""
         local = to_local(utcnow(), self.cfg.timezone)
         if cmd == "/help":
-            extra = ("\n\n🛠 <b>Admin</b>: /run · /settle · /recap"
+            extra = ("\n\n🛠 <b>Admin</b>: /run · /settle · /recap · /lastrun"
                      if user_id in self.cfg.telegram_admin_ids else "")
             zone = resolve_timezone(self.db.subscriber_timezone(chat_id or user_id),
                                     self.cfg.timezone)
@@ -189,6 +189,10 @@ class CommandLoop(threading.Thread):
                     "Send /start whenever you want them back.")
         if cmd == "/yesterday":
             return recap_card(self.db, local)
+        if cmd == "/lastrun":
+            if user_id not in self.cfg.telegram_admin_ids:
+                return "Not allowed."
+            return lastrun.lastrun_text(self.db, self.cfg)
         if cmd in ("/run", "/settle", "/recap"):
             if user_id not in self.cfg.telegram_admin_ids:
                 return "Not allowed."

@@ -12,6 +12,7 @@ from predbot.config import load_config
 from predbot.jobs import daily_picks, recap, settle
 from predbot.jobs.scheduler import DailyJob, DynamicJob, IntervalJob, loop
 from predbot.log import setup_logging
+from predbot.config import startup_lines
 from predbot.providers.chain import ProviderChain, ResultsResolver, build_providers
 from predbot.storage.db import Database
 from predbot.util.timeutil import to_local, utcnow
@@ -25,6 +26,8 @@ DELIVERY_POLL_MINUTES = 5
 def main() -> None:
     cfg = load_config()
     setup_logging(cfg.log_level, cfg.log_file)
+    for line in startup_lines(cfg):
+        log.info(line)
     db = Database(cfg.db_path)
     providers = build_providers(cfg, db)
     if not providers:

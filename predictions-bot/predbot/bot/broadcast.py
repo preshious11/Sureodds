@@ -17,7 +17,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Callable, Optional, Union
 
-from predbot.bot.format import pick_line_from_record, summary_card
+from predbot.bot.format import generated_line, pick_line_from_record, summary_card
 from predbot.bot.telegram import Telegram
 from predbot.cache.models import DailySnapshot
 from predbot.storage.db import Database
@@ -74,7 +74,7 @@ def _joined_before_target(row, date_str: str, hour: int, minute: int, user_tz: s
     return True
 
 
-def picks_text(snapshot: DailySnapshot, tz: str) -> str:
+def picks_text(snapshot: DailySnapshot, tz: str, now: Optional[datetime] = None) -> str:
     """THE subscriber summary card (single canonical renderer, no drift).
 
     Every pick line is built by ``pagination.pick_line_from_record`` - the same
@@ -82,13 +82,13 @@ def picks_text(snapshot: DailySnapshot, tz: str) -> str:
     the views and another way here. Ambiguous picks (no explicit outcome) are
     dropped BEFORE any totals are computed.
     """
-    top = [pick_line_from_record(p, tz) for p in snapshot.top_picks]
-    daily = [pick_line_from_record(p, tz) for p in snapshot.daily_picks]
+    top = [pick_line_from_record(p, tz, None, now) for p in snapshot.top_picks]
+    daily = [pick_line_from_record(p, tz, None, now) for p in snapshot.daily_picks]
     top = [p for p in top if p.outcome]
     daily = [p for p in daily if p.outcome]
     if not top and not daily:
         return ""
-    card = summary_card(top, daily)
+    card = summary_card(top, daily, generated=generated_line(snapshot.generated_at, tz))
     footer = _record_line(snapshot)
     return f"{card}\n{footer}" if footer else card
 
@@ -165,7 +165,7 @@ def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_s
         # scheduler polls every few minutes, so a narrow window would silently
         # skip a subscriber whose minute was never sampled.  delivery_done()
         # is what keeps this to one card per person per day.
-        text = picks_text(snapshot, user_tz)
+        text = picks_text(snapshot, user_tz, now=now)
         if not text:
             continue                      # nothing explicit to show - never send a blank card
         if tg.send(text, chat_id=chat_id):

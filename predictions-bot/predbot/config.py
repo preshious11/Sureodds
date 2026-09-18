@@ -5,37 +5,65 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import List
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
 
+#: Every knob the code reads: name -> (code default, effective value). Filled as
+#: Config() is built, so the startup report of "which keys override defaults"
+#: comes from the code itself instead of a hand-kept list that can go stale.
+KNOWN_KEYS: Dict[str, Tuple[Any, Any]] = {}
+
+_SECRET_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "URL", "DSN")
+
+
+def is_secret(name: str) -> bool:
+    return any(m in name.upper() for m in _SECRET_MARKERS)
+
+
+def mask(name: str, value: Any) -> str:
+    """Never show a secret: reports print ``***`` for anything that looks like one."""
+    return "***" if is_secret(name) else str(value)
+
+
 def _env(name: str, default: str = "") -> str:
     v = os.environ.get(name)
-    return default if v is None or v == "" else v
+    value = default if v is None or v == "" else v
+    KNOWN_KEYS[name] = (default, value)
+    return value
 
 
 def _int(name: str, default: int) -> int:
     try:
-        return int(_env(name, str(default)))
+        value = int(_env(name, str(default)))
     except ValueError:
-        return default
+        value = default
+    KNOWN_KEYS[name] = (default, value)
+    return value
 
 
 def _float(name: str, default: float) -> float:
     try:
-        return float(_env(name, str(default)))
+        value = float(_env(name, str(default)))
     except ValueError:
-        return default
+        value = default
+    KNOWN_KEYS[name] = (default, value)
+    return value
 
 
 def _bool(name: str, default: bool) -> bool:
-    return _env(name, "true" if default else "false").strip().lower() in ("1", "true", "yes", "on")
+    value = _env(name, "true" if default else "false").strip().lower() in ("1", "true", "yes", "on")
+    KNOWN_KEYS[name] = (default, value)
+    return value
 
 
 def _list(name: str, default: str = "") -> List[str]:
     raw = _env(name, default)
-    return [x.strip() for x in raw.split(",") if x.strip()]
+    value = [x.strip() for x in raw.split(",") if x.strip()]
+    KNOWN_KEYS[name] = ([x.strip() for x in default.split(",") if x.strip()], value)
+    return value
 
 
 def _default_log_file() -> str:
@@ -64,7 +92,7 @@ class Config:
     sgo_key: str = field(default_factory=lambda: _env("SPORTSGAMEODDS_KEY"))
     sharpapi_key: str = field(default_factory=lambda: _env("SHARPAPI_KEY"))
     odds_api_key: str = field(default_factory=lambda: _env("ODDS_API_KEY"))
-    odds_api_regions: List[str] = field(default_factory=lambda: _list("ODDS_API_REGIONS", "us,eu"))
+    odds_api_regions: List[str] = field(default_factory=lambda: _list("ODDS_API_REGIONS", "eu"))
     odds_api_min_interval: float = field(default_factory=lambda: _float("ODDS_API_MIN_INTERVAL_SEC", 1.1))
     odds_api_max_leagues_per_sport: int = field(default_factory=lambda: _int("ODDS_API_MAX_LEAGUES_PER_SPORT", 8))
     odds_api_monthly_limit: int = field(default_factory=lambda: _int("ODDS_API_MONTHLY_LIMIT", 500))
@@ -85,7 +113,7 @@ class Config:
     top_provider_priority: List[str] = field(default_factory=lambda: _list("TOP_PROVIDER_PRIORITY", "oddsapi"))
     chain_min_events: int = field(default_factory=lambda: _int("CHAIN_MIN_EVENTS", 40))
     sgo_sports: List[str] = field(default_factory=lambda: _list("SGO_SPORTS", ""))
-    sgo_leagues: List[str] = field(default_factory=lambda: _list("SGO_LEAGUES"))
+    sgo_leagues: List[str] = field(default_factory=lambda: _list("SGO_LEAGUES", "UEFA_CHAMPIONS_LEAGUE,MLS,NBA,NCAAB,NHL"))
     sgo_event_limit: int = field(default_factory=lambda: _int("SGO_EVENT_LIMIT", 200))
     sgo_monthly_object_limit: int = field(default_factory=lambda: _int("SGO_MONTHLY_OBJECT_LIMIT", 1000))
     sharpapi_leagues: List[str] = field(default_factory=lambda: _list("SHARPAPI_LEAGUES"))
@@ -218,16 +246,78 @@ class Config:
         return [p for p in self.provider_order if keys.get(p)]
 
 
-def load_config() -> Config:
-    # Load a local .env if present (Railway injects real env vars; this is for local runs).
-    env_file = os.path.join(os.getcwd(), ".env")
-    if os.path.exists(env_file):
-        with open(env_file, "r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                v = v.split("#", 1)[0].strip().strip('"').strip("'")
-                os.environ.setdefault(k.strip(), v)
-    return Config()
+def default_env_path() -> Path:
+    """The ONE .env the bot reads: next to main.py (the directory that contains
+    the predbot package), never the current working directory. A CWD-relative
+    lookup let a stale .env in a parent folder silently win depending on where
+    the bot happened to be started from."""
+    return Path(__file__).resolve().parent.parent / ".env"
+
+
+def _parse_env_file(path: Path) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.split("#", 1)[0].strip().strip('"').strip("'")
+    return out
+
+
+def load_config(env_file: Optional[str] = None) -> Config:
+    """Build the Config from real environment variables, falling back to the
+    project's .env for anything not already set (real env vars win - that is what
+    a hosting dashboard sets), then to the code defaults.
+
+    The returned config carries ``env_file`` (which file was read, "" if none)
+    and ``env_report`` (see :func:`describe_env`)."""
+    path = Path(env_file) if env_file else default_env_path()
+    from_file: Dict[str, str] = {}
+    applied: List[str] = []
+    if path.is_file():
+        from_file = _parse_env_file(path)
+        for k, v in from_file.items():
+            if k not in os.environ:
+                os.environ[k] = v
+                applied.append(k)
+    cfg = Config()
+    cfg.env_file = str(path) if path.is_file() else ""
+    cfg.env_report = describe_env(str(path), path.is_file(), from_file, applied)
+    return cfg
+
+
+def describe_env(path: str, found: bool, from_file: Dict[str, str], applied: List[str]) -> Dict[str, Any]:
+    """What the environment did to this run: which file was loaded, which keys
+    override a code default (secrets masked), and which .env keys this version
+    never reads (silently ignored otherwise)."""
+    overrides = []
+    for name, (default, value) in sorted(KNOWN_KEYS.items()):
+        if os.environ.get(name) in (None, "") or value == default:
+            continue
+        source = ".env" if name in applied else "process env"
+        overrides.append({"key": name, "value": mask(name, value), "source": source})
+    unread = sorted(k for k in from_file if k not in KNOWN_KEYS)
+    return {"path": path, "found": found, "keys_in_file": len(from_file),
+            "overrides": overrides, "unread_keys": unread}
+
+
+def startup_lines(cfg: Config) -> List[str]:
+    """Human-readable startup log lines for cfg.env_report (secrets already masked)."""
+    rep = getattr(cfg, "env_report", None)
+    if not rep:
+        return []
+    lines = []
+    if rep["found"]:
+        lines.append(f"config: loaded .env from {rep['path']} ({rep['keys_in_file']} keys)")
+    else:
+        lines.append(f"config: no .env at {rep['path']} - using process environment and code defaults")
+    if rep["overrides"]:
+        lines.append(f"config: {len(rep['overrides'])} key(s) override the code default: " +
+                     ", ".join(f"{o['key']}={o['value']} [{o['source']}]" for o in rep["overrides"]))
+    else:
+        lines.append("config: no key overrides a code default")
+    if rep["unread_keys"]:
+        lines.append("config: WARNING .env keys this version never reads (ignored): " + ", ".join(rep["unread_keys"]))
+    return lines

@@ -93,7 +93,9 @@ def test_snapshot_rejects_unknown_schema_version():
 
 # ----------------------------------------------------------------- fetcher flow
 def _fetcher(db, chain=None, cache=None) -> UnifiedFetcher:
-    return UnifiedFetcher(chain or FakeChain(), db, Config())
+    # POST_TIME=00:00: these tests are about caching, not the pre-POST_TIME gate, so they must
+    # behave the same whatever hour of the day the suite happens to run.
+    return UnifiedFetcher(chain or FakeChain(), db, Config(post_time="00:00"))
 
 
 def _insert_picks(db, date_str: str, count: int = 3):

@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, NamedTuple, Optional
 
 from predbot.bot.telegram import esc
 from predbot.markets.catalog import short_selection
 from predbot.providers.base import MarketLine
-from predbot.util.timeutil import parse_iso, to_local
+from predbot.util.timeutil import parse_iso, to_local, utcnow
+from predbot.util.duration import DURATION_H
 
 BRAND = "SureOdds"
 SPORT_ICON = {"football": "⚽", "basketball": "🏀", "american_football": "🏈", "hockey": "🏒",
@@ -46,6 +47,7 @@ class PickLine(NamedTuple):
     price: float
     country: str = ""      # "England", "Kazakhstan", etc.
     market_type: str = ""  # "Over/Under", "Match Result", etc.
+    state: str = ""        # "", "started" or "finished" - see leg_state()
 
 
 def _looks_internal(text: str) -> bool:
@@ -134,7 +136,34 @@ def format_outcome(pick, home: str = "", away: str = "") -> str:
                          getattr(pick, "sport", "football"))
 
 
-def pick_line_from_record(pick, tz: str, user_tz: Optional[str] = None) -> PickLine:
+STATE_MARKERS = {"started": "🔴 Started", "finished": "🏁 Finished"}
+
+
+def leg_state(start: Optional[datetime], sport: str, now: Optional[datetime] = None) -> str:
+    """"" before kickoff, "started" from kickoff, "finished" once the sport's
+    typical match length has passed. "finished" is an ESTIMATE from the same
+    duration table settlement uses - there is no live result feed behind it.
+
+    A card is built once per day but read at every subscriber's own 9:30 and at
+    every /top and /daily tap; a leg that has already kicked off must say so
+    instead of looking like a live tip."""
+    if start is None:
+        return ""
+    now = now or utcnow()
+    if now < start:
+        return ""
+    hours = DURATION_H.get(sport, DURATION_H["other"])
+    return "finished" if now >= start + timedelta(hours=hours) else "started"
+
+
+def generated_line(generated_at: Optional[str], tz: str) -> str:
+    """"<i>Generated 9:04 AM WAT</i>" in the reader's own zone; "" when unknown."""
+    at = parse_iso(generated_at) if generated_at else None
+    return f"<i>Generated {kickoff_label(at, tz)}</i>" if at else ""
+
+
+def pick_line_from_record(pick, tz: str, user_tz: Optional[str] = None,
+                          now: Optional[datetime] = None) -> PickLine:
     """THE canonical pick-card builder (``format_pick_card`` for a cached pick).
 
     The ONLY place a cached ``PickRecord`` becomes display text: the /top and
@@ -149,6 +178,7 @@ def pick_line_from_record(pick, tz: str, user_tz: Optional[str] = None) -> PickL
                     league=pick.league or sport_name(pick.sport),
                     confidence=pick.prob,
                     when=kickoff_label(parse_iso(pick.kickoff_utc), tz, user_tz),
+                    state=leg_state(parse_iso(pick.kickoff_utc), pick.sport, now),
                     price=pick.price,
                     country=getattr(pick, "country", ""),
                     market_type=MARKET_LABEL.get(pick.market, pick.market))
@@ -190,17 +220,19 @@ def pick_lines(p: PickLine) -> List[str]:
 
     lines = [esc(p.sport), league_label, esc(p.match)]
 
+    marker = f" | {STATE_MARKERS[p.state]}" if p.state in STATE_MARKERS else ""
     lines.extend([
         f"<b>Prediction:</b> {esc(p.outcome)}",
         f"Odds: {p.price:.2f}",
-        f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {esc(p.when)}"
+        f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {esc(p.when)}{marker}"
     ])
     return lines
 
 
 def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str] = None,
                heading: str = HEADING_DAILY,
-               total_prices: Optional[Iterable[float]] = None) -> str:
+               total_prices: Optional[Iterable[float]] = None,
+               generated: str = "") -> str:
     """The daily predictions post: one block per pick, then the ticket totals.
 
     ``total_prices`` lets a caller price a different collection than the cards
@@ -218,6 +250,8 @@ def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str]
         prices = list(total_prices) if total_prices is not None else [p.price for p in picks]
         lines.append(f"Total Picks: {len(picks)}")
         lines.append(f"Combined Odds: {combined_odds(prices):.2f}")
+    if generated and picks:
+        lines.append(generated)
     if stats_line:
         lines.append("")
         lines.append(stats_line)
@@ -263,7 +297,7 @@ def render_section(title: str, picks: List[PickLine]) -> List[str]:
     return lines
 
 
-def summary_card(top: List[PickLine], daily: List[PickLine]) -> str:
+def summary_card(top: List[PickLine], daily: List[PickLine], generated: str = "") -> str:
     """THE canonical results/summary card (one and only one renderer).
 
         📊 TODAY'S RESULTS
@@ -289,6 +323,8 @@ def summary_card(top: List[PickLine], daily: List[PickLine]) -> str:
     if daily:
         lines.append("")
         lines.extend(render_section(DAILY_SECTION_TITLE, daily))
+    if generated and (top or daily):
+        lines.append(generated)
     return "\n".join(lines).rstrip()
 
 

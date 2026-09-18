@@ -53,7 +53,7 @@ def main(argv=None):
     print("MODE: " + ("PERSIST - the result WILL be stored and served" if persist
                       else "READ-ONLY - nothing is written to the snapshot or picks tables"))
     if persist:
-        snap = service.get_daily_snapshot(force_refresh=force, persist=True)
+        snap = service.get_daily_snapshot(force_refresh=force, persist=True, scheduled=True)
     else:
         # what subscribers are being served right now (no generation, no writes)
         snap = service.get_daily_snapshot(allow_api_call=False, persist=False)
