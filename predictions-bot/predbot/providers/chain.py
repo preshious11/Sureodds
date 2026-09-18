@@ -49,7 +49,8 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
     if cfg.odds_api_key:
         out["oddsapi"] = OddsApiProvider(cfg.odds_api_key, budget, min_interval=cfg.odds_api_min_interval,
                                          regions=cfg.odds_api_regions,
-                                         max_leagues_per_sport=cfg.odds_api_max_leagues_per_sport)
+                                         max_leagues_per_sport=cfg.odds_api_max_leagues_per_sport,
+                                         monthly_limit=cfg.odds_api_monthly_limit)
     return out
 
 
@@ -157,10 +158,12 @@ def _merge_markets(dst: Event, src: Event) -> None:
             if ml.fair_price and not m.fair_price:
                 m.fair_price = ml.fair_price
             if ml.price > m.price:
-                m.price, m.bookmaker = ml.price, ml.bookmaker
-                # keep the id of the provider that can settle it if it was already set
-                if not m.provider_odd_id:
-                    m.provider_odd_id = ml.provider_odd_id
+                # provider_odd_id must always name the same provider as the
+                # price/bookmaker being displayed - it used to only fill in
+                # when unset, which could leave it pointing at an earlier,
+                # lower-priced provider's id (settlement then looks up the
+                # wrong provider's odd_scores for this line).
+                m.price, m.bookmaker, m.provider_odd_id = ml.price, ml.bookmaker, ml.provider_odd_id
         else:
             existing[k] = ml
     dst.markets = list(existing.values())

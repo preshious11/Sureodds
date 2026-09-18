@@ -158,8 +158,11 @@ class SharpApiProvider(BaseProvider):
         self.max_pages = max(1, max_pages)
         self.events_per_target = max(0, events_per_target)
         self.db = getattr(budget, "db", None)      # capability cache storage
+        # retries=0, matching api_football's discipline: a retried request is
+        # still a real upstream call, and budget.spend() is only charged once
+        # per logical fetch here - a silent retry would understate real usage.
         self.http = Http("https://api.sharpapi.io/api/v1", headers={"X-API-Key": api_key},
-                         rate=RateLimiter(min_interval))
+                         rate=RateLimiter(min_interval), retries=0)
         self.sport_status: Dict[str, Dict] = {}    # per-canonical-sport fetch outcome
         self.parse_counts: Counter = Counter()     # row -> MarketLine rejection reasons
 
@@ -237,7 +240,7 @@ class SharpApiProvider(BaseProvider):
                     st = parse_iso(r.get("event_start_time", ""))
                     if st:
                         seen_starts.append(st)
-                        if start <= st <= end:
+                        if start <= st < end:
                             page_window.add(str(r.get("event_id")))
                 in_window_ids |= page_window
                 pag = data.get("pagination") or {}
@@ -293,7 +296,7 @@ class SharpApiProvider(BaseProvider):
             st = parse_iso(r0.get("event_start_time", ""))
             sport = SPORT_MAP.get(str(r0.get("sport", "")).lower(), "other")
             counts[sport + ":raw_events"] += 1
-            if not st or not (start <= st <= end):
+            if not st or not (start <= st < end):
                 counts[sport + ":outside_window"] += 1
                 continue
             counts[sport + ":in_window"] += 1
@@ -343,8 +346,9 @@ class SharpApiProvider(BaseProvider):
         if r.get("is_player_prop") or mtype.startswith("player_"):
             self.parse_counts["PLAYER_PROP_UNSETTLEABLE"] += 1
             return None  # unsettleable from this provider's free tier
-        if r.get("is_main_line") is False and r.get("is_alternate_line") is True:
-            pass  # alt lines are fine as candidates; keep
+        # Alternate lines (is_alternate_line=True) are fine as candidates and
+        # need no special handling here; they fall through to the normal
+        # market parsing below like any other line.
 
         market: Optional[str] = None
         selection = stype

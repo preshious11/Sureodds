@@ -88,9 +88,9 @@ def grade(ml: MarketLine, res: MatchResult, sport: str = "football") -> str:
     m = ml.market
     period = ml.period if ml.period != "reg" or sport != "football" else "full"
 
-    if m in ("result3", "result2", "dnb", "dc", "handicap", "ht_ft", "correct_score",
+    if m in ("result3", "result2", "dnb", "dc", "ht_ft", "correct_score",
              "result_total", "result_btts", "clean_sheet", "win_to_nil", "winning_margin",
-             "btts", "odd_even", "team_to_score") or (m == "total" and ml.stat == "points"):
+             "btts", "team_to_score") or (m in ("total", "handicap", "odd_even") and ml.stat == "points"):
         sc = res.score(period)
         if sc is None:
             return PENDING
@@ -132,19 +132,26 @@ def grade(ml: MarketLine, res: MatchResult, sport: str = "football") -> str:
             if st is None:
                 return PENDING
             h, a = st
+        if ml.selection not in ("home", "away"):
+            return VOID
         sel, opp = (h, a) if ml.selection == "home" else (a, h)
         return _handicap(sel, opp, ml.line)
     if m == "odd_even":
         st = (h, a) if ml.stat == "points" else res.stat(ml.stat, period)
         if st is None:
             return PENDING
+        if ml.entity not in ("all", "home", "away"):
+            return VOID
         tot = int(st[0] + st[1]) if ml.entity == "all" else int(st[0] if ml.entity == "home" else st[1])
         return WON if (tot % 2 == 0) == (ml.selection == "even") else LOST
     if m == "ht_ft":
         ht = res.score("1h")
         if ht is None:
             return PENDING
-        want_ht, want_ft = (ml.selection.split("/") + [""])[:2]
+        parts = ml.selection.split("/")
+        if len(parts) != 2:
+            return VOID
+        want_ht, want_ft = parts
         return WON if _result_of(*ht) == want_ht and _result_of(h, a) == want_ft else LOST
     if m == "correct_score":
         try:
@@ -166,25 +173,52 @@ def grade(ml: MarketLine, res: MatchResult, sport: str = "football") -> str:
         both = h > 0 and a > 0
         return WON if _result_of(h, a) == t and both == (yn == "yes") else LOST
     if m == "clean_sheet":
+        if ml.entity not in ("home", "away"):
+            return VOID
         conceded = a if ml.entity == "home" else h
         cs = conceded == 0
         return WON if cs == (ml.selection == "yes") else LOST
     if m == "win_to_nil":
+        if ml.entity not in ("home", "away"):
+            return VOID
         won_nil = (h > a and a == 0) if ml.entity == "home" else (a > h and h == 0)
         return WON if won_nil == (ml.selection == "yes") else LOST
     if m == "team_to_score":
+        if ml.entity not in ("home", "away"):
+            return VOID
         scored = (h if ml.entity == "home" else a) > 0
         return WON if scored == (ml.selection == "yes") else LOST
     if m == "winning_margin":
-        t, band = ml.selection.split("_", 1)
+        parts = ml.selection.split("_", 1)
+        if len(parts) != 2:
+            return VOID
+        t, band = parts
         r = _result_of(h, a)
         margin = abs(h - a)
         if t == "draw":
             return WON if r == "draw" else LOST
         if r != t:
             return LOST
+        if not _band_is_valid(band):
+            return VOID
         return WON if _in_band(margin, band) else LOST
     return PENDING
+
+
+def _band_is_valid(band: str) -> bool:
+    band = band.replace("plus", "+")
+    try:
+        if band.endswith("+"):
+            float(band[:-1])
+        elif "-" in band:
+            lo, hi = band.split("-", 1)
+            float(lo)
+            float(hi)
+        else:
+            float(band)
+        return True
+    except ValueError:
+        return False
 
 
 def _in_band(margin: float, band: str) -> bool:
@@ -194,10 +228,7 @@ def _in_band(margin: float, band: str) -> bool:
     if "-" in band:
         lo, hi = band.split("-", 1)
         return float(lo) <= margin <= float(hi)
-    try:
-        return margin == float(band)
-    except ValueError:
-        return False
+    return margin == float(band)
 
 
 def _grade_from_value(ml: MarketLine, v: float, res: MatchResult) -> Optional[str]:

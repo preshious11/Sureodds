@@ -145,10 +145,17 @@ class Database:
         d = os.path.dirname(os.path.abspath(path))
         os.makedirs(d, exist_ok=True)
         self._lock = threading.RLock()
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        # timeout=30s: the in-process lock only coordinates threads within one
+        # process: a manual `cli.py` command and the scheduler's `main.py`
+        # worker are separate processes sharing this file, so SQLite's own
+        # busy-wait is the only thing standing between them and an immediate
+        # "database is locked" error during a longer write (e.g. picks
+        # generation blocked on a provider API call).
+        self.conn = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.execute("PRAGMA busy_timeout=30000")
         with self._lock:
             self.conn.executescript(SCHEMA)
             self.conn.commit()

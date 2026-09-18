@@ -183,21 +183,17 @@ def combined_odds(prices: Iterable[float]) -> float:
 
 
 def pick_lines(p: PickLine) -> List[str]:
-    """Pick display: sport, league+country, fixture, market type, prediction, odds, confidence, kickoff."""
+    """Pick display: sport, league+country, fixture, prediction, odds, confidence, kickoff."""
     league_label = esc(p.league)
     if hasattr(p, 'country') and p.country:
         league_label = f"{esc(p.country)} • {league_label}" if league_label else esc(p.country)
 
-    market_label = getattr(p, 'market_type', '')
     lines = [esc(p.sport), league_label, esc(p.match)]
-
-    if market_label:
-        lines.append(f"<b>Market:</b> {market_label}")
 
     lines.extend([
         f"<b>Prediction:</b> {esc(p.outcome)}",
         f"Odds: {p.price:.2f}",
-        f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {p.when}"
+        f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {esc(p.when)}"
     ])
     return lines
 

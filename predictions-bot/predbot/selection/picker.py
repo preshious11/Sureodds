@@ -29,6 +29,7 @@ from typing import Dict, List, Optional
 from predbot.config import Config
 from predbot.markets.catalog import contradicts, is_equivalent, selection_family, spec
 from predbot.model.ensemble import Scored
+from predbot.util.names import same_team
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +71,27 @@ def _cap(frac: float, target: int) -> int:
     return max(1, int(math.ceil(frac * target)))
 
 
+def _same_fixture(a, b) -> bool:
+    """True when two Scored candidates' events are the same real-world match,
+    even if they came from different providers as two distinct Event objects
+    (event.dedupe_key()/provider ids can differ across providers, so identity
+    and dedupe_key alone are not enough to catch a Top/Daily duplicate)."""
+    if a.sport != b.sport:
+        return False
+    if abs((a.start - b.start).total_seconds()) > 3 * 3600:
+        return False
+    return same_team(a.home, b.home) and same_team(a.away, b.away)
+
+
+def _duplicates_a_top_pick(s: Scored, top: List[Scored]) -> bool:
+    """True when ``s`` is the same fixture AND the same normalized outcome
+    (label) as an already-chosen Top pick - blocked from Daily regardless of
+    which provider each candidate came from. Same fixture with a genuinely
+    different outcome is left to the existing conflicts()/contradicts() and
+    per-event caps, exactly as before."""
+    return any(s.label == t.label and _same_fixture(s.event, t.event) for t in top)
+
+
 def choose_top(pool: List[Scored], cfg: Config):
     """Bounded deterministic search, retaining quality bars and unique matches.
 
@@ -85,8 +107,13 @@ def choose_top(pool: List[Scored], cfg: Config):
         options = options[:30] + sorted(options[30:], key=lambda s: (s.price, -_top_score(s), s.event.dedupe_key()))[:30]
     target = cfg.top_odds_target
     best, best_key, checked = [], None, 0
-    for size in range(1, min(3, max(1, cfg.top_max_picks)) + 1):
-        for group in combinations(options, size):
+    # Ticket sizes above 3 explode combinatorially, so the search pool is
+    # trimmed further for those sizes rather than silently ignoring a
+    # cfg.top_max_picks above 3 like before.
+    max_size = min(5, max(1, cfg.top_max_picks))
+    for size in range(1, max_size + 1):
+        pool = options if size <= 3 else options[:20]
+        for group in combinations(pool, size):
             if len({s.event.dedupe_key() for s in group}) != size:
                 continue
             checked += 1
@@ -190,6 +217,9 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     for s in base:
         if id(s) in top_ids:
             continue
+        if _duplicates_a_top_pick(s, top):
+            daily_rejected["DUPLICATE_OF_TOP"] += 1
+            continue
         # The Daily ticket stays the three-provider ticket it has always been;
         # an Odds API event that no other provider also saw is reserved for Top.
         if top_priority_source and s.event.sources == [top_priority_source]:
@@ -209,7 +239,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             continue
         daily_pool.append(s)
     preferred = [s for s in daily_pool if s.p_model >= .5]
-    if preferred or any(s.p_model >= .5 for s in top):
+    if preferred:
         daily_pool = preferred
     ps.diagnostics["daily_eligible_by_sport"] = dict(Counter(s.event.sport for s in daily_pool))
     ps.diagnostics["daily_pool_rejections"] = dict(daily_rejected)
@@ -276,10 +306,10 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         return len(top) + len(chosen) < cap        # "up to DAILY_PICKS_TARGET picks" in one list
 
     def fits(price: float) -> bool:
-        """Short of the floor anything fits; inside the window keep it under the ceiling."""
+        """Never accept a pick that would push the ticket past the ceiling, floor or not."""
         if ticket >= cfg.daily_odds_max:
             return False
-        return ticket < cfg.daily_odds_min or ticket * price <= cfg.daily_odds_max
+        return ticket * price <= cfg.daily_odds_max
 
     for s in daily_pool:
         if not under_cap():

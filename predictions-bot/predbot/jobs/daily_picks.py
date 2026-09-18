@@ -53,15 +53,19 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     top_priority_source: Optional[str] = None
     top_priority_report: Dict = {}
     providers_map = chain.providers if isinstance(chain, ProviderChain) else None
-    oddsapi = providers_map.get("oddsapi") if providers_map else None
-    if oddsapi is not None and oddsapi.enabled() and cfg.top_provider_priority:
+    # Driven entirely by cfg.top_provider_priority - not hardcoded to any one
+    # provider name, so setting TOP_PROVIDER_PRIORITY to something other than
+    # "oddsapi" actually takes effect instead of silently doing nothing.
+    priority_available = providers_map and any(
+        (p := providers_map.get(name)) is not None and p.enabled() for name in cfg.top_provider_priority)
+    if priority_available:
         top_chain = ProviderChain(providers_map, cfg.top_provider_priority, cfg.chain_min_events)
         top_chain.db, top_chain.cfg = chain.db, chain.cfg
-        oddsapi_events = top_chain.collect(start, end)
+        priority_events = top_chain.collect(start, end)
         top_priority_report = getattr(top_chain, "last_report", {})
-        if oddsapi_events:
-            events = merge_events(events, oddsapi_events)
-            top_priority_source = "oddsapi"
+        if priority_events:
+            events = merge_events(events, priority_events)
+            top_priority_source = top_chain.order[0] if top_chain.order else None
 
     log.info("collected %d events (%d markets)", len(events), sum(len(e.markets) for e in events))
     scored = score_events(events, db, cfg)

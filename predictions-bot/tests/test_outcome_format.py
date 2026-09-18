@@ -70,17 +70,17 @@ def test_baseball_team_prop_names_team_and_stat():
 def test_baseball_match_total_uses_runs():
     r = rec(sport="baseball", home="Guardians", away="Tigers", label="Over 8.5",
             market="total", selection="over", line=8.5)
-    assert format_outcome(r) == "Over 8.5 Runs"
+    assert format_outcome(r) == "Over 8.5 Total Runs"
 
 
 def test_football_total_uses_goals():
     r = rec(market="total", selection="over", line=2.5)
-    assert format_outcome(r) == "Over 2.5 Goals"
+    assert format_outcome(r) == "Over 2.5 Total Goals"
 
 
 def test_football_corners_and_team_totals():
     r = rec(market="total", selection="over", line=8.5, stat="corners")
-    assert format_outcome(r) == "Over 8.5 Corners"
+    assert format_outcome(r) == "Over 8.5 Total Corners"
     team = rec(market="total", selection="over", line=1.5, stat="points", entity="home")
     assert format_outcome(team) == "Chelsea Over 1.5 Goals"
 
@@ -101,7 +101,7 @@ def test_basketball_prop_and_team_total():
     assert format_outcome(p) == "LeBron James Over 25.5 Points"
     t = rec(sport="basketball", home="Lakers", away="Celtics", market="total",
             selection="over", line=110.5)
-    assert format_outcome(t) == "Over 110.5 Points"
+    assert format_outcome(t) == "Over 110.5 Total Points"
 
 
 # ================================================================ 7: ambiguity
@@ -116,7 +116,7 @@ def test_ambiguous_props_are_never_rendered():
 
 def test_ambiguous_labels_fall_through_to_canonical_fields():
     r = rec(label="Over 1.5", market="total", selection="over", line=1.5)
-    assert format_outcome(r) == "Over 1.5 Goals"   # unit restored from canonical fields
+    assert format_outcome(r) == "Over 1.5 Total Goals"   # unit restored from canonical fields
     bad = rec(label="Over/Under", market="prop", selection="", line=None, stat="",
               entity="")
     assert format_outcome(bad) == ""
@@ -283,16 +283,16 @@ def test_restart_from_existing_sqlite_needs_no_provider_calls(tmp_path):
     second = service.get_daily_snapshot()
     assert picks_text(second, WAT) == picks_text(snap, WAT)
     text, _ = pagination.render_page(second, VIEW_DAILY, 0, 20, WAT)
-    assert "Alec Bohm" not in text and "Over 1.5 Goals" in text
+    assert "Alec Bohm" not in text and "Over 1.5 Total Goals" in text
     db.close()
 
 
 # ===================================================== 20: sports format coverage
 @pytest.mark.parametrize("sport,market,stat,entity,selection,line,expected", [
-    ("football", "total", "corners", "all", "under", 9.5, "Under 9.5 Corners"),
-    ("football", "total", "cards", "all", "over", 3.5, "Over 3.5 Cards"),
+    ("football", "total", "corners", "all", "under", 9.5, "Under 9.5 Total Corners"),
+    ("football", "total", "cards", "all", "over", 3.5, "Over 3.5 Total Cards"),
     ("football", "total", "shots", "away", "over", 4.5, "Arsenal Over 4.5 Shots"),
-    ("baseball", "total", "points", "all", "under", 7.5, "Under 7.5 Runs"),
+    ("baseball", "total", "points", "all", "under", 7.5, "Under 7.5 Total Runs"),
     ("baseball", "prop", "rbis", "Bryce Harper", "over", 0.5, "Bryce Harper Over 0.5 RBIs"),
     ("baseball", "prop", "homeRuns", "Bryce Harper", "under", 1.5,
      "Bryce Harper Under 1.5 Home Runs"),

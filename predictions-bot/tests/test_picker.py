@@ -65,6 +65,40 @@ def test_no_overlap_between_top_and_daily():
                 assert not contradicts(t.line, d.line)
 
 
+def test_same_fixture_same_outcome_from_different_providers_never_leaks_into_daily():
+    """A Top pick's fixture/outcome must not reappear in Daily even when it
+    arrives as a SEPARATE, unmerged Event object whose exact-match dedupe_key()
+    differs - e.g. the Odds API priority sub-chain reported a kickoff time 90
+    minutes off from what sharpapi reported for the very same match, which
+    puts them in different dedupe_key() hour buckets even though they are
+    obviously the same fixture."""
+    now = dt()
+    top_event = Event(provider="oddsapi", provider_event_id="oa1", sport="football",
+                      league="L", home="Arsenal", away="Chelsea", start=dt(hh=21), sources=["oddsapi"])
+    other_provider_event = Event(provider="sharpapi", provider_event_id="sp9", sport="football",
+                                 league="L", home="Arsenal", away="Chelsea", start=dt(hh=22, mm=30),
+                                 sources=["sharpapi"])
+    assert top_event.dedupe_key() != other_provider_event.dedupe_key()
+
+    top_candidate = sc(top_event, "result3", "home", 0.75, 1.60, ev_val=0.10)
+    # Below top_min_odds (1.35 default) so it can never combinatorially join
+    # Top itself - the only way it could reach the ticket is via Daily, which
+    # is exactly the leak this test guards against.
+    duplicate_candidate = sc(other_provider_event, "result3", "home", 0.70, 1.32, ev_val=0.08)
+    # Distinct, dissimilar team names so the fuzzy same_team() match used by
+    # _same_fixture() can't confuse one filler fixture for another.
+    filler_names = ["Bayern", "Feyenoord", "Sporting", "Galatasaray", "Benfica",
+                    "Napoli", "Sevilla", "Ajax", "Lazio", "Monaco"]
+    filler = [sc(ev(10 + i, home=name, away=f"Opponent{i}"), "result3", "home", 0.62, 1.80)
+             for i, name in enumerate(filler_names)]
+
+    ps = select([top_candidate, duplicate_candidate] + filler, cfg(), now)
+
+    assert top_candidate in ps.top
+    assert duplicate_candidate not in ps.daily
+    assert ps.diagnostics["daily_pool_rejections"].get("DUPLICATE_OF_TOP") == 1
+
+
 def test_top_picks_meet_quality_bar():
     now = dt()
     pool = [sc(ev(i), "result3", "home", 0.70, 1.8, sources=3) for i in range(20)]

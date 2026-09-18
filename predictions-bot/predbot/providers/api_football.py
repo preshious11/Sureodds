@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 # Leagues we prefer when the free quota forces us to choose (API-Football ids)
 PRIORITY_LEAGUES = [2, 3, 848, 39, 140, 135, 78, 61, 88, 94, 144, 203, 253, 71, 128, 262, 307, 40, 179,
                     207, 218, 119, 113, 106, 197, 235, 169, 292, 98, 1, 4, 5, 9, 13, 11, 17, 18, 45, 143,
-                    137, 81, 66, 90, 96, 45]
+                    137, 81, 66, 90, 96]
 _PRI = {lid: i for i, lid in enumerate(PRIORITY_LEAGUES)}
 
 FINAL_STATUS = {"FT", "AET", "PEN"}
@@ -124,7 +124,7 @@ class ApiFootballProvider(BaseProvider):
             for fx in data.get("response", []):
                 self.fetch_counts["raw_fixtures"] += 1
                 st = parse_iso(fx["fixture"]["date"])
-                if not st or not (start <= st <= end):
+                if not st or not (start <= st < end):
                     continue
                 if fx["fixture"]["status"]["short"] != "NS":
                     continue

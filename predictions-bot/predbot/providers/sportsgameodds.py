@@ -41,7 +41,7 @@ def _f(v) -> Optional[float]:
         return None
 
 
-def _merge_sport_state(current: str, state: str, _got: int) -> str:
+def _merge_sport_state(current: str, state: str) -> str:
     """Combine per-league states into one per-sport state.  A FAILED league fails
     the whole sport; else PARTIAL wins; else the sport is EMPTY until any event
     actually parses (callers upgrade to SUCCESS when events > 0)."""
@@ -245,7 +245,7 @@ class SportsGameOddsProvider(BaseProvider):
                 state = 'failed'
             cur = self.sport_status.setdefault(sport, {'status': state, 'events': 0, 'leagues': 0})
             cur['leagues'] += 1
-            cur['status'] = _merge_sport_state(cur['status'], state, got)
+            cur['status'] = _merge_sport_state(cur['status'], state)
         for e in out:
             if e.sport in self.sport_status:
                 entry = self.sport_status[e.sport]
@@ -289,7 +289,10 @@ class SportsGameOddsProvider(BaseProvider):
             self.parse_counts["NO_BOOK_ODDS"] += 1
             return None
         stat_id = o.get("statID", "")
-        entity_id = o.get("statEntityID", "")
+        # A missing statEntityID means "the match itself", not "a player" -
+        # defaulting to "" (falsy) here made is_player=True for every odd
+        # object missing this field, silently misrouting team markets.
+        entity_id = o.get("statEntityID") or "all"
         period = PERIOD_MAP.get(o.get("periodID", "game"), o.get("periodID", "game"))
         if sport == "football" and period == "reg":
             period = "full"
@@ -397,11 +400,12 @@ class SportsGameOddsProvider(BaseProvider):
         sgo_sport = SPORT_TO_SGO.get(sport)
         if not sgo_sport:
             return None
-        if not self.budget.can_spend(self.name, 10, monthly_limit=self.monthly_limit):
+        query_limit = 50
+        if not self.budget.can_spend(self.name, query_limit, monthly_limit=self.monthly_limit):
             return None
         params = {"sportID": sgo_sport, "startsAfter": iso(start - timedelta(hours=2)),
                   "startsBefore": iso(start + timedelta(hours=2)), "type": "match",
-                  "expandResults": "true", "limit": 50}
+                  "expandResults": "true", "limit": query_limit}
         # The free tier rejects sport-only event queries ("specify either a
         # leagueID or an eventID"); scoping to the configured leagues keeps the
         # cross-provider team+time lookup usable instead of a guaranteed 400.

@@ -41,13 +41,12 @@ class Elo:
 
     def probs(self, sport: str, home: str, away: str) -> Tuple[Optional[Tuple[float, float, float]], int]:
         """(p_home, p_draw, p_away), confidence games. None when no data."""
-        rh, gh = self.get(sport, home)
-        ra, ga = self.get(sport, away)
-        games = min(gh, ga)
+        e, games = self.expected_home(sport, home, away)
         if games == 0:
             return None, 0
+        rh, _ = self.get(sport, home)
+        ra, _ = self.get(sport, away)
         diff = rh + HOME_ADV.get(sport, 50.0) - ra
-        e = 1.0 / (1.0 + 10 ** (-diff / 400.0))
         base_draw = BASE_DRAW.get(sport, 0.0)
         if base_draw:
             p_draw = max(0.10, base_draw - 0.00030 * abs(diff))
@@ -59,8 +58,8 @@ class Elo:
     def update(self, sport: str, home: str, away: str, home_score: float, away_score: float) -> None:
         rh, gh = self.get(sport, home)
         ra, ga = self.get(sport, away)
+        e, _ = self.expected_home(sport, home, away)
         diff = rh + HOME_ADV.get(sport, 50.0) - ra
-        e = 1.0 / (1.0 + 10 ** (-diff / 400.0))
         s = 1.0 if home_score > away_score else 0.0 if away_score > home_score else 0.5
         margin = abs(home_score - away_score)
         mov = math.log(margin + 1) * (2.2 / ((diff * (1 if s > 0.5 else -1)) * 0.001 + 2.2)) if margin > 0 else 1.0

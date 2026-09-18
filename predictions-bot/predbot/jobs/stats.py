@@ -7,8 +7,10 @@ from typing import Dict, List, Optional
 from predbot.model.calibration import Calibrator
 from predbot.storage.db import Database
 
+# "void" has no entry: _block() always `continue`s past void rows before
+# ever computing profit, so a void multiplier would never be reached.
 PROFIT = {
-    "won": lambda p: p - 1.0, "lost": lambda p: -1.0, "push": lambda p: 0.0, "void": lambda p: 0.0,
+    "won": lambda p: p - 1.0, "lost": lambda p: -1.0, "push": lambda p: 0.0,
     "half_won": lambda p: (p - 1.0) / 2, "half_lost": lambda p: -0.5,
 }
 

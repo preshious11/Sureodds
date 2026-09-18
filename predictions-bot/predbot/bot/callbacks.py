@@ -167,8 +167,14 @@ def handle_command(cmd: str, chat_id: str, *, service: UnifiedFetcher, tg: Teleg
     view = command_view(cmd)
     if view is None:
         return False
-    open_view(view, service=service, tg=tg, cfg=cfg, chat_id=chat_id, db=db,
-              page_size=page_size)
+    try:
+        open_view(view, service=service, tg=tg, cfg=cfg, chat_id=chat_id, db=db,
+                  page_size=page_size)
+    except Exception as exc:  # noqa: BLE001
+        # Match the button path (handle_callback): one bad pick/price/network
+        # blip must not crash the whole command loop for a typed command.
+        log.exception("command %r failed: %s", cmd, exc)
+        tg.send("Something went wrong.", chat_id=chat_id)
     return True
 
 

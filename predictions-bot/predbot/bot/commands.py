@@ -29,14 +29,22 @@ from predbot.util.timeutil import resolve_timezone, to_local, utcnow, parse_hhmm
 log = logging.getLogger(__name__)
 
 def _retry_get_updates(tg: Telegram, offset: Optional[int], timeout: int, max_retries: int = 3) -> list:
-    """Retry get_updates with exponential backoff on transient failures."""
+    """Retry get_updates with exponential backoff on transient failures.
+
+    ``tg.get_updates`` wraps every transport failure (including
+    ``requests.RequestException``, which is NOT a subclass of the builtin
+    ``ConnectionError``/``TimeoutError``) into ``PollingError`` - that's the
+    exception actually worth retrying on.
+    """
     for attempt in range(max_retries):
         try:
             return tg.get_updates(offset, timeout=timeout)
-        except (ConnectionError, TimeoutError) as e:
+        except PollingError as e:
             if attempt == max_retries - 1:
-                log.warning("get_updates failed after %d retries: %s", max_retries, e)
-                return []
+                # Still failing after the quick retries: let _poll()'s own
+                # 30s backoff handle a sustained outage/conflict instead of
+                # spinning here.
+                raise
             wait = 2 ** attempt
             log.debug("get_updates attempt %d failed, retrying in %ds: %s", attempt + 1, wait, e)
             time.sleep(wait)
@@ -44,18 +52,21 @@ def _retry_get_updates(tg: Telegram, offset: Optional[int], timeout: int, max_re
 
 
 def _retry_send(tg: Telegram, text: str, chat_id: str, reply_markup: Optional[Dict] = None, max_retries: int = 3) -> bool:
-    """Retry send with exponential backoff on transient failures. Returns True if sent."""
+    """Retry send with exponential backoff on transient failures. Returns True if sent.
+
+    ``tg.send`` never raises (transport failures return None like any other
+    failure), so retrying here means checking its return value, not catching
+    an exception it will never throw.
+    """
     for attempt in range(max_retries):
-        try:
-            tg.send(text, chat_id=chat_id, reply_markup=reply_markup)
+        if tg.send(text, chat_id=chat_id, reply_markup=reply_markup):
             return True
-        except (ConnectionError, TimeoutError) as e:
-            if attempt == max_retries - 1:
-                log.error("send failed after %d retries: %s", max_retries, e)
-                return False
-            wait = 2 ** attempt
-            log.debug("send attempt %d failed, retrying in %ds: %s", attempt + 1, wait, e)
-            time.sleep(wait)
+        if attempt == max_retries - 1:
+            log.error("send failed after %d retries", max_retries)
+            return False
+        wait = 2 ** attempt
+        log.debug("send attempt %d failed, retrying in %ds", attempt + 1, wait)
+        time.sleep(wait)
     return False
 
 

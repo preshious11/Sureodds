@@ -235,7 +235,9 @@ class EventModel:
                 weights["apif"] = 0.35
 
         blended = blend_logit(sources, weights) or p_mkt
-        p_final = p_mkt + self.shrink * (blended - p_mkt)
+        # self.shrink is how much we shrink the model blend TOWARD the market
+        # (MODEL_SHRINK_TO_MARKET): shrink=1.0 -> pure market, shrink=0.0 -> pure model.
+        p_final = p_mkt + (1.0 - self.shrink) * (blended - p_mkt)
         # market-only lines (no model view) are shaded to the market entirely
         if len(sources) == 1:
             p_final = p_mkt

@@ -132,22 +132,6 @@ def deliver_recap(db: Database, cfg, tg: Telegram, text: Optional[str]) -> int:
     return _deliver_recap_after_fixtures(db, cfg, tg, "recap", yesterday, text, "recap")
 
 
-def _deliver(db: Database, tg: Telegram, kind: str, date_str: str, text: str, label: str) -> int:
-    if not tg.token:
-        return 0  # no Telegram token configured - nothing to deliver
-    sent = 0
-    for row in db.subscribers_active():
-        chat_id = str(row["chat_id"])
-        if db.delivery_done(kind, date_str, chat_id):
-            continue
-        if tg.send(text, chat_id=chat_id):
-            db.mark_delivery(kind, date_str, chat_id)
-            sent += 1
-    if sent:
-        log.info("broadcast: %s delivered to %d subscriber(s)", label, sent)
-    return sent
-
-
 def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_str: str,
                               snapshot: DailySnapshot, target_hour: int, target_minute: int,
                               label: str, now: Optional[datetime] = None) -> int:

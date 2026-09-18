@@ -180,10 +180,14 @@ def selection_label(ml: MarketLine, home: str, away: str, sport: str = "football
     elif m == "btts":
         core = f"BTTS {s.title()}"
     elif m == "total":
-        if ml.line is None:
-            return ""
-        ent = "" if ml.entity == "all" else f"{team.get(ml.entity, ml.entity)} "
-        core = f"{ent}{s.title()} {_fmt_line(ml.line)} {stat_word}".strip()
+        if ml.line is None or ml.entity not in ("all", "home", "away"):
+            return ""  # no line, or an entity we can't attribute -> skip, never guess
+        if ml.entity == "all":
+            # "Over 0.5 Goals" alone doesn't say whose goals - a match total
+            # needs to say so explicitly, same as a team total names the team.
+            core = f"{s.title()} {_fmt_line(ml.line)} Total {stat_word}".strip()
+        else:
+            core = f"{team[ml.entity]} {s.title()} {_fmt_line(ml.line)} {stat_word}".strip()
     elif m == "handicap":
         core = f"{team.get(s, s)} {_fmt_line(ml.line, signed=True)}"
         if ml.stat not in ("points",):
@@ -241,10 +245,12 @@ def short_selection(ml: MarketLine, home: str = "", away: str = "", sport: str =
     elif m == "btts":
         core = f"BTTS {s.title()}"
     elif m == "total":
-        if ml.line is None:
-            return ""  # no line -> ambiguous outcome, must be skipped not guessed
-        ent = f"{team.get(ml.entity, ml.entity)} " if ml.entity != "all" else ""
-        core = f"{ent}{s.title()} {_fmt_line(ml.line)} {stat_word}".strip()
+        if ml.line is None or ml.entity not in ("all", "home", "away"):
+            return ""  # no line, or an entity we can't attribute -> skip, never guess
+        if ml.entity == "all":
+            core = f"{s.title()} {_fmt_line(ml.line)} Total {stat_word}".strip()
+        else:
+            core = f"{team[ml.entity]} {s.title()} {_fmt_line(ml.line)} {stat_word}".strip()
     elif m == "handicap" and ml.line is not None:
         core = f"{team.get(s, s)} {_fmt_line(ml.line, signed=True)}".strip()
         if ml.stat not in ("points",):
@@ -293,19 +299,43 @@ def selection_family(ml: MarketLine) -> str:
     return "other"
 
 
+#: Match-result markets whose selection implies a subset of {home, draw, away}
+#: - used to catch cross-market contradictions (e.g. "Arsenal to Win" and
+#: "Chelsea or Draw" on the same match) that same-market_key comparison alone
+#: cannot see because result3/result2/dnb/dc are different markets.
+_RESULT_OUTCOMES = {
+    "result3": {"home": {"home"}, "draw": {"draw"}, "away": {"away"}},
+    "result2": {"home": {"home"}, "away": {"away"}},
+    "dnb": {"home": {"home"}, "away": {"away"}},
+    "dc": {"home_draw": {"home", "draw"}, "away_draw": {"away", "draw"}, "home_away": {"home", "away"}},
+}
+
+
+def _implied_result(ml: MarketLine) -> Optional[set]:
+    return _RESULT_OUTCOMES.get(ml.market, {}).get(ml.selection)
+
+
 def contradicts(a: MarketLine, b: MarketLine) -> bool:
-    """True when two lines on the same event cannot both win and are the same
-    market (e.g. Over 2.5 & Under 2.5, Home & Away)."""
-    if a.market_key() != b.market_key():
-        return False
-    if a.selection == b.selection:
-        return False
-    if OPPOSITE.get(a.selection) == b.selection:
-        return True
-    if a.market in ("result3", "result2", "dnb", "correct_score", "ht_ft"):
-        return True  # different selections of a one-winner market
-    if a.market == "dc":
-        return False  # DC selections overlap; not strictly contradictory
+    """True when two lines on the same event cannot both win.
+
+    Same-market cases (e.g. Over 2.5 & Under 2.5, Home & Away) are compared by
+    market_key(); result3/result2/dnb/dc selections are additionally compared
+    across markets via their implied {home, draw, away} outcome set, since a
+    one-winner result and a double-chance pick can contradict even though they
+    are technically different markets.
+    """
+    if a.market_key() == b.market_key():
+        if a.selection == b.selection:
+            return False
+        if OPPOSITE.get(a.selection) == b.selection:
+            return True
+        if a.market in ("result3", "result2", "dnb", "correct_score", "ht_ft"):
+            return True  # different selections of a one-winner market
+        return False  # DC-vs-DC (same market) selections overlap; not strictly contradictory
+    if a.period == b.period and a.entity == b.entity:
+        oa, ob = _implied_result(a), _implied_result(b)
+        if oa is not None and ob is not None:
+            return not (oa & ob)
     return False
 
 
@@ -322,6 +352,4 @@ def _normalize_equiv(ml: MarketLine):
         return ("win2", ml.period, ml.selection)
     if ml.market == "handicap" and ml.line is not None and abs(ml.line) < 1e-9:
         return ("win2", ml.period, ml.selection)
-    if ml.market == "total" and ml.stat == "points":
-        return ("total", ml.period, ml.entity, round(ml.line or 0, 2), ml.selection)
     return None

@@ -65,7 +65,8 @@ class OddsApiProvider(BaseProvider):
 
     def __init__(self, api_key: str, budget: Budget, min_interval: float = 1.1,
                  bookmakers: Optional[List[str]] = None, odds_format: str = "decimal",
-                 regions: Optional[List[str]] = None, max_leagues_per_sport: int = 8):
+                 regions: Optional[List[str]] = None, max_leagues_per_sport: int = 8,
+                 monthly_limit: int = 500):
         self.key = api_key
         self.budget = budget
         self.min_interval = min_interval
@@ -76,9 +77,15 @@ class OddsApiProvider(BaseProvider):
         self.bookmakers = bookmakers
         self.regions = regions or ["us", "eu"]
         self.max_leagues_per_sport = max(1, max_leagues_per_sport)
+        # Free tier is ~500 requests/month; enforced here (not just paced by
+        # RateLimiter) so a busy day can't burn the whole month's quota.
+        self.monthly_limit = monthly_limit
         self.db = getattr(budget, "db", None)
+        # retries=0: a retried request is still a real upstream call, and
+        # Budget.spend() is only charged once per logical fetch - a silent
+        # retry would let real usage drift ahead of what's being tracked.
         self.http = Http("https://api.the-odds-api.com/v4",
-                         rate=RateLimiter(min_interval), retries=2)
+                         rate=RateLimiter(min_interval), retries=0)
         self.sport_keys: Dict[str, List[str]] = {}  # canonical -> in-season league keys
         self.parse_counts: Counter = Counter()
         self.sport_status: Dict[str, Dict] = {}
@@ -101,6 +108,9 @@ class OddsApiProvider(BaseProvider):
         """
         if self.sport_keys:
             return self.sport_keys
+        if not self.budget.can_spend(self.name, 1, monthly_limit=self.monthly_limit):
+            log.warning("OddsAPI: monthly quota exhausted, skipping sport discovery")
+            return {}
         try:
             data = self._get("/sports")
             self.budget.spend(self.name, 1)
@@ -141,6 +151,9 @@ class OddsApiProvider(BaseProvider):
         for canonical, league_keys in sports.items():
             leagues_ok, events_seen = 0, 0
             for league_key in league_keys:
+                if not self.budget.can_spend(self.name, 1, monthly_limit=self.monthly_limit):
+                    log.warning("OddsAPI: monthly quota exhausted, stopping league fetch early")
+                    break
                 try:
                     data = self._get(f"/sports/{league_key}/odds", {
                         "oddsFormat": self.odds_format,
@@ -192,7 +205,7 @@ class OddsApiProvider(BaseProvider):
 
             counts[sport + ":raw_events"] += 1
 
-            if not start_ts or not (start <= start_ts <= end):
+            if not start_ts or not (start <= start_ts < end):
                 counts[sport + ":outside_window"] += 1
                 continue
 
@@ -351,7 +364,7 @@ class OddsApiProvider(BaseProvider):
             point = outcome.get("point")
             price = parse_decimal(outcome.get("price"))
 
-            if not price or price < 1.0:
+            if not price:
                 self.parse_counts["INVALID_PRICE"] += 1
                 continue
 
