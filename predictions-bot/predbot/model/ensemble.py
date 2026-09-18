@@ -101,22 +101,47 @@ class EventModel:
         for ml in self.ev.markets:
             groups.setdefault(ml.market_key(), []).append(ml)
         for mk, lines in groups.items():
-            ways = spec(mk[0]).ways
+            market, ways = mk[0], spec(mk[0]).ways
             sels = {ml.selection for ml in lines}
-            complete = False
-            if ways == 3 and mk[0] == "result3":
-                complete = sels >= {"home", "draw", "away"}
-            elif ways == 2:
-                complete = len(sels) == 2 and any(
-                    {a, b} <= sels for a, b in (("home", "away"), ("over", "under"), ("yes", "no"), ("even", "odd")))
-            elif mk[0] == "dc":
-                complete = False  # derive from result3 instead
-            if complete:
-                probs = devig({ml.selection: self._mean_price(ml) for ml in lines})
-                for ml in lines:
-                    if ml.selection in probs:
-                        self.p_market[ml.key()] = probs[ml.selection]
-                        self.market_complete[ml.key()] = True
+            if market == "handicap" and ways == 2:
+                # market_key() groups by abs(line), so this bucket can hold
+                # MORE than one true pair when both signs of the same
+                # magnitude are quoted (e.g. home+2.0/away+2.0 AND
+                # home-2.0/away-2.0 - two different, non-complementary
+                # propositions, not two sides of one market). A selection-
+                # keyed dict comprehension over the whole bucket would let a
+                # later pair's price silently overwrite an earlier pair's and
+                # broadcast one devig result across every line in the group.
+                # Each home line must devig against its own signed mirror
+                # (home.line == -away.line) only.
+                homes = [ml for ml in lines if ml.selection == "home"]
+                aways = [ml for ml in lines if ml.selection == "away"]
+                for h in homes:
+                    mirror = next((a for a in aways if a.line == -h.line), None)
+                    if mirror is None:
+                        continue
+                    probs = devig({"home": self._mean_price(h), "away": self._mean_price(mirror)})
+                    if "home" in probs:
+                        self.p_market[h.key()] = probs["home"]
+                        self.market_complete[h.key()] = True
+                    if "away" in probs:
+                        self.p_market[mirror.key()] = probs["away"]
+                        self.market_complete[mirror.key()] = True
+            else:
+                complete = False
+                if ways == 3 and market == "result3":
+                    complete = sels >= {"home", "draw", "away"}
+                elif ways == 2:
+                    complete = len(sels) == 2 and any(
+                        {a, b} <= sels for a, b in (("home", "away"), ("over", "under"), ("yes", "no"), ("even", "odd")))
+                elif market == "dc":
+                    complete = False  # derive from result3 instead
+                if complete:
+                    probs = devig({ml.selection: self._mean_price(ml) for ml in lines})
+                    for ml in lines:
+                        if ml.selection in probs:
+                            self.p_market[ml.key()] = probs[ml.selection]
+                            self.market_complete[ml.key()] = True
             for ml in lines:
                 if ml.key() in self.p_market:
                     continue
