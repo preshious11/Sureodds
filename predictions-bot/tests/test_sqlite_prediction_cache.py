@@ -187,11 +187,17 @@ def test_lagos_day_rollover_expires_previous_snapshot(db, monkeypatch, clock):
     first = app.get_daily_snapshot()
     row = db.get_prediction_cache(app._key(first.date))
     assert row['expires_at'] == '2030-06-01T23:00:00Z'
-    clock[0] = dt(hh=23, mm=1)
+    clock[0] = dt(hh=23, mm=1)                 # 00:01 Lagos on the NEXT day - before POST_TIME
     second = app.get_daily_snapshot()
     assert second.date == '2030-06-02'
     assert second.date != first.date
-    assert f.fetch_events.call_count == 2
+    # yesterday's snapshot is gone, and a plain user read before POST_TIME does not
+    # generate the new day's slate (see tests/test_post_time_gate.py)
+    assert f.fetch_events.call_count == 1
+    assert second.generation['reason'] == 'before_post_time'
+    # the scheduled generation is what builds it
+    third = app.get_daily_snapshot(scheduled=True)
+    assert third.date == '2030-06-02' and f.fetch_events.call_count == 2
 
 
 def test_force_refresh_rebuilds_selections_without_burning_completed_sources(db, monkeypatch, clock):

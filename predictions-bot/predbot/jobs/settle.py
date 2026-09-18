@@ -17,9 +17,8 @@ from predbot.util.timeutil import iso, parse_iso, utcnow
 
 log = logging.getLogger(__name__)
 
-# typical duration before we bother asking for a result
-DURATION_H = {"football": 2.2, "basketball": 2.8, "american_football": 3.6, "hockey": 3.0,
-              "baseball": 3.6, "tennis": 3.0, "mma": 3.0, "handball": 2.2, "other": 3.0}
+# typical duration before we bother asking for a result (shared with the cards)
+from predbot.util.duration import DURATION_H  # noqa: E402
 MAX_PENDING_DAYS = 4
 SETTLEMENT_BUFFER_MIN = 15  # buffer after last match to ensure all results are available
 

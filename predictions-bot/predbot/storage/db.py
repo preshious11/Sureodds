@@ -202,6 +202,11 @@ class Database:
         rows = self.query('SELECT * FROM prediction_cache WHERE cache_key=?', (cache_key,))
         return dict(rows[0]) if rows else None
 
+    def latest_prediction_cache_row(self):
+        """The most recently generated snapshot row, whatever its day (or None)."""
+        rows = self.query("SELECT * FROM prediction_cache ORDER BY generated_at DESC LIMIT 1")
+        return dict(rows[0]) if rows else None
+
     def upsert_prediction_cache(self, row):
         columns = ('cache_key', 'local_date', 'timezone', 'status', 'payload_json',
                    'sport_status_json', 'generated_at', 'updated_at', 'expires_at',

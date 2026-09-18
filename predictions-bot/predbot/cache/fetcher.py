@@ -42,14 +42,20 @@ class UnifiedFetcher:
             log.warning('Cache STALE | date=%s | invalid payload', day)
             return None, None
 
-    def get_daily_snapshot(self, force_refresh=False, allow_api_call=True, persist=True):
+    def get_daily_snapshot(self, force_refresh=False, allow_api_call=True, persist=True, scheduled=False):
         """Today's snapshot, generating it when missing.
 
         ``persist=False`` is the read-only mode for dry runs and diagnostics: the
         snapshot is generated and returned but NOTHING is written - not the
         prediction_cache row (what /top and /daily serve), not the picks table
         (what settlement, recaps and /stats read). A test tool must never change
-        what subscribers are served."""
+        what subscribers are served.
+
+        ``scheduled=True`` marks the deliberate generators (the POST_TIME job, the
+        admin /run, cli). A plain user read on a cache miss BEFORE POST_TIME does not
+        generate: whichever subscriber asked first used to freeze the whole day's
+        slate for everyone at a random early moment (its window starts at "now").
+        Such a read gets a placeholder that says when the picks are ready."""
         now = utcnow()
         day = to_local(now, self.cfg.timezone).date().isoformat()
         # All service instances for the same SQLite file share this in-process lock.
@@ -62,8 +68,18 @@ class UnifiedFetcher:
                 # trigger provider API calls from user views like /top, /daily,
                 # button taps, delivery polling or post-restart reads.
                 log.info('Cache HIT | date=%s | status=%s', day, row['status'])
+                if persist:
+                    self._count('hit', day)
                 return cached
             log.info('Cache %s | date=%s', 'PARTIAL (force refresh)' if cached else 'MISS', day)
+            if not cached and not force_refresh and allow_api_call and not scheduled \
+                    and self._before_post_time(now):
+                ready = self._ready_label(now)
+                log.info('Not generating before POST_TIME | date=%s | ready at %s', day, ready)
+                return DailySnapshot(date=day, generated_at=iso(now), origin='sqlite', status='PARTIAL',
+                                     generation={'complete': False, 'reason': 'before_post_time',
+                                                 'ready_at': ready},
+                                     stats=self._stats_summary())
             # If cache miss and API calls disabled (e.g., delivery polling), return empty snapshot
             if not allow_api_call and not cached:
                 log.info('Skipping API call (delivery polling) | cache_miss=%s', day)
@@ -80,6 +96,11 @@ class UnifiedFetcher:
                 finally:
                     if isinstance(self.chain, ProviderChain):
                         self.chain.force_retry = False
+                pickset.diagnostics['cycle'] = {
+                    'trigger': 'scheduled/admin job' if scheduled else 'user command',
+                    'cache': 'FORCE REFRESH' if cached else 'MISS', 'at': iso(now)}
+                if persist:
+                    self._count('miss', day)
                 snapshot = self._snapshot_from_pickset(pickset, day)
                 # Keep usable previous selections if a catastrophic model/generator
                 # failure yields no replacement. Successful valid empties may replace.
@@ -105,6 +126,27 @@ class UnifiedFetcher:
                 if persist:
                     self._store(snapshot, now)
                 return snapshot
+
+    def _count(self, what, day):
+        """Per-day cache read counters (kv), so /lastrun can say hit/miss."""
+        key = f'cache:{what}:{day}'
+        try:
+            self.db.set_kv(key, str(int(self.db.get_kv(key) or 0) + 1))
+        except Exception:  # noqa: BLE001 - bookkeeping must never break a read
+            log.debug('cache counter failed', exc_info=True)
+
+    def _post_hm(self):
+        h, m = self.cfg.post_time.split(':')
+        return int(h), int(m)
+
+    def _before_post_time(self, now):
+        local = to_local(now, self.cfg.timezone)
+        return (local.hour, local.minute) < self._post_hm()
+
+    def _ready_label(self, now):
+        h, m = self._post_hm()
+        local = to_local(now, self.cfg.timezone)
+        return f'{h:02d}:{m:02d} {local.tzname() or self.cfg.timezone}'
 
     def _store(self, snapshot, now):
         _, midnight = day_bounds(now, self.cfg.timezone)

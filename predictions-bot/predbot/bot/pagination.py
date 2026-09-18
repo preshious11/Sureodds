@@ -12,8 +12,8 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from predbot.bot.format import (HEADING_DAILY, HEADING_TOP, PickLine,
-                                format_outcome, pick_line_from_record, pick_lines,
-                                picks_card, stats_message)
+                                format_outcome, generated_line, pick_line_from_record,
+                                pick_lines, picks_card, stats_message)
 from predbot.cache.models import (DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STATS,
                                   VIEW_TOP)
 from predbot.util.timeutil import parse_iso, to_local, utcnow
@@ -126,6 +126,8 @@ def _retry_hint(snapshot: DailySnapshot, tz: str) -> str:
 
 
 def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> str:
+    if (snapshot.generation or {}).get("reason") == "before_post_time":
+        return f"Today's picks are ready at {snapshot.generation.get('ready_at', 'the scheduled time')}."
     """Why a view has nothing to show - the real reasons, kept distinct.
 
     * an empty tier of an otherwise fine card: top picks are a quality bar, not a
@@ -145,7 +147,8 @@ def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> s
 
 
 def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
-                tz: str, user_tz: Optional[str] = None) -> Tuple[str, Dict]:
+                tz: str, user_tz: Optional[str] = None,
+                now: Optional[datetime] = None) -> Tuple[str, Dict]:
     """One page of a ticket view: cards for the visible picks, then totals for
     the section those picks come from (Top or the whole Daily ticket).
 
@@ -165,10 +168,11 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
     page = clamp_page(page, len(items), size)
     chunk = slice_page(items, page, size)
 
-    text = picks_card([pick_line_from_record(p, tz, user_tz) for p in chunk],
+    text = picks_card([pick_line_from_record(p, tz, user_tz, now) for p in chunk],
                       snapshot.date,
                       heading=HEADING_TOP if view == VIEW_TOP else HEADING_DAILY,
-                      total_prices=[p.price for p in items])
+                      total_prices=[p.price for p in items],
+                      generated=generated_line(snapshot.generated_at, user_tz or tz))
 
     if pages > 1:
         text += f"\n<i>Page {page + 1}/{pages}</i>"
@@ -205,8 +209,9 @@ def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC",
 
 
 def render_view(snapshot: DailySnapshot, view: str, page: int, size: int,
-                tz: str, db=None, user_tz: Optional[str] = None) -> Tuple[str, Dict]:
+                tz: str, db=None, user_tz: Optional[str] = None,
+                now: Optional[datetime] = None) -> Tuple[str, Dict]:
     """Entry point used by both the /daily command and callback navigation."""
     if view == VIEW_STATS:
         return render_stats(snapshot, db=db, tz=tz, user_tz=user_tz)
-    return render_page(snapshot, view, page, size, tz, user_tz)
+    return render_page(snapshot, view, page, size, tz, user_tz, now)

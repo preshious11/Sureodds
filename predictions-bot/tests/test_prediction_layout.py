@@ -14,6 +14,15 @@ from tests.test_picker import cfg, ev, sc
 from tests.test_subscribers_broadcast import FakeTG, _cb
 
 
+@pytest.fixture(autouse=True)
+def _before_kickoff(monkeypatch):
+    """Legs carry a Started/Finished marker once kickoff passes, so the exact
+    layout is only stable relative to a fixed 'now' - not the real clock."""
+    from datetime import datetime, timezone
+    monkeypatch.setattr('predbot.bot.format.utcnow',
+                        lambda: datetime(2030, 6, 1, 6, 0, tzinfo=timezone.utc))
+
+
 def snapshot():
     def pick(name, price, tier):
         return PickRecord(home=name, away='Chelsea', label='Over 1.5 Goals',
