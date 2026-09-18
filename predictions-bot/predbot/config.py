@@ -62,6 +62,10 @@ class Config:
     #: Hard cap on Odds API credits (regions x markets per odds request) spent
     #: in one generation cycle. At ~15/day that is ~450/month on a 500 quota.
     oddsapi_max_credits_per_cycle: int = field(default_factory=lambda: _int("ODDSAPI_MAX_CREDITS_PER_CYCLE", 15))
+    #: Never spend below this many of the REMAINING credits reported by the
+    #: Odds API's x-requests-remaining response header (the authoritative
+    #: quota signal), so a handful of picks never eats the whole month.
+    oddsapi_reserve_credits: int = field(default_factory=lambda: _int("ODDSAPI_RESERVE_CREDITS", 50))
     provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "api_football,sportsgameodds,sharpapi"))
     #: Provider tried first for the Top ticket only; falls back to
     #: ``provider_order`` when it can't supply enough qualifying picks.

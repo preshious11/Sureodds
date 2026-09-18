@@ -41,6 +41,10 @@ class Http:
         self.timeout = timeout
         self.rate = rate
         self.retries = retries
+        # Response headers from the MOST RECENT successful call. Providers that
+        # meter usage in response headers (the Odds API's x-requests-remaining /
+        # x-requests-used) read them here instead of re-implementing requests.
+        self.last_headers: Dict[str, str] = {}
 
     @property
     def session(self) -> requests.Session:
@@ -75,9 +79,14 @@ class Http:
                 time.sleep(2.0 * (attempt + 1))
                 continue
             if r.status_code >= 400:
+                # Capture headers even on a quota error: the Odds API still
+                # reports x-requests-remaining on 401 OUT_OF_USAGE_CREDITS.
+                self.last_headers = {k.lower(): v for k, v in r.headers.items()}
                 raise ProviderError(f"{r.status_code} from {url}: {r.text[:300]}")
             try:
-                return r.json()
+                payload = r.json()
             except ValueError as e:
                 raise ProviderError(f"non-JSON response from {url}") from e
+            self.last_headers = {k.lower(): v for k, v in r.headers.items()}
+            return payload
         raise ProviderError(f"request failed: {last_err}")

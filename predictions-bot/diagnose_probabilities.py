@@ -142,14 +142,14 @@ def report_distributions(cfg, scored):
                 rej["price_window"] += 1
             if s.p_model < cfg.daily_min_prob:
                 rej["p_model<%.2f" % cfg.daily_min_prob] += 1
-            if set(s.sources) - {"market"} and s.ev < cfg.daily_max_neg_ev:
+            if {"apif", "elo"} & set(s.sources) and s.ev < cfg.daily_max_neg_ev:
                 rej["ev<%.2f" % cfg.daily_max_neg_ev] += 1
             if s.agreement < 0.30:
                 rej["agreement<0.30"] += 1
         passing = sum(1 for s in items
                       if cfg.daily_min_odds <= s.price <= cfg.daily_max_odds
                       and s.p_model >= cfg.daily_min_prob
-                      and not (set(s.sources) - {"market"} and s.ev < cfg.daily_max_neg_ev)
+                      and not ({"apif", "elo"} & set(s.sources) and s.ev < cfg.daily_max_neg_ev)
                       and s.agreement >= 0.30)
         print(f"  {sport:12s} validated={len(items):5d} passing_all={passing:5d} {dict(rej)}")
 
