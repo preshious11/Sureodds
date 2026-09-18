@@ -241,8 +241,8 @@ Predictions use the existing SQLite database (`DB_PATH`) as the only cache.
   process against this database; this is not a multi-host distributed cache.
 - `CACHE_RETENTION_DAYS` defaults to 7. Pruning removes only expired cache history,
   not subscribers, picks, results, settings or API budget records.
-- No Redis package, URL, server, file-cache directory or external service is required.
-  Previous `REDIS_URL`/`CACHE_DIR` settings are unused and can be removed.
+- The SQLite database is the only state store: no external cache service, extra package
+  or file-cache directory is required. A leftover `CACHE_DIR` setting is unused.
 - Startup logs `Prediction cache backend=sqlite` and the resolved SQLite path.
   Docker sets `DB_PATH=/data/predbot.db`; mount persistent storage at `/data`.
   Persistence across container replacement must be verified in JustRunMyApp.

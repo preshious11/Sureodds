@@ -122,7 +122,7 @@ def test_startup_report_names_the_file_the_overrides_and_the_ignored_keys(tmp_pa
                  "ODDS_API_REGIONS=eu\n"                       # equals the default -> not an override
                  "TELEGRAM_BOT_TOKEN=abc123-very-secret\n"
                  "ODDS_API_KEY=odds-secret-key\n"
-                 "REDIS_URL=redis://user:pw@host\n"             # a key this version never reads
+                 "LEGACY_SERVICE_URL=https://user:pw@host\n"     # a key this version never reads
                  "ALLOWED_SPORTS=football\n", encoding="utf-8")
     _clear(monkeypatch, "MAX_PICKS_PER_EVENT", "ODDS_API_REGIONS", "TELEGRAM_BOT_TOKEN", "ODDS_API_KEY")
 
@@ -132,7 +132,7 @@ def test_startup_report_names_the_file_the_overrides_and_the_ignored_keys(tmp_pa
     assert "MAX_PICKS_PER_EVENT=3 [.env]" in text
     assert "TELEGRAM_BOT_TOKEN=*** [.env]" in text and "ODDS_API_KEY=*** [.env]" in text
     assert "ODDS_API_REGIONS" not in text.split("override the code default:")[1].split("\n")[0]
-    assert "WARNING .env keys this version never reads (ignored): ALLOWED_SPORTS, REDIS_URL" in text
+    assert "WARNING .env keys this version never reads (ignored): ALLOWED_SPORTS, LEGACY_SERVICE_URL" in text
 
 
 def test_secrets_are_masked_everywhere_in_the_report(tmp_path, monkeypatch):
@@ -146,7 +146,7 @@ def test_secrets_are_masked_everywhere_in_the_report(tmp_path, monkeypatch):
 
     for secret in ("abc123-very-secret", "key-999", "k3", "k4", "k5"):
         assert secret not in everything.replace("ODDS_API_KEY", "").replace("SHARPAPI_KEY", "")
-    assert mask("TELEGRAM_BOT_TOKEN", "x") == "***" and mask("REDIS_URL", "x") == "***"
+    assert mask("TELEGRAM_BOT_TOKEN", "x") == "***" and mask("SOME_SERVICE_URL", "x") == "***"
     assert mask("MAX_PICKS_PER_EVENT", 1) == "1"
 
 

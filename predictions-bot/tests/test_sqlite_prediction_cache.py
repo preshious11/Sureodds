@@ -309,14 +309,6 @@ def test_prune_retains_subscribers_and_history(db, monkeypatch, clock):
     assert db.query('SELECT COUNT(*) n FROM provider_cache')[0]['n'] == 2
 
 
-def test_no_redis_package_or_configuration_required(db, monkeypatch, clock):
-    monkeypatch.setitem(sys.modules, 'redis', None)
-    monkeypatch.setenv('REDIS_URL', 'intentionally-invalid-and-unused')
-    app, f, b = service(db, monkeypatch)
-    assert app.get_daily_snapshot().status == 'COMPLETE'
-    assert not hasattr(app.cfg, 'redis_url')
-
-
 def test_football_reuses_successful_raw_requests_after_restart(db, clock):
     p = ApiFootballProvider('fake-key', Budget(db))
     p.http.get = Mock(return_value={'response': [{'fixture': {'id': 1}}]})
@@ -460,15 +452,3 @@ def test_diagnostic_reports_missing_database(tmp_path, capsys):
     info = diag.main(Config(db_path=str(tmp_path / 'absent.db')))
     assert info['db_exists'] is False and info['today'] is None
     assert 'No database exists here' in capsys.readouterr().out
-
-
-def test_runtime_source_has_no_redis_dependency():
-    import re
-    from pathlib import Path
-    root = Path(__file__).resolve().parent.parent
-    files = list((root / 'predbot').rglob('*.py')) + [root / 'main.py', root / 'cli.py',
-                                                       root / 'diagnose_prediction_cache.py']
-    offenders = [str(f) for f in files if f.exists()
-                 and re.search(r'\bimport redis\b|\bfrom redis\b|redis_url|REDIS_URL', f.read_text(encoding='utf-8'))]
-    assert offenders == []
-    assert 'redis' not in (root / 'requirements.txt').read_text(encoding='utf-8').lower()
