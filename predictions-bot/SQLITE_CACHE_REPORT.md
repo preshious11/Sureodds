@@ -9,7 +9,7 @@ no `prediction_cache` table. A read-only check of the configured local database
 also confirmed that this table was absent before application startup migration.
 
 Previous interactive flow:
-`command/button -> Redis / JSON file / memory -> existing SQLite picks -> providers`.
+`command/button -> external cache / JSON file / memory -> existing SQLite picks -> providers`.
 A process restart could reconstruct a card from existing `picks`, without API
 calls, but that was not a persisted canonical generation with retryable provider
 portions. Any existing picks could stop regeneration even if football was missing.
@@ -46,7 +46,7 @@ request -> SQLite lookup for application timezone/date
     -> return selected view
 ```
 
-SQLite is authoritative on every request. There is no memory/file/Redis snapshot
+SQLite is authoritative on every request. There is no memory/file/external-cache snapshot
 that can override a newer SQLite row. An existing legacy `picks` row does not
 prove source coverage, so the first request after upgrade creates a new canonical
 snapshot instead of permanently importing a potentially incomplete card.
@@ -167,7 +167,7 @@ Startup logs the resolved path/existence and `Prediction cache backend=sqlite`.
 | `predbot/cache/providers.py` | Persistent normalized provider portions, retry and per-sport coverage metadata |
 | `predbot/cache/models.py` | Version 2 snapshot, status, sport metadata, complete pick identity and Top odds |
 | `predbot/cache/__init__.py` | Remove obsolete backend imports |
-| `predbot/cache/manager.py` | Removed Redis/file/memory prediction backend |
+| `predbot/cache/manager.py` | Removed the external-cache/file/memory prediction backend |
 | `predbot/providers/chain.py` | Route runtime collection through persisted provider portions |
 | `predbot/providers/api_football.py` | SQLite response reuse and conservative request accounting |
 | `predbot/jobs/daily_picks.py` | Shared service for publication, retain provider coverage, avoid repeat pick inserts |
@@ -175,16 +175,16 @@ Startup logs the resolved path/existence and `Prediction cache backend=sqlite`.
 | `predbot/bot/pagination.py` | Serve usable partial picks; unavailable text only for empty partial views |
 | `predbot/bot/broadcast.py` | Update documentation to match the shared service; delivery rules unchanged |
 | `predbot/config.py`, `.env.example` | SQLite retry/retention settings; remove runtime external-cache configuration |
-| `requirements.txt` | Remove Redis dependency |
+| `requirements.txt` | Remove the external-cache client dependency |
 | `diagnose_prediction_cache.py` | Read-only SQLite diagnostics; no sports API calls or credential output |
 | `tests/test_sqlite_prediction_cache.py` | New persistence, subprocess restart, recovery, atomicity, concurrency and migration tests |
 | `tests/test_cache_pagination.py`, `tests/test_subscribers_broadcast.py` | Test routing/pagination against SQLite rather than the removed backend |
 | `tests/test_generation_regressions.py`, `tests/test_quota_handling.py` | Usable partial data and quota-state regression expectations |
 | `tests/test_prediction_layout.py`, `tests/test_prediction_timezone.py` | Adapt construction to the SQLite service; retain layout/timezone checks |
-| `tests/test_redis_configuration.py` | Removed obsolete Redis tests, replaced by no-Redis-required regression |
+| tests for the removed external-cache backend | Removed as obsolete; a repo-wide guard test now keeps it out |
 | `README.md`, `PREDICTION_GENERATION_REPORT.md`, `SQLITE_CACHE_REPORT.md` | Current operating instructions and historical-report correction |
 
-The uncommitted earlier Redis diagnostic/football-cache experiment was also removed.
+The uncommitted earlier external-cache diagnostic/football-cache experiment was also removed.
 No welcome copy, polling, subscription semantics, selection math, grading or stats
 formulas were changed. Existing POST_TIME scheduling is preserved (this repository's
 default remains 09:00 Africa/Lagos, not changed to 09:30).
@@ -200,17 +200,17 @@ default remains 09:00 Africa/Lagos, not changed to 09:30).
 - Temporary football failure recovers after the cooldown without repeating baseball.
 - Covered: miss/hit, valid empty, all-source failure, stale version/JSON/expiry,
   force refresh, rollback, concurrent separate Database instances, fallback,
-  local midnight, retention, non-destructive migration and no Redis package.
-- No remaining test failures. Earlier tests expecting the removed Redis backend or
+  local midnight, retention, non-destructive migration and no external-cache package.
+- No remaining test failures. Earlier tests expecting the removed external-cache backend or
   provider-wide blocking were updated to the requested SQLite/partial-serving behavior.
 - No live sports API requests or Telegram messages were made for these checks.
 
-## Redis check
+## External cache check
 
-Redis is no longer imported or required by application runtime, and is removed from
-requirements. REDIS_URL and CACHE_DIR values left in local/host environments are
-ignored. Local installed packages need not be uninstalled. Historical investigation
-text may mention Redis but is explicitly superseded by this report.
+No external cache service is imported or required by application runtime, and its
+client is removed from requirements. A leftover `CACHE_DIR` value, or any old
+cache-service URL, left in local/host environments is ignored (the startup log lists
+unread keys by name). Local installed packages need not be uninstalled.
 
 ## Deployment and live verification
 
@@ -224,7 +224,7 @@ text may mention Redis but is explicitly superseded by this report.
    builds today's canonical snapshot automatically. Old external/file caches are
    ignored. If today's football quota is already exhausted it stays PARTIAL until
    the provider can recover; available picks still display.
-4. Remove obsolete REDIS_URL/CACHE_DIR settings if desired. Optional settings:
+4. Remove the obsolete `CACHE_DIR` setting, and any leftover cache-service URL setting, if desired. Optional settings:
    `CACHE_RETRY_SECONDS=900`, `CACHE_RETENTION_DAYS=7`. Keep DB_PATH, provider keys,
    subscriber timezone configuration and POST_TIME as before.
 5. Confirm startup logs: `SQLite database path: ... | exists=...` and

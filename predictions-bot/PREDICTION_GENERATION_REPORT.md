@@ -132,7 +132,7 @@ Provider contract checks used official documentation:
 ## Code fixes and cache behavior
 
 The old code could catch a football failure, select baseball, persist it, and
-cache it until UTC midnight. Simply clearing Redis then rebuilt the same picks
+cache it until UTC midnight. Simply clearing the interactive cache then rebuilt the same picks
 from SQLite. There was no failure/completeness metadata.
 
 New generations record provider completion/errors, counts and attempt times in
@@ -236,7 +236,7 @@ The diagnostic uses real API GETs/quota; do not run it repeatedly unnecessarily.
 Deploy/rebuild the updated code on justrunmy.app. API-Football access/quota must
 recover before a complete generation can be expected with all providers enabled.
 Do **not** delete the database, subscribers or settled picks. Do not clear today's
-Redis key expecting new odds: persisted published picks take precedence.
+cached entry expecting new odds: persisted published picks take precedence.
 
 No live cache was cleared and no live ticket was regenerated. Existing published
 legacy tickets are preserved. The safest action is let the next application day
