@@ -65,6 +65,14 @@ def _ranking(value: str) -> str:
     return "family_z"
 
 
+def _cross_tier(value: str) -> str:
+    v = str(value or "").strip().lower()
+    if v in ("different_outcome", "forbid"):
+        return v
+    log.warning("CROSS_TIER_SAME_FIXTURE=%r is not different_outcome or forbid - using different_outcome", value)
+    return "different_outcome"
+
+
 def _bool(name: str, default: bool) -> bool:
     value = _env(name, "true" if default else "false").strip().lower() in ("1", "true", "yes", "on")
     KNOWN_KEYS[name] = (default, value)
@@ -257,6 +265,9 @@ class Config:
     #: order the Daily builder is offered candidates in: ``family_z`` ranks each market family against its
     #: own peers (a straight win competes with wins, not with +1.5 lines); ``raw`` = ``_daily_score`` alone
     daily_ranking: str = field(default_factory=lambda: _ranking(_env("DAILY_RANKING", "family_z")))
+    #: what the Daily may do on a match that is already in the Top ticket: ``different_outcome`` = allowed
+    #: only with a tip that is neither the same nor nested in a Top leg; ``forbid`` = the match is off-limits
+    cross_tier_same_fixture: str = field(default_factory=lambda: _cross_tier(_env("CROSS_TIER_SAME_FIXTURE", "different_outcome")))
     daily_max_sport_share: float = field(default_factory=lambda: _float("DAILY_MAX_SPORT_SHARE", 0.60))
     daily_max_per_league: int = field(default_factory=lambda: _int("DAILY_MAX_PER_LEAGUE", 3))
     model_shrink: float = field(default_factory=lambda: _float("MODEL_SHRINK_TO_MARKET", 0.80))

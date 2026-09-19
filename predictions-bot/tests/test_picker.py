@@ -660,7 +660,9 @@ def test_the_same_match_under_two_providers_names_still_counts_as_one_fixture():
         home, away = _names(rng)
         pool.append(sc(ev(50 + i, home=f"{home}{i}", away=f"{away}{i}"), "result3", "home", 0.66, 1.40, sources=3))
 
-    ps = select(pool, cfg(), dt())
+    # one match across BOTH tiers is the CROSS_TIER_SAME_FIXTURE=forbid contract; the default now lets a
+    # match appear in both tiers with different outcomes (tests/test_cross_tier.py)
+    ps = select(pool, Config(cross_tier_same_fixture="forbid"), dt())
 
     assert _fixture_of(ps.all()) == []
     assert sum(1 for p in ps.all() if p.event.home.startswith("Arsenal")) <= 1
@@ -677,7 +679,7 @@ def test_a_top_fixture_never_reappears_in_daily_with_a_different_market():
         home, away = _names(rng)
         pool.append(sc(ev(80 + i, home=f"{home}{i}", away=f"{away}{i}"), "result3", "home", 0.62, 1.35, sources=3))
 
-    ps = select(pool, cfg(), dt())
+    ps = select(pool, Config(cross_tier_same_fixture="forbid"), dt())     # forbid = the old cross-tier rule
 
     assert {p.event.home for p in ps.top} == {"Alpha", "Charlie"}
     assert {p.event.home for p in ps.daily}.isdisjoint({"Alpha", "Charlie"})

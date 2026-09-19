@@ -29,9 +29,11 @@ from typing import Dict, List, Optional, Tuple
 from predbot.config import Config
 from predbot.markets.catalog import contradicts, is_equivalent, selection_family, spec
 from predbot.markets.settlement import unsettleable_reason
+from predbot.selection import cross_tier
 from predbot.selection.families import family_counts, order_by_family_z
 from predbot.model.ensemble import Scored
-from predbot.util.names import same_team
+from predbot.util.fixtures import competition_id, fixture_key, fixture_orientation
+from predbot.util.names import canonical_team
 
 log = logging.getLogger(__name__)
 
@@ -99,11 +101,29 @@ def same_fixture(a, b) -> bool:
     even if they came from different providers as two distinct Event objects
     (event.dedupe_key()/provider ids can differ across providers, so identity
     and dedupe_key alone are not enough to catch a Top/Daily duplicate)."""
-    if a.sport != b.sport:
+    return fixture_orientation(a, b) is not None
+
+
+def _pre(event) -> tuple:
+    comp = competition_id(event)
+    return event.dedupe_key(), comp, fixture_key(event, comp)
+
+
+def fixture_relation(a, b, pre_a: Optional[tuple] = None, pre_b: Optional[tuple] = None) -> Optional[bool]:
+    """``None`` when ``a`` and ``b`` are different matches; otherwise whether the two providers list the sides
+    the other way round (``True`` = home/away swapped). One match is recognised by an identical dedupe_key,
+    by ``fixture_orientation`` (fuzzy names, kickoff, competition), or by an identical ``fixture_key``.
+    ``pre_a``/``pre_b`` are optional precomputed (dedupe_key, competition id, fixture_key) triples."""
+    pre_a, pre_b = pre_a or _pre(a), pre_b or _pre(b)
+    if a is b or pre_a[0] == pre_b[0]:
         return False
-    if abs((a.start - b.start).total_seconds()) > 3 * 3600:
-        return False
-    return same_team(a.home, b.home) and same_team(a.away, b.away)
+    orientation = fixture_orientation(a, b, pre_a[1], pre_b[1])
+    if orientation is not None:
+        return orientation == "swapped"
+    if pre_a[2] == pre_b[2]:
+        ha, hb = canonical_team(a.home, a.sport), canonical_team(b.home, b.sport)
+        return ha != hb and ha == canonical_team(b.away, b.sport)
+    return None
 
 
 #: Hard ceiling on complete tickets evaluated by choose_top(). Real pools have
@@ -117,6 +137,25 @@ class _SearchBudgetSpent(Exception):
     pass
 
 
+def link_events(events) -> Tuple[List[set], set]:
+    """``fixture_conflicts`` plus the set of (i, j) index pairs (i < j) whose two providers list home/away
+    the other way round."""
+    n = len(events)
+    pre = [_pre(e) for e in events]
+    conflicts: List[set] = [set() for _ in range(n)]
+    swapped: set = set()
+    for i in range(n):
+        for j in range(i + 1, n):
+            rel = fixture_relation(events[i], events[j], pre[i], pre[j])
+            if rel is None:
+                continue
+            conflicts[i].add(j)
+            conflicts[j].add(i)
+            if rel:
+                swapped.add((i, j))
+    return conflicts, swapped
+
+
 def fixture_conflicts(events) -> List[set]:
     """For each event, the set of OTHER indices that are the same real-world
     match: an identical dedupe_key(), or the fuzzy same_fixture() match (one
@@ -127,24 +166,25 @@ def fixture_conflicts(events) -> List[set]:
     every combination. Deliberately pairwise, not clustered: fuzzy matching is
     not transitive (A~B and B~C does not make A~C), and merging chains of
     near-matches would collapse genuinely different fixtures into one."""
-    n = len(events)
-    keys = [e.dedupe_key() for e in events]
-    conflicts: List[set] = [set() for _ in range(n)]
-    for i in range(n):
-        for j in range(i + 1, n):
-            if keys[i] == keys[j] or same_fixture(events[i], events[j]):
-                conflicts[i].add(j)
-                conflicts[j].add(i)
-    return conflicts
+    return link_events(events)[0]
 
 
-def _duplicates_a_top_pick(s: Scored, top: List[Scored]) -> bool:
-    """True when ``s`` is the same fixture AND the same normalized outcome
-    (label) as an already-chosen Top pick - blocked from Daily regardless of
-    which provider each candidate came from. Same fixture with a genuinely
-    different outcome is left to the existing conflicts()/contradicts() and
-    per-event caps, exactly as before."""
-    return any(s.label == t.label and same_fixture(s.event, t.event) for t in top)
+def _cross_tier_verdict(s: Scored, top: List[Scored], mode: str) -> Optional[Tuple[str, str]]:
+    """(rejection name, why) when Daily candidate ``s`` may not be offered because of a Top leg on the same
+    match; ``None`` when it is allowed. ``forbid``: any Top fixture is off-limits. ``different_outcome``: only
+    the same tip (or one nested in it) is refused; contradictions are left to the builder's conflicts()."""
+    for t in top:
+        swapped = fixture_relation(t.event, s.event)
+        if swapped is None:
+            continue
+        if mode == cross_tier.FORBID:
+            return "CROSS_TIER_DUPLICATE", "match is in the Top ticket (CROSS_TIER_SAME_FIXTURE=forbid)"
+        rel = cross_tier.relation(t.line, s.line, swapped)
+        if rel == cross_tier.DUPLICATE or (not swapped and s.label == t.label):
+            return "CROSS_TIER_DUPLICATE", f"same tip as Top leg {t.label}"
+        if rel == cross_tier.NESTED:
+            return "CROSS_TIER_NESTED", f"nested in Top leg {t.label}"
+    return None
 
 
 def choose_top(pool: List[Scored], cfg: Config):
@@ -272,7 +312,7 @@ def choose_top(pool: List[Scored], cfg: Config):
 
 def select(scored: List[Scored], cfg: Config, now: datetime,
            top_priority_source: Optional[str] = None, trace: Optional[Dict] = None,
-           results_gate=None) -> PickSet:
+           results_gate=None, _exclude_daily: Optional[set] = None, _depth: int = 0) -> PickSet:
     """``trace`` (optional, diagnostics only) collects the first rule that
     blocked each candidate: id(Scored) -> reason string."""
     def _note(s: Scored, rule: str) -> None:
@@ -410,15 +450,24 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     # One ticket for the whole post: keep filling while it is short of the floor,
     # stop before a pick would break the ceiling or the pick cap.
     cap = cfg.daily_target
+    cross_mode = getattr(cfg, "cross_tier_same_fixture", cross_tier.DIFFERENT_OUTCOME)
     daily_pool: List[Scored] = []
     daily_rejected: Counter = Counter()
     for s in base:
         if id(s) in top_ids:
             _note(s, "daily: already a Top leg")
             continue
-        if _duplicates_a_top_pick(s, top):
-            daily_rejected["DUPLICATE_OF_TOP"] += 1
-            _note(s, "daily: DUPLICATE_OF_TOP")
+        if _exclude_daily and id(s) in _exclude_daily:
+            rejection_counts["CROSS_TIER_DUPLICATE_REMOVED"] += 1
+            _note(s, "daily: CROSS_TIER_DUPLICATE_REMOVED")
+            continue
+        verdict = _cross_tier_verdict(s, top, cross_mode)
+        if verdict:
+            name, why = verdict
+            rejection_counts[name] += 1
+            daily_rejected["DUPLICATE_OF_TOP" if name == "CROSS_TIER_DUPLICATE" else name] += 1
+            s.notes["cross_tier"] = f"{name}: {why}"
+            _note(s, f"daily: {name}")
             continue
         if not (cfg.daily_min_odds <= s.price <= cfg.daily_max_odds):
             daily_rejected["BELOW_THRESHOLD"] += 1
@@ -476,15 +525,21 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         event_pos(t.event)
     for s in daily_pool:
         event_pos(s.event)
-    fixture_links = fixture_conflicts(slate_events)
+    fixture_links, swapped_pairs = link_events(slate_events)
 
     def same_slate_fixture(a, b) -> bool:
         pa, pb = event_pos(a), event_pos(b)
         return pa == pb or pb in fixture_links[pa]
 
+    def slate_swapped(a, b) -> bool:
+        pa, pb = event_pos(a), event_pos(b)
+        return (min(pa, pb), max(pa, pb)) in swapped_pairs
+
     per_event: Dict[int, int] = {}
-    for t in top:
-        per_event[event_pos(t.event)] = per_event.get(event_pos(t.event), 0) + 1
+    if cross_mode == cross_tier.FORBID:                 # Top legs count against the per-match cap...
+        for t in top:
+            per_event[event_pos(t.event)] = per_event.get(event_pos(t.event), 0) + 1
+    # ...whereas under different_outcome MAX_PICKS_PER_EVENT counts per tier (the Top's leg is not a Daily pick)
 
     def picks_on_fixture(s: Scored) -> int:
         pos = event_pos(s.event)
@@ -524,7 +579,8 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         for other in top + chosen:
             if not same_slate_fixture(other.event, s.event):
                 continue
-            if is_equivalent(other.line, s.line) or contradicts(other.line, s.line):
+            line = cross_tier.mirror(s.line) if slate_swapped(other.event, s.event) else s.line
+            if is_equivalent(other.line, line) or contradicts(other.line, line):
                 return True
         return False
 
@@ -644,6 +700,19 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     ps.daily = chosen
     log.info("picker: pool=%d eligible=%d top_pool=%d daily_pool=%d -> top=%d daily=%d ticket=%.2f",
              ps.pool_size, ps.eligible, len(top_pool), len(daily_pool), len(top), len(chosen), ticket)
+    bad = cross_tier.violations(ps.top, ps.daily, fixture_relation, cross_mode)
+    if bad and _depth < 5:
+        for d, t, why in bad:
+            log.warning("cross-tier invariant caught a %s the selection layer missed: Daily '%s' (%s %s v %s) vs Top '%s' "
+                        "(%s %s v %s) - removing the Daily leg and refilling", why, d.label, d.event.provider, d.event.home,
+                        d.event.away, t.label, t.event.provider, t.event.home, t.event.away)
+        removed = (_exclude_daily or set()) | {id(d) for d, _, _ in bad}
+        again = select(scored, cfg, now, top_priority_source=top_priority_source, trace=trace,
+                       results_gate=results_gate, _exclude_daily=removed, _depth=_depth + 1)
+        again.diagnostics["cross_tier_removed"] = len(removed)
+        return again
+    ps.diagnostics["selection_rejections"] = dict(rejection_counts)
+    ps.diagnostics["cross_tier_mode"] = cross_mode
     ps.diagnostics["daily_family_picks"] = family_counts(ps.daily)
     ps.diagnostics["daily_ticket_by_sport"] = dict(Counter(s.event.sport for s in ps.all()))
     ps.diagnostics["daily_by_market"] = dict(Counter(f"{s.line.market}/{s.line.stat}" for s in ps.daily))
