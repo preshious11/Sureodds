@@ -787,7 +787,6 @@
     "status": "complete"
    },
    "sportsgameodds": {
-    "error_type": "RuntimeError",
     "events": {
      "american_football": 10,
      "baseball": 15,
@@ -796,8 +795,79 @@
     "expected_sports": [
      "other"
     ],
+    "fetch": {
+     "MLB": {
+      "capped": false,
+      "raw_events": 15,
+      "status": "complete"
+     },
+     "MLS": {
+      "capped": false,
+      "raw_events": 12,
+      "status": "complete"
+     },
+     "NBA": {
+      "capped": false,
+      "raw_events": 0,
+      "status": "complete"
+     },
+     "NCAAB": {
+      "capped": false,
+      "raw_events": 0,
+      "status": "complete"
+     },
+     "NCAAF": {
+      "capped": true,
+      "raw_events": 10,
+      "status": "partial"
+     },
+     "NFL": {
+      "capped": false,
+      "raw_events": 0,
+      "status": "complete"
+     },
+     "UEFA_CHAMPIONS_LEAGUE": {
+      "capped": false,
+      "raw_events": 0,
+      "status": "complete"
+     }
+    },
+    "normalization": {},
     "outcome": "failed",
-    "status": "failed"
+    "quota": null,
+    "rejections": {
+     "NO_BOOK_ODDS": 12348,
+     "PLAYER_PROP_LIMIT": 2231,
+     "PROP_UNSETTLEABLE": 914,
+     "UNKNOWN_MARKET": 108,
+     "UNSUPPORTED_PERIOD": 2667,
+     "UNSUPPORTED_STAT": 25360
+    },
+    "requests": null,
+    "sport_rejected": 0,
+    "sport_status": {
+     "american_football": {
+      "events": 10,
+      "leagues": 2,
+      "status": "partial"
+     },
+     "baseball": {
+      "events": 15,
+      "leagues": 1,
+      "status": "success"
+     },
+     "basketball": {
+      "events": 0,
+      "leagues": 2,
+      "status": "empty"
+     },
+     "football": {
+      "events": 12,
+      "leagues": 2,
+      "status": "success"
+     }
+    },
+    "status": "partial"
    }
   },
   "retry_until": "09:30",

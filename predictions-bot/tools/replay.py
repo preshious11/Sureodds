@@ -169,7 +169,7 @@ def run(profile: bool = False, subscribers: int = 300, send_delay: float = 0.03,
             wall, cpu = time.perf_counter(), time.process_time()
             if prof:
                 prof.enable()
-            snapshot = service.get_daily_snapshot(force_refresh=True, persist=True, scheduled=True)
+            snapshot = service.get_daily_snapshot(force_refresh=False, persist=True, scheduled=True)   # nothing cached yet: a MISS
             if prof:
                 prof.disable()
             gen_wall, gen_cpu = time.perf_counter() - wall, time.process_time() - cpu
