@@ -36,17 +36,16 @@ log = logging.getLogger(__name__)
 
 SPORT_MAP = {
     "soccer": "football", "football": "american_football", "basketball": "basketball",
-    "hockey": "hockey", "baseball": "baseball", "tennis": "tennis", "mma": "mma",
-    "handball": "handball",
+    "baseball": "baseball", "tennis": "tennis", "mma": "mma",
 }
 
 #: SharpAPI league ids that are NOT soccer: bare ids (``nba``) or
 #: ``<country>_-_<competition>`` slugs (``usa_-_basketball``).
 LEAGUE_SPORTS = {
     "mlb": "baseball", "ncaab": "basketball", "nba": "basketball", "wnba": "basketball",
-    "ncaaf": "american_football", "nfl": "american_football", "nhl": "hockey",
+    "ncaaf": "american_football", "nfl": "american_football",
     "atp": "tennis", "wta": "tennis", "itf_men": "tennis", "itf_women": "tennis",
-    "ufc": "mma", "pga": "golf", "nascar": "motorsports", "formula_1": "motorsports",
+    "euroleague": "basketball", "ufc": "mma", "pga": "golf", "nascar": "motorsports", "formula_1": "motorsports",
     "indycar": "motorsports", "dota_2": "esports", "league_of_legends": "esports",
     "cs2": "esports", "valorant": "esports", "politics": "politics",
 }
@@ -60,7 +59,11 @@ SOCCER_HINTS = ("soccer", "futbol", "premier_league", "la_liga", "serie_a", "ser
                 "conference_league", "nations_league", "major_league_soccer", "mls",
                 "copa", "libertadores", "championship", "league_one", "league_two",
                 "j1_league", "k_league", "a_league", "allsvenskan", "eliteserien",
-                "veikkausliiga")
+                "veikkausliiga", "premiership", "professional_league", "liga", "league")
+
+#: Slugs that contain a soccer hint word but belong to another sport.
+NON_SOCCER_PREFIXES = ("table_tennis", "esports", "league_of_legends", "basketball", "baseball", "hockey",
+                       "tennis", "volleyball", "handball", "cricket", "darts", "rugby")
 
 _SPORT_ALIASES = {"soccer": "football", "football": "american_football"}
 
@@ -118,6 +121,8 @@ def sport_for_league(slug: str) -> str:
     key = re.sub(r"[^a-z0-9]+", "_", str(slug or "").lower()).strip("_")
     if key in LEAGUE_SPORTS:
         return LEAGUE_SPORTS[key]
+    if key.startswith(NON_SOCCER_PREFIXES):
+        return "other"
     if any(hint in key for hint in SOCCER_HINTS):
         return "football"
     return "other"
@@ -138,10 +143,10 @@ def sport_for_filter(value: str) -> str:
 
 SEGMENT_PERIOD = {
     "full_game": "full", "1st_half": "1h", "2nd_half": "2h", "1st_quarter": "1q", "2nd_quarter": "2q",
-    "3rd_quarter": "3q", "4th_quarter": "4q", "1st_period": "1p", "2nd_period": "2p", "3rd_period": "3p",
+    "3rd_quarter": "3q", "4th_quarter": "4q",
     "1st_set": "1s", "2nd_set": "2s", "first_5_innings": "1i5", "1st_5_innings": "1i5",
 }
-_PERIOD_PREFIX = re.compile(r"^(1st_half|2nd_half|1st_quarter|2nd_quarter|3rd_quarter|4th_quarter|1st_period|2nd_period|3rd_period|1st_set|2nd_set|first_5_innings|1st_5_innings)_")
+_PERIOD_PREFIX = re.compile(r"^(1st_half|2nd_half|1st_quarter|2nd_quarter|3rd_quarter|4th_quarter|1st_set|2nd_set|first_5_innings|1st_5_innings)_")
 
 
 class SharpApiProvider(BaseProvider):
@@ -174,18 +179,18 @@ class SharpApiProvider(BaseProvider):
         return discover_sport_catalog(self.http, self.db)
 
     def _targets(self) -> List[Dict[str, str]]:
-        """One filtered feed per configured league plus one per configured sport.
+        """One filtered feed per configured league (``SHARPAPI_LEAGUES``).
 
-        ``SHARPAPI_SPORTS=auto`` expands to every sport this key's catalog
-        reports with events (``/sports``), biggest catalog first.  Unmapped
-        sports (esports, table tennis, darts, ...) stay out of the fetch and are
-        reported as discovered-unsupported instead of silently requested.
-        """
+        Leagues are explicit: there is no ``auto`` expansion. A sport-level feed
+        (``SHARPAPI_SPORTS``) is still honoured if configured, but it pulls every
+        league of that sport through the page budget, so it is warned about."""
         targets = [{"league": lg} for lg in self.leagues]
         sports = [sp for sp in self.sports if sp != "auto"]
         if "auto" in self.sports:
-            catalog = self.sport_catalog()
-            sports += [s["key"] for s in sport_catalog_supported(catalog)]
+            log.warning("SharpAPI: SHARPAPI_SPORTS=auto is no longer supported - list leagues in SHARPAPI_LEAGUES")
+        if sports:
+            log.warning("SharpAPI: sport-level feed(s) %s configured; prefer explicit SHARPAPI_LEAGUES "
+                        "(a sport feed spends the page budget on every league)", ", ".join(sports))
         targets += [{"sport": sp} for sp in sports]
         return targets or [{}]
 

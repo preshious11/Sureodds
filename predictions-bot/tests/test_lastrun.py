@@ -38,7 +38,7 @@ def _pickset():
         "scored_by_sport": {"football": 900, "tennis": 40}, "base_by_sport": {"football": 800, "tennis": 30},
         "top_eligible_by_sport": {"football": 25}, "top_pool_rejections": {"BELOW_THRESHOLD": 700},
         "daily_eligible_by_sport": {"football": 90, "tennis": 4},
-        "daily_pool_rejections": {"BELOW_THRESHOLD": 600, "RESERVED_FOR_TOP_PRIORITY_SOURCE": 12},
+        "daily_pool_rejections": {"BELOW_THRESHOLD": 600, "DISABLED_MARKET": 12},
         "combinations_checked": 4, "top_odds": 2.1025,
         "daily_caps_relaxed": {"reason": "strict pass could not reach DAILY_COMBINED_MIN_ODDS",
                                "strict_ticket": 6.7, "exceeded": {"market": 2}},
@@ -76,7 +76,7 @@ def test_it_reports_the_whole_cycle(world):
     assert "refused to spend" in text
     # funnel and relaxations
     assert "scored 940 → eligible 830" in text and "BELOW_THRESHOLD=700" in text
-    assert "RESERVED_FOR_TOP_PRIORITY_SOURCE=12" in text and "Top tickets evaluated: 4" in text
+    assert "DISABLED_MARKET=12" in text and "Top tickets evaluated: 4" in text
     assert "strict pass could not reach" in text and "&quot;market&quot;" not in text
     assert "Top 2 legs · combined 2.10" in text and "Daily 1 picks" in text
 

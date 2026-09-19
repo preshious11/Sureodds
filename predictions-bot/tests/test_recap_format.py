@@ -112,8 +112,8 @@ def test_sport_breakdown_is_ordered_by_volume_and_skips_undecided(db):
 
 
 def test_by_sport_ties_sort_alphabetically():
-    rows = [{"status": "won", "sport": s} for s in ("tennis", "mma", "hockey")]
-    assert [b["sport"] for b in stats_mod.by_sport(rows)] == ["hockey", "mma", "tennis"]
+    rows = [{"status": "won", "sport": s} for s in ("tennis", "mma", "baseball")]
+    assert [b["sport"] for b in stats_mod.by_sport(rows)] == ["baseball", "mma", "tennis"]
 
 
 def test_by_sport_ignores_unknown_statuses():

@@ -32,7 +32,9 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
     if cfg.sgo_key:
         out["sportsgameodds"] = SportsGameOddsProvider(
             cfg.sgo_key, budget, sports=cfg.sgo_sports, leagues=cfg.sgo_leagues,
-            event_limit=cfg.sgo_event_limit, monthly_limit=cfg.sgo_monthly_object_limit)
+            event_limit=cfg.sgo_event_limit, monthly_limit=cfg.sgo_monthly_object_limit,
+            allowed_stats=cfg.sgo_allowed_stats, allowed_periods=cfg.sgo_allowed_periods,
+            max_player_props=cfg.max_player_props)
     if cfg.sharpapi_key:
         out["sharpapi"] = SharpApiProvider(cfg.sharpapi_key, budget, leagues=cfg.sharpapi_leagues,
                                            min_interval=cfg.sharpapi_min_interval,
@@ -46,7 +48,8 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
                                          monthly_limit=cfg.odds_api_monthly_limit,
                                          max_credits_per_cycle=cfg.oddsapi_max_credits_per_cycle,
                                          reserve_credits=cfg.oddsapi_reserve_credits,
-                                         min_keys_per_sport=cfg.oddsapi_min_keys_per_sport)
+                                         min_keys_per_sport=cfg.oddsapi_min_keys_per_sport,
+                                         league_allowlist=cfg.odds_api_league_allowlist)
     return out
 
 
@@ -90,8 +93,10 @@ class ProviderChain:
                 self.last_report[name] = {"status": "failed", "error_type": type(e).__name__}
                 log.warning("provider %s crashed (%s)", name, type(e).__name__)
                 continue
-            events = filter_allowed([e for e in events if start <= e.start < end], self.cfg)
+            counts: Dict[str, int] = {}
+            events = filter_allowed([e for e in events if start <= e.start < end], self.cfg, counts)
             self.last_report[name] = {"status": "complete" if getattr(prov, 'last_fetch_complete', True) else "partial",
+                                      "sport_rejected": counts.get("sport_rejected", 0),
                                       "fetch": getattr(prov, 'fetch_counts', {}),
                                       "normalization": getattr(prov, 'normalization_counts', {}),
                                       "events": dict(Counter(e.sport for e in events)),
@@ -105,11 +110,18 @@ class ProviderChain:
         return pool
 
 
-def filter_allowed(events: List[Event], cfg: Optional[Config]) -> List[Event]:
-    """No sport/league gate: provider data is the only source of truth.
-    All events returned by providers are kept. Artificial filtering via
-    ALLOWED_SPORTS / POPULAR_LEAGUES has been removed."""
-    return events
+def filter_allowed(events: List[Event], cfg: Optional[Config], counts: Optional[Dict[str, int]] = None) -> List[Event]:
+    """Keep only events whose sport is in ``cfg.allowed_sports`` (no cfg = no gate).
+
+    Runs before events are merged, so a banned sport can never enter the pool.
+    Rejections are added to ``counts["sport_rejected"]`` when a dict is given."""
+    allowed = getattr(cfg, "allowed_sports", None)
+    if not allowed:
+        return events
+    kept = [e for e in events if e.sport in allowed]
+    if counts is not None:
+        counts["sport_rejected"] = counts.get("sport_rejected", 0) + len(events) - len(kept)
+    return kept
 
 
 def _has_main_market(e: Event) -> bool:

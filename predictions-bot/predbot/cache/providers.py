@@ -98,7 +98,8 @@ def collect_persisted(chain, start, end):
                     provider.last_fetch_complete = True
                     fetched = provider.fetch_events(day_start, fetch_end)
                     # Validate before calling a malformed response complete.
-                    events = filter_allowed(decode_events(encode_events(fetched)), cfg)
+                    gate = {}
+                    events = filter_allowed(decode_events(encode_events(fetched)), cfg, gate)
                     complete = bool(getattr(provider, 'last_fetch_complete', True))
                     if not complete:
                         # Keep previously usable rows when the failed retry is emptier.
@@ -106,6 +107,7 @@ def collect_persisted(chain, start, end):
                         by_id.update({(e.provider, e.provider_event_id): e for e in events})
                         events = list(by_id.values())
                     report.update(status='complete' if complete else 'partial',
+                                  sport_rejected=gate.get('sport_rejected', 0),
                                   outcome=('success' if events else 'empty') if complete else 'failed',
                                   fetch=getattr(provider, 'fetch_counts', {}),
                                   normalization=getattr(provider, 'normalization_counts', {}),

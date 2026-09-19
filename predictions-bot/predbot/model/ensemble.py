@@ -2,7 +2,7 @@
 
 For each event we build:
   market      de-vigged consensus probability for every selection (always)
-  score_model Poisson grid (football/hockey/baseball/handball) or Gaussian
+  score_model Poisson grid (football/baseball) or Gaussian
               margin model (basketball/american football) fitted to the main
               lines
   elo         rating-based result probabilities (weight grows with data)
@@ -27,9 +27,9 @@ from predbot.providers.base import Event, MarketLine
 
 log = logging.getLogger(__name__)
 
-GRID_SPORTS = {"football", "hockey", "baseball", "handball"}
+GRID_SPORTS = {"football", "baseball"}
 MARGIN_SPORTS = {"basketball", "american_football"}
-SCORE_MODEL_WEIGHT = {"football": 0.60, "hockey": 0.45, "baseball": 0.35, "handball": 0.35,
+SCORE_MODEL_WEIGHT = {"football": 0.60, "baseball": 0.35,
                       "basketball": 0.50, "american_football": 0.45}
 
 

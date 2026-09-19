@@ -1,4 +1,4 @@
-"""Score-grid model for low-scoring sports (football, hockey, baseball, handball).
+"""Score-grid model for low-scoring sports (football, baseball).
 
 A Dixon-Coles adjusted independent Poisson grid P(home=i, away=j). Expected
 goals (lambda) come from two places and are blended by the ensemble:
@@ -18,9 +18,9 @@ from typing import Dict, List, Optional, Tuple
 
 from predbot.providers.base import MarketLine
 
-MAX_GOALS = {"football": 10, "hockey": 12, "handball": 60, "baseball": 20}
-DEFAULT_RHO = {"football": -0.10, "hockey": -0.05, "baseball": 0.0, "handball": 0.0}
-PERIOD_SCALE = {"full": 1.0, "reg": 1.0, "1h": 0.44, "2h": 0.56, "1p": 0.33, "2p": 0.33, "3p": 0.34, "1i5": 0.55}
+MAX_GOALS = {"football": 10, "baseball": 20}
+DEFAULT_RHO = {"football": -0.10, "baseball": 0.0}
+PERIOD_SCALE = {"full": 1.0, "reg": 1.0, "1h": 0.44, "2h": 0.56, "1i5": 0.55}
 
 
 @lru_cache(maxsize=4096)
@@ -211,7 +211,7 @@ def lambdas_from_market(p_home: Optional[float], p_draw: Optional[float], p_away
     falls back to sport priors."""
     rho = DEFAULT_RHO.get(sport, 0.0) if rho is None else rho
     n = MAX_GOALS.get(sport, 10)
-    prior_total = {"football": 2.6, "hockey": 6.0, "baseball": 8.5, "handball": 55.0}.get(sport, 2.6)
+    prior_total = {"football": 2.6, "baseball": 8.5}.get(sport, 2.6)
 
     # 1) total lambda
     if total_line is not None and p_over is not None and 0.02 < p_over < 0.98:
@@ -265,9 +265,9 @@ def price_line(ml: MarketLine, lh: float, la: float, sport: str) -> Optional[flo
         return {"home": h, "draw": d, "away": a}.get(s)
     if m in ("result2", "dnb"):
         h, d, a = g.result()
-        if sport in ("football", "hockey", "handball") and ml.period in ("full", "reg", "1h", "2h") and m == "dnb":
+        if sport == "football" and ml.period in ("full", "reg", "1h", "2h") and m == "dnb":
             return {"home": h / (h + a), "away": a / (h + a)}.get(s)
-        if sport in ("hockey", "baseball") and ml.period == "full":
+        if sport == "baseball" and ml.period == "full":
             # overtime / extra innings: draw resolved ~ by strength
             share = h / (h + a)
             return {"home": h + d * share, "away": a + d * (1 - share)}.get(s)

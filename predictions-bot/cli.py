@@ -7,7 +7,7 @@ from predbot.bot import pagination
 from predbot.bot.format import stats_message
 from predbot.bot.telegram import Telegram
 from predbot.cache.models import DailySnapshot
-from predbot.config import load_config
+from predbot.config import load_config, require_provider_keys
 from predbot.jobs import daily_picks, recap, settle, stats as stats_mod
 from predbot.log import setup_logging
 from predbot.providers.budget import Budget
@@ -21,6 +21,7 @@ def main(argv):
         sys.stdout.reconfigure(encoding="utf-8")   # emoji-safe terminal output on Windows
     cfg = load_config()
     setup_logging(cfg.log_level, cfg.log_file)
+    require_provider_keys(cfg)
     db = Database(cfg.db_path)
     providers = build_providers(cfg, db)
     chain = ProviderChain(providers, cfg.provider_order, cfg.chain_min_events)

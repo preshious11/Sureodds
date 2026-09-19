@@ -34,27 +34,26 @@ from tests.conftest import dt
 
 
 # ------------------------------------------------------------------- filter_allowed
-def test_filter_allowed_returns_all_events_no_gate():
-    """filter_allowed no longer drops events by hardcoded sport/league gates."""
+def test_filter_allowed_keeps_only_allowed_sports_and_counts_the_rest():
+    """ALLOWED_SPORTS gates the pool before merging; rejections are counted."""
     events = [
-        Event(provider="t", provider_event_id="1", sport="soccer", league="La Liga",
+        Event(provider="t", provider_event_id="1", sport="football", league="La Liga",
               home="A", away="B", start=dt(hh=22), sources=["t"]),
         Event(provider="t", provider_event_id="2", sport="baseball", league="MLB",
               home="C", away="D", start=dt(hh=22), sources=["t"]),
         Event(provider="t", provider_event_id="3", sport="table_tennis", league="TT Cup",
               home="E", away="F", start=dt(hh=22), sources=["t"]),
     ]
-    cfg = Config()
-    result = filter_allowed(events, cfg)
-    assert len(result) == 3
-    sports = {e.sport for e in result}
-    assert "soccer" in sports
-    assert "baseball" in sports
-    assert "table_tennis" in sports
+    events.append(Event(provider="t", provider_event_id="4", sport="hockey", league="NHL",
+                        home="G", away="H", start=dt(hh=22), sources=["t"]))
+    counts = {}
+    result = filter_allowed(events, Config(), counts)
+    assert {e.sport for e in result} == {"football", "baseball"}
+    assert counts == {"sport_rejected": 2}
 
 
 def test_filter_allowed_no_config_needed():
-    """Even with None cfg, all events pass through."""
+    """Even with None cfg (no allowed_sports to consult), all events pass through."""
     events = [
         Event(provider="t", provider_event_id="1", sport="football", league="EPL",
               home="A", away="B", start=dt(hh=22), sources=["t"]),
