@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS picks (
     prob REAL NOT NULL,
     ev REAL NOT NULL,
     p_market REAL,
+    prob_raw REAL,                       -- model probability BEFORE calibration (what refit trains on)
     sources TEXT,                        -- json {source: prob}
     provider_odd_id TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
@@ -166,6 +167,10 @@ class Database:
         cols = {str(r["name"]) for r in self.query("PRAGMA table_info(subscribers)")}
         if "timezone" not in cols:                      # per-subscriber local delivery zone
             self.conn.execute("ALTER TABLE subscribers ADD COLUMN timezone TEXT NOT NULL DEFAULT ''")
+            self.conn.commit()
+        pick_cols = {str(r["name"]) for r in self.query("PRAGMA table_info(picks)")}
+        if pick_cols and "prob_raw" not in pick_cols:   # pre-calibration probability
+            self.conn.execute("ALTER TABLE picks ADD COLUMN prob_raw REAL")
             self.conn.commit()
 
     # ---- generic ----
@@ -331,12 +336,8 @@ class Database:
 
     def all_settled_for_calibration(self, limit: int = 3000) -> List[sqlite3.Row]:
         return self.query(
-            "SELECT prob, status, price FROM picks WHERE status IN ('won','lost','half_won','half_lost') "
+            "SELECT prob, prob_raw, status, price FROM picks WHERE status IN ('won','lost','half_won','half_lost') "
             "ORDER BY id DESC LIMIT ?", (limit,))
-
-    def recent_pick_keys(self, days: int = 1) -> List[sqlite3.Row]:
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
-        return self.query("SELECT provider_event_id, sport, market, period, stat, entity, line, selection, home, away FROM picks WHERE pick_date>=?", (since,))
 
     def previous_pick_fixtures(self, before_date: str, lookback_days: int = 2) -> List[sqlite3.Row]:
         """sport/home/away/start_utc of picks stored on the ``lookback_days``

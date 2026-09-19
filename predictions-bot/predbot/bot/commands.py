@@ -24,7 +24,7 @@ from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
 from predbot.jobs import stats as stats_mod
 from predbot.storage.db import Database
-from predbot.util.timeutil import resolve_timezone, to_local, utcnow, parse_hhmm
+from predbot.util.timeutil import canonical_tz, resolve_timezone, to_local, utcnow, parse_hhmm
 
 log = logging.getLogger(__name__)
 
@@ -184,6 +184,7 @@ class CommandLoop(threading.Thread):
         if cmd == "/help":
             extra = ("\n\n🛠 <b>Admin</b>: /run · /settle · /recap · /lastrun"
                      if user_id in self.cfg.telegram_admin_ids else "")
+            extra = "\n🌍 /timezone Area/City — kick-off times in your zone" + extra
             zone = resolve_timezone(self.db.subscriber_timezone(chat_id or user_id),
                                     self.cfg.timezone)
             return ("👋 <b>Commands</b>\n\n" + callbacks.commands_text() + "\n\n"
@@ -193,6 +194,8 @@ class CommandLoop(threading.Thread):
             self.db.subscriber_remove(chat_id or user_id)
             return ("🛑 Unsubscribed — no more daily picks. "
                     "Send /start whenever you want them back.")
+        if cmd == "/timezone":
+            return self._timezone(chat_id or user_id, args or [])
         if cmd == "/yesterday":
             return recap_card(self.db, local)
         if cmd == "/lastrun":
@@ -205,6 +208,21 @@ class CommandLoop(threading.Thread):
             fn = self.actions.get(cmd)
             return fn() if fn else "Unavailable."
         return None
+
+    def _timezone(self, chat_id: str, args: List[str]) -> str:
+        """``/timezone Africa/Lagos`` - the zone kick-off times are DISPLAYED in.
+        The delivery instant is the same for everyone (DELIVERY_TIME in TIMEZONE)."""
+        current = resolve_timezone(self.db.subscriber_timezone(chat_id), self.cfg.timezone)
+        if not args:
+            return (f"🌍 Your timezone: <b>{current}</b>\n"
+                    "Change it with /timezone Area/City, e.g. /timezone Africa/Lagos")
+        zone = canonical_tz(args[0])
+        if zone is None:
+            return ("Unknown timezone. Use an Area/City name such as Africa/Lagos, "
+                    "Europe/London or America/New_York.")
+        self.db.subscriber_set_timezone(chat_id, zone)
+        return (f"✅ Timezone set to <b>{zone}</b>. Kick-off times on your cards use it. "
+                f"Delivery stays at {self.cfg.delivery_time} {self.cfg.timezone} for everyone.")
 
     def _schedule_text(self, zone: str) -> str:
         now = utcnow()

@@ -112,7 +112,7 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
         top_priority_source = in_main_chain
         top_priority_report = {in_main_chain: getattr(chain, "last_report", {}).get(in_main_chain, {})}
     elif priority_available:
-        top_chain = ProviderChain(providers_map, cfg.top_provider_priority, cfg.chain_min_events)
+        top_chain = ProviderChain(providers_map, cfg.top_provider_priority)
         top_chain.db, top_chain.cfg = chain.db, chain.cfg
         priority_events = top_chain.collect(start, end)
         top_priority_report = getattr(top_chain, "last_report", {})
@@ -171,7 +171,7 @@ def store_picks(ps: PickSet, db: Database, pick_date: str, replace_pending: bool
                 "sport": e.sport, "league": e.league, "home": e.home, "away": e.away,
                 "start_utc": iso(e.start), "market": ml.market, "period": ml.period, "stat": ml.stat,
                 "entity": ml.entity, "line": ml.line, "selection": ml.selection, "label": s.label,
-                "price": ml.price, "prob": s.p_model, "ev": s.ev, "p_market": s.p_market,
+                "price": ml.price, "prob": s.p_model, "prob_raw": s.p_raw, "ev": s.ev, "p_market": s.p_market,
                 "sources": {**{k: round(v, 4) for k, v in s.sources.items()},
                             "_alt_ids": e.extra.get("alt_ids", {}), "_providers": e.sources,
                             "_sport_key": e.extra.get("sport_key", ""), "_league_id": e.league_id,

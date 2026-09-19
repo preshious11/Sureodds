@@ -432,11 +432,11 @@ def _loop(db) -> CommandLoop:
     return CommandLoop(FakeTG(), db, Config(timezone="UTC"), {}, service=None)
 
 
-def test_there_is_no_manual_timezone_command(db):
-    """Zones are detected, never asked for - /timezone must not come back."""
-    assert _loop(db).handle("/timezone", "1", "42", ["Africa/Lagos"]) is None
-    assert not hasattr(CommandLoop, "_timezone")
-    assert "/timezone" not in (_loop(db).handle("/help", "1", "42") or "")
+def test_the_timezone_command_is_back_and_is_advertised(db):
+    """/timezone Area/City sets the DISPLAY zone (delivery stays one shared instant)."""
+    assert "Africa/Lagos" in _loop(db).handle("/timezone", "1", "42", ["Africa/Lagos"])
+    assert db.subscriber_timezone("42") == "Africa/Lagos"
+    assert "/timezone" in _loop(db).handle("/help", "1", "42")
 
 
 def test_stop_command_unsubscribes(db):
