@@ -60,12 +60,11 @@ STAT_NAMES = {
 PERIOD_NAMES = {
     "full": "", "reg": "Regulation", "1h": "1st Half", "2h": "2nd Half",
     "1q": "1st Qtr", "2q": "2nd Qtr", "3q": "3rd Qtr", "4q": "4th Qtr",
-    "1p": "1st Period", "2p": "2nd Period", "3p": "3rd Period",
     "1s": "1st Set", "2s": "2nd Set", "1i5": "First 5 Innings",
 }
 
 SPORT_POINTS_WORD = {
-    "football": "Goals", "hockey": "Goals", "handball": "Goals",
+    "football": "Goals",
     "basketball": "Points", "american_football": "Points", "baseball": "Runs",
     "tennis": "Games", "mma": "Rounds",
 }

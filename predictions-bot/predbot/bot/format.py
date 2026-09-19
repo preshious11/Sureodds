@@ -12,11 +12,10 @@ from predbot.util.timeutil import parse_iso, to_local, utcnow
 from predbot.util.duration import DURATION_H
 
 BRAND = "SureOdds"
-SPORT_ICON = {"football": "⚽", "basketball": "🏀", "american_football": "🏈", "hockey": "🏒",
-              "baseball": "⚾", "tennis": "🎾", "mma": "🥊", "handball": "🤾", "other": "🎯"}
+SPORT_ICON = {"football": "⚽", "basketball": "🏀", "american_football": "🏈",
+              "baseball": "⚾", "tennis": "🎾", "mma": "🥊", "other": "🎯"}
 SPORT_LABEL = {"football": "Football", "basketball": "Basketball", "american_football": "American Football",
-               "hockey": "Hockey", "baseball": "Baseball", "tennis": "Tennis", "mma": "MMA",
-               "handball": "Handball", "other": "Other"}
+               "baseball": "Baseball", "tennis": "Tennis", "mma": "MMA", "other": "Other"}
 MARKET_LABEL = {"result3": "Match Result", "result2": "Moneyline", "dnb": "Draw No Bet",
                 "dc": "Double Chance", "total": "Totals", "handicap": "Handicap",
                 "btts": "Both Teams to Score", "odd_even": "Odd/Even", "ht_ft": "Halftime/Fulltime",

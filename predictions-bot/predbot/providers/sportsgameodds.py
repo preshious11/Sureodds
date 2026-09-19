@@ -22,13 +22,16 @@ log = logging.getLogger(__name__)
 
 SPORT_MAP = {
     "SOCCER": "football", "BASKETBALL": "basketball", "FOOTBALL": "american_football",
-    "HOCKEY": "hockey", "BASEBALL": "baseball", "TENNIS": "tennis", "MMA": "mma",
-    "HANDBALL": "handball", "GOLF": "golf",
+    "BASEBALL": "baseball", "TENNIS": "tennis", "MMA": "mma",
+    "GOLF": "golf",
 }
 SPORT_TO_SGO = {v: k for k, v in SPORT_MAP.items()}
 
+DEFAULT_ALLOWED_STATS = ("points", "cornerKicks", "yellowCards", "weightedCards", "bothTeamsScored")
+DEFAULT_ALLOWED_PERIODS = ("game", "reg", "1h", "2h")
+
 PERIOD_MAP = {"game": "full", "reg": "reg", "1h": "1h", "2h": "2h", "1q": "1q", "2q": "2q", "3q": "3q",
-              "4q": "4q", "1p": "1p", "2p": "2p", "3p": "3p", "1s": "1s", "2s": "2s", "3s": "3s",
+              "4q": "4q", "1s": "1s", "2s": "2s", "3s": "3s",
               "1i5": "1i5"}
 STAT_MAP = {"points": "points", "cornerKicks": "corners", "weightedCards": "cards", "yellowCards": "cards",
             "bothTeamsScored": "btts"}
@@ -56,8 +59,15 @@ class SportsGameOddsProvider(BaseProvider):
     name = "sportsgameodds"
 
     def __init__(self, api_key: str, budget: Budget, sports: List[str], leagues: List[str],
-                 event_limit: int = 25, monthly_limit: int = 1000):
+                 event_limit: int = 25, monthly_limit: int = 1000,
+                 allowed_stats: Optional[List[str]] = None, allowed_periods: Optional[List[str]] = None,
+                 max_player_props: int = 0):
         self.key = api_key
+        # Odd objects outside these stat/period ids are rejected at parse time
+        # (SGO lists hundreds of inning/quarter/player variants per event).
+        self.allowed_stats = set(DEFAULT_ALLOWED_STATS if allowed_stats is None else allowed_stats)
+        self.allowed_periods = set(DEFAULT_ALLOWED_PERIODS if allowed_periods is None else allowed_periods)
+        self.max_player_props = max(0, max_player_props)
         self.budget = budget
         self.sports = sports
         self.leagues = leagues
@@ -161,7 +171,7 @@ class SportsGameOddsProvider(BaseProvider):
             except Exception:  # noqa: BLE001
                 pass
         avail_map = getattr(self, '_league_sport', None) or {}
-        if avail_map:
+        if avail_map and self.sports:
             sports_upper = {s.upper() for s in self.sports}
             mapped_leagues = [lg for lg in leagues if avail_map.get(lg, '')]
             if mapped_leagues:
@@ -272,9 +282,15 @@ class SportsGameOddsProvider(BaseProvider):
         e = Event(provider=self.name, provider_event_id=ev["eventID"], sport=sport,
                   league=str(ev.get("leagueID", "")).replace("_", " "), league_id=ev.get("leagueID", ""),
                   home=home, away=away, start=start, sources=[self.name])
+        player_props = 0
         for odd_id, o in (ev.get("odds") or {}).items():
             ml = self._parse_odd(odd_id, o, sport, players)
             if ml:
+                if ml.is_player_prop:
+                    if player_props >= self.max_player_props:
+                        self.parse_counts["PLAYER_PROP_LIMIT"] += 1
+                        continue
+                    player_props += 1
                 e.markets.append(ml)
         if not e.markets:
             self.parse_counts["NO_USABLE_MARKETS"] += 1
@@ -289,6 +305,12 @@ class SportsGameOddsProvider(BaseProvider):
             self.parse_counts["NO_BOOK_ODDS"] += 1
             return None
         stat_id = o.get("statID", "")
+        if stat_id not in self.allowed_stats:
+            self.parse_counts["UNSUPPORTED_STAT"] += 1
+            return None
+        if o.get("periodID", "game") not in self.allowed_periods:
+            self.parse_counts["UNSUPPORTED_PERIOD"] += 1
+            return None
         # A missing statEntityID means "the match itself", not "a player" -
         # defaulting to "" (falsy) here made is_player=True for every odd
         # object missing this field, silently misrouting team markets.

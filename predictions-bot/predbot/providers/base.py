@@ -3,10 +3,10 @@ objects so the model, picker and settlement code never touch raw API shapes.
 
 Canonical vocabulary
 --------------------
-sport      : football (soccer), basketball, american_football, hockey, baseball,
-             tennis, mma, handball, other
+sport      : football (soccer), basketball, american_football, baseball,
+             tennis, mma, other
 period     : full  (whole match incl. overtime where the sport has it, or 90'
-             for football), reg (regulation only), 1h, 2h, 1q..4q, 1p..3p, 1s..
+             for football), reg (regulation only), 1h, 2h, 1q..4q, 1s..
 stat       : points (goals/points/runs), corners, cards, sets, games, or a
              provider-specific stat id for props (e.g. "player:points")
 entity     : all | home | away | <player name>

@@ -297,6 +297,10 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             rejection_counts["WRONG_DATE"] += 1
             _note(s, "base: WRONG_DATE (before now+MIN_LEAD)")
             continue
+        if s.line.market in cfg.disabled_markets:
+            rejection_counts["DISABLED_MARKET"] += 1
+            _note(s, "base: DISABLED_MARKET")
+            continue
         if not _settleable(s):
             rejection_counts["UNSUPPORTED_MARKET"] += 1
             _note(s, "base: UNSUPPORTED_MARKET")
@@ -393,12 +397,6 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         if _duplicates_a_top_pick(s, top):
             daily_rejected["DUPLICATE_OF_TOP"] += 1
             _note(s, "daily: DUPLICATE_OF_TOP")
-            continue
-        # The Daily ticket stays the three-provider ticket it has always been;
-        # an Odds API event that no other provider also saw is reserved for Top.
-        if top_priority_source and s.event.sources == [top_priority_source]:
-            daily_rejected["RESERVED_FOR_TOP_PRIORITY_SOURCE"] += 1
-            _note(s, "daily: RESERVED_FOR_TOP_PRIORITY_SOURCE")
             continue
         if not (cfg.daily_min_odds <= s.price <= cfg.daily_max_odds):
             daily_rejected["BELOW_THRESHOLD"] += 1

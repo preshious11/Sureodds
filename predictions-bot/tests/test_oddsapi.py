@@ -277,12 +277,13 @@ def test_top_priority_falls_back_to_other_providers_when_oddsapi_insufficient():
     assert any("oddsapi" not in s.event.sources for s in result.top)
 
 
-def test_oddsapi_only_events_excluded_from_daily_ticket():
+def test_oddsapi_only_events_can_join_the_daily_ticket():
+    """The Odds API is a full chain member: the old RESERVED_FOR_TOP_PRIORITY_SOURCE rule is gone."""
     oa_event = oddssgo_event(price=1.20)
     pool = [sc(oa_event, "result3", "home", 0.40, 1.20, sources=2, ev_val=0.06)]
     result = select(pool, Config(), dt(), top_priority_source="oddsapi")
-    assert result.daily == []
-    assert result.diagnostics["daily_pool_rejections"].get("RESERVED_FOR_TOP_PRIORITY_SOURCE") == 1
+    assert len(result.daily) == 1
+    assert "RESERVED_FOR_TOP_PRIORITY_SOURCE" not in result.diagnostics["daily_pool_rejections"]
 
 
 def test_build_picks_tries_oddsapi_chain_first_for_top(db, monkeypatch):

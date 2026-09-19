@@ -103,7 +103,14 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     # "oddsapi" actually takes effect instead of silently doing nothing.
     priority_available = providers_map and any(
         (p := providers_map.get(name)) is not None and p.enabled() for name in cfg.top_provider_priority)
-    if priority_available:
+    # A priority provider that is already a full member of PROVIDER_ORDER was
+    # collected by the main chain above: do not spend its credits twice.
+    in_main_chain = next((n for n in cfg.top_provider_priority if n in chain.order
+                          and (p := providers_map.get(n)) is not None and p.enabled()), None) if providers_map else None
+    if priority_available and in_main_chain:
+        top_priority_source = in_main_chain
+        top_priority_report = {in_main_chain: getattr(chain, "last_report", {}).get(in_main_chain, {})}
+    elif priority_available:
         top_chain = ProviderChain(providers_map, cfg.top_provider_priority, cfg.chain_min_events)
         top_chain.db, top_chain.cfg = chain.db, chain.cfg
         priority_events = top_chain.collect(start, end)

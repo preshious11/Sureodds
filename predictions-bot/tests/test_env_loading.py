@@ -43,10 +43,20 @@ def test_the_old_two_region_default_would_have_halved_the_leagues(monkeypatch):
     assert provider.credits_per_key == 6 and 15 // provider.credits_per_key == 2
 
 
-def test_sgo_leagues_default_to_the_five_covered_keys(monkeypatch):
+def test_sgo_leagues_default_to_the_seven_covered_keys(monkeypatch):
     _clear(monkeypatch, "SGO_LEAGUES")
 
-    assert Config().sgo_leagues == ["UEFA_CHAMPIONS_LEAGUE", "MLS", "NBA", "NCAAB", "NHL"]
+    assert Config().sgo_leagues == ["NBA", "NFL", "MLB", "MLS", "NCAAF", "NCAAB", "UEFA_CHAMPIONS_LEAGUE"]
+
+
+LIST_KEYS = {"ODDS_API_REGIONS": "odds_api_regions", "SGO_LEAGUES": "sgo_leagues",
+             "PROVIDER_ORDER": "provider_order", "ALLOWED_SPORTS": "allowed_sports",
+             "DISABLED_MARKETS": "disabled_markets", "SHARPAPI_LEAGUES": "sharpapi_leagues",
+             "ODDS_API_LEAGUE_ALLOWLIST": "odds_api_league_allowlist", "SGO_ALLOWED_STATS": "sgo_allowed_stats",
+             "SGO_ALLOWED_PERIODS": "sgo_allowed_periods"}
+SCALAR_KEYS = {"SGO_EVENT_LIMIT": "sgo_event_limit", "SHARPAPI_MAX_PAGES": "sharpapi_max_pages",
+               "ODDSAPI_MAX_CREDITS_PER_CYCLE": "oddsapi_max_credits_per_cycle",
+               "ODDSAPI_RESERVE_CREDITS": "oddsapi_reserve_credits", "MAX_PLAYER_PROPS": "max_player_props"}
 
 
 def test_the_example_env_matches_those_defaults(monkeypatch):
@@ -55,11 +65,14 @@ def test_the_example_env_matches_those_defaults(monkeypatch):
         if "=" in line and not line.lstrip().startswith("#"):
             k, v = line.split("=", 1)
             example[k.strip()] = v.split("#", 1)[0].strip()
-    _clear(monkeypatch, "ODDS_API_REGIONS", "SGO_LEAGUES")
+    _clear(monkeypatch, *LIST_KEYS, *SCALAR_KEYS)
     cfg = Config()
 
-    assert example["ODDS_API_REGIONS"].split(",") == cfg.odds_api_regions
-    assert example["SGO_LEAGUES"].split(",") == cfg.sgo_leagues
+    for env_name, attr in LIST_KEYS.items():
+        assert example[env_name].split(",") == getattr(cfg, attr), env_name
+    for env_name, attr in SCALAR_KEYS.items():
+        assert example[env_name] == str(getattr(cfg, attr)), env_name
+    assert example["SHARPAPI_SPORTS"] == "" and example["SGO_SPORTS"] == ""
 
 
 def Mock_db():
@@ -123,7 +136,7 @@ def test_startup_report_names_the_file_the_overrides_and_the_ignored_keys(tmp_pa
                  "TELEGRAM_BOT_TOKEN=abc123-very-secret\n"
                  "ODDS_API_KEY=odds-secret-key\n"
                  "LEGACY_SERVICE_URL=https://user:pw@host\n"     # a key this version never reads
-                 "ALLOWED_SPORTS=football\n", encoding="utf-8")
+                 "OLD_UNUSED_SETTING=football\n", encoding="utf-8")
     _clear(monkeypatch, "MAX_PICKS_PER_EVENT", "ODDS_API_REGIONS", "TELEGRAM_BOT_TOKEN", "ODDS_API_KEY")
 
     text = "\n".join(startup_lines(load_config(env_file=str(f))))
@@ -132,7 +145,7 @@ def test_startup_report_names_the_file_the_overrides_and_the_ignored_keys(tmp_pa
     assert "MAX_PICKS_PER_EVENT=3 [.env]" in text
     assert "TELEGRAM_BOT_TOKEN=*** [.env]" in text and "ODDS_API_KEY=*** [.env]" in text
     assert "ODDS_API_REGIONS" not in text.split("override the code default:")[1].split("\n")[0]
-    assert "WARNING .env keys this version never reads (ignored): ALLOWED_SPORTS, LEGACY_SERVICE_URL" in text
+    assert "WARNING .env keys this version never reads (ignored): LEGACY_SERVICE_URL, OLD_UNUSED_SETTING" in text
 
 
 def test_secrets_are_masked_everywhere_in_the_report(tmp_path, monkeypatch):

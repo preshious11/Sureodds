@@ -16,6 +16,9 @@ log = logging.getLogger(__name__)
 #: comes from the code itself instead of a hand-kept list that can go stale.
 KNOWN_KEYS: Dict[str, Tuple[Any, Any]] = {}
 
+#: Providers that can appear in PROVIDER_ORDER (football_data is results-only).
+KNOWN_PROVIDERS = frozenset({"oddsapi", "sharpapi", "sportsgameodds"})
+
 _SECRET_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "URL", "DSN")
 
 
@@ -95,39 +98,62 @@ class Config:
     odds_api_max_leagues_per_sport: int = field(default_factory=lambda: _int("ODDS_API_MAX_LEAGUES_PER_SPORT", 8))
     odds_api_monthly_limit: int = field(default_factory=lambda: _int("ODDS_API_MONTHLY_LIMIT", 500))
     #: Hard cap on Odds API credits (regions x markets per odds request) spent
-    #: in one generation cycle. At ~15/day that is ~450/month on a 500 quota.
-    oddsapi_max_credits_per_cycle: int = field(default_factory=lambda: _int("ODDSAPI_MAX_CREDITS_PER_CYCLE", 15))
+    #: in one generation cycle: 9 = three leagues at 3 credits each. One cycle a
+    #: day is ~270/month; settlement /scores calls are budgeted on top (~450/500).
+    oddsapi_max_credits_per_cycle: int = field(default_factory=lambda: _int("ODDSAPI_MAX_CREDITS_PER_CYCLE", 9))
     #: Never spend below this many of the REMAINING credits reported by the
     #: Odds API's x-requests-remaining response header (the authoritative
     #: quota signal), so a handful of picks never eats the whole month.
-    oddsapi_reserve_credits: int = field(default_factory=lambda: _int("ODDSAPI_RESERVE_CREDITS", 50))
+    oddsapi_reserve_credits: int = field(default_factory=lambda: _int("ODDSAPI_RESERVE_CREDITS", 80))
     #: Each allowed Odds API sport (football, tennis) that has >= 1 event in the
     #: window is guaranteed this many odds keys per cycle before the remaining
     #: credits are ranked by event count, so one busy sport can't starve another.
+    #: Football league keys the Odds API may spend credits on (empty = every
+    #: in-season football key). The default is the nine-plus leagues Nigerian
+    #: punters bet on; everything else is dropped at discovery.
+    odds_api_league_allowlist: List[str] = field(default_factory=lambda: _list(
+        "ODDS_API_LEAGUE_ALLOWLIST",
+        "soccer_epl,soccer_spain_la_liga,soccer_italy_serie_a,soccer_germany_bundesliga,soccer_france_ligue_one,soccer_uefa_champs_league,soccer_uefa_europa_league,soccer_efl_champ,soccer_netherlands_eredivisie,soccer_portugal_primeira_liga,soccer_turkey_super_league"))
     oddsapi_min_keys_per_sport: int = field(default_factory=lambda: _int("ODDSAPI_MIN_KEYS_PER_SPORT", 1))
-    provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "sportsgameodds,sharpapi"))
+    provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "oddsapi,sharpapi,sportsgameodds"))
     #: Provider tried first for the Top ticket only; falls back to
     #: ``provider_order`` when it can't supply enough qualifying picks.
     top_provider_priority: List[str] = field(default_factory=lambda: _list("TOP_PROVIDER_PRIORITY", "oddsapi"))
     chain_min_events: int = field(default_factory=lambda: _int("CHAIN_MIN_EVENTS", 40))
     sgo_sports: List[str] = field(default_factory=lambda: _list("SGO_SPORTS", ""))
-    sgo_leagues: List[str] = field(default_factory=lambda: _list("SGO_LEAGUES", "UEFA_CHAMPIONS_LEAGUE,MLS,NBA,NCAAB,NHL"))
-    sgo_event_limit: int = field(default_factory=lambda: _int("SGO_EVENT_LIMIT", 200))
+    sgo_leagues: List[str] = field(default_factory=lambda: _list("SGO_LEAGUES", "NBA,NFL,MLB,MLS,NCAAF,NCAAB,UEFA_CHAMPIONS_LEAGUE"))
+    sgo_event_limit: int = field(default_factory=lambda: _int("SGO_EVENT_LIMIT", 50))
+    #: SGO odd objects outside these statIDs / periodIDs are rejected at parse time
+    #: (UNSUPPORTED_STAT / UNSUPPORTED_PERIOD); player props are capped per event.
+    sgo_allowed_stats: List[str] = field(default_factory=lambda: _list(
+        "SGO_ALLOWED_STATS", "points,cornerKicks,yellowCards,weightedCards,bothTeamsScored"))
+    sgo_allowed_periods: List[str] = field(default_factory=lambda: _list("SGO_ALLOWED_PERIODS", "game,reg,1h,2h"))
     sgo_monthly_object_limit: int = field(default_factory=lambda: _int("SGO_MONTHLY_OBJECT_LIMIT", 1000))
-    sharpapi_leagues: List[str] = field(default_factory=lambda: _list("SHARPAPI_LEAGUES"))
+    sharpapi_leagues: List[str] = field(default_factory=lambda: _list(
+        "SHARPAPI_LEAGUES",
+        "england_-_premier_league,spain_-_la_liga,italy_-_serie_a,germany_-_bundesliga,france_-_ligue_1,england_-_championship,netherlands_-_eredivisie,portugal_-_primeira_liga,turkey_-_super_lig,uefa_-_champions_league,uefa_-_europa_league,uefa_-_europa_conference_league,nigeria_-_premier_league,atp,wta,nba,nfl,mlb,euroleague"))
     # SHARPAPI_SPORTS walks the kick-off ordered global sport feed(s), e.g. soccer:
     # one or two pages reach today's fixtures without per-league requests.
-    sharpapi_sports: List[str] = field(default_factory=lambda: _list("SHARPAPI_SPORTS", "auto"))
+    sharpapi_sports: List[str] = field(default_factory=lambda: _list("SHARPAPI_SPORTS"))
     # Provider capability discovery (no artificial sport/league gates)
     # Provider metadata and actual API responses determine what is available
     # The Odds API is intentionally restricted to Football/Tennis only
     # Match-market filter: drops the futures/outrights that flood the raw feed.
     sharpapi_markets: List[str] = field(
         default_factory=lambda: _list("SHARPAPI_MARKETS", "moneyline,spread,total"))
-    sharpapi_max_pages: int = field(default_factory=lambda: _int("SHARPAPI_MAX_PAGES", 12))
+    sharpapi_max_pages: int = field(default_factory=lambda: _int("SHARPAPI_MAX_PAGES", 3))
     sharpapi_events_per_target: int = field(
         default_factory=lambda: _int("SHARPAPI_EVENTS_PER_TARGET", 40))
     sharpapi_min_interval: float = field(default_factory=lambda: _float("SHARPAPI_MIN_INTERVAL_SEC", 5.5))
+
+    #: Sports the bot will pick from; anything else a provider returns is
+    #: dropped before merging and counted as ``sport_rejected`` in the provider report.
+    allowed_sports: List[str] = field(default_factory=lambda: _list(
+        "ALLOWED_SPORTS", "football,basketball,american_football,baseball,tennis"))
+
+    #: Market ids the picker never selects (pure coin-flips or unsettleable for our punters).
+    disabled_markets: List[str] = field(default_factory=lambda: _list(
+        "DISABLED_MARKETS", "odd_even,prop,winning_margin,ht_ft"))
 
     # Picks - the daily post is ONE ticket, so combined odds (not pick counts)
     # size the lists; daily_target is only a safety cap on the number of picks.
@@ -169,7 +195,7 @@ class Config:
     #: One selection per real fixture across Top + Daily: two legs on one match are
     #: correlated, so the slate never carries both.
     max_picks_per_event: int = field(default_factory=lambda: _int("MAX_PICKS_PER_EVENT", 1))
-    max_player_props: int = field(default_factory=lambda: _int("MAX_PLAYER_PROPS", 2))
+    max_player_props: int = field(default_factory=lambda: _int("MAX_PLAYER_PROPS", 0))
     #: Daily-list diversity quotas, so one market (e.g. corners totals), one
     #: sport or one league can never take over the single daily ticket. Shares
     #: are of daily_target. They are relaxed only when the qualifying pool is
@@ -206,6 +232,10 @@ class Config:
         (min > max, an odds target <= 1.0, a probability outside [0,1]) that
         would otherwise only surface downstream as an empty/broken selection
         pipeline with nothing pointing back at the config."""
+        unknown = [p for p in self.provider_order if p not in KNOWN_PROVIDERS]
+        if unknown:
+            log.warning("Config: PROVIDER_ORDER names unknown provider(s) %s (known: %s) - they are ignored",
+                        ", ".join(unknown), ", ".join(sorted(KNOWN_PROVIDERS)))
         checks = [
             ("DAILY_COMBINED_MIN_ODDS/MAX", self.daily_odds_min <= self.daily_odds_max),
             ("DAILY_MIN_ODDS/MAX_ODDS", self.daily_min_odds <= self.daily_max_odds),
@@ -237,6 +267,19 @@ class Config:
             "sharpapi": bool(self.sharpapi_key),
         }
         return [p for p in self.provider_order if keys.get(p)]
+
+
+def require_provider_keys(cfg: "Config") -> None:
+    """SharpAPI is the one required provider: without it there is no fixture
+    feed for the leagues we cover, so refuse to start (exit code 2). The Odds
+    API and SportsGameOdds are optional and only warn."""
+    if not cfg.sharpapi_key:
+        log.error("SHARPAPI_KEY is required — get one at https://sharpapi.io")
+        raise SystemExit(2)
+    if not cfg.odds_api_key:
+        log.warning("ODDS_API_KEY is not set - the Top ticket and European football lose The Odds API")
+    if not cfg.sgo_key:
+        log.warning("SPORTSGAMEODDS_KEY is not set - NBA/NFL/MLB/MLS/NCAA/UCL results and odds lose SportsGameOdds")
 
 
 def default_env_path() -> Path:

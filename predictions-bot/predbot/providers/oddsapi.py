@@ -67,7 +67,8 @@ class OddsApiProvider(BaseProvider):
                  bookmakers: Optional[List[str]] = None, odds_format: str = "decimal",
                  regions: Optional[List[str]] = None, max_leagues_per_sport: int = 8,
                  monthly_limit: int = 500, max_credits_per_cycle: int = 15,
-                 reserve_credits: int = 50, min_keys_per_sport: int = 1):
+                 reserve_credits: int = 50, min_keys_per_sport: int = 1,
+                 league_allowlist: Optional[List[str]] = None):
         self.key = api_key
         self.budget = budget
         self.min_interval = min_interval
@@ -83,6 +84,8 @@ class OddsApiProvider(BaseProvider):
         self.markets = ["h2h", "spreads", "totals"]
         self.max_leagues_per_sport = max(1, max_leagues_per_sport)
         self.max_credits_per_cycle = max(1, max_credits_per_cycle)
+        # Football league keys allowed at discovery; empty/None = every in-season key.
+        self.league_allowlist = [k.strip() for k in (league_allowlist or []) if k and k.strip()]
         # Every allowed sport with events in the window gets at least this many
         # odds keys per cycle before leftover credits are ranked by event count.
         self.min_keys_per_sport = max(0, min_keys_per_sport)
@@ -217,6 +220,8 @@ class OddsApiProvider(BaseProvider):
                 continue
             key = row.get("key", "").strip()
             sport = sport_key_to_canonical(key)
+            if self.league_allowlist and key not in self.league_allowlist:
+                continue
             if sport == "football":
                 football_keys.append(key)
             elif sport == "tennis":

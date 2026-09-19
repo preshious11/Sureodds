@@ -12,11 +12,11 @@ from typing import Optional, Tuple
 from predbot.storage.db import Database
 from predbot.util.names import normalize
 
-K_FACTOR = {"football": 20.0, "basketball": 20.0, "american_football": 22.0, "hockey": 18.0,
-            "baseball": 8.0, "tennis": 28.0, "mma": 30.0, "handball": 18.0}
-HOME_ADV = {"football": 65.0, "basketball": 80.0, "american_football": 60.0, "hockey": 45.0,
-            "baseball": 30.0, "tennis": 0.0, "mma": 0.0, "handball": 60.0}
-BASE_DRAW = {"football": 0.26, "hockey": 0.22, "handball": 0.08}
+K_FACTOR = {"football": 20.0, "basketball": 20.0, "american_football": 22.0,
+            "baseball": 8.0, "tennis": 28.0, "mma": 30.0}
+HOME_ADV = {"football": 65.0, "basketball": 80.0, "american_football": 60.0,
+            "baseball": 30.0, "tennis": 0.0, "mma": 0.0}
+BASE_DRAW = {"football": 0.26}
 
 
 class Elo:
