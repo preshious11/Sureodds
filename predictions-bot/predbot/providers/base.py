@@ -90,6 +90,23 @@ def apply_price_mode(ml: MarketLine, mode: str = "median") -> None:
         ml.bookmaker = "median"
 
 
+def consolidate_lines(markets: List["MarketLine"]) -> List["MarketLine"]:
+    """One line per bet: lines with an identical key (SportsGameOdds lists a football market under both its
+    ``game`` and ``reg`` period, which we map to the same ``full``) collapse into the one quoted by most books,
+    keeping its price and adding the others' books. Order of first appearance is kept."""
+    groups: Dict[Tuple, List["MarketLine"]] = {}
+    for m in markets:
+        groups.setdefault(m.key(), []).append(m)
+    out: List["MarketLine"] = []
+    for group in groups.values():
+        primary = group[0] if len(group) == 1 else max(group, key=lambda m: m.n_books)   # ties: first seen
+        if len(group) > 1:
+            primary.book_prices = [p for m in group for p in (m.book_prices or [m.price])]
+            primary.n_books = len(primary.book_prices)
+        out.append(primary)
+    return out
+
+
 @dataclass
 class Event:
     provider: str

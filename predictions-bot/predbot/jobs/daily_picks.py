@@ -22,6 +22,7 @@ from predbot.providers.chain import ProviderChain, merge_events
 from predbot.selection.picker import PickSet, same_fixture, select
 from predbot.storage.db import Database
 from predbot.util.fixtures import fixture_key
+from predbot.util.timing import Timings
 from predbot.util.timeutil import iso, parse_iso, to_local, utcnow, day_bounds
 
 log = logging.getLogger(__name__)
@@ -71,8 +72,10 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     end = min(midnight_end, now + timedelta(hours=cfg.pick_window_hours))
     if start >= end:
         return PickSet()
+    timings = Timings()
     usage_before = _api_usage(chain)
-    events = chain.collect(start, end)
+    with timings.stage('collect'):
+        events = chain.collect(start, end)
 
     # Dedupe against PREVIOUS days' stored picks: the window runs to local
     # midnight + DAY_WINDOW_END_OFFSET_HOURS, so a fixture picked late
@@ -131,14 +134,22 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
                     for e in events for m in e.extra.get("merged", [])]
     if merged_pairs:
         log.info("merged %d events across providers", len(merged_pairs))
-    scored = score_events(events, db, cfg)
+    with timings.stage('score'):
+        scored = score_events(events, db, cfg)
     gate = make_results_gate(cfg, providers_map) if providers_map else None
-    ps = select(scored, cfg, now, top_priority_source=top_priority_source, results_gate=gate)
+    with timings.stage('select'):
+        ps = select(scored, cfg, now, top_priority_source=top_priority_source, results_gate=gate)
+    timings.stages.update({k: v for k, v in (ps.diagnostics.pop('select_timings', None) or {}).items()})
     # Completeness is judged on the three-provider Daily chain only, unchanged
     # from before the Odds API existed; the Top-priority source has its own
     # fallback (picker.select) so its own outages never flip the snapshot to PARTIAL.
     providers = getattr(chain, "last_report", {})
     ps.complete = bool(providers) and all(p["status"] == "complete" for p in providers.values())
+    last = getattr(chain, 'last_timings', None)
+    for name, t in (last.items() if isinstance(last, dict) else ()):
+        if isinstance(t, dict):
+            timings.add('collect:' + name, t['wall'], t['cpu'])
+    ps.diagnostics['timings'] = timings.to_dict()
     ps.diagnostics.update({"merged_events": len(merged_pairs),
                            "merged_pairs_by_league": dict(Counter(p["league"] for p in merged_pairs)),
                            "merged_pairs": merged_pairs})

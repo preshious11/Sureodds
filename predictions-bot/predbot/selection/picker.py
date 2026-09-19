@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from collections import Counter
@@ -329,6 +330,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         else:
             trace.setdefault(id(s), rule)
 
+    marks = [(time.perf_counter(), time.process_time())]
     ps = PickSet(pool_size=len(scored))
     lead = now + timedelta(minutes=cfg.min_lead_minutes)
     base: List[Scored] = []
@@ -378,6 +380,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             continue
         base.append(s)
     ps.eligible = len(base)
+    marks.append((time.perf_counter(), time.process_time()))
     for s in base:
         s.rank_score = _daily_score(s)
 
@@ -477,6 +480,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
                       "top_priority_source": top_priority_source,
                       "top_priority_used": used_priority_pool, "top_relaxed": top_relaxed}
 
+    marks.append((time.perf_counter(), time.process_time()))
     # ---------------------------------------------------------- daily picks
     # One ticket for the whole post: keep filling while it is short of the floor,
     # stop before a pick would break the ceiling or the pick cap.
@@ -731,6 +735,10 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     ps.daily = chosen
     log.info("picker: pool=%d eligible=%d top_pool=%d daily_pool=%d -> top=%d daily=%d ticket=%.2f top_relaxed=%s",
              ps.pool_size, ps.eligible, len(top_pool), len(daily_pool), len(top), len(chosen), ticket, top_relaxed)
+    marks.append((time.perf_counter(), time.process_time()))
+    ps.diagnostics["select_timings"] = {
+        name: {"wall": round(b[0] - a[0], 4), "cpu": round(b[1] - a[1], 4)}
+        for name, a, b in zip(("select_base", "select_top", "select_daily"), marks, marks[1:])}
     bad = cross_tier.violations(ps.top, ps.daily, fixture_relation, cross_mode)
     if bad and _depth < 5:
         for d, t, why in bad:

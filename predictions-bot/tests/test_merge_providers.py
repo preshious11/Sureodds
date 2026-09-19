@@ -156,3 +156,30 @@ def test_sgo_and_sharpapi_pool_a_moneyline_and_a_handicap_despite_different_enti
     (ml,) = [x for x in m.markets if x.market == "result2"]
     assert ml.n_books == 3
     assert sum(1 for x in m.markets if x.market == "total") == 1            # the team total is kept as its own line
+
+
+def test_one_line_per_bet_within_an_event_pooling_the_books():
+    """SportsGameOdds lists a football BTTS under both its 'game' and 'reg' period, both mapped to 'full': the
+    recorded MLS day had 'BTTS Yes' twice on one event (4 books @1.5128 and 1 book @1.5), which made the same
+    tip both a Top leg and a Daily candidate."""
+    from predbot.providers.base import consolidate_lines
+    a = MarketLine("btts", "yes", 1.5128, book_prices=[1.5, 1.51, 1.52, 1.52], n_books=4, provider_odd_id="game")
+    b = MarketLine("btts", "yes", 1.5, book_prices=[1.5], n_books=1, provider_odd_id="reg")
+    c = MarketLine("btts", "no", 2.55, book_prices=[2.55], n_books=1)
+    out = consolidate_lines([b, a, c])
+    assert [(m.selection, m.n_books, m.price) for m in out] == [("yes", 5, 1.5128), ("no", 1, 2.55)]
+    assert out[0].provider_odd_id == "game" and len(out[0].book_prices) == 5
+
+
+def test_a_cached_event_with_duplicate_lines_is_consolidated_on_restore():
+    from predbot.providers.chain import ProviderChain
+    from unittest.mock import Mock
+    ev = _e("sportsgameodds", "A", "B", dt(hh=20), "MLS", "MLS", "football", markets=[
+        MarketLine("btts", "yes", 1.5, book_prices=[1.5], n_books=1), MarketLine("btts", "yes", 1.51, book_prices=[1.51, 1.5], n_books=2)])
+    prov = Mock()
+    prov.enabled.return_value = True
+    prov.fetch_events.return_value = [ev]
+    prov.last_fetch_complete = True
+    chain = ProviderChain({"sportsgameodds": prov}, ["sportsgameodds"])
+    (out,) = chain._collect_uncached(dt(hh=0), dt(hh=23, mm=59))
+    assert len(out.markets) == 1 and out.markets[0].n_books == 3

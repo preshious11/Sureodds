@@ -99,6 +99,9 @@ def _funnel(gen: Dict) -> List[str]:
                      f"{esc(_kv(gen.get('merged_pairs_by_league')))}")
         for p in (gen.get("merged_pairs") or [])[:12]:
             lines.append(f"• {esc(p['kept'])} ⇄ {esc(p['merged'])}" + (" (sides swapped)" if p.get("swapped") else ""))
+    if gen.get("timings"):
+        lines.append("Timings (wall/cpu s): " + esc(", ".join(f"{k} {v['wall']:.2f}/{v['cpu']:.2f}"
+                                                            for k, v in gen["timings"].items())))
     if "top_relaxed" in gen:
         lines.append("Top fallback: " + (f"relaxed by {esc(str(gen['top_relaxed']))}" if gen.get("top_relaxed") else "not needed / none found"))
     if gen.get("daily_family_pool") is not None:
