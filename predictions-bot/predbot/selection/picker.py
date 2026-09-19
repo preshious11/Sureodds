@@ -110,6 +110,13 @@ def _pre(event) -> tuple:
     return event.dedupe_key(), comp, fixture_key(event, comp)
 
 
+def _pre_cached(cache: Dict[int, tuple], event) -> tuple:
+    got = cache.get(id(event))
+    if got is None:
+        got = cache[id(event)] = _pre(event)
+    return got
+
+
 def fixture_relation(a, b, pre_a: Optional[tuple] = None, pre_b: Optional[tuple] = None) -> Optional[bool]:
     """``None`` when ``a`` and ``b`` are different matches; otherwise whether the two providers list the sides
     the other way round (``True`` = home/away swapped). One match is recognised by an identical dedupe_key,
@@ -170,12 +177,15 @@ def fixture_conflicts(events) -> List[set]:
     return link_events(events)[0]
 
 
-def _cross_tier_verdict(s: Scored, top: List[Scored], mode: str) -> Optional[Tuple[str, str]]:
+def _cross_tier_verdict(s: Scored, top: List[Scored], mode: str, pre: Optional[Dict[int, tuple]] = None) -> Optional[Tuple[str, str]]:
     """(rejection name, why) when Daily candidate ``s`` may not be offered because of a Top leg on the same
     match; ``None`` when it is allowed. ``forbid``: any Top fixture is off-limits. ``different_outcome``: only
     the same tip (or one nested in it) is refused; contradictions are left to the builder's conflicts()."""
     for t in top:
-        swapped = fixture_relation(t.event, s.event)
+        if pre is None:
+            swapped = fixture_relation(t.event, s.event)
+        else:                                  # per-event identity computed once for the whole selection
+            swapped = fixture_relation(t.event, s.event, _pre_cached(pre, t.event), _pre_cached(pre, s.event))
         if swapped is None:
             continue
         if mode == cross_tier.FORBID:
@@ -486,6 +496,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     # stop before a pick would break the ceiling or the pick cap.
     cap = cfg.daily_target
     cross_mode = getattr(cfg, "cross_tier_same_fixture", cross_tier.DIFFERENT_OUTCOME)
+    pre_cache: Dict[int, tuple] = {}
     daily_pool: List[Scored] = []
     daily_rejected: Counter = Counter()
     for s in base:
@@ -496,7 +507,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             rejection_counts["CROSS_TIER_DUPLICATE_REMOVED"] += 1
             _note(s, "daily: CROSS_TIER_DUPLICATE_REMOVED")
             continue
-        verdict = _cross_tier_verdict(s, top, cross_mode)
+        verdict = _cross_tier_verdict(s, top, cross_mode, pre_cache)
         if verdict:
             name, why = verdict
             rejection_counts[name] += 1

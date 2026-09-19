@@ -49,14 +49,19 @@ class ScoreGrid:
         self.la = max(0.05, lam_away)
         self.rho = rho
         self.n = max_goals
+        # The Poisson terms are looked up once per row/column and _tau is only non-trivial in the four low-score
+        # cells (elsewhere it is exactly 1.0, so the product is unchanged): the same floating-point operations in
+        # the same order as the cell-by-cell form, with a fraction of the calls.
+        pois_h = [_pois(i, self.lh) for i in range(self.n + 1)]
+        pois_a = [_pois(j, self.la) for j in range(self.n + 1)]
+        low = {(i, j): _tau(i, j, self.lh, self.la, rho) for i in (0, 1) for j in (0, 1)}
         grid: List[List[float]] = []
         tot = 0.0
         for i in range(self.n + 1):
-            row = []
-            for j in range(self.n + 1):
-                p = _pois(i, self.lh) * _pois(j, self.la) * _tau(i, j, self.lh, self.la, rho)
-                p = max(p, 0.0)
-                row.append(p)
+            ph = pois_h[i]
+            row = [max(ph * pj * low[i, j], 0.0) if (i < 2 and j < 2) else max(ph * pj, 0.0)
+                   for j, pj in enumerate(pois_a)]
+            for p in row:
                 tot += p
             grid.append(row)
         self.grid = [[p / tot for p in row] for row in grid]
