@@ -267,3 +267,12 @@ def test_a_games_total_is_graded_on_total_games_not_sets(three_setter, selection
     ("away", 4.0, PUSH), ("away", 3.5, LOST)])
 def test_a_games_handicap_is_graded_on_games(three_setter, selection, line, expected):
     assert grade(_line("handicap", selection, line, "games"), three_setter, "tennis") == expected
+
+
+@pytest.mark.parametrize("market,selection,line,expected", [
+    ("handicap", "home", -1.5, LOST),      # sets 2-1: 2 - 1.5 = 0.5 < 1
+    ("handicap", "away", 1.5, WON),        # 1 + 1.5 = 2.5 > 2
+    ("total", "over", 2.5, WON),           # three sets played
+    ("total", "under", 2.5, LOST)])
+def test_a_sets_market_is_graded_on_sets(three_setter, market, selection, line, expected):
+    assert grade(_line(market, selection, line, "sets"), three_setter, "tennis") == expected
