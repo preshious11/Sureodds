@@ -164,3 +164,29 @@ def test_partial_snapshot_is_not_presented_as_quality_rejection():
     snapshot = DailySnapshot(date='2030-06-01', generation={'complete': False})
     text, _ = render_page(snapshot, 'top', 0, 5, 'UTC')
     assert 'temporarily incomplete' not in text
+
+
+def test_sgo_sport_status_is_keyed_by_the_canonical_sport_name(budget):
+    """SGO's sport ids (SOCCER, FOOTBALL) must not leak into sport_status: the event counter and the
+    cache aggregation use canonical names, so a parsed MLS/Ligue 1 event must make 'football' a success."""
+    import json
+    import pathlib
+    from predbot.cache.providers import sport_states
+    from predbot.providers.sportsgameodds import SportsGameOddsProvider
+    raw = json.loads((pathlib.Path(__file__).parent / 'fixtures' / 'sgo_event.json').read_text(encoding='utf-8'))
+    starts = raw['status']['startsAt']
+    from predbot.util.timeutil import parse_iso
+    start = parse_iso(starts)
+    p = SportsGameOddsProvider('k', budget, [], ['FR_LIGUE_1', 'NFL'], event_limit=10)
+    p._available_leagues = {'FR_LIGUE_1', 'NFL'}
+    p._league_sport = {'FR_LIGUE_1': 'SOCCER', 'NFL': 'FOOTBALL'}
+    p.http.get = lambda path, params: {'data': [raw] if params['leagueID'] == 'FR_LIGUE_1' else []}
+
+    events = p.fetch_events(start - timedelta(days=1), start + timedelta(days=1))
+
+    assert events, 'the recorded event should parse'
+    assert p.sport_status['football'] == {'status': 'success', 'events': len(events), 'leagues': 1}
+    assert p.sport_status['american_football']['status'] == 'empty'
+    assert not {'SOCCER', 'FOOTBALL', 'BASKETBALL', 'BASEBALL'} & set(p.sport_status)
+    states = sport_states({'sportsgameodds': {'status': 'complete', 'sport_status': p.sport_status, 'events': {}}})
+    assert set(states) == {'football', 'american_football'} and states['football']['status'] == 'success'

@@ -249,7 +249,11 @@ class SportsGameOddsProvider(BaseProvider):
         # provider catalog where available, else from parsed events.
         league_sport = getattr(self, '_league_sport', None) or {}
         for league, rec in self.fetch_counts.items():
-            sport = league_sport.get(league) or self._parsed_sport_by_league.get(league) or 'other'
+            sgo_id = league_sport.get(league)
+            # SGO's own sport id (SOCCER, FOOTBALL = American football, ...) -> the bot's canonical
+            # name, so the status and the event counter below share one key space
+            sport = (SPORT_MAP.get(str(sgo_id).upper(), 'other') if sgo_id
+                     else self._parsed_sport_by_league.get(league) or 'other')
             got = rec.get('raw_events', 0)
             origin = rec.get('status', 'failed')
             if origin == 'complete':
