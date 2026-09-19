@@ -221,8 +221,9 @@ rather than failing silently:
 - **SharpAPI** — rate-limited to `SHARPAPI_MIN_INTERVAL_SEC` between calls
   (free tier ≈ 12/min). Its `/odds` feed is ordered by kick-off and prices each
   match with dozens of rows, so the fetch is shaped by `SHARPAPI_MARKETS` (default
-  `moneyline,spread,total`), an **explicit** `SHARPAPI_LEAGUES` list (19 leagues by
-  default; there is no sport-level auto-discovery — a configured `SHARPAPI_SPORTS`
+  `moneyline,spread,total`), an **explicit** `SHARPAPI_LEAGUES` list (17 leagues by
+  default, **no tennis** — `atp`/`wta` are left out until a tennis results path exists,
+  since their picks could never be settled; add them back only then; there is no sport-level auto-discovery — a configured `SHARPAPI_SPORTS`
   feed only logs a warning), `SHARPAPI_MAX_PAGES=3` and `SHARPAPI_EVENTS_PER_TARGET`.
   Paging also stops once a page starts after the pick window ends.
 

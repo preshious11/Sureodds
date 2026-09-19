@@ -3,6 +3,7 @@ the event-level results gate, the resolver order and settle.run never raising.""
 from __future__ import annotations
 
 import json
+import pathlib
 import logging
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -10,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 
 from predbot.bot.commands import CommandLoop
-from predbot.config import Config
+from predbot.config import Config, _parse_env_file
 from predbot.jobs import daily_picks, settle
 from predbot.markets.settlement import make_results_gate, results_path
 from predbot.providers.base import Event, MatchResult
@@ -90,6 +91,13 @@ def test_no_match_or_wrong_kickoff_returns_none():
     assert p.find_result("football", "Nobody FC", "Ghost United", START, league_id="soccer_epl") is None
     assert p.find_result("football", "Manchester City", "Newcastle United", dt(hh=19) .replace(day=20),
                          league_id="soccer_epl") is None
+
+
+def test_tennis_is_not_fetched_by_default_until_it_has_a_results_path():
+    leagues = Config().sharpapi_leagues
+    assert "atp" not in leagues and "wta" not in leagues and len(leagues) == 17
+    example = _parse_env_file(pathlib.Path(__file__).resolve().parent.parent / ".env.example")
+    assert "atp" not in example["SHARPAPI_LEAGUES"].split(",") and "wta" not in example["SHARPAPI_LEAGUES"].split(",")
 
 
 def test_only_football_and_only_with_a_key():

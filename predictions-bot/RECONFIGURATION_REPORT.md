@@ -52,7 +52,7 @@ the rest of the verification blanked the keys.
   `ODDS_API_LEAGUE_ALLOWLIST` (11 keys) applied in `_discover_sports`. Monthly maths is in `.env.example` (~270 generation + ~180 scores ≈ 450 / 500).
 - 2c `ALLOWED_SPORTS` enforced in `chain.filter_allowed` before merging (also on the persisted-cache path), counted as `sport_rejected`
   in the provider report; hockey/handball removed from every table and period ids `1p/2p/3p` removed.
-- 2d SharpAPI: explicit 19 leagues, `auto` removed (warning), `SHARPAPI_MAX_PAGES=3`; `sport_for_league` maps every default slug
+- 2d SharpAPI: explicit 17 leagues (atp/wta dropped later: no tennis results path), `auto` removed (warning), `SHARPAPI_MAX_PAGES=3`; `sport_for_league` maps every default slug
   (guarded by `NON_SOCCER_PREFIXES` so the new `league`/`liga` hints cannot capture table tennis etc.).
 - 2e SGO: empty `SGO_SPORTS` no longer filters every league out (the regression test fails without the fix - verified);
   `SGO_ALLOWED_STATS` / `SGO_ALLOWED_PERIODS`; `MAX_PLAYER_PROPS=0` (this key already existed for the picker's cap, default 2; one setting now drives both).
@@ -107,7 +107,7 @@ fallback to `prob` for old rows); `.env` inline-comment rule; removed `CHAIN_MIN
 | `SGO_LEAGUES` | `UEFA_CHAMPIONS_LEAGUE,MLS,NBA,NCAAB,NHL` | `NBA,NFL,MLB,MLS,NCAAF,NCAAB,UEFA_CHAMPIONS_LEAGUE` |
 | `SGO_EVENT_LIMIT` | 200 (example 25) | 50 |
 | `SHARPAPI_SPORTS` | `auto` | *(empty)* |
-| `SHARPAPI_LEAGUES` | *(empty)* | the 19 slugs in `.env.example` |
+| `SHARPAPI_LEAGUES` | *(empty)* | the 17 slugs in `.env.example` |
 | `SHARPAPI_MAX_PAGES` | 12 | 3 |
 | `MAX_PLAYER_PROPS` | 2 | 0 |
 
