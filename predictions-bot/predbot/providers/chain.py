@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import copy
+import threading
 from collections import Counter
 from datetime import datetime
 from types import SimpleNamespace
@@ -266,6 +267,24 @@ class ResultsResolver:
 
     def __init__(self, providers: Dict[str, BaseProvider]):
         self.providers = providers
+        # settlement looks results up from one thread per source (see jobs.settle): a provider is asked by one
+        # thread at a time, so its per-run response caches and rate limiter behave exactly as when serial
+        self._locks: Dict[str, threading.RLock] = {}
+
+    def paths_for(self, provider: str, sport: str, alt_ids: Optional[Dict[str, str]] = None,
+                  hints: Optional[Dict[str, str]] = None) -> List[str]:
+        """Names of the result sources to ask for a pick, in order (the first one is asked first)."""
+        from predbot.markets.settlement import result_paths
+        hints, alt_ids = hints or {}, alt_ids or {}
+        event = SimpleNamespace(sport=sport, league=hints.get("league", ""), league_id=hints.get("league_id", ""),
+                                provider=provider, sources=[provider, *alt_ids.keys()],
+                                extra={"sport_key": hints.get("sport_key", "")})
+        names = [p.name for p in result_paths(event, None, self.providers)]
+        if not names:
+            # A pick stored without a recognisable competition (older rows): the gate would
+            # refuse it today, but one that already exists is still worth a best-effort lookup.
+            names = (["football_data"] if sport == "football" else []) + ["sportsgameodds"]
+        return names
 
     def resolve(self, provider: str, provider_event_id: str, sport: str, home: str, away: str,
                 start: datetime, alt_ids: Optional[Dict[str, str]] = None,
@@ -273,23 +292,14 @@ class ResultsResolver:
                 hints: Optional[Dict[str, str]] = None) -> Optional[MatchResult]:
         """``hints`` carries what was stored with the pick: ``sport_key`` (Odds API),
         ``league_id`` and ``league`` (competition lookup)."""
-        from predbot.markets.settlement import result_paths
         cache = cache if cache is not None else {}
         hints = hints or {}
         alt_ids = alt_ids or {}
         ck = f"{provider}:{provider_event_id}"
         if ck in cache:
             return cache[ck]
-        event = SimpleNamespace(sport=sport, league=hints.get("league", ""), league_id=hints.get("league_id", ""),
-                                provider=provider, sources=[provider, *alt_ids.keys()],
-                                extra={"sport_key": hints.get("sport_key", "")})
         result: Optional[MatchResult] = None
-        names = [p.name for p in result_paths(event, None, self.providers)]
-        if not names:
-            # A pick stored without a recognisable competition (older rows): the gate would
-            # refuse it today, but one that already exists is still worth a best-effort lookup.
-            names = (["football_data"] if sport == "football" else []) + ["sportsgameodds"]
-        for name in names:
+        for name in self.paths_for(provider, sport, alt_ids, hints):
             r = self._ask(name, provider, provider_event_id, alt_ids, sport, home, away, start, hints)
             if r is not None and r.status != "unknown":
                 result = r
@@ -305,6 +315,11 @@ class ResultsResolver:
         prov = self.providers.get(name)
         if prov is None:
             return None
+        with self._locks.setdefault(name, threading.RLock()):
+            return self._ask_locked(prov, name, provider, provider_event_id, alt_ids, sport, home, away, start, hints)
+
+    def _ask_locked(self, prov, name: str, provider: str, provider_event_id: str, alt_ids: Dict[str, str], sport: str,
+                    home: str, away: str, start: datetime, hints: Dict[str, str]) -> Optional[MatchResult]:
         try:
             if name in ("football_data", "espn", "euroleague"):
                 return prov.find_result(sport, home, away, start, league_id=hints.get("league_id", ""),
