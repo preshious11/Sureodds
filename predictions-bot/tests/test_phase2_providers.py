@@ -33,10 +33,10 @@ def test_defaults_put_oddsapi_first_and_size_the_credit_budget_for_a_500_quota()
 
 
 def test_an_unknown_provider_name_is_warned_about(monkeypatch, caplog):
-    monkeypatch.setenv("PROVIDER_ORDER", "oddsapi,api_football,sharpapi")
+    monkeypatch.setenv("PROVIDER_ORDER", "oddsapi,removed_provider,sharpapi")
     with caplog.at_level(logging.WARNING):
         Config()
-    assert any("unknown provider" in r.message and "api_football" in r.message for r in caplog.records)
+    assert any("unknown provider" in r.message and "removed_provider" in r.message for r in caplog.records)
 
 
 def test_known_provider_names_do_not_warn(caplog):

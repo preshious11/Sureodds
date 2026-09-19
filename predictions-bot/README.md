@@ -196,7 +196,7 @@ try again in a minute." (or the already-published card).
    starts empty.
 3. Set the variables from `.env.example` in the host's dashboard. **Dashboard values
    override the code defaults**, so delete any variable you no longer want to pin
-   (an old `PROVIDER_ORDER=api_football,...` only produces a startup warning).
+   (a `PROVIDER_ORDER` that still names a removed provider only produces a startup warning).
 4. Redeploy after every push (a restart alone keeps the old image). Startup logs which
    `.env` was loaded and which keys override a default.
 
