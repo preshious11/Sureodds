@@ -13,11 +13,11 @@ import math
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from predbot.bot.broadcast import BROADCAST_HOUR, BROADCAST_MINUTE, picks_text
+from predbot.bot.broadcast import picks_text
 from predbot.bot.format import kickoff_label
 from predbot.bot.telegram import esc
 from predbot.cache.models import DailySnapshot
-from predbot.util.timeutil import parse_iso, to_local, utcnow
+from predbot.util.timeutil import parse_hhmm, parse_iso, to_local, utcnow
 
 
 def latest_snapshot(db) -> Optional[Tuple[DailySnapshot, Dict]]:
@@ -111,9 +111,10 @@ def lastrun_text(db, cfg, now: Optional[datetime] = None) -> str:
     out += ["", f"<b>Slates</b>: Top {len(snapshot.top_picks)} legs · combined {_product(snapshot.top_picks):.2f} | "
                 f"Daily {len(snapshot.daily_picks)} picks · ticket {_product(snapshot.daily_picks):.2f}"]
 
-    # Both slates exactly as a subscriber's card renders them at 09:30 in the bot's zone.
-    sent_at = to_local(at, tz).replace(hour=BROADCAST_HOUR, minute=BROADCAST_MINUTE, second=0, microsecond=0) if at else None
+    # Both slates exactly as a subscriber's card renders them at DELIVERY_TIME in the bot's zone.
+    d_hour, d_minute = parse_hhmm(cfg.delivery_time, "09:30")
+    sent_at = to_local(at, tz).replace(hour=d_hour, minute=d_minute, second=0, microsecond=0) if at else None
     card = picks_text(snapshot, tz, now=sent_at) if snapshot.total_picks() else ""
-    out += ["", f"<b>Slates as sent</b> (rendered for {esc(tz)} at {BROADCAST_HOUR:02d}:{BROADCAST_MINUTE:02d}):",
+    out += ["", f"<b>Slates as sent</b> (rendered for {esc(tz)} at {d_hour:02d}:{d_minute:02d}):",
             card or "No picks in this snapshot."]
     return "\n".join(out)

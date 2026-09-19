@@ -286,7 +286,7 @@ def test_concurrent_services_share_single_generation(tmp_path, monkeypatch, cloc
     b, f2, b2 = service(db2, monkeypatch)
     results, errors = [], []
     def worker(app):
-        try: results.append(app.get_daily_snapshot().to_dict())
+        try: results.append(app.get_daily_snapshot(scheduled=True).to_dict())
         except Exception as exc: errors.append(exc)
     threads = [threading.Thread(target=worker, args=(app,)) for app in (a,b,a,b)]
     for t in threads: t.start()

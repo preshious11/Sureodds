@@ -5,10 +5,11 @@ failed providers after the configured cooldown. Recaps use already-fetched text.
 send is de-duplicated per (kind, card date, chat) in the ``deliveries`` table, so
 restarts and repeated job runs never double-send.
 
-Picks land at 09:30 in each subscriber's OWN zone (their stored IANA zone, else
-``TIMEZONE``), and only for people whose subscription already existed at that
-moment: joining, /start or re-subscribing after 09:30 is never itself a reason to
-be sent today's card, which arrives with the next scheduled broadcast instead.
+Picks land at ``DELIVERY_TIME`` (default 09:30) in ``TIMEZONE`` - ONE shared instant for
+every subscriber. A subscriber's own zone only changes how kick-off times are shown on
+their card. Only people whose subscription already existed at that moment get it:
+joining, /start or re-subscribing after it is never itself a reason to be sent today's
+card, which arrives with the next scheduled broadcast instead.
 Onboarding is therefore menu-only - it never triggers a prediction send.
 """
 from __future__ import annotations
@@ -21,16 +22,13 @@ from predbot.bot.format import generated_line, pick_line_from_record, summary_ca
 from predbot.bot.telegram import Telegram
 from predbot.cache.models import DailySnapshot
 from predbot.storage.db import Database
-from predbot.util.timeutil import resolve_timezone, local_reached, parse_iso, to_local, utcnow
+from predbot.util.timeutil import parse_hhmm, resolve_timezone, local_reached, parse_iso, to_local, utcnow
 
 log = logging.getLogger(__name__)
 
 #: Resolves the canonical card to deliver; ``UnifiedFetcher.published_snapshot``.
 SnapshotProvider = Callable[[], Optional[DailySnapshot]]
 
-
-#: Picks land at 9:30 in each subscriber's OWN zone, not one shared instant.
-BROADCAST_HOUR, BROADCAST_MINUTE = 9, 30
 
 
 def subscriber_tz(row, fallback_tz: str) -> str:
@@ -104,11 +102,11 @@ def _record_line(snapshot: DailySnapshot) -> Optional[str]:
 def deliver_picks(db: Database, cfg, tg: Telegram,
                   snapshot: Union[DailySnapshot, SnapshotProvider, None],
                   now: Optional[datetime] = None) -> int:
-    """Send today's card to each subscriber at 9:30 AM in THEIR OWN timezone.
+    """Send today's card to every subscriber at ``DELIVERY_TIME`` in ``TIMEZONE``.
 
-    Deliberately not one shared broadcast instant: a subscriber in Lagos and one
-    in New York each get the card at their own 9:30, and the ``deliveries`` table
-    keeps it to once per person per day.
+    One shared instant (default 09:30 Lagos): a subscriber in New York gets it at the
+    same moment as one in Lagos, with kick-offs shown in their own zone, and the
+    ``deliveries`` table keeps it to once per person per day.
 
     Accepts either a snapshot or a zero-argument provider (``published_snapshot``),
     so the scheduler can poll without forcing a provider fetch.
@@ -119,9 +117,9 @@ def deliver_picks(db: Database, cfg, tg: Telegram,
         snapshot = snapshot()
     if snapshot is None or not (snapshot.top_picks or snapshot.daily_picks):
         return 0
+    hour, minute = parse_hhmm(cfg.delivery_time, "09:30")
     return _deliver_per_user_at_time(db, cfg, tg, "picks", snapshot.date, snapshot,
-                                     BROADCAST_HOUR, BROADCAST_MINUTE, "daily picks",
-                                     now=now)
+                                     hour, minute, "daily picks", now=now)
 
 
 def deliver_recap(db: Database, cfg, tg: Telegram, text: Optional[str]) -> int:
@@ -135,7 +133,7 @@ def deliver_recap(db: Database, cfg, tg: Telegram, text: Optional[str]) -> int:
 def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_str: str,
                               snapshot: DailySnapshot, target_hour: int, target_minute: int,
                               label: str, now: Optional[datetime] = None) -> int:
-    """Send to each subscriber once their target time has arrived in their zone.
+    """Send to each subscriber once the target time has arrived in ``cfg.timezone``.
 
     "At or past" rather than an exact-minute window: the scheduler polls every few
     minutes, so a narrow window would silently skip a subscriber whose minute was
@@ -153,13 +151,13 @@ def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_s
         chat_id = str(row["chat_id"])
         if db.delivery_done(kind, date_str, chat_id):
             continue
-        user_tz = subscriber_tz(row, cfg.timezone)
-        local = to_local(now, user_tz)
+        user_tz = subscriber_tz(row, cfg.timezone)      # display only
+        local = to_local(now, cfg.timezone)
         if local.strftime("%Y-%m-%d") < date_str:
-            continue                      # their day hasn't started yet
+            continue                      # the card's day hasn't started yet
         if (local.hour, local.minute) < (target_hour, target_minute):
-            continue                      # their 9:30 hasn't arrived
-        if not _joined_before_target(row, date_str, target_hour, target_minute, user_tz):
+            continue                      # DELIVERY_TIME hasn't arrived
+        if not _joined_before_target(row, date_str, target_hour, target_minute, cfg.timezone):
             continue                      # joined after today's card was due - starts tomorrow
         # Deliberately "at or past" rather than an exact-minute window: the
         # scheduler polls every few minutes, so a narrow window would silently
@@ -172,7 +170,7 @@ def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_s
             db.mark_delivery(kind, date_str, chat_id)
             sent += 1
     if sent:
-        log.info("broadcast: %s delivered to %d subscriber(s) at their %02d:%02d",
+        log.info("broadcast: %s delivered to %d subscriber(s) at %02d:%02d",
                  label, sent, target_hour, target_minute)
     return sent
 

@@ -138,12 +138,27 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
                            "markets_by_sport": dict(Counter(e.sport for e in events for m in e.markets)),
                            "scored_by_sport": dict(Counter(s.event.sport for s in scored)),
                            "complete": ps.complete, "generated_at": iso(now),
-                           "retry_after": iso(now + timedelta(seconds=cfg.cache_retry_seconds))})
+                           "retry_after": iso(now + timedelta(seconds=cfg.cache_retry_seconds)),
+                           "retry_until": cfg.delivery_time})
     log.info("Prediction generation %s: %s", day, ps.diagnostics)
     return ps
 
 
-def store_picks(ps: PickSet, db: Database, pick_date: str) -> None:
+def _selection_identity(tier: str, s) -> tuple:
+    e, m = s.event, s.line
+    return (tier, e.provider, e.provider_event_id, m.market, m.period, m.stat, m.entity, m.line, m.selection)
+
+
+def store_picks(ps: PickSet, db: Database, pick_date: str, replace_pending: bool = True) -> None:
+    """Persist a pickset. Regenerating a day that nobody has been sent yet REPLACES its
+    pending picks (those not in the new set are deleted, in the caller's transaction),
+    so a retry cannot leave stale legs that settlement and stats would count. Once a
+    card has been delivered the stored rows are what people saw: they are never touched."""
+    if replace_pending and not db.deliveries_exist("picks", pick_date):
+        keep = [_selection_identity(tier, s) for tier, items in (("top", ps.top), ("daily", ps.daily)) for s in items]
+        removed = db.delete_pending_picks_not_in(pick_date, keep)
+        if removed:
+            log.info("regeneration replaced %d stale pending pick(s) for %s", removed, pick_date)
     for tier, items in (("top", ps.top), ("daily", ps.daily)):
         for rank, s in enumerate(items, 1):
             if db.has_pick_selection(pick_date, tier, s):

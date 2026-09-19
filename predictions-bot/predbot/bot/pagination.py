@@ -125,9 +125,16 @@ def _retry_hint(snapshot: DailySnapshot, tz: str) -> str:
     return f" Retrying around {to_local(at, tz).strftime('%H:%M')} {tz}." if at else ""
 
 
+def _retry_until(snapshot: DailySnapshot) -> str:
+    until = (snapshot.generation or {}).get("retry_until")
+    return f" until {until}" if until else ""
+
+
 def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> str:
     if (snapshot.generation or {}).get("reason") == "before_post_time":
         return f"Today's picks are ready at {snapshot.generation.get('ready_at', 'the scheduled time')}."
+    if (snapshot.generation or {}).get("reason") == "generating":
+        return "Today's picks are being generated — try again in a minute."
     """Why a view has nothing to show - the real reasons, kept distinct.
 
     * an empty tier of an otherwise fine card: top picks are a quality bar, not a
@@ -140,8 +147,8 @@ def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> s
     if snapshot.status == 'PARTIAL' and not snapshot.total_picks():
         return ("<b>Today's predictions are still being assembled</b> - a data "
                 f"source did not answer.{_retry_hint(snapshot, tz)}\n"
-                "The bot retries automatically; /daily shows the card as soon as it "
-                "is complete.")
+                f"The bot retries automatically{_retry_until(snapshot)}; /daily shows the card as "
+                "soon as it is complete.")
     return picks_card([], snapshot.date, heading="Top" if view == VIEW_TOP else "Today's")
 
 

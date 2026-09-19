@@ -14,10 +14,10 @@ def test_nigeria_defaults(monkeypatch):
     assert Config().post_time == '09:00'
 
 
-@pytest.mark.parametrize('month,expected', [(1, '03:00 AM EST'), (6, '04:00 AM EDT')])
+@pytest.mark.parametrize('month,expected', [(1, '03:30 AM EST'), (6, '04:30 AM EDT')])
 def test_schedule_description_converts_same_instant_for_dst(db, monkeypatch, month, expected):
     monkeypatch.setattr('predbot.bot.commands.utcnow', lambda: datetime(2030, month, 1, 7, tzinfo=timezone.utc))
-    loop = CommandLoop(FakeTG(), db, Config(timezone='Africa/Lagos', post_time='09:00'), {})
+    loop = CommandLoop(FakeTG(), db, Config(timezone='Africa/Lagos', post_time='09:00', delivery_time='09:30'), {})
     text = loop._schedule_text('America/New_York')
-    assert '09:00 AM WAT' in text
+    assert '09:30 AM WAT' in text
     assert expected in text

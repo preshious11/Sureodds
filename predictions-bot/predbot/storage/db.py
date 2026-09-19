@@ -232,6 +232,26 @@ class Database:
                               (date, tier, e.provider, e.provider_event_id, m.market, m.period,
                                m.stat, m.entity, m.line, m.selection)))
 
+    def deliveries_exist(self, kind: str, post_date: str) -> bool:
+        """True once ANY subscriber has been sent ``kind`` for ``post_date``."""
+        return bool(self.query("SELECT 1 FROM deliveries WHERE kind=? AND post_date=? LIMIT 1", (kind, post_date)))
+
+    def delete_pending_picks_not_in(self, date, keep):
+        """Delete ``date``'s still-pending picks that are not in ``keep`` - an iterable of
+        (tier, provider, provider_event_id, market, period, stat, entity, line, selection)
+        tuples (the ``has_pick_selection`` identity). Returns the number deleted."""
+        keep = set(keep)
+        gone = []
+        for r in self.query("SELECT id, tier, provider, provider_event_id, market, period, stat, entity, line, "
+                            "selection FROM picks WHERE pick_date=? AND status='pending'", (date,)):
+            ident = (r["tier"], r["provider"], r["provider_event_id"], r["market"], r["period"], r["stat"],
+                     r["entity"], r["line"], r["selection"])
+            if ident not in keep:
+                gone.append(r["id"])
+        for pid in gone:
+            self.execute("DELETE FROM picks WHERE id=?", (pid,))
+        return len(gone)
+
     def prune_prediction_cache(self, before_date):
         with self.transaction():
             self.execute('DELETE FROM prediction_cache WHERE local_date < ?', (before_date,))
