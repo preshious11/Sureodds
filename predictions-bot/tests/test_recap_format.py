@@ -16,7 +16,7 @@ def _pick(db, *, date=YESTERDAY, status="won", sport="football", label="Home Win
     pid = db.insert_pick({
         "pick_date": date, "tier": tier, "rank": rank, "provider": "fake",
         "provider_event_id": f"{date}-{rank}-{label}", "sport": sport, "league": "EPL",
-        "home": "Geylang International FC", "away": "Away FC",
+        "home": f"Geylang International FC {rank} {label}", "away": "Away FC",     # one match per pick (unique per date+fixture+selection)
         "start_utc": f"{date}T12:00:00Z", "market": "result3", "period": "full",
         "stat": "points", "entity": "home", "line": None, "selection": "home",
         "label": label, "price": price, "prob": 0.70, "ev": 0.05, "p_market": 0.60,

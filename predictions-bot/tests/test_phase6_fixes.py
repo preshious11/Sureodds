@@ -73,7 +73,7 @@ def test_canonical_tz():
 # ============================================================ calibration on raw p
 def _settled(db, i, prob, raw, status="won"):
     row = {"pick_date": "2030-06-01", "tier": "daily", "rank": i, "provider": "p", "provider_event_id": str(i),
-           "sport": "football", "league": "L", "home": "A", "away": "B", "start_utc": "2030-06-01T18:00:00Z",
+           "sport": "football", "league": "L", "home": f"A{i}", "away": "B", "start_utc": "2030-06-01T18:00:00Z",
            "market": "result3", "period": "full", "stat": "points", "entity": "all", "line": None,
            "selection": "home", "label": "x", "price": 1.5, "prob": prob, "ev": 0.05, "p_market": 0.6,
            "sources": {}, "provider_odd_id": "", "status": status}

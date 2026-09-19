@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from datetime import datetime, timedelta
 from collections import Counter
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from predbot.markets.settlement import make_results_gate
 from predbot.providers.chain import ProviderChain, merge_events
 from predbot.selection.picker import PickSet, same_fixture, select
 from predbot.storage.db import Database
+from predbot.util.fixtures import fixture_key
 from predbot.util.timeutil import iso, parse_iso, to_local, utcnow, day_bounds
 
 log = logging.getLogger(__name__)
@@ -169,7 +171,12 @@ def store_picks(ps: PickSet, db: Database, pick_date: str, replace_pending: bool
                 continue
             ml = s.line
             e = s.event
-            db.insert_pick({
+            key = fixture_key(e)
+            if db.has_fixture_selection(pick_date, key, s):
+                log.warning("not storing %s pick '%s' (%s v %s): the same selection on this match is already stored "
+                            "for %s in another tier/provider view", tier, s.label, e.home, e.away, pick_date)
+                continue
+            row = {
                 "pick_date": pick_date, "tier": tier, "rank": rank,
                 "provider": e.provider, "provider_event_id": e.provider_event_id,
                 "sport": e.sport, "league": e.league, "home": e.home, "away": e.away,
@@ -180,8 +187,13 @@ def store_picks(ps: PickSet, db: Database, pick_date: str, replace_pending: bool
                             "_alt_ids": e.extra.get("alt_ids", {}), "_providers": e.sources,
                             "_sport_key": e.extra.get("sport_key", ""), "_league_id": e.league_id,
                             "_notes": s.notes},
-                "provider_odd_id": ml.provider_odd_id,
-            })
+                "provider_odd_id": ml.provider_odd_id, "fixture_key": key,
+            }
+            try:
+                db.insert_pick(row)
+            except sqlite3.IntegrityError:
+                log.warning("not storing %s pick '%s' (%s v %s): unique (date, fixture, selection) constraint", tier,
+                            s.label, e.home, e.away)
 
 
 def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram], force: bool = False,

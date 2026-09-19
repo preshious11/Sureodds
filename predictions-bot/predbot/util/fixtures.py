@@ -6,7 +6,9 @@ home/away the other way round); ``fixture_key`` is the string identity of a matc
 """
 from __future__ import annotations
 
+import json
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import Optional
 
 from predbot.markets.competitions import competition_for_event
@@ -59,3 +61,31 @@ def fixture_key(event, competition: Optional[str] = None) -> str:
     ``fixture_orientation`` remains the authority for anything looser."""
     comp = _competition_id(event) if competition is None else competition
     return _key(event.sport, comp, event.home, event.away, event.start)
+
+
+def row_fixture_key(row) -> str:
+    """The fixture_key of a stored ``picks`` row (sport/league/home/away/start_utc, plus the league id and
+    Odds API sport key kept in its ``sources`` JSON). A row whose kickoff cannot be read still gets a key
+    from its raw columns."""
+    from predbot.util.timeutil import parse_iso
+
+    def col(name):
+        try:
+            return row[name]
+        except (KeyError, IndexError):
+            return None
+
+    meta = {}
+    raw = col("sources")
+    if isinstance(raw, str) and raw:
+        try:
+            meta = json.loads(raw) or {}
+        except ValueError:
+            meta = {}
+    elif isinstance(raw, dict):
+        meta = raw
+    start = parse_iso(col("start_utc")) if col("start_utc") else None
+    event = SimpleNamespace(sport=col("sport") or "", league=col("league") or "", league_id=meta.get("_league_id") or "",
+                            extra={"sport_key": meta.get("_sport_key") or ""}, home=col("home") or "",
+                            away=col("away") or "", start=start)
+    return fixture_key(event)

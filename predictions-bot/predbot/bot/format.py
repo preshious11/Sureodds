@@ -1,15 +1,18 @@
 """Message templates. Deliberately terse: picks, odds, probability, stats."""
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timedelta
-from typing import Dict, Iterable, List, NamedTuple, Optional
+from typing import Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from predbot.bot.telegram import esc
 from predbot.markets.catalog import short_selection
 from predbot.providers.base import MarketLine
 from predbot.util.timeutil import parse_iso, to_local, utcnow
 from predbot.util.duration import DURATION_H
+
+log = logging.getLogger(__name__)
 
 BRAND = "SureOdds"
 SPORT_ICON = {"football": "⚽", "basketball": "🏀", "american_football": "🏈",
@@ -266,6 +269,7 @@ def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str]
 def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str]) -> str:
     """Channel post for the day's selections: top picks first, then the daily ones."""
     picks: List[PickLine] = []
+    n_top = len(list(top))
     for s in list(top) + list(daily):
         e = s.event
         picks.append(PickLine(sport=sport_name(e.sport),
@@ -276,6 +280,8 @@ def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str])
                               price=s.price,
                               country=str(e.extra.get("country") or ""),
                               market_type=MARKET_LABEL.get(s.line.market, s.line.market)))
+    for match, outcome in duplicate_pick_lines([p for p in picks[:n_top] if p.outcome], [p for p in picks[n_top:] if p.outcome]):
+        log.warning("card renders the same pick in Top and Daily: %s - %s", match, outcome)
     picks = [p for p in picks if p.outcome]
     return picks_card(picks, to_local(day, tz).strftime("%Y-%m-%d"), stats_line)
 
@@ -303,6 +309,16 @@ def render_section(title: str, picks: List[PickLine], odds_as_of: str = "") -> L
     return lines
 
 
+def duplicate_pick_lines(top: Iterable[PickLine], daily: Iterable[PickLine]) -> List[Tuple[str, str]]:
+    """(match, outcome) of every Daily block whose text repeats a Top block: the same outcome on the same
+    two teams (in either order). The cross-tier rule makes this impossible; the card checks anyway."""
+    def ident(p: PickLine):
+        teams = sorted(t.strip().lower() for t in re.split(r"\s+vs\.?\s+", p.match or "", maxsplit=1))
+        return (p.outcome.strip().lower(), tuple(teams))
+    seen = {ident(p) for p in top if p.outcome}
+    return [(p.match, p.outcome) for p in daily if p.outcome and ident(p) in seen]
+
+
 def summary_card(top: List[PickLine], daily: List[PickLine], generated: str = "", odds_as_of: str = "") -> str:
     """THE canonical results/summary card (one and only one renderer).
 
@@ -322,6 +338,8 @@ def summary_card(top: List[PickLine], daily: List[PickLine], generated: str = ""
     """
     top = [p for p in top if p.outcome]
     daily = [p for p in daily if p.outcome]
+    for match, outcome in duplicate_pick_lines(top, daily):
+        log.warning("card renders the same pick in Top and Daily: %s - %s", match, outcome)
     lines = [SUMMARY_TITLE]
     if top:
         lines.append("")
