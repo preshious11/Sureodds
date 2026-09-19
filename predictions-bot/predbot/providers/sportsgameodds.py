@@ -183,13 +183,27 @@ class SportsGameOddsProvider(BaseProvider):
                 leagues = [lg for lg in leagues if avail_map.get(lg, '').upper() in sports_upper]
                 log.info("SGO: filtered to %d leagues matching configured sports %s",
                          len(leagues), self.sports)
-        events = []
+        n_raw = 0                     # raw event objects fetched (the object allowance is measured in these)
+        out: List[Event] = []
         pending = []
         self.fetch_counts = {}
+
+        def absorb(batch):
+            """Parse a fetched page straight away and let go of the raw payload: an SGO event carries ~1,000 odds
+            objects, so keeping every raw page until the end held the whole response in memory at once."""
+            for ev in batch:
+                try:
+                    e = self._parse_event(ev)
+                    if e and e.markets and start <= e.start < end:
+                        out.append(e)
+                        self._parsed_sport_by_league[str(ev.get("leagueID", ""))] = e.sport
+                except Exception as ex:  # noqa: BLE001
+                    log.debug("SGO parse error %s: %s", ev.get("eventID"), ex)
+            batch.clear()
         # Share the existing object allowance across configured leagues so the
         # first sport in a multi-league response cannot consume the whole page.
         for index, league in enumerate(leagues):
-            remaining = limit - len(events)
+            remaining = limit - n_raw
             if remaining <= 0:
                 self.last_fetch_complete = False
                 break
@@ -211,13 +225,14 @@ class SportsGameOddsProvider(BaseProvider):
             self.budget.spend(self.name, len(batch))
             self.fetch_counts[league] = {"status": "complete", "raw_events": len(batch),
                                         "capped": bool(data.get("nextCursor"))}
-            events.extend(batch)
+            n_raw += len(batch)
+            absorb(batch)
             if data.get("nextCursor"):
                 pending.append((league, params, data["nextCursor"]))
         # Reuse spare allowance from empty leagues without changing cursor filters.
         while pending:
             league, params, cursor = pending.pop(0)
-            if len(events) + params["limit"] > limit:
+            if n_raw + params["limit"] > limit:
                 continue
             try:
                 data = self.http.get("/events", {**params, "cursor": cursor})
@@ -227,22 +242,15 @@ class SportsGameOddsProvider(BaseProvider):
                 continue
             batch = data.get("data", [])
             self.budget.spend(self.name, len(batch))
-            events.extend(batch)
+            n_raw += len(batch)
             self.fetch_counts[league]["raw_events"] += len(batch)
             self.fetch_counts[league]["capped"] = bool(data.get("nextCursor"))
-            if batch and data.get("nextCursor") and data["nextCursor"] != cursor:
+            more = bool(batch and data.get("nextCursor") and data["nextCursor"] != cursor)
+            absorb(batch)
+            if more:
                 pending.append((league, params, data["nextCursor"]))
         if self.fetch_counts and all(v["status"] == "failed" for v in self.fetch_counts.values()):
             raise ProviderError("All configured SGO league requests failed")
-        out: List[Event] = []
-        for ev in events:
-            try:
-                e = self._parse_event(ev)
-                if e and e.markets and start <= e.start < end:
-                    out.append(e)
-                    self._parsed_sport_by_league[str(ev.get("leagueID", ""))] = e.sport
-            except Exception as ex:  # noqa: BLE001
-                log.debug("SGO parse error %s: %s", ev.get("eventID"), ex)
         # Per-sport payload status (SUCCESS / EMPTY / PARTIAL / FAILED) so the
         # cache tracks each sport independently: one league's failure must not
         # paint another sport complete.  League id -> sport comes from the
@@ -273,7 +281,7 @@ class SportsGameOddsProvider(BaseProvider):
                     entry['status'] = 'success'
         log.info("SGO: %d events with markets (spent %d objects, %d used this month) | "
                  "rejections: %s | sport status: %s",
-                 len(out), len(events), self.budget.used_month(self.name),
+                 len(out), n_raw, self.budget.used_month(self.name),
                  dict(self.parse_counts), self.sport_status)
         return out
 
