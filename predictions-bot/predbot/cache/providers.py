@@ -82,6 +82,8 @@ def collect_persisted(chain, start, end):
     chain.last_timings = {}
     cfg = chain.cfg
     with chain.db.prediction_lock:
+        # Phase 1 (serial, cheap): read each provider's cached row and decide whether it must be refreshed.
+        plan = []
         for name in chain.order:
             provider = chain.providers[name]
             if not provider.enabled():
@@ -102,13 +104,45 @@ def collect_persisted(chain, start, end):
             retry_at = parse_iso(report.get('retry_after', '')) if report else None
             reuse = report and (report['status'] == 'complete' or
                                 (retry_at and now < retry_at and not getattr(chain, 'force_retry', False)))
-            if not reuse:
+            plan.append({'name': name, 'provider': provider, 'key': key, 'events': events, 'report': report,
+                         'reuse': bool(reuse), 'spent': (time.perf_counter() - _w, time.process_time() - _c)})
+
+        # Phase 2: the providers that need a refresh are fetched CONCURRENTLY. Each has its own rate limiter and
+        # budget row, so they do not compete; a slow or retrying provider no longer delays the others. Results are
+        # consumed below in PROVIDER_ORDER, so the merged pool is exactly what the serial loop produced.
+        fetches = {}
+        stale = [p for p in plan if not p['reuse']]
+
+        def fetch(p):
+            t0, c0 = time.perf_counter(), time.process_time()
+            try:
+                p['provider'].last_fetch_complete = True
+                return p['provider'].fetch_events(day_start, fetch_end), None, (time.perf_counter() - t0, time.process_time() - c0)
+            except Exception as exc:  # noqa: BLE001 - handled per provider in phase 3, like the serial loop
+                return None, exc, (time.perf_counter() - t0, time.process_time() - c0)
+
+        if len(stale) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=len(stale), thread_name_prefix='collect') as pool_:
+                for p, res in zip(stale, pool_.map(fetch, stale)):
+                    fetches[p['name']] = res
+        else:
+            for p in stale:
+                fetches[p['name']] = fetch(p)
+
+        # Phase 3 (serial, in provider order): validate, persist, merge.
+        for p in plan:
+            name, provider, key, events, report = p['name'], p['provider'], p['key'], p['events'], p['report']
+            _w, _c = time.perf_counter(), time.process_time()
+            fetch_wall = fetch_cpu = 0.0
+            if not p['reuse']:
                 previous = events
                 report = {'expected_sports': expected_sports(name, provider, cfg), 'status': 'failed'}
                 log.info('Cache RETRY | provider=%s | date=%s', name, day)
+                fetched, error, (fetch_wall, fetch_cpu) = fetches[name]
                 try:
-                    provider.last_fetch_complete = True
-                    fetched = provider.fetch_events(day_start, fetch_end)
+                    if error is not None:
+                        raise error
                     # Validate before calling a malformed response complete.
                     gate = {}
                     events = filter_allowed(decode_events(encode_events(fetched)), cfg, gate)
@@ -140,7 +174,8 @@ def collect_persisted(chain, start, end):
                 e.markets = consolidate_lines(e.markets)         # one line per bet, cached rows included
             pool = merge_events(pool, [e for e in events if start <= e.start < end],
                                 getattr(cfg, 'price_mode', 'median'))
-            chain.last_timings[name] = {'wall': round(time.perf_counter() - _w, 4), 'cpu': round(time.process_time() - _c, 4)}
+            chain.last_timings[name] = {'wall': round(p['spent'][0] + fetch_wall + time.perf_counter() - _w, 4),
+                                        'cpu': round(p['spent'][1] + fetch_cpu + time.process_time() - _c, 4)}
     return pool
 
 
