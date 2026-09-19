@@ -122,35 +122,41 @@ class CommandLoop(threading.Thread):
                 continue
             for upd in updates:
                 self.offset = upd["update_id"] + 1
-                cb = upd.get("callback_query")
-                if cb:
-                    self._dispatch_callback(cb)
-                    continue
-                msg = upd.get("message") or {}
-                text = (msg.get("text") or "").strip()
-                if not text.startswith("/"):
-                    continue
-                chat_id = str(msg.get("chat", {}).get("id"))
-                user_id = str((msg.get("from") or {}).get("id"))
-                cmd, args = split_command(text)
-                if cmd == "/start":
-                    try:
-                        handle_start(self.db, self.tg, chat_id, msg.get("from") or {})
-                        log.info("start handled | instance=%s | update_id=%s",
-                                 self.instance, upd["update_id"])
-                    except Exception as exc:
-                        log.error("start failed | error_type=%s", type(exc).__name__)
-                    continue
-                if self.service is not None and callbacks.is_view_command(cmd):
-                    self._send_view(cmd, chat_id)
-                    continue
                 try:
-                    reply = self.handle(cmd, user_id, chat_id, args)
-                except (ValueError, KeyError, AttributeError) as e:
-                    log.exception("command failed: %s", e)
-                    reply = "Command failed."
-                if reply:
-                    _retry_send(self.tg, reply, chat_id)
+                    self._handle_update(upd)
+                except Exception:  # noqa: BLE001 - one bad update must not kill the poll loop
+                    log.error("update %s failed", upd.get("update_id"), exc_info=True)
+
+    def _handle_update(self, upd: dict) -> None:
+        cb = upd.get("callback_query")
+        if cb:
+            self._dispatch_callback(cb)
+            return
+        msg = upd.get("message") or {}
+        text = (msg.get("text") or "").strip()
+        if not text.startswith("/"):
+            return
+        chat_id = str(msg.get("chat", {}).get("id"))
+        user_id = str((msg.get("from") or {}).get("id"))
+        cmd, args = split_command(text)
+        if cmd == "/start":
+            try:
+                handle_start(self.db, self.tg, chat_id, msg.get("from") or {})
+                log.info("start handled | instance=%s | update_id=%s",
+                         self.instance, upd["update_id"])
+            except Exception as exc:
+                log.error("start failed | error_type=%s", type(exc).__name__)
+            return
+        if self.service is not None and callbacks.is_view_command(cmd):
+            self._send_view(cmd, chat_id)
+            return
+        try:
+            reply = self.handle(cmd, user_id, chat_id, args)
+        except (ValueError, KeyError, AttributeError) as e:
+            log.exception("command failed: %s", e)
+            reply = "Command failed."
+        if reply:
+            _retry_send(self.tg, reply, chat_id)
 
     def _send_view(self, cmd: str, chat_id: str) -> None:
         """Typed /top, /daily, /today or /stats: the same handler as the buttons."""

@@ -13,6 +13,7 @@ from predbot.model.elo import Elo
 from predbot.providers.base import MarketLine, MatchResult
 from predbot.providers.chain import ResultsResolver
 from predbot.storage.db import Database
+from predbot.util.http import ProviderError
 from predbot.util.timeutil import iso, parse_iso, utcnow
 
 log = logging.getLogger(__name__)
@@ -56,60 +57,76 @@ def _row_to_line(r) -> MarketLine:
                       provider_odd_id=r["provider_odd_id"] or "")
 
 
+#: Errors a single pick may raise without stopping the run: provider trouble or a
+#: malformed stored/returned value. Anything else is a bug and should surface.
+PICK_ERRORS = (ProviderError, ValueError, KeyError, TypeError, AttributeError)
+
+
+def _settle_row(r, resolver: ResultsResolver, db: Database, elo: Elo, now: datetime,
+                cache: Dict[str, MatchResult], counts: Dict[str, int]) -> None:
+    start = parse_iso(r["start_utc"])
+    if start is None:
+        log.error("invalid start time for pick %s: %s", r["id"], r["start_utc"])
+        counts["errors"] += 1
+        return
+    if start + timedelta(hours=DURATION_H.get(r["sport"], 3)) > now:
+        counts["pending"] += 1
+        return
+    try:
+        src = json.loads(r["sources"]) if r["sources"] else {}
+    except ValueError as e:
+        log.warning("malformed sources JSON for pick %s: %s", r["id"], e)
+        src = {}
+    hints = {"sport_key": src.get("_sport_key") or "", "league_id": src.get("_league_id") or "",
+             "league": r["league"] or ""}
+    res = resolver.resolve(r["provider"], r["provider_event_id"], r["sport"], r["home"], r["away"],
+                           start, alt_ids=src.get("_alt_ids") or {}, cache=cache, hints=hints)
+    if res is None:
+        if start < now - timedelta(days=MAX_PENDING_DAYS):
+            db.settle_pick(r["id"], VOID, {"reason": "no result available"})
+            counts["void"] += 1
+        else:
+            counts["pending"] += 1
+        return
+    outcome = grade(_row_to_line(r), res, r["sport"])
+    if outcome == PENDING:
+        if res.status == "final" and start < now - timedelta(days=MAX_PENDING_DAYS):
+            outcome = VOID
+        else:
+            counts["pending"] += 1
+            return
+    db.settle_pick(r["id"], outcome, {"status": res.status, "scores": {k: list(v) for k, v in res.scores.items()},
+                                      "source": res.source})
+    counts["settled" if outcome != VOID else "void"] += 1
+    # learn from the final score
+    sc = res.score("full")
+    if res.status == "final" and sc:
+        key = f"{r['sport']}|{r['home']}|{r['away']}|{start.strftime('%Y%m%d')}"
+        if not db.result_seen(key):
+            db.mark_result_seen(key, sc[0], sc[1])
+            elo.update(r["sport"], r["home"], r["away"], sc[0], sc[1])
+
+
 def run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]:
+    """Settle every pending pick whose event should be over. Never raises for a
+    single pick: a provider or data error is counted in ``errors`` and the run
+    moves on, so one bad row cannot stop the rest (or crash the caller)."""
     now = utcnow()
     elo = Elo(db)
     counts = {"settled": 0, "pending": 0, "void": 0, "errors": 0}
     cache: Dict[str, MatchResult] = {}
+    for provider in resolver.providers.values():
+        begin = getattr(provider, "begin_run", None)      # per-run response caches (credits / rate limits)
+        if callable(begin):
+            begin()
     rows = db.pending_picks(before_utc=iso(now))
 
     for r in rows:
-        start = parse_iso(r["start_utc"])
-        if start is None:
-            log.error("invalid start time for pick %s: %s", r["id"], r["start_utc"])
-            counts["errors"] += 1
-            continue
-        if start + timedelta(hours=DURATION_H.get(r["sport"], 3)) > now:
-            counts["pending"] += 1
-            continue
         try:
-            src = json.loads(r["sources"]) if r["sources"] else {}
-        except ValueError as e:
-            log.warning("malformed sources JSON for pick %s: %s", r["id"], e)
-            src = {}
-        alt_ids = src.get("_alt_ids") or {}
-        try:
-            res = resolver.resolve(r["provider"], r["provider_event_id"], r["sport"], r["home"], r["away"],
-                                  start, alt_ids=alt_ids, cache=cache)
-        except (ValueError, KeyError, TypeError, AttributeError) as e:
-            log.exception("resolve failed for pick %s: %s", r["id"], e)
+            _settle_row(r, resolver, db, elo, now, cache, counts)
+        except PICK_ERRORS as e:
+            log.exception("settle failed for pick %s: %s", r["id"], e)
             counts["errors"] += 1
-            continue
-        if res is None:
-            if start < now - timedelta(days=MAX_PENDING_DAYS):
-                db.settle_pick(r["id"], VOID, {"reason": "no result available"})
-                counts["void"] += 1
-            else:
-                counts["pending"] += 1
-            continue
-        ml = _row_to_line(r)
-        outcome = grade(ml, res, r["sport"])
-        if outcome == PENDING:
-            if res.status == "final" and start < now - timedelta(days=MAX_PENDING_DAYS):
-                outcome = VOID
-            else:
-                counts["pending"] += 1
-                continue
-        db.settle_pick(r["id"], outcome, {"status": res.status, "scores": {k: list(v) for k, v in res.scores.items()},
-                                          "source": res.source})
-        counts["settled" if outcome != VOID else "void"] += 1
-        # learn from the final score
-        sc = res.score("full")
-        if res.status == "final" and sc:
-            key = f"{r['sport']}|{r['home']}|{r['away']}|{start.strftime('%Y%m%d')}"
-            if not db.result_seen(key):
-                db.mark_result_seen(key, sc[0], sc[1])
-                elo.update(r["sport"], r["home"], r["away"], sc[0], sc[1])
 
     if counts["settled"]:
         try:

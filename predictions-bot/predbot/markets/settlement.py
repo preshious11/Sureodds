@@ -5,9 +5,13 @@ Outcomes: won | lost | push | half_won | half_lost | void | pending
 """
 from __future__ import annotations
 
-from typing import Optional, Tuple
+import logging
+from typing import Callable, Dict, Optional, Set, Tuple
 
 from predbot.providers.base import MarketLine, MatchResult
+from predbot.providers.football_data import competition_for
+
+log = logging.getLogger(__name__)
 
 WON, LOST, PUSH, HALF_WON, HALF_LOST, VOID, PENDING = (
     "won", "lost", "push", "half_won", "half_lost", "void", "pending")
@@ -241,3 +245,72 @@ def _grade_from_value(ml: MarketLine, v: float, res: MatchResult) -> Optional[st
         return WON if (v > 0) == (ml.selection == "yes") else LOST
     # moneyline/handicap style props need the opposing value; fall through to score-based grading
     return None
+
+
+# ------------------------------------------------------------ results-path gate
+#: Odds API sport-key prefixes whose /scores endpoint returns results.
+ODDS_API_SCORES_PREFIXES = ("soccer_",)
+
+#: Sports SportsGameOdds can look results up for (SPORT_TO_SGO) by teams + time.
+SGO_RESULT_SPORTS = ("football", "basketball", "american_football", "baseball")
+
+#: SharpAPI league slugs -> SportsGameOdds league ids, for leagues whose ids differ.
+SHARP_TO_SGO_LEAGUE = {
+    "nba": "NBA", "nfl": "NFL", "mlb": "MLB", "ncaab": "NCAAB", "ncaaf": "NCAAF", "mls": "MLS",
+    "uefa_-_champions_league": "UEFA_CHAMPIONS_LEAGUE",
+}
+
+
+def _sgo_covers(event, sgo) -> bool:
+    if getattr(event, "sport", "") not in SGO_RESULT_SPORTS:
+        return False
+    available = getattr(sgo, "_available_leagues", None)
+    covered = set(available) if available else set(getattr(sgo, "leagues", None) or [])
+    league_id = str(getattr(event, "league_id", "") or "")
+    candidates = {league_id, league_id.upper(), SHARP_TO_SGO_LEAGUE.get(league_id.lower(), "")}
+    return bool(covered & {c for c in candidates if c})
+
+
+def results_path(event, cfg, providers: Dict) -> Optional[str]:
+    """Which provider can settle a pick on this event, or None when none can.
+
+    The single source of truth for "will this ever be gradable?" - the picker uses
+    it to refuse candidates up front (``NO_RESULTS_PATH``) and the resolver uses it
+    to explain a pick that stays pending. ``event`` only needs ``sport``, ``league``,
+    ``league_id``, ``provider``, ``sources`` and ``extra`` (a stored pick works too).
+    """
+    providers = providers or {}
+    sources: Set[str] = set(getattr(event, "sources", None) or []) | {getattr(event, "provider", "")}
+    extra = getattr(event, "extra", None) or {}
+    sgo = providers.get("sportsgameodds")
+    if sgo is not None and "sportsgameodds" in sources:
+        return "sportsgameodds"
+    odds_api = providers.get("oddsapi")
+    if odds_api is not None and "oddsapi" in sources \
+            and str(extra.get("sport_key") or "").startswith(ODDS_API_SCORES_PREFIXES):
+        return "oddsapi"
+    football_data = providers.get("football_data")
+    if football_data is not None and getattr(event, "sport", "") == "football" \
+            and competition_for(str(getattr(event, "league_id", "") or ""), str(getattr(event, "league", "") or "")):
+        return "football_data"
+    if sgo is not None and _sgo_covers(event, sgo):
+        return "sportsgameodds"
+    return None
+
+
+def make_results_gate(cfg, providers: Dict) -> Callable:
+    """``gate(event) -> Optional[str]`` around results_path that logs each league
+    without a results path once per run (per gate instance)."""
+    logged: Set[str] = set()
+
+    def gate(event) -> Optional[str]:
+        path = results_path(event, cfg, providers)
+        if path is None:
+            league = str(getattr(event, "league_id", "") or getattr(event, "league", "") or "?")
+            if league not in logged:
+                logged.add(league)
+                log.info("NO_RESULTS_PATH: no provider can settle %s (%s) - its picks are skipped",
+                         league, getattr(event, "sport", "?"))
+        return path
+
+    return gate

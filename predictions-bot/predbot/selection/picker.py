@@ -269,7 +269,8 @@ def choose_top(pool: List[Scored], cfg: Config):
 
 
 def select(scored: List[Scored], cfg: Config, now: datetime,
-           top_priority_source: Optional[str] = None, trace: Optional[Dict] = None) -> PickSet:
+           top_priority_source: Optional[str] = None, trace: Optional[Dict] = None,
+           results_gate=None) -> PickSet:
     """``trace`` (optional, diagnostics only) collects the first rule that
     blocked each candidate: id(Scored) -> reason string."""
     def _note(s: Scored, rule: str) -> None:
@@ -288,6 +289,8 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     lead = now + timedelta(minutes=cfg.min_lead_minutes)
     base: List[Scored] = []
     rejection_counts: Counter = Counter()
+    gate_paths: Dict[int, Optional[str]] = {}
+    no_path_by_league: Counter = Counter()      # distinct events per league
     for s in scored:
         if not s.event.start:
             rejection_counts["INVALID_KICKOFF"] += 1
@@ -305,6 +308,16 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             rejection_counts["UNSUPPORTED_MARKET"] += 1
             _note(s, "base: UNSUPPORTED_MARKET")
             continue
+        if results_gate is not None:
+            path = gate_paths.get(id(s.event), False)
+            if path is False:
+                path = gate_paths[id(s.event)] = results_gate(s.event)
+                if path is None:
+                    no_path_by_league[str(s.event.league_id or s.event.league or "?")] += 1
+            if path is None:
+                rejection_counts["NO_RESULTS_PATH"] += 1
+                _note(s, "base: NO_RESULTS_PATH")
+                continue
         if not math.isfinite(s.price):
             rejection_counts["INVALID_PRICE"] += 1
             _note(s, "base: INVALID_PRICE (non-finite)")
@@ -379,6 +392,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
                       "gte50_by_sport": dict(Counter(s.event.sport for s in base if s.p_model >= .5)),
                       "top_eligible_by_sport": dict(Counter(s.event.sport for s in top_pool)),
                       "selection_rejections": dict(rejection_counts),
+                      "no_results_path_by_league": dict(no_path_by_league),
                       "top_pool_rejections": dict(top_rejected),
                       "combinations_checked": checked, "top_odds": top_odds if top else None,
                       "top_priority_source": top_priority_source,

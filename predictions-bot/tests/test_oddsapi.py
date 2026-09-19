@@ -320,6 +320,7 @@ def test_build_picks_tries_oddsapi_chain_first_for_top(db, monkeypatch):
         return out
 
     monkeypatch.setattr("predbot.jobs.daily_picks.score_events", fake_score)
+    monkeypatch.setattr("predbot.jobs.daily_picks.make_results_gate", lambda cfg, providers: (lambda event: "test"))
     cfg = Config(timezone="UTC", top_provider_priority=["oddsapi"])
     result = build_picks(chain, db, cfg, now)
     assert result.top

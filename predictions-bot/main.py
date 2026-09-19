@@ -44,7 +44,10 @@ def main() -> None:
         settle.run(resolver, db, cfg)
 
     def job_recap():
-        job_settle()               # make sure yesterday is graded first
+        try:
+            job_settle()           # make sure yesterday is graded first
+        except Exception:  # noqa: BLE001 - a settlement failure must not cancel the recap
+            log.exception("settlement before recap failed; recap continues")
         text = recap.run(db, cfg, tg)                # channel mirror (optional)
         if text:
             db.set_kv("recap_text", text)            # cache recap for broadcast job
