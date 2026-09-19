@@ -39,6 +39,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterator, List, Optional, Tuple
 
+import requests
+
 from predbot.markets.competitions import Competition, lookup
 from predbot.providers.base import BaseProvider, Event, MatchResult
 from predbot.util.http import Http, ProviderError, RateLimiter
@@ -90,7 +92,11 @@ class ESPNProvider(BaseProvider):
     sports = ["football", "basketball", "american_football", "baseball", "tennis"]
 
     def __init__(self, min_interval: float = 1.0):
-        self.http = Http(BASE_URL, rate=RateLimiter(min_interval), retries=0)
+        # ESPN's edge answered 403 ("Access Denied") to `predbot/2.0`, a browser-style agent and a
+        # `Mozilla/5.0 (compatible; ...)` agent, and 200 to the default python-requests agent
+        # (checked 2026-09-19), so that one is sent explicitly.
+        self.http = Http(BASE_URL, headers={"User-Agent": requests.utils.default_user_agent()},
+                         rate=RateLimiter(min_interval), retries=0)
         self._days: Dict[Tuple[str, str, str], List[Dict]] = {}
 
     def enabled(self) -> bool:
