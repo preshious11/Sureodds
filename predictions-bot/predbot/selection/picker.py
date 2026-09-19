@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Tuple
 from predbot.config import Config
 from predbot.markets.catalog import contradicts, is_equivalent, selection_family, spec
 from predbot.markets.settlement import unsettleable_reason
+from predbot.selection.families import family_counts, order_by_family_z
 from predbot.model.ensemble import Scored
 from predbot.util.names import same_team
 
@@ -449,7 +450,13 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         daily_pool = preferred
     ps.diagnostics["daily_eligible_by_sport"] = dict(Counter(s.event.sport for s in daily_pool))
     ps.diagnostics["daily_pool_rejections"] = dict(daily_rejected)
-    daily_pool.sort(key=lambda s: s.rank_score, reverse=True)
+    # Order only: every gate above and every cap below is untouched. ``raw`` keeps _daily_score alone.
+    if getattr(cfg, "daily_ranking", "family_z") == "raw":
+        daily_pool.sort(key=lambda s: s.rank_score, reverse=True)
+        ps.diagnostics["daily_family_pool"] = family_counts(daily_pool)
+    else:
+        daily_pool, ps.diagnostics["daily_family_pool"] = order_by_family_z(daily_pool, lambda s: s.rank_score)
+    ps.diagnostics["daily_ranking"] = getattr(cfg, "daily_ranking", "family_z")
 
     # One real fixture = one event position, however many providers/legs describe
     # it. fixture_conflicts() links the same match seen under different names or
@@ -637,6 +644,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     ps.daily = chosen
     log.info("picker: pool=%d eligible=%d top_pool=%d daily_pool=%d -> top=%d daily=%d ticket=%.2f",
              ps.pool_size, ps.eligible, len(top_pool), len(daily_pool), len(top), len(chosen), ticket)
+    ps.diagnostics["daily_family_picks"] = family_counts(ps.daily)
     ps.diagnostics["daily_ticket_by_sport"] = dict(Counter(s.event.sport for s in ps.all()))
     ps.diagnostics["daily_by_market"] = dict(Counter(f"{s.line.market}/{s.line.stat}" for s in ps.daily))
     ps.diagnostics["daily_by_league"] = dict(Counter(s.event.league for s in ps.daily))
