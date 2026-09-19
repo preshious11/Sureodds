@@ -176,9 +176,28 @@ def test_scores_cost_two_credits_and_one_call_per_key_per_run(db):
     assert p._get.call_count == 1
     assert p._get.call_args[0][0] == "/sports/soccer_epl/scores" and p._get.call_args[0][1]["daysFrom"] == 3
     assert Budget(db).used_month("oddsapi") == 2
-    p.begin_run()
+
+
+def test_a_second_settle_run_the_same_day_spends_nothing(db):
+    p = _oa(db)
     p.fetch_result("e1", {"sport_key": "soccer_epl"})
-    assert p._get.call_count == 2
+    p.begin_run()                                     # next settlement run
+    assert p.fetch_result("e1", {"sport_key": "soccer_epl"}).status == "final"
+    fresh = _oa(db)                                   # ... and a restarted process
+    assert fresh.fetch_result("e1", {"sport_key": "soccer_epl"}).scores["full"] == (2.0, 1.0)
+    fresh._get.assert_not_called()
+    assert Budget(db).used_month("oddsapi") == 2
+    fresh.fetch_result("e1", {"sport_key": "soccer_efl_champ"})       # another key is a new payload
+    assert fresh._get.call_count == 1
+
+
+def test_a_payload_stored_on_an_earlier_day_is_not_reused(db):
+    p = _oa(db)
+    p.fetch_result("e1", {"sport_key": "soccer_epl"})
+    db.execute("UPDATE provider_cache SET local_date='2000-01-01' WHERE cache_key LIKE 'oddsapi:scores:%'")
+    fresh = _oa(db)
+    fresh.fetch_result("e1", {"sport_key": "soccer_epl"})
+    assert fresh._get.call_count == 1
 
 
 def test_no_sport_key_means_no_call(db):
@@ -303,7 +322,7 @@ def _prov(**kw):
     return p
 
 
-def test_resolver_order_is_origin_then_alt_ids_then_football_data_then_sgo():
+def test_resolver_order_is_origin_then_alt_ids_then_football_data_then_sgo_for_uncovered_leagues():
     origin, alt, fd, sgo = _prov(), _prov(), _prov(), _prov(find=_res(source="sgo"))
     fd.find_result.return_value = None
     resolver = ResultsResolver({"sharpapi": origin, "oddsapi": alt, "football_data": fd, "sportsgameodds": sgo})
@@ -313,10 +332,41 @@ def test_resolver_order_is_origin_then_alt_ids_then_football_data_then_sgo():
         p.find_result.side_effect = lambda *a, _n=name, _p=p, **k: (calls.append(_n), _p.find_result.return_value)[1]
 
     r = resolver.resolve("sharpapi", "1", "football", "A", "B", dt(), alt_ids={"oddsapi": "9"},
-                         hints={"league_id": "soccer_epl"})
+                         hints={"league_id": "soccer_uefa_europa_league"})
 
     assert r.source == "sgo" and calls == ["origin", "alt", "fd", "sgo"]
-    assert fd.find_result.call_args.kwargs["league_id"] == "soccer_epl"
+    assert fd.find_result.call_args.kwargs["league_id"] == "soccer_uefa_europa_league"
+
+
+@pytest.mark.parametrize("league_id", ["soccer_epl", "england_-_premier_league"])
+def test_a_league_football_data_covers_skips_the_paid_scores_call(league_id):
+    origin, alt, fd = _prov(fetch=_res(source="oddsapi")), _prov(fetch=_res(source="oddsapi")), _prov(find=_res(source="fd"))
+    resolver = ResultsResolver({"oddsapi": origin, "football_data": fd, "sharpapi": alt})
+
+    r = resolver.resolve("oddsapi", "e1", "football", "A", "B", dt(), alt_ids={"sharpapi": "9"},
+                         hints={"league_id": league_id, "sport_key": league_id})
+
+    assert r.source == "fd"
+    origin.fetch_result.assert_not_called()
+    alt.fetch_result.assert_not_called()
+
+
+def test_a_covered_league_falls_back_to_scores_when_football_data_has_no_answer():
+    origin, fd = _prov(fetch=_res(source="oddsapi")), _prov()
+    fd.find_result.return_value = None
+    resolver = ResultsResolver({"oddsapi": origin, "football_data": fd})
+
+    r = resolver.resolve("oddsapi", "e1", "football", "A", "B", dt(), hints={"league_id": "soccer_epl"})
+
+    assert r.source == "oddsapi" and fd.find_result.call_count == 1          # not asked twice
+
+
+def test_scores_stay_first_for_keys_football_data_does_not_cover():
+    origin, fd = _prov(fetch=_res(source="oddsapi")), _prov(find=_res(source="fd"))
+    resolver = ResultsResolver({"oddsapi": origin, "football_data": fd})
+    for key in ("soccer_uefa_europa_league", "soccer_turkey_super_league"):
+        assert resolver.resolve("oddsapi", key, "football", "A", "B", dt(), hints={"league_id": key}).source == "oddsapi"
+    fd.find_result.assert_not_called()
 
 
 def test_football_data_is_only_asked_about_football_and_stops_the_chain_when_it_answers():

@@ -13,9 +13,10 @@ Quota (free tier ~= 500 requests / month, 1 req / sec):
 """
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, apply_price_mode
@@ -23,7 +24,7 @@ from predbot.providers.budget import Budget
 from predbot.util.http import Http, ProviderError, RateLimiter
 from predbot.util.names import same_team
 from predbot.util.odds import parse_decimal
-from predbot.util.timeutil import parse_iso
+from predbot.util.timeutil import parse_iso, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -581,6 +582,10 @@ class OddsApiProvider(BaseProvider):
         key per settlement run, and only while the quota gate allows it."""
         if sport_key in self._scores_cache:
             return self._scores_cache[sport_key]
+        stored = self._stored_scores(sport_key)
+        if stored is not None:                          # a run earlier today already paid for it
+            self._scores_cache[sport_key] = stored
+            return stored
         if not self.can_spend_credits(self.SCORES_COST):
             self._scores_cache[sport_key] = None
             return None
@@ -593,7 +598,38 @@ class OddsApiProvider(BaseProvider):
         rows = {str(r.get("id")): r for r in (data if isinstance(data, list) else [])
                 if isinstance(r, dict) and r.get("id")}
         self._scores_cache[sport_key] = rows
+        self._store_scores(sport_key, rows)
         return rows
+
+    # The paid /scores payload is kept in provider_cache for the rest of the UTC day,
+    # so a second settlement run (or a restart) spends nothing.
+    def _scores_cache_key(self, sport_key: str) -> str:
+        return f"oddsapi:scores:{sport_key}"
+
+    def _stored_scores(self, sport_key: str) -> Optional[Dict[str, Dict]]:
+        if self.db is None:
+            return None
+        try:
+            row = self.db.get_provider_cache(self._scores_cache_key(sport_key))
+            if not row or row["local_date"] != utcnow().date().isoformat():
+                return None
+            rows = json.loads(row["payload_json"])
+        except Exception as e:            # a bad cache row must never block settlement
+            log.warning("OddsAPI scores cache unreadable for %s: %s", sport_key, e)
+            return None
+        return rows if isinstance(rows, dict) else None
+
+    def _store_scores(self, sport_key: str, rows: Dict[str, Dict]) -> None:
+        if self.db is None:
+            return
+        today = utcnow().date()
+        try:
+            self.db.upsert_provider_cache(self._scores_cache_key(sport_key), today.isoformat(), rows,
+                                          {"sport_key": sport_key, "cost": self.SCORES_COST},
+                                          (datetime.combine(today, datetime.min.time(), timezone.utc)
+                                           + timedelta(days=1)).isoformat())
+        except Exception as e:
+            log.warning("OddsAPI scores cache write failed for %s: %s", sport_key, e)
 
     def fetch_result(self, provider_event_id: str, event_hint: Optional[Dict] = None) -> Optional[MatchResult]:
         """Result for a known Odds API event id from ``/sports/{key}/scores?daysFrom=3``.
