@@ -166,7 +166,7 @@ def test_deliver_picks_reaches_all_subscribers_once(db, monkeypatch):
     assert len(tg.sends) == 2
 
 
-def test_deliver_picks_waits_until_930_in_subscriber_timezone(db):
+def test_deliver_picks_waits_until_delivery_time(db):
     db.subscriber_add("42")
     tg = FakeTG()
     cfg = Config(timezone="UTC")
@@ -179,22 +179,31 @@ def test_deliver_picks_waits_until_930_in_subscriber_timezone(db):
     assert broadcast.deliver_picks(db, cfg, tg, _snapshot(), now=due) == 1
 
 
-def test_deliver_picks_uses_each_subscribers_own_timezone(db):
-    """The whole point: 9:30 means 9:30 where the subscriber is, not one instant."""
-    db.subscriber_add("lagos", timezone="Africa/Lagos")   # UTC+1 -> their 9:30 == 08:30 UTC
+def test_delivery_is_one_shared_instant_and_zones_only_change_the_display(db):
+    """DELIVERY_TIME is measured in TIMEZONE for everyone; a subscriber's own zone is display-only."""
+    db.subscriber_add("lagos", timezone="Africa/Lagos")
     db.subscriber_add("utc")
     tg = FakeTG()
-    cfg = Config(timezone="UTC")
+    cfg = Config(timezone="Africa/Lagos")                 # 09:30 WAT == 08:30 UTC
 
-    lagos_930 = datetime(2030, 6, 1, 8, 30, tzinfo=timezone.utc)
-    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(), now=lagos_930) == 1
-    assert tg.sends[0]["chat_id"] == "lagos"             # the UTC subscriber waits
-    assert "WAT" in tg.sends[0]["text"]                  # kickoffs in their zone
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 8, 29, tzinfo=timezone.utc)) == 0
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 8, 30, tzinfo=timezone.utc)) == 2
+    assert {s["chat_id"] for s in tg.sends} == {"lagos", "utc"}
+    assert any("WAT" in s["text"] for s in tg.sends)      # kickoffs still rendered per zone
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 9, 0, tzinfo=timezone.utc)) == 0   # once each
 
-    utc_930 = datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)
-    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(), now=utc_930) == 1
-    assert tg.sends[1]["chat_id"] == "utc"
-    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(), now=utc_930) == 0   # once each
+
+def test_delivery_time_is_configurable(db):
+    db.subscriber_add("42")
+    cfg = Config(timezone="UTC", delivery_time="11:15")
+    tg = FakeTG()
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)) == 0
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 11, 15, tzinfo=timezone.utc)) == 1
 
 
 def test_deliver_picks_survives_a_missed_poll_tick(db):
@@ -213,11 +222,11 @@ def test_deliver_picks_skips_empty_snapshot(db):
                                    lambda: empty, now=now) == 0
 
 
-def test_each_zone_is_served_at_its_own_930(db):
-    """Tokyo, New York and Lagos each get the card at their own 9:30, not a shared one."""
-    db.subscriber_add("tokyo", timezone="Asia/Tokyo")          # UTC+9  -> 00:30 UTC
-    db.subscriber_add("lagos", timezone="Africa/Lagos")        # UTC+1  -> 08:30 UTC
-    db.subscriber_add("newyork", timezone="America/New_York")  # UTC-4  -> 13:30 UTC
+def test_every_zone_is_served_at_the_same_delivery_time_with_its_own_kickoff_times(db):
+    """Tokyo, New York and Lagos get the card together at DELIVERY_TIME; only the display differs."""
+    db.subscriber_add("tokyo", timezone="Asia/Tokyo")
+    db.subscriber_add("lagos", timezone="Africa/Lagos")
+    db.subscriber_add("newyork", timezone="America/New_York")
     tg = FakeTG()
     cfg = Config(timezone="UTC")
 
@@ -226,13 +235,11 @@ def test_each_zone_is_served_at_its_own_930(db):
             db, cfg, tg, _snapshot(),
             now=datetime(2030, 6, 1, hour, minute, tzinfo=timezone.utc))
 
-    assert at(0, 0) == 0                       # nobody's 9:30 yet
-    assert at(0, 30) == 1 and tg.sends[-1]["chat_id"] == "tokyo"
-    assert at(8, 30) == 1 and tg.sends[-1]["chat_id"] == "lagos"
-    assert at(13, 30) == 1 and tg.sends[-1]["chat_id"] == "newyork"
-    assert at(13, 30) == 0                     # and only once each
+    assert at(0, 30) == 0 and at(8, 30) == 0       # nobody's own 9:30 matters any more
+    assert at(9, 30) == 3
+    assert [s["chat_id"] for s in tg.sends] == ["tokyo", "lagos", "newyork"]
+    assert at(13, 30) == 0                         # and only once each
 
-    # each card carries kickoffs rendered in that subscriber's own zone
     assert "3:00 AM JST" in tg.sends[0]["text"]
     assert "7:00 PM WAT" in tg.sends[1]["text"]
     assert "2:00 PM EDT" in tg.sends[2]["text"]
@@ -295,11 +302,11 @@ def test_subscribing_before_930_still_gets_todays_card(db, monkeypatch):
     assert len(tg.sends) == 1
 
 
-def test_the_join_gate_is_measured_in_the_subscribers_own_zone(db, monkeypatch):
-    """Own-zone 9:30: 09:30 UTC is 10:30 WAT (missed) but 08:00 JST (in time)."""
-    _join_at(monkeypatch, "2030-06-01T09:30:00Z")            # Lagos: 10:30 WAT
-    db.subscriber_add("lagos", timezone="Africa/Lagos")
-    _join_at(monkeypatch, "2030-05-31T23:00:00Z")            # Tokyo: 08:00 JST on 1 June
+def test_the_join_gate_is_measured_in_the_config_timezone_not_the_subscribers(db, monkeypatch):
+    """DELIVERY_TIME is one instant: 00:35 UTC is 09:35 JST but still before the 09:30 UTC card."""
+    _join_at(monkeypatch, "2030-06-01T09:31:00Z")            # a minute after the shared instant
+    db.subscriber_add("late", timezone="Africa/Lagos")
+    _join_at(monkeypatch, "2030-06-01T00:35:00Z")            # 09:35 JST, but well before 09:30 UTC
     db.subscriber_add("tokyo", timezone="Asia/Tokyo")
     tg = FakeTG()
 

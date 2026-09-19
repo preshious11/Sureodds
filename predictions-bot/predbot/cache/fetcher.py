@@ -9,7 +9,7 @@ from predbot.cache.models import DailySnapshot, PickRecord, StatsSummary, SCHEMA
 from predbot.cache.providers import sport_states
 from predbot.jobs import daily_picks, stats as stats_mod
 from predbot.providers.chain import ProviderChain
-from predbot.util.timeutil import iso, to_local, utcnow, day_bounds, parse_iso
+from predbot.util.timeutil import iso, parse_hhmm, to_local, utcnow, day_bounds, parse_iso
 
 log = logging.getLogger(__name__)
 
@@ -59,73 +59,114 @@ class UnifiedFetcher:
         now = utcnow()
         day = to_local(now, self.cfg.timezone).date().isoformat()
         # All service instances for the same SQLite file share this in-process lock.
-        with self.db.prediction_lock:
-            cached, row = self._read(day, now)
+        # Scheduled/admin generation waits for it; a user command or delivery poll
+        # must never queue behind a generation that can take minutes.
+        lock = self.db.prediction_lock
+        if not lock.acquire(blocking=bool(scheduled)):
+            cached, _ = self._read(day, now)
             if cached is not None and not force_refresh:
-                # Once today's snapshot is cached (COMPLETE or PARTIAL), serve it
-                # for every subsequent read. retry_after only throttles the error
-                # path (defer_prediction_retry on refresh failure); it must NOT
-                # trigger provider API calls from user views like /top, /daily,
-                # button taps, delivery polling or post-restart reads.
-                log.info('Cache HIT | date=%s | status=%s', day, row['status'])
-                if persist:
-                    self._count('hit', day)
-                return cached
-            log.info('Cache %s | date=%s', 'PARTIAL (force refresh)' if cached else 'MISS', day)
-            if not cached and not force_refresh and allow_api_call and not scheduled \
-                    and self._before_post_time(now):
-                ready = self._ready_label(now)
-                log.info('Not generating before POST_TIME | date=%s | ready at %s', day, ready)
-                return DailySnapshot(date=day, generated_at=iso(now), origin='sqlite', status='PARTIAL',
-                                     generation={'complete': False, 'reason': 'before_post_time',
-                                                 'ready_at': ready},
-                                     stats=self._stats_summary())
-            # If cache miss and API calls disabled (e.g., delivery polling), return empty snapshot
-            if not allow_api_call and not cached:
-                log.info('Skipping API call (delivery polling) | cache_miss=%s', day)
-                snapshot = DailySnapshot(date=day, generated_at=iso(now), origin='sqlite',
-                                         status='PARTIAL', generation={'complete': False,
-                                         'reason': 'awaiting scheduled fetch'})
-                return snapshot
+                return cached                      # today's card is already published: serve it
+            log.info('Generation in progress | date=%s | read answered without waiting', day)
+            return DailySnapshot(date=day, generated_at=iso(now), origin='sqlite', status='PARTIAL',
+                                 generation={'complete': False, 'reason': 'generating'},
+                                 stats=self._stats_summary())
+        try:
+            return self._snapshot_locked(day, now, force_refresh, allow_api_call, persist, scheduled)
+        finally:
+            lock.release()
+
+    def _snapshot_locked(self, day, now, force_refresh, allow_api_call, persist, scheduled):
+        cached, row = self._read(day, now)
+        if cached is not None and not force_refresh:
+            # Once today's snapshot is cached (COMPLETE or PARTIAL), serve it
+            # for every subsequent read. retry_after only throttles the error
+            # path (defer_prediction_retry on refresh failure); it must NOT
+            # trigger provider API calls from user views like /top, /daily,
+            # button taps, delivery polling or post-restart reads.
+            log.info('Cache HIT | date=%s | status=%s', day, row['status'])
+            if persist:
+                self._count('hit', day)
+            return cached
+        log.info('Cache %s | date=%s', 'PARTIAL (force refresh)' if cached else 'MISS', day)
+        if not cached and not force_refresh and allow_api_call and not scheduled \
+                and self._before_post_time(now):
+            ready = self._ready_label(now)
+            log.info('Not generating before POST_TIME | date=%s | ready at %s', day, ready)
+            return DailySnapshot(date=day, generated_at=iso(now), origin='sqlite', status='PARTIAL',
+                                 generation={'complete': False, 'reason': 'before_post_time',
+                                             'ready_at': ready},
+                                 stats=self._stats_summary())
+        # If cache miss and API calls disabled (e.g., delivery polling), return empty snapshot
+        if not allow_api_call and not cached:
+            log.info('Skipping API call (delivery polling) | cache_miss=%s', day)
+            snapshot = DailySnapshot(date=day, generated_at=iso(now), origin='sqlite',
+                                     status='PARTIAL', generation={'complete': False,
+                                     'reason': 'awaiting scheduled fetch'})
+            return snapshot
+        try:
+            self.api_batches += 1
+            if isinstance(self.chain, ProviderChain):
+                self.chain.force_retry = force_refresh
             try:
-                self.api_batches += 1
+                pickset = daily_picks.build_picks(self.chain, self.db, self.cfg, now)
+            finally:
                 if isinstance(self.chain, ProviderChain):
-                    self.chain.force_retry = force_refresh
-                try:
-                    pickset = daily_picks.build_picks(self.chain, self.db, self.cfg, now)
-                finally:
-                    if isinstance(self.chain, ProviderChain):
-                        self.chain.force_retry = False
-                pickset.diagnostics['cycle'] = {
-                    'trigger': 'scheduled/admin job' if scheduled else 'user command',
-                    'cache': 'FORCE REFRESH' if cached else 'MISS', 'at': iso(now)}
-                if persist:
-                    self._count('miss', day)
-                snapshot = self._snapshot_from_pickset(pickset, day)
-                # Keep usable previous selections if a catastrophic model/generator
-                # failure yields no replacement. Successful valid empties may replace.
-                if cached and cached.total_picks() and not snapshot.total_picks() and not pickset.complete:
-                    snapshot.top_picks = cached.top_picks
-                    snapshot.daily_picks = cached.daily_picks
-                if persist:
-                    with self.db.transaction():
-                        daily_picks.store_picks(pickset, self.db, day)
-                        self._store(snapshot, now)
-                return snapshot
-            except Exception as exc:
-                log.warning('Cache refresh failed | date=%s | error=%s', day, type(exc).__name__, exc_info=exc)
-                if cached is not None:
-                    # Preserve the previous atomic snapshot, and throttle subsequent
-                    # attempts even when failure happened after provider collection.
-                    if persist:
-                        self.db.defer_prediction_retry(self._key(day), iso(now + timedelta(seconds=self.cfg.cache_retry_seconds)))
-                    return cached
-                snapshot = DailySnapshot(date=day, generated_at=iso(now), origin='sqlite',
-                                         status='PARTIAL', generation={'complete': False,
-                                         'error_type': type(exc).__name__})
-                if persist:
+                    self.chain.force_retry = False
+            pickset.diagnostics['cycle'] = {
+                'trigger': 'scheduled/admin job' if scheduled else 'user command',
+                'cache': 'FORCE REFRESH' if cached else 'MISS', 'at': iso(now)}
+            if persist:
+                self._count('miss', day)
+            snapshot = self._snapshot_from_pickset(pickset, day)
+            # Keep usable previous selections if a catastrophic model/generator
+            # failure yields no replacement. Successful valid empties may replace.
+            kept_previous = bool(cached and cached.total_picks() and not snapshot.total_picks()
+                                 and not pickset.complete)
+            if kept_previous:
+                snapshot.top_picks = cached.top_picks
+                snapshot.daily_picks = cached.daily_picks
+            if persist:
+                with self.db.transaction():
+                    # the previous selections stay published, so their rows must stay too
+                    daily_picks.store_picks(pickset, self.db, day, replace_pending=not kept_previous)
                     self._store(snapshot, now)
-                return snapshot
+            return snapshot
+        except Exception as exc:
+            log.warning('Cache refresh failed | date=%s | error=%s', day, type(exc).__name__, exc_info=exc)
+            if cached is not None:
+                # Preserve the previous atomic snapshot, and throttle subsequent
+                # attempts even when failure happened after provider collection.
+                if persist:
+                    self.db.defer_prediction_retry(self._key(day), iso(now + timedelta(seconds=self.cfg.cache_retry_seconds)))
+                return cached
+            snapshot = DailySnapshot(date=day, generated_at=iso(now), origin='sqlite',
+                                     status='PARTIAL', generation={'complete': False,
+                                     'error_type': type(exc).__name__})
+            if persist:
+                self._store(snapshot, now)
+            return snapshot
+
+    def retry_partial(self, now=None):
+        """Regenerate today's PARTIAL snapshot once its ``retry_after`` has passed.
+
+        Only while nothing has been delivered yet and DELIVERY_TIME has not arrived:
+        after that the published card is what people saw and must not change under
+        them. Returns the new snapshot, or None when there was nothing to retry."""
+        now = now or utcnow()
+        day = to_local(now, self.cfg.timezone).date().isoformat()
+        cached, row = self._read(day, now)
+        if cached is None or row['status'] != 'PARTIAL':
+            return None
+        retry_at = parse_iso(row['retry_after'] or '')
+        if retry_at is None or now < retry_at:
+            return None
+        if self.db.deliveries_exist('picks', day):
+            return None
+        local = to_local(now, self.cfg.timezone)
+        if (local.hour, local.minute) >= parse_hhmm(self.cfg.delivery_time, '09:30'):
+            return None
+        log.info('Retrying PARTIAL snapshot | date=%s | retry_after passed', day)
+        return self.get_daily_snapshot(force_refresh=True, scheduled=True)
 
     def _count(self, what, day):
         """Per-day cache read counters (kv), so /lastrun can say hit/miss."""

@@ -69,6 +69,15 @@ def _list(name: str, default: str = "") -> List[str]:
     return value
 
 
+def _hhmm(value: str) -> Tuple[int, int]:
+    """"HH:MM" -> (hour, minute); anything malformed sorts as (0, 0)."""
+    try:
+        h, m = (int(x) for x in str(value).split(":"))
+        return h, m
+    except (ValueError, TypeError):
+        return 0, 0
+
+
 def _default_log_file() -> str:
     raw = _env("LOG_FILE", "")
     if raw.lower() in ("none", "off", "false", "0"):
@@ -157,6 +166,10 @@ class Config:
     disabled_markets: List[str] = field(default_factory=lambda: _list(
         "DISABLED_MARKETS", "odd_even,prop,winning_margin,ht_ft"))
 
+    #: When the card is delivered, in TIMEZONE - ONE shared instant for every
+    #: subscriber (their own zones only change how times are displayed).
+    delivery_time: str = field(default_factory=lambda: _env("DELIVERY_TIME", "09:30"))
+
     # Picks - the daily post is ONE ticket, so combined odds (not pick counts)
     # size the lists; daily_target is only a safety cap on the number of picks.
     daily_target: int = field(default_factory=lambda: _int("DAILY_PICKS_TARGET", 20))
@@ -238,6 +251,9 @@ class Config:
         if unknown:
             log.warning("Config: PROVIDER_ORDER names unknown provider(s) %s (known: %s) - they are ignored",
                         ", ".join(unknown), ", ".join(sorted(KNOWN_PROVIDERS)))
+        if _hhmm(self.delivery_time) <= _hhmm(self.post_time):
+            log.warning("Config: DELIVERY_TIME %s is not after POST_TIME %s - the card would be due before it is generated",
+                        self.delivery_time, self.post_time)
         checks = [
             ("DAILY_COMBINED_MIN_ODDS/MAX", self.daily_odds_min <= self.daily_odds_max),
             ("DAILY_MIN_ODDS/MAX_ODDS", self.daily_min_odds <= self.daily_max_odds),

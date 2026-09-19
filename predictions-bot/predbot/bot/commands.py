@@ -208,7 +208,7 @@ class CommandLoop(threading.Thread):
 
     def _schedule_text(self, zone: str) -> str:
         now = utcnow()
-        hour, minute = parse_hhmm(self.cfg.post_time, "09:00")
+        hour, minute = parse_hhmm(self.cfg.delivery_time, "09:30")
         scheduled = to_local(now, self.cfg.timezone).replace(hour=hour, minute=minute, second=0, microsecond=0)
         if scheduled <= now:
             scheduled += timedelta(days=1)

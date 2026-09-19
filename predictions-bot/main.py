@@ -59,12 +59,16 @@ def main() -> None:
             broadcast.deliver_recap(db, cfg, tg, text)
 
     def job_deliver():
-        """Poll: hand the card to every subscriber whose own 9:30 AM has arrived."""
+        """Poll: hand the card to every subscriber once DELIVERY_TIME has arrived."""
         # Prevent API calls during delivery polling; only use cached data.
         snapshot = service.get_daily_snapshot(allow_api_call=False)
         if not snapshot.total_picks():
             return
         broadcast.deliver_picks(db, cfg, tg, snapshot)
+
+    def job_retry_partial():
+        """A PARTIAL slate is retried until DELIVERY_TIME, while nothing has been sent."""
+        service.retry_partial()
 
     def job_picks():
         daily_picks.run(chain, db, cfg, tg, service=service)          # channel mirror (optional)
@@ -78,7 +82,8 @@ def main() -> None:
         DailyJob("recap", cfg.recap_time, cfg.timezone, job_recap),
         DailyJob("picks", cfg.post_time, cfg.timezone, job_picks),
         # Per-subscriber local-time gates, so both must poll rather than fire once.
-        IntervalJob("deliver", DELIVERY_POLL_MINUTES, job_deliver),   # each subscriber's 9:30 AM
+        IntervalJob("deliver", DELIVERY_POLL_MINUTES, job_deliver),   # everyone's card at DELIVERY_TIME
+        IntervalJob("retry_partial", max(1, cfg.cache_retry_seconds // 60), job_retry_partial),
         IntervalJob("broadcast_recap", 5, job_broadcast_recap),       # their last fixture ending
         DynamicJob("settle", cfg.timezone, compute_settle_deadline, job_settle),
     ]

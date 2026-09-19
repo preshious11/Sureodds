@@ -37,6 +37,8 @@ def compute_settlement_deadline(db: Database, today_local_date: str) -> Optional
     latest_sport = "other"
     for p in picks:
         start = parse_iso(p["start_utc"])
+        if start is None:
+            continue                       # an unparseable kick-off must not break the deadline
         if latest_start is None or start > latest_start:
             latest_start = start
             latest_sport = p["sport"]
