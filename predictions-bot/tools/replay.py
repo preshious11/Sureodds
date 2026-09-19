@@ -252,11 +252,15 @@ def run(profile: bool = False, subscribers: int = 300, send_delay: float = 0.03,
             db.conn.commit()
             deliver_now = now.replace(hour=8, minute=31)          # 09:31 in Lagos on the card's day
             dtg = FakeTelegram(delay=send_delay)
+            import predbot.bot.broadcast as broadcast
+            if not send_delay:
+                broadcast.SENDS_PER_SECOND = 1e9                  # tests: no pacing (the golden does not depend on it)
             db.stats.update(executes=0, commits=0)
             t0 = time.perf_counter()
             sent = deliver_picks(db, cfg, dtg, service.published_snapshot, now=deliver_now)
             deliver_wall = time.perf_counter() - t0
             again = deliver_picks(db, cfg, FakeTelegram(), service.published_snapshot, now=deliver_now)
+            broadcast.SENDS_PER_SECOND = 20.0
             result["delivery"] = {"subscribers": subscribers, "sent": sent, "second_pass_sent": again,
                                   "wall": round(deliver_wall, 3), "sqlite": dict(db.stats)}
             by_chat = {c: (text) for c, text, _ in dtg.sent}

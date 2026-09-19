@@ -15,8 +15,10 @@ Onboarding is therefore menu-only - it never triggers a prediction send.
 from __future__ import annotations
 
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import Callable, Optional, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 from predbot.bot.format import generated_line, odds_as_of_label, pick_line_from_record, summary_card
 from predbot.bot.telegram import Telegram
@@ -147,33 +149,86 @@ def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_s
     if not tg.token:
         return 0
     now = now or utcnow()
-    sent = 0
+    local = to_local(now, cfg.timezone)                  # one instant for every subscriber
+    if local.strftime("%Y-%m-%d") < date_str:
+        return 0                          # the card's day hasn't started yet
+    if (local.hour, local.minute) < (target_hour, target_minute):
+        return 0                          # DELIVERY_TIME hasn't arrived
+    done = db.deliveries_done(kind, date_str)            # one query, not one per subscriber
+    cards: Dict[str, str] = {}            # the card differs only by the subscriber's zone: render once per zone
+    pending: List[Tuple[str, str]] = []
     for row in db.subscribers_active():
         chat_id = str(row["chat_id"])
-        if db.delivery_done(kind, date_str, chat_id):
+        if chat_id in done:
             continue
         user_tz = subscriber_tz(row, cfg.timezone)      # display only
-        local = to_local(now, cfg.timezone)
-        if local.strftime("%Y-%m-%d") < date_str:
-            continue                      # the card's day hasn't started yet
-        if (local.hour, local.minute) < (target_hour, target_minute):
-            continue                      # DELIVERY_TIME hasn't arrived
         if not _joined_before_target(row, date_str, target_hour, target_minute, cfg.timezone):
             continue                      # joined after today's card was due - starts tomorrow
         # Deliberately "at or past" rather than an exact-minute window: the
         # scheduler polls every few minutes, so a narrow window would silently
-        # skip a subscriber whose minute was never sampled.  delivery_done()
-        # is what keeps this to one card per person per day.
-        text = picks_text(snapshot, user_tz, now=now)
+        # skip a subscriber whose minute was never sampled.  deliveries is
+        # what keeps this to one card per person per day.
+        if user_tz not in cards:
+            cards[user_tz] = picks_text(snapshot, user_tz, now=now)
+        text = cards[user_tz]
         if not text:
             continue                      # nothing explicit to show - never send a blank card
-        if tg.send(text, chat_id=chat_id):
-            db.mark_delivery(kind, date_str, chat_id)
-            sent += 1
+        pending.append((chat_id, text))
+    sent = _send_all(db, tg, kind, date_str, pending)
     if sent:
         log.info("broadcast: %s delivered to %d subscriber(s) at %02d:%02d",
                  label, sent, target_hour, target_minute)
     return sent
+
+
+#: Below this many recipients the sends stay sequential (order, and nothing to gain from threads).
+PARALLEL_MIN = 8
+#: Telegram allows ~30 messages/s to different chats; stay well under it.
+SENDS_PER_SECOND = 20.0
+SEND_WORKERS = 8
+RECORD_BATCH = 20                         # deliveries recorded in one transaction per this many sends
+
+
+def _send_all(db: Database, tg: Telegram, kind: str, date_str: str, pending: List[Tuple[str, str]]) -> int:
+    """Send each (chat_id, text); record every success in ``deliveries``. Returns how many were sent."""
+    if len(pending) < PARALLEL_MIN:
+        sent = 0
+        for chat_id, text in pending:
+            if tg.send(text, chat_id=chat_id):
+                db.mark_delivery(kind, date_str, chat_id)
+                sent += 1
+        return sent
+    sent = 0
+    interval = 1.0 / SENDS_PER_SECOND
+    with ThreadPoolExecutor(max_workers=SEND_WORKERS, thread_name_prefix="deliver") as pool:
+        futures, next_slot = [], time.monotonic()
+        for chat_id, text in pending:
+            wait = next_slot - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)                                  # <= SENDS_PER_SECOND submissions per second
+            next_slot = max(next_slot, time.monotonic()) + interval
+            futures.append((chat_id, pool.submit(tg.send, text, chat_id=chat_id)))
+        ok: List[str] = []
+        for chat_id, fut in futures:
+            try:
+                if fut.result():
+                    ok.append(chat_id)
+            except Exception:  # noqa: BLE001 - one failed send never stops the rest; it is retried on the next poll
+                log.exception("broadcast: send to %s raised", chat_id)
+            if len(ok) >= RECORD_BATCH:
+                _record(db, kind, date_str, ok)
+                sent += len(ok)
+                ok = []
+        _record(db, kind, date_str, ok)
+        sent += len(ok)
+    return sent
+
+
+def _record(db: Database, kind: str, date_str: str, chat_ids: List[str]) -> None:
+    if chat_ids:
+        with db.transaction():
+            for chat_id in chat_ids:
+                db.mark_delivery(kind, date_str, chat_id)
 
 
 def _get_last_fixture_end_time(db: Database, pick_date: str) -> Optional[datetime]:

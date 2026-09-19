@@ -474,6 +474,11 @@ class Database:
         return bool(self.query("SELECT 1 FROM deliveries WHERE kind=? AND post_date=? AND chat_id=?",
                                (kind, post_date, str(chat_id))))
 
+    def deliveries_done(self, kind: str, post_date: str) -> set:
+        """chat ids already sent ``kind`` for ``post_date`` - one query instead of one per subscriber."""
+        return {str(r["chat_id"]) for r in self.query("SELECT chat_id FROM deliveries WHERE kind=? AND post_date=?",
+                                                     (kind, post_date))}
+
     def mark_delivery(self, kind: str, post_date: str, chat_id: str) -> None:
         self.execute("INSERT OR IGNORE INTO deliveries(kind,post_date,chat_id,created_at) VALUES(?,?,?,?)",
                      (kind, post_date, str(chat_id), _now()))
