@@ -72,6 +72,19 @@ def test_team_names_match_fuzzily_and_by_short_name():
     assert _fd().find_result("football", "Man City", "Newcastle", START, league_id="soccer_epl").status == "final"
 
 
+def test_a_regular_match_without_regular_time_settles_on_full_time():
+    """duration REGULAR carries no regularTime key; fullTime is the 90 minutes."""
+    match = next(m for m in load("football_data_matches.json")["matches"] if m["id"] == 1006)
+    assert match["score"]["duration"] == "REGULAR" and "regularTime" not in match["score"]
+    r = _fd().find_result("football", "Tottenham Hotspur", "Brighton & Hove Albion", START, league_id="england_-_premier_league")
+    assert r.status == "final" and r.scores == {"full": (2.0, 2.0), "1h": (1.0, 0.0), "2h": (1.0, 2.0)}
+
+
+def test_teams_also_match_on_the_three_letter_code():
+    r = _fd().find_result("football", "TOT", "BHA", START, league_id="england_-_premier_league")
+    assert r is not None and r.status == "final"
+
+
 def test_no_match_or_wrong_kickoff_returns_none():
     p = _fd()
     assert p.find_result("football", "Nobody FC", "Ghost United", START, league_id="soccer_epl") is None
