@@ -140,6 +140,10 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
                            "complete": ps.complete, "generated_at": iso(now),
                            "retry_after": iso(now + timedelta(seconds=cfg.cache_retry_seconds)),
                            "retry_until": cfg.delivery_time})
+    skipped = {n: [x for x in getattr(p, "skipped_no_results", None) or [] if isinstance(x, str)]
+               for n, p in (providers_map or {}).items()
+               if isinstance(getattr(p, "skipped_no_results", None), list)}
+    ps.diagnostics["leagues_skipped_no_results"] = {n: v for n, v in skipped.items() if v}
     log.info("Prediction generation %s: %s", day, ps.diagnostics)
     return ps
 

@@ -77,6 +77,7 @@ class SportsGameOddsProvider(BaseProvider):
         self._league_sport: Dict[str, str] = {}          # leagueID -> SPORT (SGO id)
         self._parsed_sport_by_league: Dict[str, str] = {}  # leagueID -> canonical sport seen in parsed events
         self.sport_status: Dict[str, Dict] = {}          # canonical sport -> status/events/leagues
+        self.skipped_no_results: List[str] = []          # configured leagues with no results path (not fetched)
         self.parse_counts: Counter = Counter()           # rejection reasons
         self.http = Http("https://api.sportsgameodds.com/v2", headers={"X-Api-Key": api_key},
                          rate=RateLimiter(1.0))
@@ -162,6 +163,10 @@ class SportsGameOddsProvider(BaseProvider):
                     self.last_fetch_complete = False
                     self.budget.mark_exhausted(self.name, "configured leagues unavailable at tier")
                     return []
+        leagues = [lg for lg in leagues if lg not in self.skipped_no_results]      # nothing can settle these
+        if not leagues:
+            self.last_fetch_complete = False
+            return []
         # Filter by configured sports when provided (empty sgo_sports = all sports).
         # The league -> sport map comes from the provider catalog so the filter
         # never relies on a hardcoded sports list.

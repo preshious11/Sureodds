@@ -76,6 +76,15 @@ def _funnel(gen: Dict) -> List[str]:
              f"Daily pool: {esc(_kv(gen.get('daily_eligible_by_sport')))} | rejected: {esc(_kv(gen.get('daily_pool_rejections')))}",
              f"Top tickets evaluated: {gen.get('combinations_checked', '?')}"
              + (f" · Top odds {gen['top_odds']:.2f}" if gen.get("top_odds") else "")]
+    rejections = gen.get("selection_rejections") or {}
+    lines.append("Results gate: " + esc(_kv({k: rejections[k] for k in
+                                             ("NO_RESULTS_PATH", "PERIOD_UNSETTLEABLE", "STAT_UNSETTLEABLE")
+                                             if k in rejections})))
+    if gen.get("no_results_path_by_league"):
+        lines.append("No results path (events per league): " + esc(_kv(gen["no_results_path_by_league"])))
+    skipped = gen.get("leagues_skipped_no_results") or {}
+    lines.append("Leagues not fetched (no results path): "
+                 + (esc("; ".join(f"{p}: {', '.join(v)}" for p, v in sorted(skipped.items()))) if skipped else "none"))
     relaxed = gen.get("daily_caps_relaxed")
     lines.append("Relaxations: " + (esc(json.dumps(relaxed, sort_keys=True)) if relaxed else "none"))
     return lines

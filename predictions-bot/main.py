@@ -13,6 +13,7 @@ from predbot.jobs import daily_picks, recap, settle
 from predbot.jobs.scheduler import DailyJob, DynamicJob, IntervalJob, loop
 from predbot.log import setup_logging
 from predbot.config import require_provider_keys, startup_lines
+from predbot.markets.settlement import log_coverage
 from predbot.providers.chain import ProviderChain, ResultsResolver, build_providers
 from predbot.storage.db import Database
 from predbot.util.timeutil import to_local, utcnow
@@ -31,6 +32,7 @@ def main() -> None:
     require_provider_keys(cfg)
     db = Database(cfg.db_path)
     providers = build_providers(cfg, db)
+    log_coverage(cfg, providers)
     chain = ProviderChain(providers, cfg.provider_order)
     resolver = ResultsResolver(providers)
     tg = Telegram(cfg.telegram_token, cfg.telegram_chat_id)

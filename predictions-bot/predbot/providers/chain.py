@@ -11,12 +11,15 @@ import logging
 import copy
 from collections import Counter
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Dict, List, Optional
 
 from predbot.config import Config
 from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, apply_price_mode
 from predbot.providers.budget import Budget
-from predbot.providers.football_data import FootballDataProvider, competition_for
+from predbot.providers.espn import ESPNProvider
+from predbot.providers.euroleague import EuroLeagueProvider
+from predbot.providers.football_data import FootballDataProvider
 from predbot.providers.oddsapi import OddsApiProvider
 from predbot.providers.sharpapi import SharpApiProvider
 from predbot.providers.sportsgameodds import SportsGameOddsProvider
@@ -55,7 +58,30 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
                                          league_allowlist=cfg.odds_api_league_allowlist)
     if cfg.football_data_key:
         out["football_data"] = FootballDataProvider(cfg.football_data_key)
+    if cfg.espn_results:
+        out["espn"] = ESPNProvider()
+    if cfg.euroleague_results:
+        out["euroleague"] = EuroLeagueProvider()
+    _skip_leagues_without_results(cfg, out)
     return out
+
+
+def _skip_leagues_without_results(cfg: Config, providers: Dict[str, BaseProvider]) -> None:
+    """Tell each fixture provider which configured leagues can never be settled, so it
+    does not spend requests / credits fetching them (one warning per league per process)."""
+    from predbot.markets.settlement import coverage_table
+    warned = set()
+    for origin, ident, paths in coverage_table(cfg, providers):
+        prov = providers.get(origin)
+        if prov is None or paths:
+            continue
+        skipped = getattr(prov, "skipped_no_results", None)
+        if skipped is None:
+            skipped = prov.skipped_no_results = []
+        skipped.append(ident)
+        if (origin, ident) not in warned:
+            warned.add((origin, ident))
+            log.warning("%s: league %s has no results path (nothing can settle it) - not fetching it", origin, ident)
 
 
 class ProviderChain:
@@ -186,7 +212,13 @@ def _merge_markets(dst: Event, src: Event, price_mode: str = "median") -> None:
 
 
 class ResultsResolver:
-    """Find a MatchResult for a stored pick using any provider we have."""
+    """Find a MatchResult for a stored pick using any provider we have.
+
+    The providers to ask, and in which order, come from
+    ``markets.settlement.result_paths``: the origin SportsGameOdds id, football-data.org,
+    ESPN, EuroLeague, The Odds API ``/scores`` (last - it costs credits), then a
+    SportsGameOdds team+time lookup. The first usable result wins, and every provider
+    call is wrapped so one provider being down never stops the rest."""
 
     def __init__(self, providers: Dict[str, BaseProvider]):
         self.providers = providers
@@ -196,71 +228,55 @@ class ResultsResolver:
                 cache: Optional[Dict[str, MatchResult]] = None,
                 hints: Optional[Dict[str, str]] = None) -> Optional[MatchResult]:
         """``hints`` carries what was stored with the pick: ``sport_key`` (Odds API),
-        ``league_id`` and ``league`` (football-data competition lookup)."""
+        ``league_id`` and ``league`` (competition lookup)."""
+        from predbot.markets.settlement import result_paths
         cache = cache if cache is not None else {}
         hints = hints or {}
+        alt_ids = alt_ids or {}
         ck = f"{provider}:{provider_event_id}"
         if ck in cache:
             return cache[ck]
+        event = SimpleNamespace(sport=sport, league=hints.get("league", ""), league_id=hints.get("league_id", ""),
+                                provider=provider, sources=[provider, *alt_ids.keys()],
+                                extra={"sport_key": hints.get("sport_key", "")})
         result: Optional[MatchResult] = None
-
-        def unresolved() -> bool:
-            return result is None or result.status == "unknown"
-
-        fd = self.providers.get("football_data")
-
-        def ask_football_data() -> None:
-            nonlocal result
-            if not (unresolved() and fd and sport == "football" and provider != "football_data"):
-                return
-            try:
-                r = fd.find_result(sport, home, away, start, league_id=hints.get("league_id", ""),
-                                   league=hints.get("league", ""))
-            except ProviderError as e:
-                log.warning("football-data lookup (%s v %s) failed: %s", home, away, e)
-                r = None
-            if r and r.status != "unknown":
+        names = [p.name for p in result_paths(event, None, self.providers)]
+        if not names:
+            # A pick stored without a recognisable competition (older rows): the gate would
+            # refuse it today, but one that already exists is still worth a best-effort lookup.
+            names = (["football_data"] if sport == "football" else []) + ["sportsgameodds"]
+        for name in names:
+            r = self._ask(name, provider, provider_event_id, alt_ids, sport, home, away, start, hints)
+            if r is not None and r.status != "unknown":
                 result = r
-
-        # 0) football-data.org first for a league it covers: it is free, whereas the
-        #    Odds API /scores fallback below costs credits
-        fd_covers = bool(fd and sport == "football"
-                         and competition_for(hints.get("league_id", ""), hints.get("league", "")))
-        if fd_covers:
-            ask_football_data()
-        # 1) origin provider by id
-        prov = self.providers.get(provider)
-        if unresolved() and prov:
-            try:
-                result = prov.fetch_result(provider_event_id, event_hint=hints)
-            except ProviderError as e:
-                log.warning("result fetch (%s %s) failed: %s", provider, provider_event_id, e)
-        # 2) alternate ids recorded when the event was merged across providers
-        if unresolved() and alt_ids:
-            for pname, pid in alt_ids.items():
-                p = self.providers.get(pname)
-                if not p or pname == provider:
-                    continue
-                try:
-                    r = p.fetch_result(pid, event_hint=hints)
-                except ProviderError:
-                    r = None
-                if r and r.status != "unknown":
-                    result = r
-                    break
-        # 3) football-data.org for the leagues it does not map (skipped if already asked)
-        if not fd_covers:
-            ask_football_data()
-        # 4) SportsGameOdds by teams + time
-        sgo = self.providers.get("sportsgameodds")
-        if unresolved() and sgo and provider != "sportsgameodds":
-            try:
-                r = sgo.find_result(sport, home, away, start)
-            except ProviderError as e:
-                log.warning("SGO lookup (%s v %s) failed: %s", home, away, e)
-                r = None
-            if r and r.status != "unknown":
-                result = r
+                break
+            if r is not None and result is None:
+                result = r                              # remember an "unknown" only if nothing better turns up
         if result is not None:
             cache[ck] = result
         return result
+
+    def _ask(self, name: str, provider: str, provider_event_id: str, alt_ids: Dict[str, str], sport: str,
+             home: str, away: str, start: datetime, hints: Dict[str, str]) -> Optional[MatchResult]:
+        prov = self.providers.get(name)
+        if prov is None:
+            return None
+        try:
+            if name in ("football_data", "espn", "euroleague"):
+                return prov.find_result(sport, home, away, start, league_id=hints.get("league_id", ""),
+                                        league=hints.get("league", ""))
+            if name == "sportsgameodds":
+                if provider == "sportsgameodds":
+                    return prov.fetch_result(provider_event_id, event_hint=hints)
+                r = None
+                if alt_ids.get("sportsgameodds"):
+                    r = prov.fetch_result(alt_ids["sportsgameodds"], event_hint=hints)
+                if r is not None and r.status != "unknown":
+                    return r
+                return prov.find_result(sport, home, away, start)
+            # The Odds API /scores: by the id of whichever record is an Odds API one
+            event_id = provider_event_id if provider == name else alt_ids.get(name)
+            return prov.fetch_result(event_id, event_hint=hints) if event_id else None
+        except ProviderError as e:
+            log.warning("result lookup via %s (%s v %s) failed: %s", name, home, away, e)
+            return None

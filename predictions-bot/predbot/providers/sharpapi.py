@@ -172,6 +172,7 @@ class SharpApiProvider(BaseProvider):
         self.http = Http("https://api.sharpapi.io/api/v1", headers={"X-API-Key": api_key},
                          rate=RateLimiter(min_interval), retries=0)
         self.sport_status: Dict[str, Dict] = {}    # per-canonical-sport fetch outcome
+        self.skipped_no_results: List[str] = []    # configured leagues with no results path (not fetched)
         self.parse_counts: Counter = Counter()     # row -> MarketLine rejection reasons
 
     def enabled(self) -> bool:
@@ -187,7 +188,8 @@ class SharpApiProvider(BaseProvider):
         Leagues are explicit: there is no ``auto`` expansion. A sport-level feed
         (``SHARPAPI_SPORTS``) is still honoured if configured, but it pulls every
         league of that sport through the page budget, so it is warned about."""
-        targets = [{"league": lg} for lg in self.leagues]
+        # leagues nothing can settle are not fetched (chain.build_providers fills skipped_no_results)
+        targets = [{"league": lg} for lg in self.leagues if lg not in self.skipped_no_results]
         sports = [sp for sp in self.sports if sp != "auto"]
         if "auto" in self.sports:
             log.warning("SharpAPI: SHARPAPI_SPORTS=auto is no longer supported - list leagues in SHARPAPI_LEAGUES")
@@ -195,7 +197,9 @@ class SharpApiProvider(BaseProvider):
             log.warning("SharpAPI: sport-level feed(s) %s configured; prefer explicit SHARPAPI_LEAGUES "
                         "(a sport feed spends the page budget on every league)", ", ".join(sports))
         targets += [{"sport": sp} for sp in sports]
-        return targets or [{}]
+        if not targets and not self.leagues and not sports:
+            return [{}]                       # nothing configured at all: the unfiltered feed
+        return targets
 
     @staticmethod
     def _target_sport(target: Dict[str, str]) -> str:
