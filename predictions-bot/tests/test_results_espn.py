@@ -168,6 +168,12 @@ def test_provider_errors_propagate_so_the_resolver_can_skip_them():
         _espn(error="400").find_result("football", "A", "B", parse_iso("2026-09-12T14:00Z"), league_id="soccer_epl")
 
 
+def test_it_identifies_itself_as_the_default_python_requests_agent():
+    """ESPN's edge returned 403 to every other agent tried (predbot/2.0, browser-style) on 2026-09-19."""
+    import requests
+    assert ESPNProvider().http._headers["User-Agent"] == requests.utils.default_user_agent()
+
+
 def test_it_never_supplies_events_and_needs_no_key():
     p = ESPNProvider()
     assert p.fetch_events(None, None) == [] and p.enabled()
