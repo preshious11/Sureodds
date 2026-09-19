@@ -116,6 +116,14 @@ The **picker** then applies your rules:
 - **No single-outcome bias:** caps on the share of home/away/over/under picks,
   on any one market type, on short-priced favourites, on exotics, and on player
   props, plus a soft per-sport cap when multiple sports are available.
+- **Family-fair Daily ranking** (`DAILY_RANKING=family_z`, the default): the Daily score is
+  0.60 × probability, so on any match the safest line (+1.5, Over 1.5, double chance) used to
+  beat the straight win or the real Over 2.5, and "one pick per match" kept the safe line. The
+  builder is now *offered* candidates in the order of their z-score within their own family
+  (`win`, `total_main`/`total_alt`, `handicap_main`/`handicap_alt`, `safety`, `btts`,
+  `team_total`, `period`, `exotic`, `prop`; the main line is the one whose two sides are closest
+  to 50%). Only the order changes — every gate and cap is untouched, and the Top ticket is
+  unaffected. `DAILY_RANKING=raw` restores the old order; `/lastrun` shows "Daily by family".
 
 ---
 

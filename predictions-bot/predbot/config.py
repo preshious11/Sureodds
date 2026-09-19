@@ -57,6 +57,14 @@ def _float(name: str, default: float) -> float:
     return value
 
 
+def _ranking(value: str) -> str:
+    v = str(value or "").strip().lower()
+    if v in ("family_z", "raw"):
+        return v
+    log.warning("DAILY_RANKING=%r is not family_z or raw - using family_z", value)
+    return "family_z"
+
+
 def _bool(name: str, default: bool) -> bool:
     value = _env(name, "true" if default else "false").strip().lower() in ("1", "true", "yes", "on")
     KNOWN_KEYS[name] = (default, value)
@@ -246,6 +254,9 @@ class Config:
     #: Cross-market cap on one stat ("corners" can appear as totals AND 1X2
     #: result3 lines; the (market, stat) cap above sees them as two markets).
     daily_max_stat_share: float = field(default_factory=lambda: _float("DAILY_MAX_STAT_SHARE", 0.40))
+    #: order the Daily builder is offered candidates in: ``family_z`` ranks each market family against its
+    #: own peers (a straight win competes with wins, not with +1.5 lines); ``raw`` = ``_daily_score`` alone
+    daily_ranking: str = field(default_factory=lambda: _ranking(_env("DAILY_RANKING", "family_z")))
     daily_max_sport_share: float = field(default_factory=lambda: _float("DAILY_MAX_SPORT_SHARE", 0.60))
     daily_max_per_league: int = field(default_factory=lambda: _int("DAILY_MAX_PER_LEAGUE", 3))
     model_shrink: float = field(default_factory=lambda: _float("MODEL_SHRINK_TO_MARKET", 0.80))

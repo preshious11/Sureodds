@@ -94,6 +94,9 @@ def _funnel(gen: Dict) -> List[str]:
              f"Daily pool: {esc(_kv(gen.get('daily_eligible_by_sport')))} | rejected: {esc(_kv(gen.get('daily_pool_rejections')))}",
              f"Top tickets evaluated: {gen.get('combinations_checked', '?')}"
              + (f" · Top odds {gen['top_odds']:.2f}" if gen.get("top_odds") else "")]
+    if gen.get("daily_family_pool") is not None:
+        lines.append(f"Daily by family ({esc(gen.get('daily_ranking', '?'))}): pool {esc(_kv(gen.get('daily_family_pool')))}"
+                     f" | picked {esc(_kv(gen.get('daily_family_picks')))}")
     rejections = gen.get("selection_rejections") or {}
     lines.append("Results gate: " + esc(_kv({k: rejections[k] for k in
                                              ("NO_RESULTS_PATH", "PERIOD_UNSETTLEABLE", "STAT_UNSETTLEABLE")
