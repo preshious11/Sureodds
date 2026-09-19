@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from predbot.bot.format import (HEADING_DAILY, HEADING_TOP, PickLine,
-                                format_outcome, generated_line, pick_line_from_record,
+                                format_outcome, generated_line, odds_as_of_label, pick_line_from_record,
                                 pick_lines, picks_card, stats_message)
 from predbot.cache.models import (DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STATS,
                                   VIEW_TOP)
@@ -179,7 +179,8 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
                       snapshot.date,
                       heading=HEADING_TOP if view == VIEW_TOP else HEADING_DAILY,
                       total_prices=[p.price for p in items],
-                      generated=generated_line(snapshot.generated_at, user_tz or tz))
+                      generated=generated_line(snapshot.generated_at, user_tz or tz),
+                      odds_as_of=odds_as_of_label(snapshot.generated_at, user_tz or tz))
 
     if pages > 1:
         text += f"\n<i>Page {page + 1}/{pages}</i>"

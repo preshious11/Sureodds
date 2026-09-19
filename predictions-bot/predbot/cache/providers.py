@@ -123,7 +123,8 @@ def collect_persisted(chain, start, end):
                               updated_at=iso(now))
                 chain.db.upsert_provider_cache(key, day, encode_events(events), report, iso(midnight))
             chain.last_report[name] = report
-            pool = merge_events(pool, [e for e in events if start <= e.start < end])
+            pool = merge_events(pool, [e for e in events if start <= e.start < end],
+                                getattr(cfg, 'price_mode', 'median'))
     return pool
 
 

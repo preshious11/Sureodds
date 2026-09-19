@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Callable, Optional, Union
 
-from predbot.bot.format import generated_line, pick_line_from_record, summary_card
+from predbot.bot.format import generated_line, odds_as_of_label, pick_line_from_record, summary_card
 from predbot.bot.telegram import Telegram
 from predbot.cache.models import DailySnapshot
 from predbot.storage.db import Database
@@ -86,7 +86,8 @@ def picks_text(snapshot: DailySnapshot, tz: str, now: Optional[datetime] = None)
     daily = [p for p in daily if p.outcome]
     if not top and not daily:
         return ""
-    card = summary_card(top, daily, generated=generated_line(snapshot.generated_at, tz))
+    card = summary_card(top, daily, generated=generated_line(snapshot.generated_at, tz),
+                        odds_as_of=odds_as_of_label(snapshot.generated_at, tz))
     footer = _record_line(snapshot)
     return f"{card}\n{footer}" if footer else card
 
