@@ -124,6 +124,16 @@ The **picker** then applies your rules:
   `team_total`, `period`, `exotic`, `prop`; the main line is the one whose two sides are closest
   to 50%). Only the order changes — every gate and cap is untouched, and the Top ticket is
   unaffected. `DAILY_RANKING=raw` restores the old order; `/lastrun` shows "Daily by family".
+- **Same match in Top and Daily** (`CROSS_TIER_SAME_FIXTURE=different_outcome`, the default): a match in the Top
+  ticket may also carry a Daily pick, but never the same tip - not the same selection, an equivalent one, nor one
+  nested in it (win / double chance / draw-no-bet on the same side; over or under at any line; the same handicap
+  side at any line). Providers that list home/away the other way round, or spell a team differently ("LA Dodgers" /
+  "Los Angeles Dodgers"), are recognised as the same match. `MAX_PICKS_PER_EVENT` then counts per tier; `forbid`
+  keeps a Top match off-limits to the Daily. The `picks` table has a unique index on (date, fixture key, selection)
+  as a last line of defence.
+- **Top ticket never empty**: when the strict search (2-3 legs, odds 2.00-2.50, every leg at `TOP_MIN_PROB`) finds
+  nothing, `TOP_RELAXED_FALLBACK=1` widens the band by `TOP_RELAX_BAND`, then lowers the probability floor by
+  `TOP_RELAX_PROB`; never one leg, never more than three. `/lastrun` shows "Top fallback".
 
 ---
 

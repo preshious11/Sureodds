@@ -187,7 +187,8 @@ def _cross_tier_verdict(s: Scored, top: List[Scored], mode: str) -> Optional[Tup
     return None
 
 
-def choose_top(pool: List[Scored], cfg: Config):
+def choose_top(pool: List[Scored], cfg: Config, target: Optional[float] = None, ceiling: Optional[float] = None,
+               min_legs: Optional[int] = None, max_legs: Optional[int] = None):
     """Exact, band-aware search for the Top accumulator: the 2..3-leg combination
     of DIFFERENT fixtures whose combined odds sit in [TOP_COMBINED_ODDS,
     TOP_ODDS_MAX] with the highest joint confidence (product of p_model), ties
@@ -205,9 +206,10 @@ def choose_top(pool: List[Scored], cfg: Config):
 
     Returns (legs, combinations_checked) where combinations_checked counts the
     complete tickets actually evaluated (bounded by MAX_TOP_TICKETS_EVALUATED)."""
-    target, ceiling = cfg.top_odds_target, cfg.top_odds_max
-    min_size = max(1, cfg.top_legs_min)
-    max_size = max(min_size, cfg.top_legs_max)
+    target = cfg.top_odds_target if target is None else target
+    ceiling = cfg.top_odds_max if ceiling is None else ceiling
+    min_size = max(1, cfg.top_legs_min if min_legs is None else min_legs)
+    max_size = max(min_size, cfg.top_legs_max if max_legs is None else max_legs)
 
     # Identical fixture + price collapses to the most confident leg.
     ranked = sorted(pool, key=lambda s: (-s.p_model, -_top_score(s), s.event.dedupe_key(), repr(s.line.key())))
@@ -382,7 +384,15 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     # ------------------------------------------------------------ top picks
     # Sized by odds: take the best candidates until the ticket is worth ~2.00.
     top_pool: List[Scored] = []
+    relaxed_extra: List[Scored] = []      # pass every Top gate except a per-leg p_model within TOP_RELAX_PROB of the floor
+    relax_floor = cfg.top_min_prob - getattr(cfg, "top_relax_prob", 0.0)
     top_rejected: Counter = Counter()
+
+    def _passes_rest(s: Scored) -> bool:
+        if has_independent_signal(s) and s.ev < cfg.top_max_neg_ev:
+            return False
+        return s.agreement >= cfg.top_min_agreement and len(s.sources) >= 2
+
     for s in base:
         if s.line.market == "prop":
             top_rejected["PLAYER_PROP"] += 1
@@ -395,6 +405,8 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         if not (s.p_model >= cfg.top_min_prob):
             top_rejected["BELOW_THRESHOLD"] += 1
             _note(s, f"top: p_model < TOP_MIN_PROB ({cfg.top_min_prob})")
+            if s.p_model >= relax_floor and _passes_rest(s):
+                relaxed_extra.append(s)
             continue
         # Confidence product, not an edge product: market-only candidates skip
         # the EV gate (their EV is negative by construction); candidates with
@@ -415,17 +427,36 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         top_pool.append(s)
     # Odds API is tried first for the Top ticket: only fall back to the full
     # pool (the other providers) when it can't reach the combined odds target.
-    used_priority_pool = False
-    if top_priority_source:
-        priority_pool = [s for s in top_pool if top_priority_source in s.event.sources]
-        top, checked = choose_top(priority_pool, cfg)
-        reached = math.prod(s.price for s in top) if top else 0.0
-        if top and reached >= cfg.top_odds_target:
-            used_priority_pool = True
-        else:
-            top, checked = choose_top(top_pool, cfg)
-    else:
-        top, checked = choose_top(top_pool, cfg)
+    def find_top(pool: List[Scored], target: Optional[float] = None, ceiling: Optional[float] = None, **legs):
+        """(legs, tickets checked, priority pool used): the priority source first, then the whole pool."""
+        goal = cfg.top_odds_target if target is None else target
+        if top_priority_source:
+            priority_pool = [s for s in pool if top_priority_source in s.event.sources]
+            found, n = choose_top(priority_pool, cfg, target, ceiling, **legs)
+            if found and math.prod(s.price for s in found) >= goal:
+                return found, n, True
+            return (*choose_top(pool, cfg, target, ceiling, **legs), False)
+        return (*choose_top(pool, cfg, target, ceiling, **legs), False)
+
+    top, checked, used_priority_pool = find_top(top_pool)
+    top_relaxed: Optional[str] = None
+    if not top and getattr(cfg, "top_relaxed_fallback", False):
+        # Only when the strict search found nothing: widen the band, then lower the probability floor. Every other
+        # Top gate (>= 2 sources, agreement, disagreement floor) is unchanged; never a single leg, never over 3.
+        band = cfg.top_relax_band
+        wide = dict(target=cfg.top_odds_target - band, ceiling=cfg.top_odds_max + band,
+                    min_legs=max(2, cfg.top_legs_min), max_legs=min(3, max(2, cfg.top_legs_max)))
+        top, checked2, used_priority_pool = find_top(top_pool, **wide)
+        checked += checked2
+        if top:
+            top_relaxed = "band"
+        elif relaxed_extra:
+            top, checked2, used_priority_pool = find_top(top_pool + relaxed_extra, **wide)
+            checked += checked2
+            top_relaxed = "prob" if top else None
+        if top:
+            log.warning("picker: strict Top search found no ticket - relaxed fallback '%s' gave %d legs at %.2f",
+                        top_relaxed, len(top), math.prod(s.price for s in top))
     top_ids = {id(s) for s in top}
     top_odds = math.prod(s.price for s in top)
     for s in top:
@@ -444,7 +475,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
                       "top_pool_rejections": dict(top_rejected),
                       "combinations_checked": checked, "top_odds": top_odds if top else None,
                       "top_priority_source": top_priority_source,
-                      "top_priority_used": used_priority_pool}
+                      "top_priority_used": used_priority_pool, "top_relaxed": top_relaxed}
 
     # ---------------------------------------------------------- daily picks
     # One ticket for the whole post: keep filling while it is short of the floor,
@@ -698,8 +729,8 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     for s in chosen:
         s.tier = "daily"
     ps.daily = chosen
-    log.info("picker: pool=%d eligible=%d top_pool=%d daily_pool=%d -> top=%d daily=%d ticket=%.2f",
-             ps.pool_size, ps.eligible, len(top_pool), len(daily_pool), len(top), len(chosen), ticket)
+    log.info("picker: pool=%d eligible=%d top_pool=%d daily_pool=%d -> top=%d daily=%d ticket=%.2f top_relaxed=%s",
+             ps.pool_size, ps.eligible, len(top_pool), len(daily_pool), len(top), len(chosen), ticket, top_relaxed)
     bad = cross_tier.violations(ps.top, ps.daily, fixture_relation, cross_mode)
     if bad and _depth < 5:
         for d, t, why in bad:
