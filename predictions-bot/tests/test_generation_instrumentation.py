@@ -26,8 +26,8 @@ def _frozen(monkeypatch):
 
 
 class SpendingProvider(BaseProvider):
-    """Stands in for API-Football: every fetch spends a known number of calls."""
-    name = "api_football"
+    """Stands in for a metered provider: every fetch spends a known number of calls."""
+    name = "sportsgameodds"
     daily_limit = 100
 
     def __init__(self, budget, calls):
@@ -41,13 +41,13 @@ class SpendingProvider(BaseProvider):
 def test_generation_records_the_api_calls_this_cycle_spent(db, monkeypatch):
     monkeypatch.setattr(daily_picks, "score_events", lambda *a, **k: [])
     budget = Budget(db)
-    budget.spend("api_football", 30)                     # earlier cycles today
-    chain = ProviderChain({"api_football": SpendingProvider(budget, 7)}, ["api_football"], 1)
+    budget.spend("sportsgameodds", 30)                     # earlier cycles today
+    chain = ProviderChain({"sportsgameodds": SpendingProvider(budget, 7)}, ["sportsgameodds"], 1)
     chain.db, chain.cfg = db, Config(timezone="UTC")
 
     ps = daily_picks.build_picks(chain, db, Config(timezone="UTC"), NOW)
 
-    assert ps.diagnostics["api_usage"] == {"api_football": {"cycle": 7, "today": 37, "limit": 100}}
+    assert ps.diagnostics["api_usage"] == {"sportsgameodds": {"cycle": 7, "today": 37, "limit": 100}}
 
 
 def test_a_cache_hit_cycle_reports_zero_api_calls(db, monkeypatch):
@@ -56,14 +56,14 @@ def test_a_cache_hit_cycle_reports_zero_api_calls(db, monkeypatch):
     monkeypatch.setattr(daily_picks, "score_events", lambda *a, **k: [])
     budget = Budget(db)
     prov = SpendingProvider(budget, 7)
-    chain = ProviderChain({"api_football": prov}, ["api_football"], 1)
+    chain = ProviderChain({"sportsgameodds": prov}, ["sportsgameodds"], 1)
     chain.db, chain.cfg = db, Config(timezone="UTC")
     daily_picks.build_picks(chain, db, Config(timezone="UTC"), NOW)
 
     ps = daily_picks.build_picks(chain, db, Config(timezone="UTC"), NOW)
 
-    assert ps.diagnostics["api_usage"]["api_football"]["cycle"] == 0
-    assert ps.diagnostics["api_usage"]["api_football"]["today"] == 7
+    assert ps.diagnostics["api_usage"]["sportsgameodds"]["cycle"] == 0
+    assert ps.diagnostics["api_usage"]["sportsgameodds"]["today"] == 7
 
 
 def test_provider_report_carries_the_odds_api_quota_and_the_refusal(db):

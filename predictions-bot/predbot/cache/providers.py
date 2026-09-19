@@ -35,9 +35,7 @@ def decode_events(payload):
 
 
 def expected_sports(name, provider, cfg=None):
-    if name == 'api_football':
-        sports = ['football']
-    elif name == 'sportsgameodds':
+    if name == 'sportsgameodds':
         from predbot.providers.sportsgameodds import SPORT_MAP
         sports = sorted({SPORT_MAP.get(s.upper(), s.lower()) for s in provider.sports})
     elif name == 'sharpapi':
@@ -130,8 +128,7 @@ def collect_persisted(chain, start, end):
 def sport_states(providers):
     """Per-sport coverage state (SUCCESS/EMPTY/PARTIAL/FAILED) across providers.
 
-    Providers that report a per-sport ``sport_status`` (api_football,
-    sportsgameodds, sharpapi) drive the aggregation: one provider's failed
+    Providers that report a per-sport ``sport_status`` (sportsgameodds, sharpapi) drive the aggregation: one provider's failed
     Basketball fetch must not mark Football complete or vice versa.  Mock/stub
     providers without per-sport status fall back to the coarse whole-provider
     state so the same shape stays available in tests.

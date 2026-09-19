@@ -4,7 +4,6 @@ A Dixon-Coles adjusted independent Poisson grid P(home=i, away=j). Expected
 goals (lambda) come from two places and are blended by the ensemble:
   * the market  - solved so the grid reproduces the de-vigged 1X2 and main
                   Over/Under line (see `lambdas_from_market`)
-  * team stats  - API-Football season/last-5 goal rates (see model.features)
 
 From one grid we price *every* score-settled market consistently: 1X2, DNB,
 DC, totals on any line (incl. Asian quarter lines), team totals, BTTS, Asian

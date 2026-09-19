@@ -60,7 +60,7 @@ def _settleable(s: Scored) -> bool:
 #: prices), so its "EV" is just the bookmaker margin - treating it as an
 #: independent signal rejected every basketball candidate at once. Only these
 #: two can say the market is wrong.
-INDEPENDENT_SIGNALS = {"apif", "elo"}
+INDEPENDENT_SIGNALS = {"elo"}
 
 
 def has_independent_signal(s: "Scored") -> bool:

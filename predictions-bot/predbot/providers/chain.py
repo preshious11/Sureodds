@@ -14,7 +14,6 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from predbot.config import Config
-from predbot.providers.api_football import ApiFootballProvider
 from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult
 from predbot.providers.budget import Budget
 from predbot.providers.oddsapi import OddsApiProvider
@@ -30,12 +29,6 @@ log = logging.getLogger(__name__)
 def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
     budget = Budget(db)
     out: Dict[str, BaseProvider] = {}
-    if cfg.api_football_key:
-        out["api_football"] = ApiFootballProvider(
-            cfg.api_football_key, budget, host=cfg.api_football_host, league_ids=cfg.apif_league_ids,
-            daily_limit=cfg.apif_daily_limit, predictions_per_run=cfg.apif_predictions_per_run,
-            odds_pages=cfg.apif_odds_pages,
-            timezone=cfg.timezone)
     if cfg.sgo_key:
         out["sportsgameodds"] = SportsGameOddsProvider(
             cfg.sgo_key, budget, sports=cfg.sgo_sports, leagues=cfg.sgo_leagues,
@@ -208,7 +201,7 @@ class ResultsResolver:
                     break
         # 3) cross-provider lookup by teams + time
         if result is None or result.status == "unknown":
-            for pname in ("sportsgameodds", "api_football"):
+            for pname in ("sportsgameodds",):
                 p = self.providers.get(pname)
                 if not p or pname == provider:
                     continue

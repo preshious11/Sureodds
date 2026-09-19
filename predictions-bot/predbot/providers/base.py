@@ -37,7 +37,7 @@ class MarketLine:
     provider_prob: Optional[float] = None   # provider-supplied probability (0..1) when present, e.g. SharpAPI odds_probability
     bookmaker: str = ""
     n_books: int = 1
-    provider_odd_id: str = ""            # SGO oddID / SharpAPI row id / APIF "bet:value"
+    provider_odd_id: str = ""            # SGO oddID / SharpAPI row id
     label: str = ""                      # human readable selection label
     market_name: str = ""                # human readable market name
     is_player_prop: bool = False
@@ -64,7 +64,7 @@ class Event:
     start: datetime
     markets: List[MarketLine] = field(default_factory=list)
     league_id: str = ""            # provider league identifier
-    extra: Dict = field(default_factory=dict)   # e.g. API-Football predictions payload
+    extra: Dict = field(default_factory=dict)
     sources: List[str] = field(default_factory=list)  # providers merged into this event
 
     @property

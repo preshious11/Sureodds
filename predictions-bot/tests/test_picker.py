@@ -414,14 +414,14 @@ def test_market_derived_score_model_does_not_trigger_the_disagreement_floor():
 
 
 def test_independent_signal_candidates_have_a_disagreement_floor_not_an_edge_requirement():
-    """With an independent signal (apif/elo), a candidate is rejected only when
+    """With an independent signal (elo), a candidate is rejected only when
     that signal says the market is MATERIALLY overpricing it (ev < -0.05);
     mildly negative EV no longer disqualifies."""
     now = dt()
     mildly_negative = sc(ev(1), "result3", "home", 0.70, 1.50, sources=1, ev_val=-0.03)
-    mildly_negative.sources = {"market": 0.68, "apif": 0.72}
+    mildly_negative.sources = {"market": 0.68, "elo": 0.72}
     strongly_overpriced = sc(ev(2), "result3", "home", 0.70, 1.50, sources=1, ev_val=-0.10)
-    strongly_overpriced.sources = {"market": 0.68, "apif": 0.72}
+    strongly_overpriced.sources = {"market": 0.68, "elo": 0.72}
     ps = select([mildly_negative, strongly_overpriced], cfg(), now)
     assert mildly_negative.event.dedupe_key() in {s.event.dedupe_key() for s in ps.all()}
     assert strongly_overpriced.event.dedupe_key() not in {s.event.dedupe_key() for s in ps.all()}

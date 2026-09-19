@@ -3,7 +3,7 @@
 Free tier: 12 req/min, DraftKings + FanDuel, 60 s delay, all sports.
 SharpAPI has no results endpoint on the free tier (game state is a paid
 add-on), so picks sourced here are settled through the cross-provider
-results chain (SportsGameOdds / API-Football) by team names + kick-off.
+results chain (SportsGameOdds) by team names + kick-off.
 
 Feed shape (measured against the live free tier): ``/odds`` is ordered by
 kick-off ascending and each match carries ~40-200 price rows, so the *earliest*
@@ -158,7 +158,7 @@ class SharpApiProvider(BaseProvider):
         self.max_pages = max(1, max_pages)
         self.events_per_target = max(0, events_per_target)
         self.db = getattr(budget, "db", None)      # capability cache storage
-        # retries=0, matching api_football's discipline: a retried request is
+        # retries=0, matching the other providers' discipline: a retried request is
         # still a real upstream call, and budget.spend() is only charged once
         # per logical fetch here - a silent retry would understate real usage.
         self.http = Http("https://api.sharpapi.io/api/v1", headers={"X-API-Key": api_key},

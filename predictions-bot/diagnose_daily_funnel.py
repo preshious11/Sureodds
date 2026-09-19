@@ -80,7 +80,7 @@ def stage_table(cfg, scored, now):
         items = [s for s in items if s.p_model >= cfg.daily_min_prob]
         rows.append((f"p_model>={cfg.daily_min_prob}", len(items)))
         items = [s for s in items if not (INDEPENDENT_SIGNALS & set(s.sources)) or s.ev >= cfg.daily_max_neg_ev]
-        rows.append((f"disagreement floor (ev>={cfg.daily_max_neg_ev} if apif/elo)", len(items)))
+        rows.append((f"disagreement floor (ev>={cfg.daily_max_neg_ev} if elo)", len(items)))
         items = [s for s in items if s.agreement >= 0.30]
         rows.append(("agreement>=0.30", len(items)))
         preferred = [s for s in items if s.p_model >= 0.5]

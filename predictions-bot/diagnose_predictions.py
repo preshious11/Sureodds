@@ -31,15 +31,13 @@ def main():
     _, end = day_bounds(now, cfg.timezone)
     report = {'date': to_local(now, cfg.timezone).date().isoformat(),
               'window': [start.isoformat(), end.isoformat()],
-              'prediction_features_requested': False, 'providers': {}, 'sports': {}}
+              'providers': {}, 'sports': {}}
     pool = []
     for name, provider in build_providers(cfg, db).items():
         if name not in cfg.provider_order:
             continue
         provider.http.retries = 0
         provider.http.timeout = 15
-        if name == 'api_football':
-            provider.predictions_per_run = 0
         if name == 'sharpapi':
             provider.max_pages = 1
         calls = []
@@ -83,7 +81,7 @@ def main():
             'top': sum(s.event.sport == sport for s in picks.top)}
         gates = [('odds', lambda s: s.price >= cfg.top_leg_odds_min),
                  ('confidence', lambda s: s.p_model >= cfg.top_min_prob),
-                 ('disagreement_floor', lambda s: not ({"apif", "elo"} & set(s.sources))
+                 ('disagreement_floor', lambda s: not ({"elo"} & set(s.sources))
                   or s.ev >= cfg.top_max_neg_ev),
                  ('agreement', lambda s: s.agreement >= .5),
                  ('two_sources', lambda s: len(s.sources) >= 2),

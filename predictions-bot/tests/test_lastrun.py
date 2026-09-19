@@ -26,9 +26,9 @@ def _pickset():
                  daily=[sc(c, "result3", "home", 0.70, 1.50)])
     ps.complete = True
     ps.diagnostics = {
-        "providers": {"api_football": {"status": "complete", "outcome": "success", "events": {"football": 30}},
+        "providers": {"sportsgameodds": {"status": "complete", "outcome": "success", "events": {"football": 30}},
                       "sharpapi": {"status": "partial", "outcome": "failed", "events": {"football": 12, "tennis": 5}}},
-        "api_usage": {"api_football": {"cycle": 7, "today": 37, "limit": 100},
+        "api_usage": {"sportsgameodds": {"cycle": 7, "today": 37, "limit": 100},
                       "sharpapi": {"cycle": 3, "today": 30, "limit": None}},
         "top_priority_provider_report": {"oddsapi": {
             "status": "complete", "outcome": "empty", "events": {},
@@ -69,7 +69,7 @@ def test_it_reports_the_whole_cycle(world):
     assert "Last run" in text and "2030-06-02" in text and "status <b>COMPLETE</b>" in text
     assert "Trigger: scheduled/admin job" in text and "cache: <b>MISS</b>" in text
     # per-provider status and the calls THIS cycle spent
-    assert "api_football" in text and "+7 calls (37/100 today)" in text
+    assert "sportsgameodds" in text and "+7 calls (37/100 today)" in text
     assert "sharpapi" in text and "partial/failed" in text and "+3 calls (30/? today)" in text
     # Odds API remaining/used and the refusal
     assert "remaining <b>0</b>" in text and "used <b>500</b>" in text and "reserve 50" in text

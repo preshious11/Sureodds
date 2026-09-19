@@ -31,7 +31,7 @@ def main() -> None:
     db = Database(cfg.db_path)
     providers = build_providers(cfg, db)
     if not providers:
-        log.error("No API keys configured - set at least one of API_FOOTBALL_KEY / SPORTSGAMEODDS_KEY / SHARPAPI_KEY")
+        log.error("No API keys configured - set at least one of SHARPAPI_KEY / ODDS_API_KEY / SPORTSGAMEODDS_KEY")
     chain = ProviderChain(providers, cfg.provider_order, cfg.chain_min_events)
     resolver = ResultsResolver(providers)
     tg = Telegram(cfg.telegram_token, cfg.telegram_chat_id)

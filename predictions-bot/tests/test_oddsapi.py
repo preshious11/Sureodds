@@ -233,7 +233,7 @@ def test_enabled_requires_key(budget):
 
 # ------------------------------------------------------- Top-picks priority
 
-def oddsapi_football_event(price=1.60, i=1):
+def oddssgo_event(price=1.60, i=1):
     # Genuinely distinct club names: same_team() fuzzily matches names that
     # differ only by a trailing digit, and choose_top now refuses two legs
     # from the same real fixture even across providers.
@@ -246,7 +246,7 @@ def oddsapi_football_event(price=1.60, i=1):
 
 
 def test_top_priority_uses_oddsapi_pool_when_it_reaches_target():
-    oa_event = oddsapi_football_event(price=1.45)
+    oa_event = oddssgo_event(price=1.45)
     other_event = ev(2)
     pool = [
         sc(oa_event, "result3", "home", 0.75, 1.45, sources=2),
@@ -254,7 +254,7 @@ def test_top_priority_uses_oddsapi_pool_when_it_reaches_target():
     ]
     # combined 1.45*1.45 = 2.1 >= target 2.0, priority pool alone should suffice
     # but a single oddsapi pick alone (1.45) doesn't reach 2.0, so add a second oddsapi event
-    oa_event2 = oddsapi_football_event(price=1.50, i=2)
+    oa_event2 = oddssgo_event(price=1.50, i=2)
     pool.append(sc(oa_event2, "result3", "home", 0.75, 1.50, sources=2))
     result = select(pool, Config(), dt(), top_priority_source="oddsapi")
     assert result.top
@@ -264,7 +264,7 @@ def test_top_priority_uses_oddsapi_pool_when_it_reaches_target():
 
 def test_top_priority_falls_back_to_other_providers_when_oddsapi_insufficient():
     # Only one weak oddsapi candidate: cannot reach the 2.00 target alone.
-    oa_event = oddsapi_football_event(price=1.40)
+    oa_event = oddssgo_event(price=1.40)
     other_event = ev(2)
     pool = [
         sc(oa_event, "result3", "home", 0.75, 1.40, sources=2),
@@ -278,7 +278,7 @@ def test_top_priority_falls_back_to_other_providers_when_oddsapi_insufficient():
 
 
 def test_oddsapi_only_events_excluded_from_daily_ticket():
-    oa_event = oddsapi_football_event(price=1.20)
+    oa_event = oddssgo_event(price=1.20)
     pool = [sc(oa_event, "result3", "home", 0.40, 1.20, sources=2, ev_val=0.06)]
     result = select(pool, Config(), dt(), top_priority_source="oddsapi")
     assert result.daily == []
@@ -287,15 +287,15 @@ def test_oddsapi_only_events_excluded_from_daily_ticket():
 
 def test_build_picks_tries_oddsapi_chain_first_for_top(db, monkeypatch):
     now = dt()
-    oa_event = oddsapi_football_event(price=1.50, i=1)
+    oa_event = oddssgo_event(price=1.50, i=1)
     # Real fixture builds go through ProviderChain.collect() -> merge_events(),
     # unlike the picker-only tests above. same_team() fuzzily matches names
     # that differ only by a trailing digit (e.g. "OddsHome1"/"OddsHome2"), so
     # this second event needs a genuinely distinct club name or merge_events()
     # folds both legs into one fixture before scoring ever sees two.
-    oa_event2 = oddsapi_football_event(price=1.45, i=2)
+    oa_event2 = oddssgo_event(price=1.45, i=2)
     oa_event2.home, oa_event2.away = "Sporting", "Feyenoord"
-    api_football_event = ev(3)
+    sgo_event = ev(3)
 
     oddsapi_provider = Mock()
     oddsapi_provider.enabled.return_value = True
@@ -303,10 +303,10 @@ def test_build_picks_tries_oddsapi_chain_first_for_top(db, monkeypatch):
 
     daily_provider = Mock()
     daily_provider.enabled.return_value = True
-    daily_provider.fetch_events.return_value = [api_football_event]
+    daily_provider.fetch_events.return_value = [sgo_event]
 
-    chain = ProviderChain({"api_football": daily_provider, "oddsapi": oddsapi_provider},
-                          ["api_football"], 1)
+    chain = ProviderChain({"sportsgameodds": daily_provider, "oddsapi": oddsapi_provider},
+                          ["sportsgameodds"], 1)
     chain.db, chain.cfg = None, None
 
     def fake_score(events, db_, cfg_):
