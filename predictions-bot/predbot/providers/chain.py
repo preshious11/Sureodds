@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 from predbot.config import Config
 from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, apply_price_mode
 from predbot.providers.budget import Budget
-from predbot.providers.football_data import FootballDataProvider
+from predbot.providers.football_data import FootballDataProvider, competition_for
 from predbot.providers.oddsapi import OddsApiProvider
 from predbot.providers.sharpapi import SharpApiProvider
 from predbot.providers.sportsgameodds import SportsGameOddsProvider
@@ -207,9 +207,30 @@ class ResultsResolver:
         def unresolved() -> bool:
             return result is None or result.status == "unknown"
 
+        fd = self.providers.get("football_data")
+
+        def ask_football_data() -> None:
+            nonlocal result
+            if not (unresolved() and fd and sport == "football" and provider != "football_data"):
+                return
+            try:
+                r = fd.find_result(sport, home, away, start, league_id=hints.get("league_id", ""),
+                                   league=hints.get("league", ""))
+            except ProviderError as e:
+                log.warning("football-data lookup (%s v %s) failed: %s", home, away, e)
+                r = None
+            if r and r.status != "unknown":
+                result = r
+
+        # 0) football-data.org first for a league it covers: it is free, whereas the
+        #    Odds API /scores fallback below costs credits
+        fd_covers = bool(fd and sport == "football"
+                         and competition_for(hints.get("league_id", ""), hints.get("league", "")))
+        if fd_covers:
+            ask_football_data()
         # 1) origin provider by id
         prov = self.providers.get(provider)
-        if prov:
+        if unresolved() and prov:
             try:
                 result = prov.fetch_result(provider_event_id, event_hint=hints)
             except ProviderError as e:
@@ -227,17 +248,9 @@ class ResultsResolver:
                 if r and r.status != "unknown":
                     result = r
                     break
-        # 3) football-data.org by competition + teams + kick-off (football only)
-        fd = self.providers.get("football_data")
-        if unresolved() and fd and sport == "football" and provider != "football_data":
-            try:
-                r = fd.find_result(sport, home, away, start, league_id=hints.get("league_id", ""),
-                                   league=hints.get("league", ""))
-            except ProviderError as e:
-                log.warning("football-data lookup (%s v %s) failed: %s", home, away, e)
-                r = None
-            if r and r.status != "unknown":
-                result = r
+        # 3) football-data.org for the leagues it does not map (skipped if already asked)
+        if not fd_covers:
+            ask_football_data()
         # 4) SportsGameOdds by teams + time
         sgo = self.providers.get("sportsgameodds")
         if unresolved() and sgo and provider != "sportsgameodds":
