@@ -154,6 +154,10 @@ def lastrun_text(db, cfg, now: Optional[datetime] = None) -> str:
            "<b>Providers</b>"]
     providers = gen.get("providers") or {}
     out += [_provider_line(n, r, usage) for n, r in sorted(providers.items())] or ["• none recorded"]
+    parse = [f"{esc(n)}: {esc(_kv(r.get('rejections')))}" for n, r in sorted(providers.items())
+             if isinstance(r, dict) and r.get("rejections")]
+    if parse:
+        out += ["", "<b>Parse rejections</b>"] + [f"• {p}" for p in parse]
     feed = _feed_lines(providers)
     if feed:
         out += ["", "<b>SharpAPI feeds</b>"] + feed

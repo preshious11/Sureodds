@@ -47,6 +47,12 @@ def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, na, nb).ratio()
 
 
+def is_doubles(home: str, away: str) -> bool:
+    """A tennis doubles fixture: a side is a pair ("Dabrowski / Stefani"). Neither SharpAPI's ``/odds`` rows nor
+    the Odds API carry a doubles flag or participant count, so the pair separator is the indicator."""
+    return " / " in (home or "") or " / " in (away or "")
+
+
 def strip_abbreviation(name: str) -> str:
     """Drop a leading/trailing all-caps 2-3 letter city code ("BOS Red Sox" -> "Red Sox", "LA Dodgers" ->
     "Dodgers"); a name that is nothing but the code is left alone."""

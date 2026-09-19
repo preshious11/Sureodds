@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Tuple
 from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, apply_price_mode
 from predbot.providers.budget import Budget
 from predbot.util.http import Http, ProviderError, RateLimiter
-from predbot.util.names import same_team
+from predbot.util.names import is_doubles, same_team
 from predbot.util.odds import parse_decimal
 from predbot.util.timeutil import parse_iso, utcnow
 
@@ -393,6 +393,10 @@ class OddsApiProvider(BaseProvider):
                 counts[sport + ":missing_teams"] += 1
                 continue
 
+            if sport == "tennis" and is_doubles(home, away):
+                counts[sport + ":doubles"] += 1
+                self.parse_counts["DOUBLES_UNSUPPORTED"] += 1
+                continue
             counts[sport + ":in_window"] += 1
 
             e = Event(provider=self.name, provider_event_id=event_id, sport=sport,
