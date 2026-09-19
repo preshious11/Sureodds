@@ -1,11 +1,13 @@
 """SQLite provider portions: completed sources are reused during partial retries."""
 import json
 import logging
+import time
 from collections import Counter
 from dataclasses import asdict
 from datetime import timedelta
 
 from predbot.providers.base import Event, MarketLine
+from predbot.providers.base import consolidate_lines
 from predbot.providers.chain import filter_allowed, merge_events
 from predbot.util.timeutil import iso, parse_iso, to_local, utcnow, day_bounds
 
@@ -77,12 +79,14 @@ def collect_persisted(chain, start, end):
     fetch_end = midnight + timedelta(hours=max(0, chain.cfg.day_window_end_offset_hours))
     pool = []
     chain.last_report = {}
+    chain.last_timings = {}
     cfg = chain.cfg
     with chain.db.prediction_lock:
         for name in chain.order:
             provider = chain.providers[name]
             if not provider.enabled():
                 continue
+            _w, _c = time.perf_counter(), time.process_time()
             key = f'provider:v1:{cfg.timezone}:{day}:{name}'
             row = chain.db.get_provider_cache(key)
             events, report = [], None
@@ -132,8 +136,11 @@ def collect_persisted(chain, start, end):
                               updated_at=iso(now))
                 chain.db.upsert_provider_cache(key, day, encode_events(events), report, iso(midnight))
             chain.last_report[name] = report
+            for e in events:
+                e.markets = consolidate_lines(e.markets)         # one line per bet, cached rows included
             pool = merge_events(pool, [e for e in events if start <= e.start < end],
                                 getattr(cfg, 'price_mode', 'median'))
+            chain.last_timings[name] = {'wall': round(time.perf_counter() - _w, 4), 'cpu': round(time.process_time() - _c, 4)}
     return pool
 
 

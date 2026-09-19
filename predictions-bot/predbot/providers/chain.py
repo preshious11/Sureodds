@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
 
 from predbot.config import Config
-from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, apply_price_mode
+from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, apply_price_mode, consolidate_lines
 from predbot.providers.budget import Budget
 from predbot.providers.espn import ESPNProvider
 from predbot.providers.euroleague import EuroLeagueProvider
@@ -139,6 +139,8 @@ class ProviderChain:
                                       "normalization": getattr(prov, 'normalization_counts', {}),
                                       "events": dict(Counter(e.sport for e in events)),
                                       "markets": dict(Counter(e.sport for e in events for m in e.markets))}
+            for e in events:
+                e.markets = consolidate_lines(e.markets)
             pool = merge_events(pool, events, getattr(self.cfg, "price_mode", "median"))
             priced = sum(1 for e in pool if _has_main_market(e))
             log.info("chain: after %s -> %d events (%d with main markets)", name, len(pool), priced)

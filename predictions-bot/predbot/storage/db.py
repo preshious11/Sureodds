@@ -143,6 +143,8 @@ class Database:
             key = os.path.normcase(os.path.abspath(path)) if path != ':memory:' else id(self)
             self.prediction_lock = self._prediction_locks.setdefault(key, threading.RLock())
         self._transaction_depth = 0
+        #: instrumentation: statements executed / commits issued (see tools/replay.py)
+        self.stats = {"executes": 0, "commits": 0}
         d = os.path.dirname(os.path.abspath(path))
         os.makedirs(d, exist_ok=True)
         self._lock = threading.RLock()
@@ -203,8 +205,10 @@ class Database:
     def execute(self, sql: str, params: Iterable = ()) -> sqlite3.Cursor:
         with self._lock:
             cur = self.conn.execute(sql, tuple(params))
+            self.stats["executes"] += 1
             if not self._transaction_depth:
                 self.conn.commit()
+                self.stats["commits"] += 1
             return cur
 
     @contextmanager
@@ -218,6 +222,7 @@ class Database:
                 yield
                 if outer:
                     self.conn.commit()
+                    self.stats["commits"] += 1
             except BaseException:
                 if outer:
                     self.conn.rollback()
