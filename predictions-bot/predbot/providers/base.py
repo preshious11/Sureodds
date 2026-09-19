@@ -25,6 +25,9 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 
+_SIDE_SWAP = {"home": "away", "away": "home", "home_draw": "away_draw", "away_draw": "home_draw"}
+
+
 @dataclass
 class MarketLine:
     market: str
@@ -47,6 +50,22 @@ class MarketLine:
     def key(self) -> Tuple:
         return (self.market, self.period, self.stat, self.entity,
                 None if self.line is None else round(self.line, 2), self.selection)
+
+    def mirrored(self) -> "MarketLine":
+        """The same bet as a provider that lists home and away the other way round would state it: sides
+        exchanged (selection, a team total's entity, a correct score's digits). A handicap's ``line`` is
+        applied to the SELECTED side (see the module docstring, and settlement's ``_handicap(sel, opp, line)``),
+        so it does NOT change sign when the label changes: "their home -1.5" is "our away -1.5" - the same
+        team keeps the same line. (Negating it would describe the opposite bet.)"""
+        import re
+        from dataclasses import replace
+        sel = self.selection
+        if self.market == "correct_score" and re.fullmatch(r"\d+-\d+", sel or ""):
+            a, b = sel.split("-")
+            sel = f"{b}-{a}"
+        else:
+            sel = _SIDE_SWAP.get(sel, sel)
+        return replace(self, selection=sel, entity=_SIDE_SWAP.get(self.entity, self.entity))
 
     def market_key(self) -> Tuple:
         """Identifies the market (all selections share it)."""

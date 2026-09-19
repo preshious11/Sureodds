@@ -94,6 +94,11 @@ def _funnel(gen: Dict) -> List[str]:
              f"Daily pool: {esc(_kv(gen.get('daily_eligible_by_sport')))} | rejected: {esc(_kv(gen.get('daily_pool_rejections')))}",
              f"Top tickets evaluated: {gen.get('combinations_checked', '?')}"
              + (f" · Top odds {gen['top_odds']:.2f}" if gen.get("top_odds") else "")]
+    if gen.get("merged_events") is not None:
+        lines.append(f"Merged across providers: <b>{gen['merged_events']}</b> events | by league: "
+                     f"{esc(_kv(gen.get('merged_pairs_by_league')))}")
+        for p in (gen.get("merged_pairs") or [])[:12]:
+            lines.append(f"• {esc(p['kept'])} ⇄ {esc(p['merged'])}" + (" (sides swapped)" if p.get("swapped") else ""))
     if "top_relaxed" in gen:
         lines.append("Top fallback: " + (f"relaxed by {esc(str(gen['top_relaxed']))}" if gen.get("top_relaxed") else "not needed / none found"))
     if gen.get("daily_family_pool") is not None:
