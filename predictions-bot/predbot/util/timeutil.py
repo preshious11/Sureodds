@@ -37,6 +37,24 @@ def is_valid_tz(name: str) -> bool:
         return False
 
 
+def canonical_tz(name: str) -> Optional[str]:
+    """The IANA spelling of ``name`` (``africa/lagos`` -> ``Africa/Lagos``) for an
+    ``Area/City`` zone this interpreter knows, else None."""
+    raw = str(name or "").strip()
+    if "/" not in raw:
+        return None
+    if is_valid_tz(raw):
+        return raw
+    try:
+        from zoneinfo import available_timezones
+        for known in available_timezones():
+            if known.lower() == raw.lower():
+                return known
+    except Exception:  # noqa: BLE001 - no tz database listing available
+        pass
+    return None
+
+
 def parse_iso(s: str) -> Optional[datetime]:
     if not s:
         return None

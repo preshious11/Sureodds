@@ -59,7 +59,7 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
 
 
 class ProviderChain:
-    def __init__(self, providers: Dict[str, BaseProvider], order: List[str], min_events: int):
+    def __init__(self, providers: Dict[str, BaseProvider], order: List[str], min_events: Optional[int] = None):
         self.providers = providers
         self.order = [p for p in order if p in providers]
         self.min_events = min_events

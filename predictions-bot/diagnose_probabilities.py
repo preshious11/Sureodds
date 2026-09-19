@@ -54,7 +54,7 @@ def main():
           f"(now+{cfg.min_lead_minutes}min .. min(local midnight {cfg.timezone}, now+{cfg.pick_window_hours}h))")
 
     providers = build_providers(cfg, db)
-    chain = ProviderChain(providers, cfg.provider_order, cfg.chain_min_events)
+    chain = ProviderChain(providers, cfg.provider_order)
     chain.db, chain.cfg = db, cfg
     events = chain.collect(start, end)
 
@@ -87,7 +87,7 @@ def main():
     prio = {n: providers[n] for n in cfg.top_provider_priority if n in providers
             and providers[n].enabled()}
     if prio:
-        top_chain = ProviderChain(providers, cfg.top_provider_priority, cfg.chain_min_events)
+        top_chain = ProviderChain(providers, cfg.top_provider_priority)
         top_chain.db, top_chain.cfg = db, cfg
         top_events = top_chain.collect(start, end)
         print(f"\n== top-priority chain {cfg.top_provider_priority}: {len(top_events)} events "

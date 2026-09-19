@@ -55,13 +55,28 @@ LOCALE_TO_TIMEZONE = {
     "en_NZ": "Pacific/Auckland",
 }
 
+_LOCALES = {k.lower(): v for k, v in LOCALE_TO_TIMEZONE.items()}
+#: A bare English locale (Telegram often sends just "en") defaults to the bot's home market.
+BARE_ENGLISH_TIMEZONE = "Africa/Lagos"
+
+
 def _detect_user_timezone(user: Dict[str, Any]) -> Optional[str]:
-    """Detect a subscriber's timezone from the locale Telegram already sends."""
+    """Detect a subscriber's timezone from the locale Telegram already sends.
+
+    Telegram uses BCP-47 tags (``en-US``, ``pt-br``, bare ``en``) while the table is
+    keyed ``en_US``: hyphens are normalised and the match ignores case. A bare
+    ``en`` maps to Africa/Lagos; anything else unknown returns None (the bot's own
+    zone applies)."""
     if not user:
         return None
-    locale = user.get("language_code") or user.get("language")
-    if locale:
-        return LOCALE_TO_TIMEZONE.get(locale)
+    locale = str(user.get("language_code") or user.get("language") or "").strip()
+    if not locale:
+        return None
+    key = locale.replace("-", "_").lower()
+    if key in _LOCALES:
+        return _LOCALES[key]
+    if key == "en":
+        return BARE_ENGLISH_TIMEZONE
     return None
 
 

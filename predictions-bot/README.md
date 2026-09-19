@@ -1,12 +1,13 @@
 # predbot — multi-sport predictions Telegram bot
 
-A Telegram bot that pulls odds from three free-tier APIs, prices **every market
-the APIs expose** with its own model, and posts a daily set of **2 top picks +
-up to 20 daily picks**. It settles results automatically and tracks a rolling
-record.
+A Telegram bot for Nigerian SportyBet punters. It pulls odds from The Odds API,
+SharpAPI and SportsGameOdds, prices the markets it can settle with its own model,
+and posts a daily **Top ticket (~2.00 combined odds) + a Daily ticket**. It settles
+results automatically (football-data.org, The Odds API scores, SportsGameOdds) and
+tracks a rolling record.
 
-It is written in pure Python (only `requests` is required) and is built to run
-as a single Railway **worker** service.
+It is written in pure Python 3.11 (only `requests` is required) and runs as a single
+worker process (a Docker container; the root `Dockerfile` runs `python main.py`).
 
 > **Honest note first.** No model can guarantee betting results — sports are
 > genuinely uncertain and every book builds in a margin. This bot estimates
@@ -19,20 +20,23 @@ as a single Railway **worker** service.
 
 ## What it does
 
-- **Fallback provider chain.** It queries providers in order (default
-  `sportsgameodds → sharpapi`) and stops once it has enough
-  priced events for the day. If football alone is thin, it reaches into the
-  other providers for basketball, tennis, hockey, baseball, etc. Events that
-  appear in more than one provider are merged (fuzzy team-name + kickoff match),
-  so a pick can be backed by several books.
+- **Provider chain.** Providers are queried in `PROVIDER_ORDER` (default
+  `oddsapi,sharpapi,sportsgameodds`) and their events are merged (fuzzy team-name +
+  kickoff match), so a pick can be backed by several books. Only `ALLOWED_SPORTS`
+  (football, basketball, American football, baseball, tennis) are kept; anything
+  else a provider returns is dropped and counted as `sport_rejected`. SharpAPI is
+  required; the others are optional. A line is priced at the **median** of the books
+  that quote it (`PRICE_MODE=median`, or `best` for the highest price + bookmaker).
 - **Full market coverage.** Not just win/lose — see the list below.
 - **A real pricing model** (not just the odds read back at you) — see "How the
   model works".
-- **2 top picks + up to 20 daily picks**, with hard rules: no padding, no
-  favouring one outcome type, and no overlap between the two pools.
-- **Auto-settlement + stats.** Results are fetched from the APIs; it posts a
-  daily recap (each pick ✅/❌, win–loss, best win, 7-day ROI) and a rolling
-  7-day record.
+- **A Top ticket and a Daily ticket**, with hard rules: no padding, no favouring
+  one outcome type, one pick per real fixture, and no overlap between the two.
+- **Only picks that can be settled.** A candidate is accepted only if some provider
+  can later return its result (see "Settlement"); otherwise it is rejected as
+  `NO_RESULTS_PATH` and counted per league in the generation diagnostics.
+- **Auto-settlement + stats.** It posts a daily recap (each pick ✅/❌, win–loss,
+  best win, 7-day ROI) and a rolling 7-day record.
 
 ---
 
@@ -48,11 +52,18 @@ and graded on settlement:
 | Handicap | Asian & European handicaps (incl. quarter lines), on goals/points/corners/cards |
 | Goals | Both Teams To Score, Team To Score, Clean Sheet, Win To Nil |
 | Combos | HT/FT, Result & Over/Under, Result & BTTS, Winning Margin, Correct Score |
-| Other | Odd/Even (match & team) |
-| Props | Player props (Over/Under, Yes/No) **only via SportsGameOdds**, since only it supplies a settleable result value |
+| Other | Odd/Even (match & team) — priced and settled, but not selected by default |
+| Props | Player props (**only via SportsGameOdds**), off by default (`MAX_PLAYER_PROPS=0`) |
+
+`DISABLED_MARKETS` (default `odd_even,prop,winning_margin,ht_ft`) lists market ids
+the picker never selects (`DISABLED_MARKET` in the rejection counts); empty it to
+allow them. SportsGameOdds odds are also restricted to `SGO_ALLOWED_STATS`
+(default `points,cornerKicks,yellowCards,weightedCards,bothTeamsScored`) and
+`SGO_ALLOWED_PERIODS` (default `game,reg,1h,2h`); anything else is rejected at parse
+time (`UNSUPPORTED_STAT` / `UNSUPPORTED_PERIOD`).
 
 Periods supported where a provider offers them: full match, regulation, 1st/2nd
-half, quarters, and periods (hockey).
+half, quarters and sets/innings for the sports that use them.
 
 **What is intentionally excluded:** SharpAPI player props are dropped — its free
 tier gives no game-state/result feed, so those bets could never be settled
@@ -71,7 +82,7 @@ learned calibration:
    average of a multiplicative and a power de-vig (the power method is fairer to
    longshots). This is the market's honest opinion and the anchor for everything
    else.
-2. **Score-grid model** (football, hockey, handball, baseball). A Dixon-Coles
+2. **Score-grid model** (football, baseball). A Dixon-Coles
    adjusted Poisson grid over final scores. Its expected goals are solved so the
    grid *reproduces* the de-vigged 1X2 and the main Over/Under line. One grid
    prices **every** score-settled market consistently (1X2, DNB, DC, any total or
@@ -110,13 +121,16 @@ The **picker** then applies your rules:
 
 ## Setup
 
-### 1. Get API keys (all have free tiers)
+### 1. Get API keys
 
-- **SportsGameOdds** — https://sportsgameodds.com/
-- **SharpAPI** — https://sharpapi.io/
+| Provider | Role | Status |
+|----------|------|--------|
+| **SharpAPI** — https://sharpapi.io/ | fixtures + odds for the explicit `SHARPAPI_LEAGUES` | **required** — the bot exits with code 2 without `SHARPAPI_KEY` |
+| **The Odds API** — https://the-odds-api.com/ | odds (Top ticket, European football) + `/scores` results | recommended |
+| **SportsGameOdds** — https://sportsgameodds.com/ | NBA/NFL/MLB/MLS/NCAA/UCL odds + results | optional |
+| **football-data.org** — https://www.football-data.org/ | free football **results only** (never odds or fixtures) | optional, recommended for settlement |
 
-You only need the ones you want to use; the chain skips any provider without a
-key.
+A missing optional key only logs a warning at startup; the chain skips that provider.
 
 ### 2. Telegram
 
@@ -132,12 +146,14 @@ Copy `.env.example` to `.env` and fill it in. The important ones:
 ```
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
-SPORTSGAMEODDS_KEY=...
-SHARPAPI_KEY=...
-PROVIDER_ORDER=sportsgameodds,sharpapi
-POST_TIME=09:00
-RECAP_TIME=08:30
+SHARPAPI_KEY=...                 # required
+ODDS_API_KEY=...                 # recommended
+SPORTSGAMEODDS_KEY=...           # optional
+FOOTBALL_DATA_KEY=...            # optional (results only)
+PROVIDER_ORDER=oddsapi,sharpapi,sportsgameodds
 TIMEZONE=Africa/Lagos
+POST_TIME=09:00                  # picks are generated
+DELIVERY_TIME=09:30              # the card is sent (one instant, in TIMEZONE)
 DB_PATH=/data/predbot.db
 ```
 
@@ -155,29 +171,34 @@ python cli.py settle             # settle finished games now
 python cli.py recap              # post yesterday's recap
 python cli.py stats              # print the rolling record
 python cli.py budget             # show API usage today / this month
-python main.py                   # run the scheduler (what Railway runs)
+python main.py                   # run the scheduler (what the container runs)
 ```
 
-`main.py` runs the scheduler loop: recap at `RECAP_TIME`, picks at `POST_TIME`,
-settlement every `SETTLE_INTERVAL_MIN` minutes. Set `ENABLE_COMMANDS=true` and
-`TELEGRAM_ADMIN_IDS` to also answer `/top`, `/daily`, `/stats`, `/yesterday` (and admin
-`/run`, `/settle`, `/recap`).
+`main.py` runs the scheduler loop: recap at `RECAP_TIME`, picks generated at
+`POST_TIME`, the card delivered at `DELIVERY_TIME`, a PARTIAL slate retried every
+`CACHE_RETRY_SECONDS` until then, and settlement dynamically after the day's last
+match ends (+ sport duration + 15 min). With `ENABLE_COMMANDS=true` the bot answers
+`/top`, `/daily`, `/stats`, `/yesterday`, `/timezone Area/City` and `/help`; ids in
+`TELEGRAM_ADMIN_IDS` also get `/run`, `/settle`, `/recap` and `/lastrun`.
+User commands and delivery polling only read the SQLite cache — they never call a
+provider. If a generation is running, a read gets "Today's picks are being generated —
+try again in a minute." (or the already-published card).
 
 ---
 
-## Deploy on Railway
+## Deploy (justrunmy.app / any Docker host)
 
-1. Push this folder to a GitHub repo and create a Railway project from it (or use
-   the Railway CLI).
-2. Railway reads the `Procfile` (`worker: python main.py`) and `railway.json`.
-   It runs as a **worker** — there is no web port.
-3. **Add a Volume** and mount it at `/data`, then set `DB_PATH=/data/predbot.db`.
-   This is essential: the SQLite database holds your record, budget counters,
-   Elo ratings and calibration. Without a volume the container's disk resets on
-   every redeploy and you lose all history.
-4. Add every variable from `.env` in the Railway **Variables** tab.
-5. Deploy. Watch the logs; run a one-off `python cli.py test-post` from the
-   Railway shell to confirm Telegram is wired up.
+1. Build from the repo-root `Dockerfile` (`CMD python main.py`, `DB_PATH=/data/predbot.db`).
+   It is a worker — there is no web port. Run exactly ONE instance per Telegram token
+   (two pollers cause 409 conflicts).
+2. **Mount a persistent volume at `/data`.** The SQLite database holds your record,
+   budget counters, Elo ratings and calibration; without a volume every redeploy
+   starts empty.
+3. Set the variables from `.env.example` in the host's dashboard. **Dashboard values
+   override the code defaults**, so delete any variable you no longer want to pin
+   (an old `PROVIDER_ORDER=api_football,...` only produces a startup warning).
+4. Redeploy after every push (a restart alone keeps the old image). Startup logs which
+   `.env` was loaded and which keys override a default.
 
 ---
 
@@ -186,20 +207,44 @@ settlement every `SETTLE_INTERVAL_MIN` minutes. Set `ENABLE_COMMANDS=true` and
 The bot tracks usage per provider in the database and refuses to exceed a quota
 rather than failing silently:
 
+- **The Odds API** — 500 credits/month; an odds request costs regions × markets
+  (`ODDS_API_REGIONS=eu` × 3 markets = 3 credits per league key). Generation is capped
+  at `ODDSAPI_MAX_CREDITS_PER_CYCLE=9` (three leagues from `ODDS_API_LEAGUE_ALLOWLIST`),
+  never spends below `ODDSAPI_RESERVE_CREDITS=80` of `x-requests-remaining`, and the
+  settlement `/scores` call costs 2 credits per league key per run: ≈ 270 + 180 ≈
+  450 of 500 a month. `ODDS_API_REGIONS=uk` adds UK books at the same cost.
+- **football-data.org** — 10 requests/minute (calls are spaced 6.5 s and cached per
+  competition + date for one settlement run).
 - **SportsGameOdds** — billed per *event object* per month
   (`SGO_MONTHLY_OBJECT_LIMIT`). The bot spreads the monthly allowance across the
   days remaining in the month and keeps a reserve for settlement.
 - **SharpAPI** — rate-limited to `SHARPAPI_MIN_INTERVAL_SEC` between calls
   (free tier ≈ 12/min). Its `/odds` feed is ordered by kick-off and prices each
-  match with dozens of rows, so the fetch is shaped by three knobs:
-  `SHARPAPI_MARKETS` (default `moneyline,spread,total` — drops the season
-  outrights that flood a raw page), `SHARPAPI_SPORTS` (e.g. `soccer`: walks the
-  global kick-off-ordered feed, the cheapest way to today's fixtures without a
-  request per league), `SHARPAPI_LEAGUES` (optional per-league feeds), plus
-  `SHARPAPI_MAX_PAGES` and `SHARPAPI_EVENTS_PER_TARGET` bounds. Paging also
-  stops by itself once a page starts after the pick window ends.
+  match with dozens of rows, so the fetch is shaped by `SHARPAPI_MARKETS` (default
+  `moneyline,spread,total`), an **explicit** `SHARPAPI_LEAGUES` list (19 leagues by
+  default; there is no sport-level auto-discovery — a configured `SHARPAPI_SPORTS`
+  feed only logs a warning), `SHARPAPI_MAX_PAGES=3` and `SHARPAPI_EVENTS_PER_TARGET`.
+  Paging also stops once a page starts after the pick window ends.
 
 Run `python cli.py budget` any time to see where you stand.
+
+---
+
+## Settlement
+
+A pick is only made when `markets/settlement.py::results_path(event, …)` finds a
+provider that can settle it, in this order: SportsGameOdds (events it supplied);
+The Odds API (its `sport_key` is stored with the pick and `/sports/{key}/scores`
+covers it); football-data.org (a football league that maps to a competition code —
+needs `FOOTBALL_DATA_KEY`); SportsGameOdds `find_result` for a league it covers.
+Otherwise the candidate is rejected as `NO_RESULTS_PATH` (logged once per league).
+
+`ResultsResolver` then resolves each stored pick in this order: the origin provider by
+id → alternate ids recorded when providers were merged → football-data.org by
+competition + teams + kick-off → SportsGameOdds by teams + time. Every provider call
+is wrapped, so an outage leaves the pick pending. `settle.run` never raises: a bad
+pick is counted in `errors` and the rest are settled; a pick with no result after
+`MAX_PENDING_DAYS` is voided. Football markets settle on the 90-minute score.
 
 ---
 
@@ -211,8 +256,11 @@ plus the additional daily selections, which the picker sizes toward 10–20 odds
 Commands and buttons share the same renderer. Each prediction shows its sport
 icon, fixture, outcome, confidence, subscriber-local kickoff time and odds.
 The footer multiplies all odds in the selected ticket, across every page, and
-displays two decimal places. The saved `/timezone` preference applies to both
-commands and buttons; the configured timezone is the fallback.
+displays two decimal places. The saved `/timezone` preference (detected from the
+Telegram locale on `/start`, or set with `/timezone Area/City`) applies to both
+commands and buttons; the configured timezone is the fallback. Each ticket header
+shows `odds as of <generation time>` and every pick says where its price comes from
+(`Odds: 2.10 (median of 6 books)` / `Odds: 2.35 (Bet365)`).
 
 Predictions use the existing SQLite database (`DB_PATH`) as the only cache.
 
@@ -221,9 +269,11 @@ Predictions use the existing SQLite database (`DB_PATH`) as the only cache.
 - Keys contain the application timezone and calendar date. Subscriber zones affect
   display only. Rows expire at application-zone midnight (Africa/Lagos by default).
 - COMPLETE snapshots return without provider calls, including after process restart.
-- PARTIAL snapshots remain usable. After `CACHE_RETRY_SECONDS` (default 900), failed
-  providers are retried; successful provider portions in `provider_cache` are reused.
-  Valid empty results count as completed; a failed football source does not.
+- PARTIAL snapshots remain usable. The `retry_partial` job regenerates a PARTIAL day
+  every `CACHE_RETRY_SECONDS` (default 900) **until `DELIVERY_TIME`, and only while
+  nothing has been delivered**; successful provider portions in `provider_cache` are
+  reused. Regenerating a day nobody was sent replaces that day's pending picks
+  (delivered days are never rewritten).
 - `force_refresh=True` rebuilds Top/Daily selection from canonical provider data.
   Completed source responses remain protected from unnecessary paid refetches.
 - SQLite transactions save both lists/status together; a shared in-process lock
@@ -262,14 +312,15 @@ parsers against saved sample payloads in `tests/fixtures/`.
 ## Project layout
 
 ```
-main.py                 scheduler entrypoint (Railway worker)
+main.py                 scheduler entrypoint (the container worker)
 cli.py                  manual commands
 predbot/
   config.py             all env-driven settings
-  providers/            sportsgameodds, sharpapi, oddsapi, chain, budget
+  providers/            oddsapi, sharpapi, sportsgameodds, football_data
+                        (results only), chain, budget
   markets/              canonical market catalogue + settlement grading
   model/                devig, poisson score grid, margin model, elo,
-                        features, calibration, ensemble
+                        calibration (fitted on pre-calibration probabilities), ensemble
   selection/picker.py   top/daily selection rules
   bot/                  telegram client, message formatting, command loop
   jobs/                 daily_picks, settle, recap, stats, scheduler
@@ -277,11 +328,12 @@ predbot/
 tests/                  pytest suite + fixtures
 ```
 
-### Shared daily broadcast time
+### Shared daily delivery time
 
-The default is `TIMEZONE=Africa/Lagos` and `POST_TIME=09:00`. All subscribers
-receive the same scheduled broadcast at 09:00 WAT (08:00 UTC), subject to job
-completion and delivery retries. Their saved timezone changes displayed kickoff
-times and the local schedule shown by `/timezone`, not the delivery instant.
-For New York this is 03:00 EST or 04:00 EDT. Set both deployment variables and
-redeploy; existing environment values override code defaults.
+Picks are generated at `POST_TIME` (default 09:00) and delivered at `DELIVERY_TIME`
+(default 09:30), both in `TIMEZONE` (default `Africa/Lagos`): every subscriber gets
+the card at the same instant (09:30 WAT = 08:30 UTC), once per person per day. A
+subscriber's own zone only changes how kick-off times are displayed. Someone who
+subscribes after `DELIVERY_TIME` starts with the next day's card. Legs that have
+already started or finished when a card is read are marked. Dashboard variables
+override code defaults, so set/delete them there and redeploy.

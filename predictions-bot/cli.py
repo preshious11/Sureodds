@@ -24,7 +24,7 @@ def main(argv):
     require_provider_keys(cfg)
     db = Database(cfg.db_path)
     providers = build_providers(cfg, db)
-    chain = ProviderChain(providers, cfg.provider_order, cfg.chain_min_events)
+    chain = ProviderChain(providers, cfg.provider_order)
     resolver = ResultsResolver(providers)
     tg = Telegram(cfg.telegram_token, cfg.telegram_chat_id)
     cmd = argv[1] if len(argv) > 1 else "help"

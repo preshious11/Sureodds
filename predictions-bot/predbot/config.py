@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -130,7 +131,6 @@ class Config:
     #: Provider tried first for the Top ticket only; falls back to
     #: ``provider_order`` when it can't supply enough qualifying picks.
     top_provider_priority: List[str] = field(default_factory=lambda: _list("TOP_PROVIDER_PRIORITY", "oddsapi"))
-    chain_min_events: int = field(default_factory=lambda: _int("CHAIN_MIN_EVENTS", 40))
     sgo_sports: List[str] = field(default_factory=lambda: _list("SGO_SPORTS", ""))
     sgo_leagues: List[str] = field(default_factory=lambda: _list("SGO_LEAGUES", "NBA,NFL,MLB,MLS,NCAAF,NCAAB,UEFA_CHAMPIONS_LEAGUE"))
     sgo_event_limit: int = field(default_factory=lambda: _int("SGO_EVENT_LIMIT", 50))
@@ -287,13 +287,6 @@ class Config:
             if not ok:
                 log.warning("Config: %s does not hold - selection may behave unexpectedly", name)
 
-    def enabled_providers(self) -> List[str]:
-        keys = {
-            "sportsgameodds": bool(self.sgo_key),
-            "sharpapi": bool(self.sharpapi_key),
-        }
-        return [p for p in self.provider_order if keys.get(p)]
-
 
 def require_provider_keys(cfg: "Config") -> None:
     """SharpAPI is the one required provider: without it there is no fixture
@@ -316,6 +309,24 @@ def default_env_path() -> Path:
     return Path(__file__).resolve().parent.parent / ".env"
 
 
+def _env_value(raw: str) -> str:
+    """The value part of a ``KEY=value`` line.
+
+    ``#`` starts a comment only when it is preceded by whitespace and the value is
+    not quoted, so a token or URL containing ``#`` survives; a quoted value ends at
+    its closing quote (whatever follows, e.g. `` # note``, is ignored)."""
+    v = raw.strip()
+    if v[:1] in ("'", '"'):
+        end = v.find(v[0], 1)
+        if end != -1:
+            return v[1:end]
+        return v[1:]
+    m = re.search(r"\s#", raw)
+    if m:
+        v = raw[:m.start()].strip()
+    return v
+
+
 def _parse_env_file(path: Path) -> Dict[str, str]:
     out: Dict[str, str] = {}
     with open(path, "r", encoding="utf-8") as fh:
@@ -324,7 +335,7 @@ def _parse_env_file(path: Path) -> Dict[str, str]:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, v = line.split("=", 1)
-            out[k.strip()] = v.split("#", 1)[0].strip().strip('"').strip("'")
+            out[k.strip()] = _env_value(v)
     return out
 
 

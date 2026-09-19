@@ -98,7 +98,7 @@ tz = cfg.timezone
 now = datetime.now(timezone.utc)
 day_start, midnight = day_bounds(now, tz)
 
-chain = ProviderChain(raw, cfg.provider_order, cfg.chain_min_events)
+chain = ProviderChain(raw, cfg.provider_order)
 chain.cfg = cfg
 chain.db = db
 

@@ -64,6 +64,7 @@ class Scored:
     rank_score: float = 0.0
     tier: str = ""
     notes: Dict = field(default_factory=dict)
+    p_raw: Optional[float] = None     # blended probability BEFORE calibration (stored as prob_raw)
 
     @property
     def price(self) -> float:
@@ -265,6 +266,7 @@ class EventModel:
         # market-only lines (no model view) are shaded to the market entirely
         if len(sources) == 1:
             p_final = p_mkt
+        p_raw = max(0.02, min(0.98, p_final))
         p_final = self.cal.apply(p_final)
         p_final = max(0.02, min(0.98, p_final))
 
@@ -276,7 +278,7 @@ class EventModel:
         edge = p_final - p_mkt
         liquidity = min(1.0, ml.n_books / 3.0)
         label = selection_label(ml, self.ev.home, self.ev.away, self.sport)
-        return Scored(event=self.ev, line=ml, p_market=p_mkt, p_model=p_final, sources=sources,
+        return Scored(event=self.ev, line=ml, p_market=p_mkt, p_model=p_final, p_raw=p_raw, sources=sources,
                       agreement=agreement, ev=ev, edge=edge, label=label, liquidity=liquidity,
                       notes=dict(self.notes))
 

@@ -16,6 +16,19 @@ log = logging.getLogger(__name__)
 MIN_SAMPLES = 150
 
 
+def _raw_probability(row) -> float:
+    """The probability the model produced BEFORE calibration.
+
+    Training the calibrator on already-calibrated ``prob`` would fit it to its own
+    output; ``prob_raw`` is stored with every pick since that column was added, and
+    older rows (NULL) fall back to ``prob``."""
+    try:
+        raw = row["prob_raw"]
+    except (KeyError, IndexError):
+        raw = None
+    return float(raw if raw is not None else row["prob"])
+
+
 def fit(samples: List[Tuple[float, float]], epochs: int = 400, lr: float = 0.05) -> Tuple[float, float]:
     """samples: (prob, outcome in {0, 0.5, 1})."""
     a, b = 1.0, 0.0
@@ -53,7 +66,7 @@ class Calibrator:
             y = {"won": 1.0, "lost": 0.0, "half_won": 0.75, "half_lost": 0.25}.get(r["status"])
             if y is None:
                 continue
-            samples.append((float(r["prob"]), y))
+            samples.append((_raw_probability(r), y))
         if len(samples) < MIN_SAMPLES:
             return None
         a, b = fit(samples)
@@ -68,5 +81,5 @@ class Calibrator:
         for r in rows:
             y = {"won": 1.0, "lost": 0.0, "half_won": 0.75, "half_lost": 0.25}.get(r["status"])
             if y is not None:
-                vals.append((float(r["prob"]) - y) ** 2)
+                vals.append((_raw_probability(r) - y) ** 2)
         return sum(vals) / len(vals) if vals else None

@@ -48,7 +48,7 @@ def main(argv=None):
     db = Database(cfg.db_path)
     from predbot.providers.chain import build_providers, ProviderChain
     providers = build_providers(cfg, db)
-    chain = ProviderChain(providers, cfg.provider_order, cfg.chain_min_events)
+    chain = ProviderChain(providers, cfg.provider_order)
     service = UnifiedFetcher(chain, db, cfg)
     print("MODE: " + ("PERSIST - the result WILL be stored and served" if persist
                       else "READ-ONLY - nothing is written to the snapshot or picks tables"))

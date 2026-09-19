@@ -37,7 +37,7 @@ def base_valid(s, lead) -> str:
 
 def collect(cfg, db, force):
     providers = build_providers(cfg, db)
-    chain = ProviderChain(providers, cfg.provider_order, cfg.chain_min_events)
+    chain = ProviderChain(providers, cfg.provider_order)
     chain.db, chain.cfg = db, cfg
     if force:
         chain.force_retry = True
@@ -51,7 +51,7 @@ def collect(cfg, db, force):
     top_priority_source = None
     prio = [n for n in cfg.top_provider_priority if n in providers and providers[n].enabled()]
     if prio:
-        top_chain = ProviderChain(providers, cfg.top_provider_priority, cfg.chain_min_events)
+        top_chain = ProviderChain(providers, cfg.top_provider_priority)
         top_chain.db, top_chain.cfg = db, cfg
         prio_events = top_chain.collect(start, end)
         if prio_events:
