@@ -45,7 +45,13 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
                                            max_pages=cfg.sharpapi_max_pages, markets=cfg.sharpapi_markets,
                                            sports=cfg.sharpapi_sports,
                                            events_per_target=cfg.sharpapi_events_per_target,
-                                           price_mode=cfg.price_mode)
+                                           price_mode=cfg.price_mode,
+                                           main_lines_only=cfg.sharpapi_main_lines_only,
+                                           sport_markets={"football": cfg.sharpapi_markets_football,
+                                                          "baseball": cfg.sharpapi_markets_baseball},
+                                           monthly_limit=cfg.sharpapi_monthly_request_limit,
+                                           max_requests_per_generation=cfg.sharpapi_max_requests_per_generation,
+                                           league_priority=cfg.sharpapi_league_priority)
     if cfg.odds_api_key:
         out["oddsapi"] = OddsApiProvider(cfg.odds_api_key, budget, min_interval=cfg.odds_api_min_interval,
                                          price_mode=cfg.price_mode,

@@ -156,8 +156,20 @@ class SharpApiProvider(BaseProvider):
     def __init__(self, api_key: str, budget: Budget, leagues: List[str], min_interval: float = 5.5,
                  max_pages: int = 12, markets: Optional[List[str]] = None,
                  sports: Optional[List[str]] = None, events_per_target: int = 40,
-                 price_mode: str = "median"):
+                 price_mode: str = "median", main_lines_only: bool = False,
+                 sport_markets: Optional[Dict[str, List[str]]] = None, monthly_limit: Optional[int] = None,
+                 max_requests_per_generation: Optional[int] = None, league_priority: Optional[List[str]] = None):
         self.key = api_key
+        #: ``is_main_line=true`` on every /odds request: alternate lines are ~70% of a match's rows
+        self.main_lines_only = main_lines_only
+        #: exact ``market=`` names per sport (they exclude the shots/fouls/corners/player rows that the
+        #: ``spread``/``total`` aliases drag in); sports without an entry use ``markets``
+        self.sport_markets = {k: list(v) for k, v in (sport_markets or {}).items() if v}
+        #: SharpAPI documents no monthly quota (free tier: 12 requests/minute only); this is a
+        #: self-imposed monthly budget, spread over the days left by Budget.monthly_daily_allowance
+        self.monthly_limit = monthly_limit
+        self.max_requests_per_generation = max_requests_per_generation
+        self.league_priority = [x for x in (league_priority or []) if x]
         self.price_mode = price_mode
         self.budget = budget
         self.leagues = leagues
@@ -189,7 +201,9 @@ class SharpApiProvider(BaseProvider):
         (``SHARPAPI_SPORTS``) is still honoured if configured, but it pulls every
         league of that sport through the page budget, so it is warned about."""
         # leagues nothing can settle are not fetched (chain.build_providers fills skipped_no_results)
-        targets = [{"league": lg} for lg in self.leagues if lg not in self.skipped_no_results]
+        ordered = [lg for lg in self.league_priority if lg in self.leagues] + \
+                  [lg for lg in self.leagues if lg not in self.league_priority]
+        targets = [{"league": lg} for lg in ordered if lg not in self.skipped_no_results]
         sports = [sp for sp in self.sports if sp != "auto"]
         if "auto" in self.sports:
             log.warning("SharpAPI: SHARPAPI_SPORTS=auto is no longer supported - list leagues in SHARPAPI_LEAGUES")
@@ -209,6 +223,25 @@ class SharpApiProvider(BaseProvider):
             return sport_for_filter(target["sport"])
         return "other"
 
+    def request_budget(self) -> Optional[int]:
+        """Requests this generation may spend: the daily share of ``monthly_limit`` (Budget keeps
+        10% back) capped by ``max_requests_per_generation``; None = unbudgeted."""
+        cap = self.max_requests_per_generation
+        if self.monthly_limit:
+            allowance = self.budget.monthly_daily_allowance(self.name, self.monthly_limit, reserve_frac=0.10)
+            cap = allowance if cap is None else min(cap, allowance)
+        return None if cap is None else max(0, int(cap))
+
+    def _params(self, target: Dict[str, str]) -> Dict:
+        params: Dict = {"is_live": "false", "limit": 200}
+        params.update(target)
+        markets = self.sport_markets.get(self._target_sport(target)) or self.markets
+        if markets:
+            params["market"] = ",".join(markets)
+        if self.main_lines_only:
+            params["is_main_line"] = "true"
+        return params
+
     def fetch_events(self, start: datetime, end: datetime) -> List[Event]:
         self.last_fetch_complete = True
         self.fetch_counts = {}
@@ -217,19 +250,34 @@ class SharpApiProvider(BaseProvider):
         target_status: Dict[str, set] = defaultdict(set)
         feeds: Counter = Counter()            # how many targets walked per sport
         rows: List[Dict] = []
-        for target in self._targets():
+        targets = self._targets()
+        budget_left = self.request_budget()
+        self.requests_budget = budget_left
+        self.requests_spent = 0
+        for index, target in enumerate(targets):
             label = target.get("league") or target.get("sport") or "all"
             sport = self._target_sport(target)
             feeds[sport] += 1
+            # every feed still to come is owed one page, so a hungry feed cannot starve the rest
+            ceiling = self.max_pages
+            if budget_left is not None:
+                owed = len(targets) - index - 1
+                ceiling = min(ceiling, max(1 if budget_left >= 1 else 0, budget_left - owed))
+            counts = {"requests": 0, "rows": 0, "matches_seen": 0, "matches_in_window": 0, "rows_per_match": 0.0,
+                      "capped": False, "stop_reason": ""}
+            self.fetch_counts[label] = counts
+            if ceiling < 1:                   # checked BEFORE any request is made
+                counts.update(capped=True, stop_reason="budget")
+                self.last_fetch_complete = False
+                target_status[sport].add("failed")
+                continue
             cursor = None
             pages = 0
             seen: set = set()
             in_window_ids: set = set()
-            while pages < self.max_pages:
-                params: Dict = {"is_live": "false", "limit": 200}
-                params.update(target)
-                if self.markets:
-                    params["market"] = ",".join(self.markets)
+            stop = "page_ceiling"
+            while pages < ceiling:
+                params = self._params(target)
                 if cursor:
                     params["cursor"] = cursor
                 try:
@@ -238,9 +286,13 @@ class SharpApiProvider(BaseProvider):
                     self.last_fetch_complete = False
                     target_status[sport].add("failed")
                     log.warning("SharpAPI fetch failed (%s): %s", label, e)
+                    stop = "error"
                     break
                 self.budget.spend(self.name, 1)
                 pages += 1
+                self.requests_spent += 1
+                if budget_left is not None:
+                    budget_left -= 1
                 batch = data.get("data", [])
                 rows.extend(batch)
                 # Matches only: season outrights arrive without an away team.
@@ -256,21 +308,32 @@ class SharpApiProvider(BaseProvider):
                             page_window.add(str(r.get("event_id")))
                 in_window_ids |= page_window
                 pag = data.get("pagination") or {}
-                self.fetch_counts[label] = {"pages": pages, "capped": bool(pag.get("has_more")),
-                                            "match_events": len(seen), "in_window": len(in_window_ids)}
+                counts["rows"] += len(batch)
+                counts.update(requests=pages, matches_seen=len(seen), matches_in_window=len(in_window_ids),
+                              rows_per_match=round(counts["rows"] / len(seen), 1) if seen else 0.0,
+                              capped=bool(pag.get("has_more")))
+                # legacy keys (tests, diagnostics)
+                counts.update(pages=pages, match_events=len(seen), in_window=len(in_window_ids))
                 if not pag.get("has_more") or not pag.get("next_cursor"):
+                    stop = "no_more_data"
                     break
-                # Kick-off ordered feed: past the window there is nothing left for
-                # us, and enough priced matches means the target is done walking.
-                if seen_starts and min(seen_starts) > end:
+                # Kick-off ordered feed: once a page reaches past the window end every later
+                # page starts after it, so there is nothing left for us.
+                if seen_starts and max(seen_starts) > end:
+                    stop = "window_end"
                     break
                 if self.events_per_target and len(seen) >= self.events_per_target:
+                    stop = "events_per_target"
                     break
                 cursor = pag["next_cursor"]
             else:
                 # page budget exhausted mid-walk: this sport's feed is truncated
+                stop = "max_pages" if ceiling >= self.max_pages else "budget"
                 target_status[sport].add("failed")
                 self.last_fetch_complete = False
+            counts["stop_reason"] = stop
+            if stop in ("window_end", "events_per_target"):
+                counts["capped"] = False                  # stopped on purpose: nothing we need is missing
             if pages:
                 target_status[sport].add("fetched")
         events = self._rows_to_events(rows, start, end)

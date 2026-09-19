@@ -51,6 +51,24 @@ def _provider_line(name: str, report: Dict, usage: Dict) -> str:
     return f"• <b>{esc(name)}</b> — {esc(status)} · {esc(_events(report))}{esc(spent)}"
 
 
+def _feed_lines(providers: Dict) -> List[str]:
+    """Per-feed SharpAPI paging: requests, rows, matches, rows per match, why it stopped."""
+    report = providers.get("sharpapi") or {}
+    fetch = report.get("fetch") or {}
+    lines: List[str] = []
+    req = report.get("requests")
+    if req:
+        lines.append(f"Requests: <b>{req.get('spent')}</b> of budget <b>{req.get('budget') if req.get('budget') is not None else '∞'}</b>")
+    for league, c in fetch.items():
+        if not isinstance(c, dict) or "requests" not in c:
+            continue
+        lines.append(f"• {esc(league)}: {c['requests']} req · {c.get('rows', 0)} rows · "
+                     f"{c.get('matches_in_window', 0)}/{c.get('matches_seen', 0)} matches in window · "
+                     f"{c.get('rows_per_match', 0)} rows/match · stop: {esc(c.get('stop_reason') or '?')}"
+                     + (" · <b>capped</b>" if c.get("capped") else ""))
+    return lines
+
+
 def _quota_lines(db, gen: Dict) -> List[str]:
     report = (gen.get("top_priority_provider_report") or {}).get("oddsapi") or {}
     quota = report.get("quota") or {}
@@ -131,6 +149,9 @@ def lastrun_text(db, cfg, now: Optional[datetime] = None) -> str:
            "<b>Providers</b>"]
     providers = gen.get("providers") or {}
     out += [_provider_line(n, r, usage) for n, r in sorted(providers.items())] or ["• none recorded"]
+    feed = _feed_lines(providers)
+    if feed:
+        out += ["", "<b>SharpAPI feeds</b>"] + feed
     out += ["", "<b>Odds API</b> (Top priority)"] + _quota_lines(db, gen)
     out += ["", "<b>Funnel</b>"] + _funnel(gen)
     out += ["", "<b>Price sources</b> (not shown on the card)"] + _price_sources(snapshot)
