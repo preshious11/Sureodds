@@ -25,7 +25,8 @@ from predbot.providers.sharpapi import SharpApiProvider
 from predbot.providers.sportsgameodds import SportsGameOddsProvider
 from predbot.storage.db import Database
 from predbot.util.http import ProviderError
-from predbot.util.names import same_team
+from predbot.util.fixtures import competition_id, fixture_orientation
+from predbot.util.names import normalize
 
 log = logging.getLogger(__name__)
 
@@ -165,36 +166,55 @@ def _has_main_market(e: Event) -> bool:
     return any(m.market in ("result3", "result2", "dnb", "total", "handicap") for m in e.markets)
 
 
+def _norm_league(text: str) -> str:
+    return normalize(text or "").casefold()
+
+
+def _same_match(ex: Event, ev: Event) -> Optional[str]:
+    """``None`` = different matches, else ``"same"`` / ``"swapped"`` (``ev`` lists home/away the other way
+    round). Teams, kickoff and the competition veto come from ``fixture_orientation`` (the one matcher);
+    when the competition is not known for BOTH events, the league must agree case-insensitively."""
+    ca, cb = competition_id(ex), competition_id(ev)
+    if not (ca and cb):
+        if ex.league_id and ev.league_id and ex.league_id.casefold() != ev.league_id.casefold():
+            return None
+        if ex.league and ev.league and _norm_league(ex.league) != _norm_league(ev.league):
+            return None
+    return fixture_orientation(ex, ev, ca, cb)
+
+
 def merge_events(pool: List[Event], new: List[Event], price_mode: str = "median") -> List[Event]:
+    """Fold each new event into the pool event that is the same real match (any provider, either home/away
+    order); a swapped provider's markets are re-expressed on the kept event's sides first."""
     out = list(pool)
     for ev in new:
-        match = None
+        match, orientation = None, None
         for ex in out:
             if ex.sport != ev.sport:
                 continue
-            if abs((ex.start - ev.start).total_seconds()) > 3 * 3600:
-                continue
-            if ex.league_id and ev.league_id and ex.league_id != ev.league_id:
-                continue
-            if ex.league and ev.league and ex.league != ev.league:
-                continue
-            if same_team(ex.home, ev.home) and same_team(ex.away, ev.away):
+            orientation = _same_match(ex, ev)
+            if orientation is not None:
                 match = ex
                 break
         if match is None:
             out.append(ev)
             continue
-        _merge_markets(match, ev, price_mode)
+        _merge_markets(match, ev, price_mode, swapped=orientation == "swapped")
     return out
 
 
-def _merge_markets(dst: Event, src: Event, price_mode: str = "median") -> None:
+def _merge_markets(dst: Event, src: Event, price_mode: str = "median", swapped: bool = False) -> None:
     dst.sources = sorted(set(dst.sources) | set(src.sources))
     for k, v in src.extra.items():
         dst.extra.setdefault(k, v)
     dst.extra.setdefault("alt_ids", {})[src.provider] = src.provider_event_id
+    dst.extra.setdefault("merged", []).append({"provider": src.provider, "home": src.home, "away": src.away,
+                                               "with": dst.provider, "kept_home": dst.home, "kept_away": dst.away,
+                                               "swapped": swapped})
     existing = {m.key(): m for m in dst.markets}
     for ml in src.markets:
+        if swapped:
+            ml = ml.mirrored()
         k = ml.key()
         if k in existing:
             m = existing[k]

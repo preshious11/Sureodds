@@ -26,15 +26,9 @@ _ENTITY = {"home": "away", "away": "home"}
 
 
 def mirror(ml: MarketLine) -> MarketLine:
-    """The same bet as the other provider would list it, with home and away exchanged."""
-    sel = ml.selection
-    if ml.market == "correct_score" and re.fullmatch(r"\d+-\d+", sel or ""):
-        a, b = sel.split("-")
-        sel = f"{b}-{a}"
-    else:
-        sel = _SIDE.get(sel, sel)
-    line = -ml.line if ml.market == "handicap" and ml.line is not None else ml.line
-    return replace(ml, selection=sel, entity=_ENTITY.get(ml.entity, ml.entity), line=line)
+    """The same bet as the other provider would list it, with home and away exchanged (the handicap line
+    stays on the same team - see ``MarketLine.mirrored``)."""
+    return ml.mirrored()
 
 
 def tip_signature(ml: MarketLine) -> Optional[Tuple]:

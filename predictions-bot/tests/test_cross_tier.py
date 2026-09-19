@@ -108,7 +108,7 @@ def test_nesting_in_totals_ignores_the_line_and_in_handicaps_ignores_the_line():
 
 def test_mirror_swaps_sides_lines_and_entities():
     m = cross_tier.mirror(MarketLine("handicap", "home", 1.9, line=-1.5))
-    assert (m.selection, m.line) == ("away", 1.5)
+    assert (m.selection, m.line) == ("away", -1.5)          # the same team keeps the same line
     assert cross_tier.mirror(MarketLine("dc", "home_draw", 1.3)).selection == "away_draw"
     assert cross_tier.mirror(MarketLine("total", "over", 1.9, line=1.5, entity="home")).entity == "away"
     assert cross_tier.mirror(MarketLine("correct_score", "2-1", 9.0)).selection == "1-2"

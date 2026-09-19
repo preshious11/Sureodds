@@ -126,6 +126,11 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     log.info("API usage this cycle: %s", {n: f"+{u['cycle']} ({u['today']}/{u['limit'] or '?'} today)"
                                           for n, u in api_usage.items()})
     log.info("collected %d events (%d markets)", len(events), sum(len(e.markets) for e in events))
+    merged_pairs = [{"league": e.league, "sport": e.sport, "kept": f"{e.provider}: {m['kept_home']} v {m['kept_away']}",
+                     "merged": f"{m['provider']}: {m['home']} v {m['away']}", "swapped": m["swapped"]}
+                    for e in events for m in e.extra.get("merged", [])]
+    if merged_pairs:
+        log.info("merged %d events across providers", len(merged_pairs))
     scored = score_events(events, db, cfg)
     gate = make_results_gate(cfg, providers_map) if providers_map else None
     ps = select(scored, cfg, now, top_priority_source=top_priority_source, results_gate=gate)
@@ -134,6 +139,9 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     # fallback (picker.select) so its own outages never flip the snapshot to PARTIAL.
     providers = getattr(chain, "last_report", {})
     ps.complete = bool(providers) and all(p["status"] == "complete" for p in providers.values())
+    ps.diagnostics.update({"merged_events": len(merged_pairs),
+                           "merged_pairs_by_league": dict(Counter(p["league"] for p in merged_pairs)),
+                           "merged_pairs": merged_pairs})
     ps.diagnostics.update({"providers": providers, "api_usage": api_usage,
                            "top_priority_provider_report": top_priority_report,
                            "events_by_sport": dict(Counter(e.sport for e in events)),
