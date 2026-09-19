@@ -181,8 +181,8 @@ def show_purpose_matrix():
     print("=" * 80)
     headers = ["SPORT", "FIXTURE SOURCE", "PREDICTION SOURCE", "CONFIDENCE SOURCE", "ODDS SOURCE"]
     col_widths = [12, 28, 24, 24, 28]
-    for sport in ("football", "basketball", "baseball", "tennis", "hockey", "american_football",
-                  "handball", "mma", "golf", "esports"):
+    for sport in ("football", "basketball", "baseball", "tennis", "american_football",
+                  "mma", "golf", "esports"):
         rows = []
         for prov, info in PROVIDER_PURPOSE_MATRIX.items():
             restriction = info.get("SPORT_RESTRICTION", "")
