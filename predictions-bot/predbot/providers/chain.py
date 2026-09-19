@@ -12,7 +12,7 @@ import copy
 from collections import Counter
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from predbot.config import Config
 from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, apply_price_mode
@@ -203,6 +203,18 @@ def merge_events(pool: List[Event], new: List[Event], price_mode: str = "median"
     return out
 
 
+#: Markets whose ``entity`` only repeats the selected side: SportsGameOdds tags a moneyline / handicap on the home
+#: team ``entity="home"`` where SharpAPI says ``"all"``, yet it is one bet - so the pooling key ignores it.
+_SIDE_MARKETS = {"result2", "result3", "dnb", "dc", "handicap"}
+
+
+def _pool_key(ml: MarketLine) -> Tuple:
+    key = ml.key()
+    if ml.market in _SIDE_MARKETS and ml.entity in ("home", "away", "all"):
+        return (key[0], key[1], key[2], "all") + key[4:]
+    return key
+
+
 def _merge_markets(dst: Event, src: Event, price_mode: str = "median", swapped: bool = False) -> None:
     dst.sources = sorted(set(dst.sources) | set(src.sources))
     for k, v in src.extra.items():
@@ -211,11 +223,14 @@ def _merge_markets(dst: Event, src: Event, price_mode: str = "median", swapped: 
     dst.extra.setdefault("merged", []).append({"provider": src.provider, "home": src.home, "away": src.away,
                                                "with": dst.provider, "kept_home": dst.home, "kept_away": dst.away,
                                                "swapped": swapped})
-    existing = {m.key(): m for m in dst.markets}
+    markets = list(dst.markets)
+    existing: Dict[Tuple, MarketLine] = {}
+    for m in markets:
+        existing.setdefault(_pool_key(m), m)
     for ml in src.markets:
         if swapped:
             ml = ml.mirrored()
-        k = ml.key()
+        k = _pool_key(ml)
         if k in existing:
             m = existing[k]
             best_before = max(m.book_prices or [m.price])
@@ -234,7 +249,8 @@ def _merge_markets(dst: Event, src: Event, price_mode: str = "median", swapped: 
             apply_price_mode(m, price_mode)
         else:
             existing[k] = ml
-    dst.markets = list(existing.values())
+            markets.append(ml)
+    dst.markets = markets
 
 
 class ResultsResolver:

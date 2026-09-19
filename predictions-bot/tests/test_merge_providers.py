@@ -136,3 +136,23 @@ def test_the_similarity_floor_shortcut_never_changes_a_same_team_answer():
              "Home1", "Home2", "Bayern Munich", "FC Bayern", "Sporting CP", "Sporting Lisbon", "Rangers", "Texas Rangers"]
     for a, b in itertools.product(names, names):
         assert (similarity(a, b) >= 0.82) == same_team(a, b), (a, b)
+
+
+def test_sgo_and_sharpapi_pool_a_moneyline_and_a_handicap_despite_different_entity_tags():
+    """Found in the recorded MLB day: SportsGameOdds tags a moneyline/handicap with the selected team as its
+    entity ('home'), SharpAPI with 'all' - one bet, two keys, so nothing was pooled and one Angels +1.5 leg
+    existed twice on the merged event."""
+    sharp = [MarketLine("handicap", "home", 1.53, line=1.5, entity="all", book_prices=[1.5, 1.55], n_books=2),
+             MarketLine("result2", "home", 1.4, entity="all", book_prices=[1.4], n_books=1)]
+    sgo = [MarketLine("handicap", "home", 1.52, line=1.5, entity="home", book_prices=[1.52, 1.5, 1.51], n_books=3,
+                      provider_odd_id="points-home-game-sp-home"),
+           MarketLine("result2", "home", 1.42, entity="home", book_prices=[1.42, 1.41], n_books=2),
+           MarketLine("total", "over", 1.9, line=3.5, entity="home", book_prices=[1.9], n_books=1)]      # a team total: NOT the same
+    a = _e("sharpapi", "Los Angeles Angels", "Minnesota Twins", _t(1), "MLB", "mlb", markets=sharp)
+    b = _e("sportsgameodds", "Los Angeles Angels", "Minnesota Twins", _t(1), "MLB", "MLB", markets=sgo)
+    (m,) = merge_events([a], [b])
+    handicaps = [x for x in m.markets if x.market == "handicap"]
+    assert len(handicaps) == 1 and handicaps[0].n_books == 5 and handicaps[0].entity == "all"
+    (ml,) = [x for x in m.markets if x.market == "result2"]
+    assert ml.n_books == 3
+    assert sum(1 for x in m.markets if x.market == "total") == 1            # the team total is kept as its own line
