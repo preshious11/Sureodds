@@ -109,6 +109,51 @@ def _settle_row(r, resolver: ResultsResolver, db: Database, elo: Elo, now: datet
             elo.update(r["sport"], r["home"], r["away"], sc[0], sc[1])
 
 
+def _resolve_args(r):
+    try:
+        src = json.loads(r["sources"]) if r["sources"] else {}
+    except ValueError:
+        src = {}
+    hints = {"sport_key": src.get("_sport_key") or "", "league_id": src.get("_league_id") or "",
+             "league": r["league"] or ""}
+    return src.get("_alt_ids") or {}, hints
+
+
+def _prefetch(resolver: ResultsResolver, rows, now: datetime, cache: Dict[str, MatchResult]) -> None:
+    """Look results up for every due pick BEFORE grading, one thread per first-choice source, so football-data.org's
+    6.5 s pacing overlaps ESPN's and EuroLeague's instead of adding to them. Each source is asked by one thread at a
+    time and its per-run caches are keyed by (competition, day), so N picks from one competition and day still cost
+    one request. Every answer - including "nothing found" - goes into ``cache``, so the serial pass below grades from
+    exactly what a serial run would have fetched and never asks twice."""
+    if not callable(getattr(resolver, "paths_for", None)):
+        return                                          # a stub resolver: nothing to schedule
+    groups: Dict[str, list] = {}
+    for r in rows:
+        start = parse_iso(r["start_utc"])
+        if start is None or start + timedelta(hours=DURATION_H.get(r["sport"], 3)) > now:
+            continue
+        alt_ids, hints = _resolve_args(r)
+        names = resolver.paths_for(r["provider"], r["sport"], alt_ids, hints)
+        groups.setdefault(names[0] if names else "", []).append((r, start, alt_ids, hints))
+    if len(groups) < 2:
+        return                                          # nothing to overlap
+
+    def work(items):
+        for r, start, alt_ids, hints in items:
+            ck = f"{r['provider']}:{r['provider_event_id']}"
+            try:
+                res = resolver.resolve(r["provider"], r["provider_event_id"], r["sport"], r["home"], r["away"], start,
+                                       alt_ids=alt_ids, cache=cache, hints=hints)
+            except PICK_ERRORS as e:
+                log.warning("result prefetch failed for pick %s: %s", r["id"], e)
+                res = None
+            cache.setdefault(ck, res)
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=len(groups), thread_name_prefix="settle") as pool:
+        list(pool.map(work, groups.values()))
+
+
 def run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]:
     """Settle every pending pick whose event should be over. Never raises for a
     single pick: a provider or data error is counted in ``errors`` and the run
@@ -122,6 +167,7 @@ def run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]:
         if callable(begin):
             begin()
     rows = db.pending_picks(before_utc=iso(now))
+    _prefetch(resolver, rows, now, cache)
 
     for r in rows:
         try:
