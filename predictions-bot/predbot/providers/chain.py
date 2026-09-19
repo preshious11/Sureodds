@@ -16,6 +16,7 @@ from typing import Dict, List, Optional
 from predbot.config import Config
 from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult
 from predbot.providers.budget import Budget
+from predbot.providers.football_data import FootballDataProvider
 from predbot.providers.oddsapi import OddsApiProvider
 from predbot.providers.sharpapi import SharpApiProvider
 from predbot.providers.sportsgameodds import SportsGameOddsProvider
@@ -50,6 +51,8 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
                                          reserve_credits=cfg.oddsapi_reserve_credits,
                                          min_keys_per_sport=cfg.oddsapi_min_keys_per_sport,
                                          league_allowlist=cfg.odds_api_league_allowlist)
+    if cfg.football_data_key:
+        out["football_data"] = FootballDataProvider(cfg.football_data_key)
     return out
 
 
@@ -185,45 +188,61 @@ class ResultsResolver:
 
     def resolve(self, provider: str, provider_event_id: str, sport: str, home: str, away: str,
                 start: datetime, alt_ids: Optional[Dict[str, str]] = None,
-                cache: Optional[Dict[str, MatchResult]] = None) -> Optional[MatchResult]:
+                cache: Optional[Dict[str, MatchResult]] = None,
+                hints: Optional[Dict[str, str]] = None) -> Optional[MatchResult]:
+        """``hints`` carries what was stored with the pick: ``sport_key`` (Odds API),
+        ``league_id`` and ``league`` (football-data competition lookup)."""
         cache = cache if cache is not None else {}
+        hints = hints or {}
         ck = f"{provider}:{provider_event_id}"
         if ck in cache:
             return cache[ck]
         result: Optional[MatchResult] = None
+
+        def unresolved() -> bool:
+            return result is None or result.status == "unknown"
+
         # 1) origin provider by id
         prov = self.providers.get(provider)
         if prov:
             try:
-                result = prov.fetch_result(provider_event_id)
+                result = prov.fetch_result(provider_event_id, event_hint=hints)
             except ProviderError as e:
                 log.warning("result fetch (%s %s) failed: %s", provider, provider_event_id, e)
         # 2) alternate ids recorded when the event was merged across providers
-        if (result is None or result.status == "unknown") and alt_ids:
+        if unresolved() and alt_ids:
             for pname, pid in alt_ids.items():
                 p = self.providers.get(pname)
                 if not p or pname == provider:
                     continue
                 try:
-                    r = p.fetch_result(pid)
+                    r = p.fetch_result(pid, event_hint=hints)
                 except ProviderError:
                     r = None
                 if r and r.status != "unknown":
                     result = r
                     break
-        # 3) cross-provider lookup by teams + time
-        if result is None or result.status == "unknown":
-            for pname in ("sportsgameodds",):
-                p = self.providers.get(pname)
-                if not p or pname == provider:
-                    continue
-                try:
-                    r = p.find_result(sport, home, away, start)
-                except ProviderError:
-                    r = None
-                if r and r.status != "unknown":
-                    result = r
-                    break
+        # 3) football-data.org by competition + teams + kick-off (football only)
+        fd = self.providers.get("football_data")
+        if unresolved() and fd and sport == "football" and provider != "football_data":
+            try:
+                r = fd.find_result(sport, home, away, start, league_id=hints.get("league_id", ""),
+                                   league=hints.get("league", ""))
+            except ProviderError as e:
+                log.warning("football-data lookup (%s v %s) failed: %s", home, away, e)
+                r = None
+            if r and r.status != "unknown":
+                result = r
+        # 4) SportsGameOdds by teams + time
+        sgo = self.providers.get("sportsgameodds")
+        if unresolved() and sgo and provider != "sportsgameodds":
+            try:
+                r = sgo.find_result(sport, home, away, start)
+            except ProviderError as e:
+                log.warning("SGO lookup (%s v %s) failed: %s", home, away, e)
+                r = None
+            if r and r.status != "unknown":
+                result = r
         if result is not None:
             cache[ck] = result
         return result

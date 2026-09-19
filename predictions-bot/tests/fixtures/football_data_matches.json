@@ -1,0 +1,32 @@
+{
+  "filters": {"dateFrom": "2030-05-31", "dateTo": "2030-06-02", "permission": "TIER_ONE"},
+  "resultSet": {"count": 5, "competitions": "PL,CL", "first": "2030-06-01", "last": "2030-06-01", "played": 3},
+  "matches": [
+    {"id": 1001, "utcDate": "2030-06-01T19:00:00Z", "status": "FINISHED", "matchday": 38,
+     "homeTeam": {"id": 65, "name": "Manchester City FC", "shortName": "Man City", "tla": "MCI"},
+     "awayTeam": {"id": 67, "name": "Newcastle United FC", "shortName": "Newcastle", "tla": "NEW"},
+     "score": {"winner": "HOME_TEAM", "duration": "REGULAR",
+               "fullTime": {"home": 3, "away": 0}, "halfTime": {"home": 1, "away": 0}}},
+    {"id": 1002, "utcDate": "2030-06-01T19:00:00Z", "status": "FINISHED", "stage": "LAST_16",
+     "homeTeam": {"id": 524, "name": "Paris Saint-Germain FC", "shortName": "PSG", "tla": "PSG"},
+     "awayTeam": {"id": 64, "name": "Liverpool FC", "shortName": "Liverpool", "tla": "LIV"},
+     "score": {"winner": "HOME_TEAM", "duration": "EXTRA_TIME",
+               "fullTime": {"home": 3, "away": 2}, "halfTime": {"home": 1, "away": 1},
+               "regularTime": {"home": 2, "away": 2}, "extraTime": {"home": 1, "away": 0}}},
+    {"id": 1003, "utcDate": "2030-06-01T19:00:00Z", "status": "FINISHED", "stage": "LAST_16",
+     "homeTeam": {"id": 503, "name": "FC Porto", "shortName": "Porto", "tla": "POR"},
+     "awayTeam": {"id": 498, "name": "Sporting Clube de Portugal", "shortName": "Sporting CP", "tla": "SCP"},
+     "score": {"winner": "AWAY_TEAM", "duration": "PENALTY_SHOOTOUT",
+               "fullTime": {"home": 4, "away": 5}, "halfTime": {"home": 0, "away": 0}}},
+    {"id": 1004, "utcDate": "2030-06-01T19:00:00Z", "status": "POSTPONED",
+     "homeTeam": {"id": 62, "name": "Everton FC", "shortName": "Everton", "tla": "EVE"},
+     "awayTeam": {"id": 63, "name": "Fulham FC", "shortName": "Fulham", "tla": "FUL"},
+     "score": {"winner": null, "duration": "REGULAR",
+               "fullTime": {"home": null, "away": null}, "halfTime": {"home": null, "away": null}}},
+    {"id": 1005, "utcDate": "2030-06-01T19:00:00Z", "status": "IN_PLAY",
+     "homeTeam": {"id": 58, "name": "Aston Villa FC", "shortName": "Aston Villa", "tla": "AVL"},
+     "awayTeam": {"id": 402, "name": "Brentford FC", "shortName": "Brentford", "tla": "BRE"},
+     "score": {"winner": null, "duration": "REGULAR",
+               "fullTime": {"home": 1, "away": 0}, "halfTime": {"home": 1, "away": 0}}}
+  ]
+}

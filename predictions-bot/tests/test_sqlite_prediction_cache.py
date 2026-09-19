@@ -50,6 +50,8 @@ def service(db, monkeypatch, football_error=False):
                    'home' if int(e.provider_event_id) % 2 else 'away', .76,
                    1.40 if int(e.provider_event_id) % 2 else 1.45) for e in events]
     monkeypatch.setattr(daily_picks, 'score_events', score)
+    # These tests are about caching, not settlement: every fake event has a results path.
+    monkeypatch.setattr(daily_picks, 'make_results_gate', lambda cfg, providers: (lambda event: 'test'))
     return UnifiedFetcher(chain, db, Config(timezone='Africa/Lagos', cache_retry_seconds=900)), football, baseball
 
 

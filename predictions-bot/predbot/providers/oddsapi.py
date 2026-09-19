@@ -108,6 +108,12 @@ class OddsApiProvider(BaseProvider):
         self.sport_keys: Dict[str, List[str]] = {}  # canonical -> in-season league keys
         self.parse_counts: Counter = Counter()
         self.sport_status: Dict[str, Dict] = {}
+        # /scores responses cached per sport key for the duration of one settle.run
+        self._scores_cache: Dict[str, Optional[Dict[str, Dict]]] = {}
+
+    def begin_run(self) -> None:
+        """Forget cached /scores responses: results change between settlement runs."""
+        self._scores_cache = {}
 
     def enabled(self) -> bool:
         return bool(self.key)
@@ -386,7 +392,8 @@ class OddsApiProvider(BaseProvider):
 
             e = Event(provider=self.name, provider_event_id=event_id, sport=sport,
                       league=row.get("sport_title", "").strip() or sport.title(),
-                      home=home, away=away, start=start_ts, sources=[self.name])
+                      home=home, away=away, start=start_ts, sources=[self.name],
+                      extra={"sport_key": str(row.get("sport_key") or "")} if row.get("sport_key") else {})
 
             # Merge bookmaker odds for same market/selection
             merged: Dict[Tuple, MarketLine] = {}
@@ -563,11 +570,56 @@ class OddsApiProvider(BaseProvider):
 
         return lines
 
+    #: GET /sports/{key}/scores costs 2 credits when ``daysFrom`` is used.
+    SCORES_COST = 2
+
+    def _scores_for(self, sport_key: str) -> Optional[Dict[str, Dict]]:
+        """Recent scores for one sport key, by event id; ONE call (2 credits) per
+        key per settlement run, and only while the quota gate allows it."""
+        if sport_key in self._scores_cache:
+            return self._scores_cache[sport_key]
+        if not self.can_spend_credits(self.SCORES_COST):
+            self._scores_cache[sport_key] = None
+            return None
+        try:
+            data = self._get(f"/sports/{sport_key}/scores", {"daysFrom": 3, "dateFormat": "iso"})
+        except ProviderError:
+            self._scores_cache[sport_key] = None
+            raise
+        self.budget.spend(self.name, self.SCORES_COST)
+        rows = {str(r.get("id")): r for r in (data if isinstance(data, list) else [])
+                if isinstance(r, dict) and r.get("id")}
+        self._scores_cache[sport_key] = rows
+        return rows
+
     def fetch_result(self, provider_event_id: str, event_hint: Optional[Dict] = None) -> Optional[MatchResult]:
-        """Fetch a result for a known Odds API event id."""
-        # Odds API doesn't provide easy result endpoints on the free tier
-        # Settlement will rely on cross-provider lookups (SportsGameOdds)
-        return None
+        """Result for a known Odds API event id from ``/sports/{key}/scores?daysFrom=3``.
+
+        Needs the event's sport key (``event_hint["sport_key"]``, persisted with the
+        pick); without it there is nothing to ask, so this returns None."""
+        sport_key = str((event_hint or {}).get("sport_key") or "")
+        if not sport_key or not provider_event_id:
+            return None
+        rows = self._scores_for(sport_key)
+        row = (rows or {}).get(str(provider_event_id))
+        return self._parse_score_row(row) if row else None
+
+    def _parse_score_row(self, row: Dict) -> MatchResult:
+        result = MatchResult(status="unknown", source=self.name)
+        by_team = {}
+        for s in row.get("scores") or []:
+            try:
+                by_team[str(s.get("name", "")).strip()] = float(s.get("score"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+        home, away = str(row.get("home_team", "")).strip(), str(row.get("away_team", "")).strip()
+        pair = (by_team[home], by_team[away]) if home in by_team and away in by_team else None
+        if row.get("completed") and pair:
+            result.status = "final"
+            result.scores["full"] = pair
+        elif pair:
+            result.status = "in_progress"
+        return result
 
     def find_result(self, sport: str, home: str, away: str, start: datetime) -> Optional[MatchResult]:
         """Look up a result by teams/time (cross-provider settlement)."""

@@ -93,6 +93,8 @@ class Config:
     sgo_key: str = field(default_factory=lambda: _env("SPORTSGAMEODDS_KEY"))
     sharpapi_key: str = field(default_factory=lambda: _env("SHARPAPI_KEY"))
     odds_api_key: str = field(default_factory=lambda: _env("ODDS_API_KEY"))
+    #: football-data.org token: free football RESULTS for settlement (never a fixture/odds source).
+    football_data_key: str = field(default_factory=lambda: _env("FOOTBALL_DATA_KEY"))
     odds_api_regions: List[str] = field(default_factory=lambda: _list("ODDS_API_REGIONS", "eu"))
     odds_api_min_interval: float = field(default_factory=lambda: _float("ODDS_API_MIN_INTERVAL_SEC", 1.1))
     odds_api_max_leagues_per_sport: int = field(default_factory=lambda: _int("ODDS_API_MAX_LEAGUES_PER_SPORT", 8))

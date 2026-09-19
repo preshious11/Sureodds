@@ -16,6 +16,7 @@ from predbot.model.elo import Elo
 from predbot.model.ensemble import EventModel, Scored
 from predbot.providers.base import Event
 from predbot.providers.budget import Budget
+from predbot.markets.settlement import make_results_gate
 from predbot.providers.chain import ProviderChain, merge_events
 from predbot.selection.picker import PickSet, same_fixture, select
 from predbot.storage.db import Database
@@ -124,7 +125,8 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
                                           for n, u in api_usage.items()})
     log.info("collected %d events (%d markets)", len(events), sum(len(e.markets) for e in events))
     scored = score_events(events, db, cfg)
-    ps = select(scored, cfg, now, top_priority_source=top_priority_source)
+    gate = make_results_gate(cfg, providers_map) if providers_map else None
+    ps = select(scored, cfg, now, top_priority_source=top_priority_source, results_gate=gate)
     # Completeness is judged on the three-provider Daily chain only, unchanged
     # from before the Odds API existed; the Top-priority source has its own
     # fallback (picker.select) so its own outages never flip the snapshot to PARTIAL.
@@ -157,6 +159,7 @@ def store_picks(ps: PickSet, db: Database, pick_date: str) -> None:
                 "price": ml.price, "prob": s.p_model, "ev": s.ev, "p_market": s.p_market,
                 "sources": {**{k: round(v, 4) for k, v in s.sources.items()},
                             "_alt_ids": e.extra.get("alt_ids", {}), "_providers": e.sources,
+                            "_sport_key": e.extra.get("sport_key", ""), "_league_id": e.league_id,
                             "_notes": s.notes},
                 "provider_odd_id": ml.provider_odd_id,
             })
