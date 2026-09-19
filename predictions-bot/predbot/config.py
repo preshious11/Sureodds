@@ -142,7 +142,7 @@ class Config:
     sgo_monthly_object_limit: int = field(default_factory=lambda: _int("SGO_MONTHLY_OBJECT_LIMIT", 1000))
     sharpapi_leagues: List[str] = field(default_factory=lambda: _list(
         "SHARPAPI_LEAGUES",
-        "england_-_premier_league,spain_-_la_liga,italy_-_serie_a,germany_-_bundesliga,france_-_ligue_1,england_-_championship,netherlands_-_eredivisie,portugal_-_primeira_liga,turkey_-_super_lig,uefa_-_champions_league,uefa_-_europa_league,uefa_-_europa_conference_league,nigeria_-_premier_league,atp,wta,nba,nfl,mlb,euroleague"))
+        "england_-_premier_league,spain_-_la_liga,italy_-_serie_a,germany_-_bundesliga,france_-_ligue_1,england_-_championship,netherlands_-_eredivisie,portugal_-_primeira_liga,turkey_-_super_lig,uefa_-_champions_league,uefa_-_europa_league,uefa_-_europa_conference_league,nigeria_-_premier_league,nba,nfl,mlb,euroleague"))
     # SHARPAPI_SPORTS walks the kick-off ordered global sport feed(s), e.g. soccer:
     # one or two pages reach today's fixtures without per-league requests.
     sharpapi_sports: List[str] = field(default_factory=lambda: _list("SHARPAPI_SPORTS"))
