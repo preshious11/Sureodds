@@ -7,7 +7,7 @@ import os
 import pytest
 
 from predbot.bot import broadcast, pagination
-from predbot.bot.format import odds_as_of_label, odds_note, pick_line_from_record, pick_lines
+from predbot.bot.format import odds_as_of_label, pick_line_from_record, pick_lines
 from predbot.cache.models import DailySnapshot, PickRecord
 from predbot.config import Config
 from predbot.markets.catalog import pretty_league, readable_stat, selection_label, short_selection
@@ -117,20 +117,22 @@ def _record(**kw):
     return PickRecord(**base)
 
 
-def test_the_card_says_where_the_price_comes_from():
-    median = pick_lines(pick_line_from_record(_record(bookmaker="median", n_books=6), "Africa/Lagos"))
-    assert "Odds: 2.10 (median of 6 books)" in median
-    best = pick_lines(pick_line_from_record(_record(price=2.35, bookmaker="bet365", n_books=6), "Africa/Lagos"))
-    assert "Odds: 2.35 (Bet365)" in best
-    plain = pick_lines(pick_line_from_record(_record(bookmaker="", n_books=1), "Africa/Lagos"))
-    assert "Odds: 2.10" in plain
+@pytest.mark.parametrize("bookmaker,n_books,price", [("median", 6, 2.10), ("bet365", 6, 2.35), ("consensus", 4, 2.10),
+                                                      ("", 1, 2.10)])
+def test_the_odds_line_carries_no_bookmaker_text(bookmaker, n_books, price):
+    lines = pick_lines(pick_line_from_record(_record(price=price, bookmaker=bookmaker, n_books=n_books), "Africa/Lagos"))
+    text = " ".join(lines)
+    odds_line = next(ln for ln in lines if ln.startswith("Odds:"))
+    assert odds_line == f"Odds: {price:.2f}"
+    assert "books" not in text.lower() and "bet365" not in text.lower() and "median" not in text.lower()
 
 
-def test_odds_note_edge_cases():
-    assert odds_note("median", 1) == "" and odds_note("", 3) == ""
-    assert odds_note("consensus", 4) == " (consensus of 4 books)"
-    assert odds_note("william_hill", 2) == " (William hill)"
-    assert odds_note("Bet365", 2) == " (Bet365)"
+def test_the_price_source_is_still_visible_to_the_operator_in_lastrun():
+    from predbot.bot.lastrun import _price_source
+    assert _price_source(_record(bookmaker="median", n_books=6)) == "median of 6 books"
+    assert _price_source(_record(bookmaker="bet365", n_books=6)) == "bet365"
+    assert _price_source(_record(bookmaker="william_hill", n_books=2)) == "william hill"
+    assert _price_source(_record(bookmaker="", n_books=1)) == "unknown"
 
 
 # ================================================================= 5b readable words

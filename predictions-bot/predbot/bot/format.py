@@ -47,7 +47,6 @@ class PickLine(NamedTuple):
     country: str = ""      # "England", "Kazakhstan", etc.
     market_type: str = ""  # "Over/Under", "Match Result", etc.
     state: str = ""        # "", "started" or "finished" - see leg_state()
-    odds_note: str = ""    # " (median of 6 books)" / " (Bet365)" - where the price comes from
 
 
 def _looks_internal(text: str) -> bool:
@@ -156,21 +155,6 @@ def leg_state(start: Optional[datetime], sport: str, now: Optional[datetime] = N
     return "finished" if now >= start + timedelta(hours=hours) else "started"
 
 
-def odds_note(bookmaker: str, n_books: int) -> str:
-    """Where a card's price comes from: `` (median of 6 books)`` under PRICE_MODE=median,
-    `` (Bet365)`` for the best price under PRICE_MODE=best, nothing when unknown."""
-    b = str(bookmaker or "").strip()
-    n = int(n_books or 0)
-    if not b:
-        return ""
-    if b == "median":
-        return f" (median of {n} books)" if n >= 2 else ""
-    if b == "consensus":
-        return f" (consensus of {n} books)" if n >= 2 else ""
-    name = b.replace("_", " ")
-    return f" ({name[:1].upper() + name[1:] if name.islower() else name})"
-
-
 def odds_as_of_label(generated_at: Optional[str], tz: str) -> str:
     """"odds as of 9:04 AM WAT" - when the prices were read; "" when unknown."""
     at = parse_iso(generated_at) if generated_at else None
@@ -202,8 +186,7 @@ def pick_line_from_record(pick, tz: str, user_tz: Optional[str] = None,
                     state=leg_state(parse_iso(pick.kickoff_utc), pick.sport, now),
                     price=pick.price,
                     country=getattr(pick, "country", ""),
-                    market_type=MARKET_LABEL.get(pick.market, pick.market),
-                    odds_note=odds_note(getattr(pick, "bookmaker", ""), getattr(pick, "n_books", 1)))
+                    market_type=MARKET_LABEL.get(pick.market, pick.market))
 
 
 def kickoff_label(start: Optional[datetime], tz: str, user_tz: Optional[str] = None) -> str:
@@ -245,7 +228,7 @@ def pick_lines(p: PickLine) -> List[str]:
     marker = f" | {STATE_MARKERS[p.state]}" if p.state in STATE_MARKERS else ""
     lines.extend([
         f"<b>Prediction:</b> {esc(p.outcome)}",
-        f"Odds: {p.price:.2f}{p.odds_note}",
+        f"Odds: {p.price:.2f}",
         f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {esc(p.when)}{marker}"
     ])
     return lines

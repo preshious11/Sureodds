@@ -90,6 +90,22 @@ def _funnel(gen: Dict) -> List[str]:
     return lines
 
 
+def _price_source(pick) -> str:
+    """Where a pick's price came from, e.g. "median of 6 books" / "Bet365" (operator view; not on the card)."""
+    book = str(getattr(pick, "bookmaker", "") or "").strip()
+    n = int(getattr(pick, "n_books", 0) or 0)
+    if not book:
+        return "unknown"
+    if book in ("median", "consensus"):
+        return f"{book} of {n} books"
+    return book.replace("_", " ")
+
+
+def _price_sources(snapshot) -> List[str]:
+    picks = list(snapshot.top_picks) + list(snapshot.daily_picks)
+    return [f"• {esc(p.label)} @ {p.price:.2f} — {esc(_price_source(p))}" for p in picks] or ["• none"]
+
+
 def _product(picks) -> float:
     return math.prod(p.price for p in picks) if picks else 0.0
 
@@ -117,6 +133,7 @@ def lastrun_text(db, cfg, now: Optional[datetime] = None) -> str:
     out += [_provider_line(n, r, usage) for n, r in sorted(providers.items())] or ["• none recorded"]
     out += ["", "<b>Odds API</b> (Top priority)"] + _quota_lines(db, gen)
     out += ["", "<b>Funnel</b>"] + _funnel(gen)
+    out += ["", "<b>Price sources</b> (not shown on the card)"] + _price_sources(snapshot)
     out += ["", f"<b>Slates</b>: Top {len(snapshot.top_picks)} legs · combined {_product(snapshot.top_picks):.2f} | "
                 f"Daily {len(snapshot.daily_picks)} picks · ticket {_product(snapshot.daily_picks):.2f}"]
 
