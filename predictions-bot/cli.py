@@ -11,6 +11,7 @@ from predbot.config import load_config, require_provider_keys
 from predbot.jobs import daily_picks, recap, settle, stats as stats_mod
 from predbot.log import setup_logging
 from predbot.providers.budget import Budget
+from predbot.markets.settlement import log_coverage
 from predbot.providers.chain import ProviderChain, ResultsResolver, build_providers
 from predbot.storage.db import Database
 from predbot.util.timeutil import to_local, utcnow
@@ -24,6 +25,7 @@ def main(argv):
     require_provider_keys(cfg)
     db = Database(cfg.db_path)
     providers = build_providers(cfg, db)
+    log_coverage(cfg, providers)
     chain = ProviderChain(providers, cfg.provider_order)
     resolver = ResultsResolver(providers)
     tg = Telegram(cfg.telegram_token, cfg.telegram_chat_id)

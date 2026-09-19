@@ -115,7 +115,7 @@ def test_sharpapi_never_auto_expands_sports_and_warns_about_sport_feeds(db, capl
 
 def test_sharpapi_defaults_are_explicit_leagues_with_a_three_page_cap():
     cfg = Config()
-    assert cfg.sharpapi_sports == [] and cfg.sharpapi_max_pages == 3 and len(cfg.sharpapi_leagues) == 17
+    assert cfg.sharpapi_sports == [] and cfg.sharpapi_max_pages == 3 and len(cfg.sharpapi_leagues) == 19
 
 
 # ================================================================ 2e: SportsGameOdds

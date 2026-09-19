@@ -93,11 +93,11 @@ def test_no_match_or_wrong_kickoff_returns_none():
                          league_id="soccer_epl") is None
 
 
-def test_tennis_is_not_fetched_by_default_until_it_has_a_results_path():
+def test_tennis_is_back_in_the_default_leagues_because_espn_settles_it():
     leagues = Config().sharpapi_leagues
-    assert "atp" not in leagues and "wta" not in leagues and len(leagues) == 17
+    assert "atp" in leagues and "wta" in leagues and len(leagues) == 19
     example = _parse_env_file(pathlib.Path(__file__).resolve().parent.parent / ".env.example")
-    assert "atp" not in example["SHARPAPI_LEAGUES"].split(",") and "wta" not in example["SHARPAPI_LEAGUES"].split(",")
+    assert {"atp", "wta"} <= set(example["SHARPAPI_LEAGUES"].split(","))
 
 
 def test_only_football_and_only_with_a_key():
@@ -330,60 +330,56 @@ def _prov(**kw):
     return p
 
 
-def test_resolver_order_is_origin_then_alt_ids_then_football_data_then_sgo_for_uncovered_leagues():
-    origin, alt, fd, sgo = _prov(), _prov(), _prov(), _prov(find=_res(source="sgo"))
-    fd.find_result.return_value = None
-    resolver = ResultsResolver({"sharpapi": origin, "oddsapi": alt, "football_data": fd, "sportsgameodds": sgo})
-    calls = []
-    for name, p in (("origin", origin), ("alt", alt), ("fd", fd), ("sgo", sgo)):
-        p.fetch_result.side_effect = lambda *a, _n=name, **k: calls.append(_n)
-        p.find_result.side_effect = lambda *a, _n=name, _p=p, **k: (calls.append(_n), _p.find_result.return_value)[1]
-
-    r = resolver.resolve("sharpapi", "1", "football", "A", "B", dt(), alt_ids={"oddsapi": "9"},
-                         hints={"league_id": "soccer_uefa_europa_league"})
-
-    assert r.source == "sgo" and calls == ["origin", "alt", "fd", "sgo"]
-    assert fd.find_result.call_args.kwargs["league_id"] == "soccer_uefa_europa_league"
+def _spied(**answers):
+    """Mock providers that record the order they were asked in."""
+    calls, provs = [], {}
+    for name, result in answers.items():
+        p = Mock()
+        p.fetch_result.side_effect = lambda *a, _n=name, _r=result, **k: (calls.append(_n), _r)[1]
+        p.find_result.side_effect = lambda *a, _n=name, _r=result, **k: (calls.append(_n), _r)[1]
+        provs[name] = p
+    return provs, calls
 
 
-@pytest.mark.parametrize("league_id", ["soccer_epl", "england_-_premier_league"])
-def test_a_league_football_data_covers_skips_the_paid_scores_call(league_id):
-    origin, alt, fd = _prov(fetch=_res(source="oddsapi")), _prov(fetch=_res(source="oddsapi")), _prov(find=_res(source="fd"))
-    resolver = ResultsResolver({"oddsapi": origin, "football_data": fd, "sharpapi": alt})
-
-    r = resolver.resolve("oddsapi", "e1", "football", "A", "B", dt(), alt_ids={"sharpapi": "9"},
-                         hints={"league_id": league_id, "sport_key": league_id})
-
-    assert r.source == "fd"
-    origin.fetch_result.assert_not_called()
-    alt.fetch_result.assert_not_called()
+def test_resolver_follows_the_results_paths_cheapest_first():
+    provs, calls = _spied(football_data=None, espn=None, oddsapi=_res(source="oddsapi"), sportsgameodds=_res(source="sgo"))
+    r = ResultsResolver(provs).resolve("sharpapi", "1", "football", "A", "B", dt(), alt_ids={"oddsapi": "9"},
+                                       hints={"league_id": "england_-_premier_league", "sport_key": "soccer_epl"})
+    assert r.source == "oddsapi" and calls == ["football_data", "espn", "oddsapi"]      # sgo never reached
 
 
-def test_a_covered_league_falls_back_to_scores_when_football_data_has_no_answer():
-    origin, fd = _prov(fetch=_res(source="oddsapi")), _prov()
-    fd.find_result.return_value = None
-    resolver = ResultsResolver({"oddsapi": origin, "football_data": fd})
+@pytest.mark.parametrize("answers,winner", [
+    ({"football_data": _res(source="fd"), "espn": _res(source="espn")}, "fd"),
+    ({"football_data": None, "espn": _res(source="espn")}, "espn"),
+])
+def test_the_paid_scores_call_is_never_made_when_a_free_source_answered(answers, winner):
+    provs, calls = _spied(oddsapi=_res(source="oddsapi"), sportsgameodds=_res(source="sgo"), **answers)
+    r = ResultsResolver(provs).resolve("oddsapi", "e1", "football", "A", "B", dt(),
+                                       hints={"league_id": "soccer_epl", "sport_key": "soccer_epl"})
+    assert r.source == winner
+    provs["oddsapi"].fetch_result.assert_not_called()
+    provs["sportsgameodds"].find_result.assert_not_called()
 
-    r = resolver.resolve("oddsapi", "e1", "football", "A", "B", dt(), hints={"league_id": "soccer_epl"})
 
-    assert r.source == "oddsapi" and fd.find_result.call_count == 1          # not asked twice
-
-
-def test_scores_stay_first_for_keys_football_data_does_not_cover():
-    origin, fd = _prov(fetch=_res(source="oddsapi")), _prov(find=_res(source="fd"))
-    resolver = ResultsResolver({"oddsapi": origin, "football_data": fd})
+def test_europa_league_settles_from_espn_without_touching_the_odds_api():
+    provs, calls = _spied(football_data=_res(source="fd"), espn=_res(source="espn"), oddsapi=_res(source="oddsapi"))
     for key in ("soccer_uefa_europa_league", "soccer_turkey_super_league"):
-        assert resolver.resolve("oddsapi", key, "football", "A", "B", dt(), hints={"league_id": key}).source == "oddsapi"
-    fd.find_result.assert_not_called()
+        calls.clear()
+        r = ResultsResolver(provs).resolve("oddsapi", key, "football", "A", "B", dt(),
+                                           hints={"league_id": key, "sport_key": key})
+        assert r.source == "espn" and calls == ["espn"]                # football-data has no code for these
 
 
-def test_football_data_is_only_asked_about_football_and_stops_the_chain_when_it_answers():
-    fd, sgo = _prov(find=_res(source="fd")), _prov(find=_res(source="sgo"))
-    resolver = ResultsResolver({"football_data": fd, "sportsgameodds": sgo})
-    assert resolver.resolve("sharpapi", "1", "football", "A", "B", dt()).source == "fd"
-    sgo.find_result.assert_not_called()
-    resolver.resolve("sharpapi", "2", "basketball", "A", "B", dt())
-    assert fd.find_result.call_count == 1                                         # not asked about basketball
+def test_football_data_is_only_asked_about_football():
+    provs, calls = _spied(football_data=_res(source="fd"), espn=_res(source="espn"))
+    r = ResultsResolver(provs).resolve("sharpapi", "2", "basketball", "A", "B", dt(), hints={"league_id": "nba"})
+    assert r.source == "espn" and calls == ["espn"]
+
+
+def test_a_pick_without_a_recognisable_competition_still_gets_a_best_effort_lookup():
+    provs, calls = _spied(football_data=_res(source="fd"), espn=_res(source="espn"))
+    r = ResultsResolver(provs).resolve("sharpapi", "1", "football", "A", "B", dt(), hints={"league": "Old Name"})
+    assert r.source == "fd" and calls == ["football_data"]
 
 
 @pytest.mark.parametrize("failing", ["origin", "alt", "football_data", "sportsgameodds"])

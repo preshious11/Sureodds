@@ -1,0 +1,484 @@
+{
+ "events": [
+  {
+   "id": "401879285",
+   "date": "2026-09-12T14:00Z",
+   "name": "Brentford at AFC Bournemouth",
+   "shortName": "BRE @ BOU",
+   "competitions": [
+    {
+     "id": "401879285",
+     "date": "2026-09-12T14:00Z",
+     "startDate": "2026-09-12T14:00Z",
+     "timeValid": true,
+     "recent": false,
+     "status": {
+      "clock": 5400.0,
+      "displayClock": "90'+6'",
+      "period": 2,
+      "type": {
+       "id": "28",
+       "name": "STATUS_FULL_TIME",
+       "state": "post",
+       "completed": true,
+       "description": "Full Time",
+       "detail": "FT",
+       "shortDetail": "FT"
+      }
+     },
+     "competitors": [
+      {
+       "id": "349",
+       "type": "team",
+       "order": 0,
+       "homeAway": "home",
+       "winner": false,
+       "form": "WDWDD",
+       "score": "2",
+       "team": {
+        "id": "349",
+        "displayName": "AFC Bournemouth",
+        "shortDisplayName": "Bournemouth",
+        "abbreviation": "BOU",
+        "name": "AFC Bournemouth",
+        "location": "AFC Bournemouth"
+       }
+      },
+      {
+       "id": "337",
+       "type": "team",
+       "order": 1,
+       "homeAway": "away",
+       "winner": false,
+       "form": "WWDDD",
+       "score": "2",
+       "team": {
+        "id": "337",
+        "displayName": "Brentford",
+        "shortDisplayName": "Brentford",
+        "abbreviation": "BRE",
+        "name": "Brentford",
+        "location": "Brentford"
+       }
+      }
+     ],
+     "wasSuspended": false
+    }
+   ],
+   "status": {
+    "clock": 5400.0,
+    "displayClock": "90'+6'",
+    "period": 2,
+    "type": {
+     "id": "28",
+     "name": "STATUS_FULL_TIME",
+     "state": "post",
+     "completed": true,
+     "description": "Full Time",
+     "detail": "FT",
+     "shortDetail": "FT"
+    }
+   }
+  },
+  {
+   "id": "401879284",
+   "date": "2026-09-12T14:00Z",
+   "name": "Nottingham Forest at Aston Villa",
+   "shortName": "NFO @ AVL",
+   "competitions": [
+    {
+     "id": "401879284",
+     "date": "2026-09-12T14:00Z",
+     "startDate": "2026-09-12T14:00Z",
+     "timeValid": true,
+     "recent": false,
+     "status": {
+      "clock": 5400.0,
+      "displayClock": "90'+7'",
+      "period": 2,
+      "type": {
+       "id": "28",
+       "name": "STATUS_FULL_TIME",
+       "state": "post",
+       "completed": true,
+       "description": "Full Time",
+       "detail": "FT",
+       "shortDetail": "FT"
+      }
+     },
+     "competitors": [
+      {
+       "id": "362",
+       "type": "team",
+       "order": 0,
+       "homeAway": "home",
+       "winner": false,
+       "form": "WWLWD",
+       "score": "1",
+       "team": {
+        "id": "362",
+        "displayName": "Aston Villa",
+        "shortDisplayName": "Aston Villa",
+        "abbreviation": "AVL",
+        "name": "Aston Villa",
+        "location": "Aston Villa"
+       }
+      },
+      {
+       "id": "393",
+       "type": "team",
+       "order": 1,
+       "homeAway": "away",
+       "winner": true,
+       "form": "WDDLL",
+       "score": "2",
+       "team": {
+        "id": "393",
+        "displayName": "Nottingham Forest",
+        "shortDisplayName": "Nottm Forest",
+        "abbreviation": "NFO",
+        "name": "Nottingham Forest",
+        "location": "Nottingham Forest"
+       }
+      }
+     ],
+     "wasSuspended": false
+    }
+   ],
+   "status": {
+    "clock": 5400.0,
+    "displayClock": "90'+7'",
+    "period": 2,
+    "type": {
+     "id": "28",
+     "name": "STATUS_FULL_TIME",
+     "state": "post",
+     "completed": true,
+     "description": "Full Time",
+     "detail": "FT",
+     "shortDetail": "FT"
+    }
+   }
+  },
+  {
+   "id": "401915584",
+   "date": "2026-09-17T16:45Z",
+   "name": "RB Salzburg at Levski Sofia",
+   "shortName": "SLZ @ LEV",
+   "competitions": [
+    {
+     "id": "401915584",
+     "date": "2026-09-17T16:45Z",
+     "startDate": "2026-09-17T16:45Z",
+     "timeValid": true,
+     "recent": false,
+     "status": {
+      "clock": 5400.0,
+      "displayClock": "90'+4'",
+      "period": 2,
+      "type": {
+       "id": "28",
+       "name": "STATUS_FULL_TIME",
+       "state": "post",
+       "completed": true,
+       "description": "Full Time",
+       "detail": "FT",
+       "shortDetail": "FT"
+      }
+     },
+     "competitors": [
+      {
+       "id": "490",
+       "type": "team",
+       "order": 0,
+       "homeAway": "home",
+       "winner": false,
+       "form": "LLDWW",
+       "score": "0",
+       "team": {
+        "id": "490",
+        "displayName": "Levski Sofia",
+        "shortDisplayName": "Levski Sofia",
+        "abbreviation": "LEV",
+        "name": "Levski Sofia",
+        "location": "Levski Sofia"
+       }
+      },
+      {
+       "id": "2790",
+       "type": "team",
+       "order": 1,
+       "homeAway": "away",
+       "winner": true,
+       "form": "WDWWW",
+       "score": "1",
+       "team": {
+        "id": "2790",
+        "displayName": "RB Salzburg",
+        "shortDisplayName": "RB Salzburg",
+        "abbreviation": "SLZ",
+        "name": "RB Salzburg",
+        "location": "RB Salzburg"
+       }
+      }
+     ],
+     "wasSuspended": false
+    }
+   ],
+   "status": {
+    "clock": 5400.0,
+    "displayClock": "90'+4'",
+    "period": 2,
+    "type": {
+     "id": "28",
+     "name": "STATUS_FULL_TIME",
+     "state": "post",
+     "completed": true,
+     "description": "Full Time",
+     "detail": "FT",
+     "shortDetail": "FT"
+    }
+   }
+  },
+  {
+   "id": "401915585",
+   "date": "2026-09-17T16:45Z",
+   "name": "TSG Hoffenheim at OFI CRETE",
+   "shortName": "TSG @ OFI CRETE",
+   "competitions": [
+    {
+     "id": "401915585",
+     "date": "2026-09-17T16:45Z",
+     "startDate": "2026-09-17T16:45Z",
+     "timeValid": true,
+     "recent": false,
+     "status": {
+      "clock": 5400.0,
+      "displayClock": "90'+4'",
+      "period": 2,
+      "type": {
+       "id": "28",
+       "name": "STATUS_FULL_TIME",
+       "state": "post",
+       "completed": true,
+       "description": "Full Time",
+       "detail": "FT",
+       "shortDetail": "FT"
+      }
+     },
+     "competitors": [
+      {
+       "id": "1010",
+       "type": "team",
+       "order": 0,
+       "homeAway": "home",
+       "winner": true,
+       "form": "WWWLW",
+       "score": "2",
+       "team": {
+        "id": "1010",
+        "displayName": "OFI CRETE",
+        "shortDisplayName": "OFI CRETE",
+        "abbreviation": "OFI Crete",
+        "name": "OFI CRETE",
+        "location": "OFI CRETE"
+       }
+      },
+      {
+       "id": "7911",
+       "type": "team",
+       "order": 1,
+       "homeAway": "away",
+       "winner": false,
+       "form": "LWLLW",
+       "score": "0",
+       "team": {
+        "id": "7911",
+        "displayName": "TSG Hoffenheim",
+        "shortDisplayName": "Hoffenheim",
+        "abbreviation": "TSG",
+        "name": "TSG Hoffenheim",
+        "location": "TSG Hoffenheim"
+       }
+      }
+     ],
+     "wasSuspended": false
+    }
+   ],
+   "status": {
+    "clock": 5400.0,
+    "displayClock": "90'+4'",
+    "period": 2,
+    "type": {
+     "id": "28",
+     "name": "STATUS_FULL_TIME",
+     "state": "post",
+     "completed": true,
+     "description": "Full Time",
+     "detail": "FT",
+     "shortDetail": "FT"
+    }
+   }
+  },
+  {
+   "id": "401888297",
+   "date": "2026-09-12T14:00Z",
+   "name": "Caykur Rizespor at Eyupspor",
+   "shortName": "CAY @ EYU",
+   "competitions": [
+    {
+     "id": "401888297",
+     "date": "2026-09-12T14:00Z",
+     "startDate": "2026-09-12T14:00Z",
+     "timeValid": true,
+     "recent": false,
+     "status": {
+      "clock": 5400.0,
+      "displayClock": "90'+6'",
+      "period": 2,
+      "type": {
+       "id": "28",
+       "name": "STATUS_FULL_TIME",
+       "state": "post",
+       "completed": true,
+       "description": "Full Time",
+       "detail": "FT",
+       "shortDetail": "FT"
+      }
+     },
+     "competitors": [
+      {
+       "id": "20729",
+       "type": "team",
+       "order": 0,
+       "homeAway": "home",
+       "winner": false,
+       "form": "LLWLL",
+       "score": "0",
+       "team": {
+        "id": "20729",
+        "displayName": "Eyupspor",
+        "shortDisplayName": "Eyupspor",
+        "abbreviation": "EYU",
+        "name": "Eyupspor",
+        "location": "Eyupspor"
+       }
+      },
+      {
+       "id": "7656",
+       "type": "team",
+       "order": 1,
+       "homeAway": "away",
+       "winner": true,
+       "form": "WLWLW",
+       "score": "2",
+       "team": {
+        "id": "7656",
+        "displayName": "Caykur Rizespor",
+        "shortDisplayName": "Caykur Rizespor",
+        "abbreviation": "CAY",
+        "name": "Caykur Rizespor",
+        "location": "Caykur Rizespor"
+       }
+      }
+     ],
+     "wasSuspended": false
+    }
+   ],
+   "status": {
+    "clock": 5400.0,
+    "displayClock": "90'+6'",
+    "period": 2,
+    "type": {
+     "id": "28",
+     "name": "STATUS_FULL_TIME",
+     "state": "post",
+     "completed": true,
+     "description": "Full Time",
+     "detail": "FT",
+     "shortDetail": "FT"
+    }
+   }
+  },
+  {
+   "id": "761812",
+   "date": "2026-09-13T21:30Z",
+   "name": "New England Revolution at Chicago Fire FC",
+   "shortName": "NE @ CHI",
+   "competitions": [
+    {
+     "id": "761812",
+     "date": "2026-09-13T21:30Z",
+     "startDate": "2026-09-13T21:30Z",
+     "timeValid": true,
+     "recent": false,
+     "status": {
+      "clock": 5400.0,
+      "displayClock": "90'+6'",
+      "period": 2,
+      "type": {
+       "id": "28",
+       "name": "STATUS_FULL_TIME",
+       "state": "post",
+       "completed": true,
+       "description": "Full Time",
+       "detail": "FT",
+       "shortDetail": "FT"
+      }
+     },
+     "competitors": [
+      {
+       "id": "182",
+       "type": "team",
+       "order": 0,
+       "homeAway": "home",
+       "winner": false,
+       "form": "LDDDL",
+       "score": "1",
+       "team": {
+        "id": "182",
+        "displayName": "Chicago Fire FC",
+        "shortDisplayName": "Chicago",
+        "abbreviation": "CHI",
+        "name": "Chicago Fire FC",
+        "location": "Chicago Fire FC"
+       }
+      },
+      {
+       "id": "189",
+       "type": "team",
+       "order": 1,
+       "homeAway": "away",
+       "winner": true,
+       "form": "WWLWD",
+       "score": "2",
+       "team": {
+        "id": "189",
+        "displayName": "New England Revolution",
+        "shortDisplayName": "New England",
+        "abbreviation": "NE",
+        "name": "New England Revolution",
+        "location": "New England Revolution"
+       }
+      }
+     ],
+     "wasSuspended": false
+    }
+   ],
+   "status": {
+    "clock": 5400.0,
+    "displayClock": "90'+6'",
+    "period": 2,
+    "type": {
+     "id": "28",
+     "name": "STATUS_FULL_TIME",
+     "state": "post",
+     "completed": true,
+     "description": "Full Time",
+     "detail": "FT",
+     "shortDetail": "FT"
+    }
+   }
+  }
+ ]
+}

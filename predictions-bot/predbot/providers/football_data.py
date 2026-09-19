@@ -26,6 +26,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
+from predbot.markets.competitions import COMPETITIONS as COMPETITION_TABLE, lookup
 from predbot.providers.base import BaseProvider, Event, MatchResult
 from predbot.util.http import Http, ProviderError, RateLimiter
 from predbot.util.names import same_team
@@ -36,21 +37,10 @@ log = logging.getLogger(__name__)
 #: Competitions covered by the free tier that matter to us.
 COMPETITIONS = ("PL", "ELC", "PD", "SA", "BL1", "FL1", "DED", "PPL", "CL", "EC", "WC", "BSA")
 
-#: SharpAPI league slugs and Odds API sport keys -> football-data competition codes.
-LEAGUE_TO_COMPETITION = {
-    # SharpAPI slugs (``<country>_-_<competition>``)
-    "england_-_premier_league": "PL", "england_-_championship": "ELC", "spain_-_la_liga": "PD",
-    "italy_-_serie_a": "SA", "germany_-_bundesliga": "BL1", "france_-_ligue_1": "FL1",
-    "netherlands_-_eredivisie": "DED", "portugal_-_primeira_liga": "PPL",
-    "uefa_-_champions_league": "CL",
-    # The Odds API sport keys
-    "soccer_epl": "PL", "soccer_efl_champ": "ELC", "soccer_spain_la_liga": "PD",
-    "soccer_italy_serie_a": "SA", "soccer_germany_bundesliga": "BL1", "soccer_france_ligue_one": "FL1",
-    "soccer_netherlands_eredivisie": "DED", "soccer_portugal_primeira_liga": "PPL",
-    "soccer_uefa_champs_league": "CL", "soccer_fifa_world_cup": "WC", "soccer_brazil_campeonato": "BSA",
-    # SportsGameOdds league ids (only those seen in fixtures / config)
-    "FR_LIGUE_1": "FL1", "UEFA_CHAMPIONS_LEAGUE": "CL",
-}
+#: SharpAPI slugs, Odds API sport keys and SGO league ids -> football-data codes, derived
+#: from the single competitions table (markets/competitions.py).
+LEAGUE_TO_COMPETITION = {ident: c.football_data for c in COMPETITION_TABLE if c.football_data
+                         for ident in (c.sharp, c.oddsapi, c.sgo) if ident}
 
 STATUS_MAP = {
     "FINISHED": "final", "AWARDED": "final",
@@ -62,16 +52,8 @@ STATUS_MAP = {
 
 def competition_for(league_id: str = "", league: str = "") -> Optional[str]:
     """football-data competition code for a stored league id / display name, or None."""
-    for raw in (league_id, league):
-        if not raw:
-            continue
-        if raw in LEAGUE_TO_COMPETITION:
-            return LEAGUE_TO_COMPETITION[raw]
-        slug = re.sub(r"[^a-z0-9]+", "_", str(raw).lower()).strip("_")
-        for known, code in LEAGUE_TO_COMPETITION.items():
-            if re.sub(r"[^a-z0-9]+", "_", known.lower()).strip("_") == slug:
-                return code
-    return None
+    comp = lookup(league_id, league)
+    return (comp.football_data or None) if comp is not None else None
 
 
 def _pair(block) -> Optional[Tuple[float, float]]:

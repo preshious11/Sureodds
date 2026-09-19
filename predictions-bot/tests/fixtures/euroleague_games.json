@@ -1,0 +1,169 @@
+{
+ "total": 4,
+ "data": [
+  {
+   "identifier": "E2025_4",
+   "played": true,
+   "utcDate": "2025-09-30T16:00:00Z",
+   "gameStatus": "Confirmed",
+   "local": {
+    "club": {
+     "code": "DUB",
+     "name": "Dubai Basketball",
+     "abbreviatedName": "Dubai",
+     "editorialName": "Dubai"
+    },
+    "score": 89,
+    "standingsScore": 89,
+    "partials": {
+     "partials1": 28,
+     "partials2": 19,
+     "partials3": 21,
+     "partials4": 21,
+     "extraPeriods": {}
+    }
+   },
+   "road": {
+    "club": {
+     "code": "PAR",
+     "name": "Partizan Mozzart Bet Belgrade",
+     "abbreviatedName": "Partizan",
+     "editorialName": "Partizan"
+    },
+    "score": 76,
+    "standingsScore": 76,
+    "partials": {
+     "partials1": 18,
+     "partials2": 22,
+     "partials3": 16,
+     "partials4": 20,
+     "extraPeriods": {}
+    }
+   }
+  },
+  {
+   "identifier": "E2025_406",
+   "played": true,
+   "utcDate": "2026-05-24T18:00:00Z",
+   "gameStatus": "Confirmed",
+   "local": {
+    "club": {
+     "code": "OLY",
+     "name": "Olympiacos Piraeus",
+     "abbreviatedName": "Olympiacos",
+     "editorialName": "Olympiacos"
+    },
+    "score": 92,
+    "standingsScore": 92,
+    "partials": {
+     "partials1": 19,
+     "partials2": 27,
+     "partials3": 15,
+     "partials4": 31,
+     "extraPeriods": {}
+    }
+   },
+   "road": {
+    "club": {
+     "code": "MAD",
+     "name": "Real Madrid",
+     "abbreviatedName": "Real",
+     "editorialName": "Real"
+    },
+    "score": 85,
+    "standingsScore": 85,
+    "partials": {
+     "partials1": 26,
+     "partials2": 18,
+     "partials3": 21,
+     "partials4": 20,
+     "extraPeriods": {}
+    }
+   }
+  },
+  {
+   "identifier": "E2025_397",
+   "played": true,
+   "utcDate": "2026-05-08T17:00:00Z",
+   "gameStatus": "Confirmed",
+   "local": {
+    "club": {
+     "code": "ZAL",
+     "name": "Zalgiris Kaunas",
+     "abbreviatedName": "Zalgiris",
+     "editorialName": "Zalgiris"
+    },
+    "score": 90,
+    "standingsScore": 80,
+    "partials": {
+     "partials1": 20,
+     "partials2": 22,
+     "partials3": 20,
+     "partials4": 18,
+     "extraPeriods": {
+      "1": 10
+     }
+    }
+   },
+   "road": {
+    "club": {
+     "code": "ULK",
+     "name": "Fenerbahce Beko Istanbul",
+     "abbreviatedName": "Fenerbahce",
+     "editorialName": "Fenerbahce"
+    },
+    "score": 94,
+    "standingsScore": 80,
+    "partials": {
+     "partials1": 25,
+     "partials2": 22,
+     "partials3": 14,
+     "partials4": 19,
+     "extraPeriods": {
+      "1": 14
+     }
+    }
+   }
+  },
+  {
+   "identifier": "E2026_379",
+   "played": false,
+   "utcDate": "2027-04-16T18:30:00Z",
+   "gameStatus": "Confirmed",
+   "local": {
+    "club": {
+     "code": "BAR",
+     "name": "FC Barcelona",
+     "abbreviatedName": "FC Barcelona",
+     "editorialName": "Barca"
+    },
+    "score": 0,
+    "standingsScore": 0,
+    "partials": {
+     "partials1": 0,
+     "partials2": 0,
+     "partials3": 0,
+     "partials4": 0,
+     "extraPeriods": {}
+    }
+   },
+   "road": {
+    "club": {
+     "code": "PAR",
+     "name": "Partizan Mozzart Bet Belgrade",
+     "abbreviatedName": "Partizan",
+     "editorialName": "Partizan"
+    },
+    "score": 0,
+    "standingsScore": 0,
+    "partials": {
+     "partials1": 0,
+     "partials2": 0,
+     "partials3": 0,
+     "partials4": 0,
+     "extraPeriods": {}
+    }
+   }
+  }
+ ]
+}

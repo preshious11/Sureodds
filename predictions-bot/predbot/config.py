@@ -105,6 +105,9 @@ class Config:
     odds_api_key: str = field(default_factory=lambda: _env("ODDS_API_KEY"))
     #: football-data.org token: free football RESULTS for settlement (never a fixture/odds source).
     football_data_key: str = field(default_factory=lambda: _env("FOOTBALL_DATA_KEY"))
+    #: free, keyless results sources (settlement only); on by default
+    espn_results: bool = field(default_factory=lambda: _bool("ESPN_RESULTS", True))
+    euroleague_results: bool = field(default_factory=lambda: _bool("EUROLEAGUE_RESULTS", True))
     odds_api_regions: List[str] = field(default_factory=lambda: _list("ODDS_API_REGIONS", "eu"))
     odds_api_min_interval: float = field(default_factory=lambda: _float("ODDS_API_MIN_INTERVAL_SEC", 1.1))
     odds_api_max_leagues_per_sport: int = field(default_factory=lambda: _int("ODDS_API_MAX_LEAGUES_PER_SPORT", 8))
@@ -142,7 +145,7 @@ class Config:
     sgo_monthly_object_limit: int = field(default_factory=lambda: _int("SGO_MONTHLY_OBJECT_LIMIT", 1000))
     sharpapi_leagues: List[str] = field(default_factory=lambda: _list(
         "SHARPAPI_LEAGUES",
-        "england_-_premier_league,spain_-_la_liga,italy_-_serie_a,germany_-_bundesliga,france_-_ligue_1,england_-_championship,netherlands_-_eredivisie,portugal_-_primeira_liga,turkey_-_super_lig,uefa_-_champions_league,uefa_-_europa_league,uefa_-_europa_conference_league,nigeria_-_premier_league,nba,nfl,mlb,euroleague"))
+        "england_-_premier_league,spain_-_la_liga,italy_-_serie_a,germany_-_bundesliga,france_-_ligue_1,england_-_championship,netherlands_-_eredivisie,portugal_-_primeira_liga,turkey_-_super_lig,uefa_-_champions_league,uefa_-_europa_league,uefa_-_europa_conference_league,nigeria_-_premier_league,atp,wta,nba,nfl,mlb,euroleague"))
     # SHARPAPI_SPORTS walks the kick-off ordered global sport feed(s), e.g. soccer:
     # one or two pages reach today's fixtures without per-league requests.
     sharpapi_sports: List[str] = field(default_factory=lambda: _list("SHARPAPI_SPORTS"))

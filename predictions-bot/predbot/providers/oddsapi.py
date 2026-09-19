@@ -112,6 +112,7 @@ class OddsApiProvider(BaseProvider):
         self.sport_status: Dict[str, Dict] = {}
         # /scores responses cached per sport key for the duration of one settle.run
         self._scores_cache: Dict[str, Optional[Dict[str, Dict]]] = {}
+        self.skipped_no_results: List[str] = []   # keys with no results path (not fetched)
 
     def begin_run(self) -> None:
         """Forget cached /scores responses: results change between settlement runs."""
@@ -230,6 +231,8 @@ class OddsApiProvider(BaseProvider):
             sport = sport_key_to_canonical(key)
             if self.league_allowlist and key not in self.league_allowlist:
                 continue
+            if key in self.skipped_no_results:
+                continue                                  # nothing can settle it
             if sport == "football":
                 football_keys.append(key)
             elif sport == "tennis":

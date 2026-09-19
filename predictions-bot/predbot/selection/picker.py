@@ -28,6 +28,7 @@ from typing import Dict, List, Optional, Tuple
 
 from predbot.config import Config
 from predbot.markets.catalog import contradicts, is_equivalent, selection_family, spec
+from predbot.markets.settlement import unsettleable_reason
 from predbot.model.ensemble import Scored
 from predbot.util.names import same_team
 
@@ -314,9 +315,15 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
                 path = gate_paths[id(s.event)] = results_gate(s.event)
                 if path is None:
                     no_path_by_league[str(s.event.league_id or s.event.league or "?")] += 1
-            if path is None:
+            if not path:
                 rejection_counts["NO_RESULTS_PATH"] += 1
                 _note(s, "base: NO_RESULTS_PATH")
+                continue
+            why = unsettleable_reason(path if isinstance(path, (list, tuple)) else [path], s.line.period, s.line.stat)
+            if why:
+                # a path exists for the event, but none can grade THIS market's period / stat
+                rejection_counts["PERIOD_UNSETTLEABLE" if why == "period" else "STAT_UNSETTLEABLE"] += 1
+                _note(s, f"base: {why.upper()}_UNSETTLEABLE")
                 continue
         if not math.isfinite(s.price):
             rejection_counts["INVALID_PRICE"] += 1
