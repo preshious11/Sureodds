@@ -3,7 +3,7 @@
 A Telegram bot for Nigerian SportyBet punters. It pulls odds from The Odds API,
 SharpAPI and SportsGameOdds, prices the markets it can settle with its own model,
 and posts a daily **Top ticket (~2.00 combined odds) + a Daily ticket**. It settles
-results automatically (football-data.org, The Odds API scores, SportsGameOdds) and
+results automatically (football-data.org, ESPN, EuroLeague, SportsGameOdds, The Odds API scores) and
 tracks a rolling record.
 
 It is written in pure Python 3.11 (only `requests` is required) and runs as a single
@@ -129,6 +129,8 @@ The **picker** then applies your rules:
 | **The Odds API** — https://the-odds-api.com/ | odds (Top ticket, European football) + `/scores` results | recommended |
 | **SportsGameOdds** — https://sportsgameodds.com/ | NBA/NFL/MLB/MLS/NCAA/UCL odds + results | optional |
 | **football-data.org** — https://www.football-data.org/ | free football **results only** (never odds or fixtures) | optional, recommended for settlement |
+| **ESPN scoreboard** — site.api.espn.com | free, keyless **results only**: football (incl. Europa/Conference/Süper Lig/Nigeria/MLS), NBA, NCAAB, NFL, NCAAF, MLB, ATP/WTA | on by default (`ESPN_RESULTS=1`) |
+| **EuroLeague API** — api-live.euroleague.net | free, keyless Euroleague **results only** | on by default (`EUROLEAGUE_RESULTS=1`) |
 
 A missing optional key only logs a warning at startup; the chain skips that provider.
 
@@ -221,9 +223,10 @@ rather than failing silently:
 - **SharpAPI** — rate-limited to `SHARPAPI_MIN_INTERVAL_SEC` between calls
   (free tier ≈ 12/min). Its `/odds` feed is ordered by kick-off and prices each
   match with dozens of rows, so the fetch is shaped by `SHARPAPI_MARKETS` (default
-  `moneyline,spread,total`), an **explicit** `SHARPAPI_LEAGUES` list (17 leagues by
-  default, **no tennis** — `atp`/`wta` are left out until a tennis results path exists,
-  since their picks could never be settled; add them back only then; there is no sport-level auto-discovery — a configured `SHARPAPI_SPORTS`
+  `moneyline,spread,total`), an **explicit** `SHARPAPI_LEAGUES` list (19 leagues by
+  default, tennis included since ESPN settles it; a configured league that nothing can
+  settle is not fetched and is listed in the startup coverage table and `/lastrun`;
+  there is no sport-level auto-discovery — a configured `SHARPAPI_SPORTS`
   feed only logs a warning), `SHARPAPI_MAX_PAGES=3` and `SHARPAPI_EVENTS_PER_TARGET`.
   Paging also stops once a page starts after the pick window ends.
 
@@ -233,19 +236,30 @@ Run `python cli.py budget` any time to see where you stand.
 
 ## Settlement
 
-A pick is only made when `markets/settlement.py::results_path(event, …)` finds a
-provider that can settle it, in this order: SportsGameOdds (events it supplied);
-The Odds API (its `sport_key` is stored with the pick and `/sports/{key}/scores`
-covers it); football-data.org (a football league that maps to a competition code —
-needs `FOOTBALL_DATA_KEY`); SportsGameOdds `find_result` for a league it covers.
-Otherwise the candidate is rejected as `NO_RESULTS_PATH` (logged once per league).
+Every league is one row of `markets/competitions.py` (its SharpAPI slug, Odds API key, SGO
+league id, football-data code, ESPN `sport/league`, EuroLeague code). A pick is only made
+when `markets/settlement.py::result_paths(event, …)` finds at least one provider that can
+settle it, tried in this order: the origin SportsGameOdds id → football-data.org (needs
+`FOOTBALL_DATA_KEY`) → **ESPN** → **EuroLeague** → The Odds API `/scores` (2 credits, last
+resort, cached per key per day) → a SportsGameOdds team+time lookup.
 
-`ResultsResolver` then resolves each stored pick in this order: the origin provider by
-id → alternate ids recorded when providers were merged → football-data.org by
-competition + teams + kick-off → SportsGameOdds by teams + time. Every provider call
-is wrapped, so an outage leaves the pick pending. `settle.run` never raises: a bad
-pick is counted in `errors` and the rest are settled; a pick with no result after
-`MAX_PENDING_DAYS` is voided. Football markets settle on the 90-minute score.
+Each path also declares which **periods and stats** it can grade (football-data and
+EuroLeague: full/halves; ESPN: full for football/baseball/tennis, plus halves and
+quarters for basketball/NFL; SportsGameOdds: anything). A market no path can grade —
+say a 1st-half bet on a `full`-only path — is rejected up front as `PERIOD_UNSETTLEABLE`
+(or `STAT_UNSETTLEABLE`) instead of sitting pending for four days and being voided; an
+event with no path at all is `NO_RESULTS_PATH`. Leagues with no path are not fetched,
+and the startup log prints one table of every configured league and its path(s).
+
+`ResultsResolver` walks the same list, first usable result wins, every provider call is
+wrapped so an outage leaves the pick pending. Tennis settles on **sets** (match winner)
+and on **games** (totals/handicaps). `settle.run` never raises: a bad pick is counted in
+`errors` and the rest are settled; a pick with no result after `MAX_PENDING_DAYS` is
+voided. Football markets settle on the 90-minute score.
+
+ESPN needs no key but its edge returns 403 to most user agents, so the provider sends the
+default python-requests agent; if ESPN ever blocks the host, its paths fail as
+`ProviderError` and settlement falls through to the next path.
 
 ---
 
@@ -260,8 +274,8 @@ The footer multiplies all odds in the selected ticket, across every page, and
 displays two decimal places. The saved `/timezone` preference (detected from the
 Telegram locale on `/start`, or set with `/timezone Area/City`) applies to both
 commands and buttons; the configured timezone is the fallback. Each ticket header
-shows `odds as of <generation time>` and every pick says where its price comes from
-(`Odds: 2.10 (median of 6 books)` / `Odds: 2.35 (Bet365)`).
+shows `odds as of <generation time>`. The card shows the plain price (`Odds: 2.10`); where
+each price came from (median of N books / a bookmaker) is listed in `/lastrun`.
 
 Predictions use the existing SQLite database (`DB_PATH`) as the only cache.
 
@@ -317,8 +331,8 @@ main.py                 scheduler entrypoint (the container worker)
 cli.py                  manual commands
 predbot/
   config.py             all env-driven settings
-  providers/            oddsapi, sharpapi, sportsgameodds, football_data
-                        (results only), chain, budget
+  providers/            oddsapi, sharpapi, sportsgameodds; espn, euroleague,
+                        football_data (results only), chain, budget
   markets/              canonical market catalogue + settlement grading
   model/                devig, poisson score grid, margin model, elo,
                         calibration (fitted on pre-calibration probabilities), ensemble
