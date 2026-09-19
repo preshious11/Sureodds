@@ -30,6 +30,7 @@ from predbot.markets.catalog import pretty_league
 from predbot.providers.base import BaseProvider, Event, MarketLine, apply_price_mode
 from predbot.providers.budget import Budget
 from predbot.util.http import Http, ProviderError, RateLimiter
+from predbot.util.names import is_doubles
 from predbot.util.odds import parse_decimal
 from predbot.util.timeutil import parse_iso
 
@@ -373,6 +374,10 @@ class SharpApiProvider(BaseProvider):
             counts[sport + ":raw_events"] += 1
             if not st or not (start <= st < end):
                 counts[sport + ":outside_window"] += 1
+                continue
+            if sport == "tennis" and is_doubles(r0.get("home_team", ""), r0.get("away_team", "")):
+                counts[sport + ":doubles"] += 1
+                self.parse_counts["DOUBLES_UNSUPPORTED"] += 1       # ESPN results are singles only: it could never settle
                 continue
             counts[sport + ":in_window"] += 1
             e = Event(provider=self.name, provider_event_id=eid, sport=sport,

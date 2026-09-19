@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
+from predbot.util.names import is_doubles
 from predbot.providers.base import MarketLine, MatchResult
 from predbot.markets.competitions import (BY_ID, competition_for_event, lookup, normalise_period, path_periods,
                                           path_stats)
@@ -296,6 +297,8 @@ def result_paths(event, cfg, providers: Dict) -> List[ResultPath]:
     last), then a SportsGameOdds team+time lookup.
     """
     providers = providers or {}
+    if getattr(event, "sport", "") == "tennis" and is_doubles(getattr(event, "home", ""), getattr(event, "away", "")):
+        return []                             # ESPN's tennis parser grades singles only; nothing can settle doubles
     comp = competition_for_event(event)
     sources: Set[str] = set(getattr(event, "sources", None) or []) | {getattr(event, "provider", "")}
     extra = getattr(event, "extra", None) or {}
