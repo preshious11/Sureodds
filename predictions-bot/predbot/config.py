@@ -160,7 +160,8 @@ class Config:
     sharpapi_main_lines_only: bool = field(default_factory=lambda: _bool("SHARPAPI_MAIN_LINES_ONLY", True))
     #: exact market names per sport; the aliases in SHARPAPI_MARKETS also drag in shots/fouls/corners/player rows
     sharpapi_markets_football: List[str] = field(default_factory=lambda: _list(
-        "SHARPAPI_MARKETS_FOOTBALL", "moneyline,point_spread,total_goals"))
+        "SHARPAPI_MARKETS_FOOTBALL",
+        "moneyline,point_spread,total_goals,double_chance,draw_no_bet,both_teams_to_score,team_total_goals"))
     sharpapi_markets_baseball: List[str] = field(default_factory=lambda: _list(
         "SHARPAPI_MARKETS_BASEBALL", "moneyline,run_line,total_runs"))
     #: SharpAPI publishes no monthly quota (free tier = 12 requests/minute, ~17,280/day); this is OUR

@@ -456,7 +456,7 @@ class SharpApiProvider(BaseProvider):
                 stat = "cards"
             elif "game" in mtype or "set" in mtype:
                 stat = "games" if "game" in mtype else "sets"
-        elif mtype == "team_total":
+        elif mtype in ("team_total", "team_total_goals"):
             if line is None:
                 return None
             market = "total"
