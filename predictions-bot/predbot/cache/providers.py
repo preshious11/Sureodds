@@ -56,6 +56,14 @@ def _quota_state(provider):
     return state if isinstance(state, dict) else None
 
 
+def _request_summary(provider):
+    """Requests this generation spent versus the budget it was given (providers that meter requests)."""
+    spent, budget = getattr(provider, 'requests_spent', None), getattr(provider, 'requests_budget', None)
+    if not isinstance(spent, int):
+        return None
+    return {'spent': spent, 'budget': budget if isinstance(budget, int) else None}
+
+
 def collect_persisted(chain, start, end):
     from predbot.providers.chain import merge_events
     now = utcnow()
@@ -110,6 +118,7 @@ def collect_persisted(chain, start, end):
                                   sport_rejected=gate.get('sport_rejected', 0),
                                   outcome=('success' if events else 'empty') if complete else 'failed',
                                   fetch=getattr(provider, 'fetch_counts', {}),
+                                  requests=_request_summary(provider),
                                   normalization=getattr(provider, 'normalization_counts', {}),
                                   rejections=dict(getattr(provider, 'parse_counts', {}) or {}),
                                   sport_status=getattr(provider, 'sport_status', None),

@@ -155,7 +155,24 @@ class Config:
     # Match-market filter: drops the futures/outrights that flood the raw feed.
     sharpapi_markets: List[str] = field(
         default_factory=lambda: _list("SHARPAPI_MARKETS", "moneyline,spread,total"))
-    sharpapi_max_pages: int = field(default_factory=lambda: _int("SHARPAPI_MAX_PAGES", 3))
+    sharpapi_max_pages: int = field(default_factory=lambda: _int("SHARPAPI_MAX_PAGES", 3))     # hard per-feed ceiling
+    #: is_main_line=true on every request (alternate lines are ~70% of the rows a match costs)
+    sharpapi_main_lines_only: bool = field(default_factory=lambda: _bool("SHARPAPI_MAIN_LINES_ONLY", True))
+    #: exact market names per sport; the aliases in SHARPAPI_MARKETS also drag in shots/fouls/corners/player rows
+    sharpapi_markets_football: List[str] = field(default_factory=lambda: _list(
+        "SHARPAPI_MARKETS_FOOTBALL", "moneyline,point_spread,total_goals"))
+    sharpapi_markets_baseball: List[str] = field(default_factory=lambda: _list(
+        "SHARPAPI_MARKETS_BASEBALL", "moneyline,run_line,total_runs"))
+    #: SharpAPI publishes no monthly quota (free tier = 12 requests/minute, ~17,280/day); this is OUR
+    #: self-imposed budget, spread over the days left in the month, capped per generation
+    sharpapi_monthly_request_limit: int = field(default_factory=lambda: _int("SHARPAPI_MONTHLY_REQUEST_LIMIT", 3000))
+    sharpapi_max_requests_per_generation: int = field(
+        default_factory=lambda: _int("SHARPAPI_MAX_REQUESTS_PER_GENERATION", 60))
+    #: leagues fetched first (and never starved) when the request budget is tight
+    sharpapi_league_priority: List[str] = field(default_factory=lambda: _list(
+        "SHARPAPI_LEAGUE_PRIORITY",
+        "england_-_premier_league,spain_-_la_liga,italy_-_serie_a,germany_-_bundesliga,france_-_ligue_1,"
+        "uefa_-_champions_league"))
     sharpapi_events_per_target: int = field(
         default_factory=lambda: _int("SHARPAPI_EVENTS_PER_TARGET", 40))
     sharpapi_min_interval: float = field(default_factory=lambda: _float("SHARPAPI_MIN_INTERVAL_SEC", 5.5))
