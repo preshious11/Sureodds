@@ -88,6 +88,10 @@ def recap_card(db: Database, local_now: datetime) -> str:
     return recap_message("YESTERDAY", stats_mod.by_sport(rows), st)
 
 
+#: admin commands that run a whole job (generation / settlement / recap)
+LONG_RUNNING = frozenset({"/run", "/settle", "/recap"})
+
+
 class CommandLoop(threading.Thread):
     def __init__(self, tg: Telegram, db: Database, cfg: Config,
                  actions: Dict[str, Callable[[], str]],
@@ -99,6 +103,7 @@ class CommandLoop(threading.Thread):
         self.page_size = page_size
         self.offset: Optional[int] = None
         self._stop_event = threading.Event()
+        self._admin_threads: List[threading.Thread] = []
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -126,6 +131,8 @@ class CommandLoop(threading.Thread):
                     self._handle_update(upd)
                 except Exception:  # noqa: BLE001 - one bad update must not kill the poll loop
                     log.error("update %s failed", upd.get("update_id"), exc_info=True)
+        for worker in self._admin_threads:            # leaving the loop: let an admin action in flight finish
+            worker.join(timeout=5)
 
     def _handle_update(self, upd: dict) -> None:
         cb = upd.get("callback_query")
@@ -150,6 +157,23 @@ class CommandLoop(threading.Thread):
         if self.service is not None and callbacks.is_view_command(cmd):
             self._send_view(cmd, chat_id)
             return
+        if cmd in LONG_RUNNING and user_id in self.cfg.telegram_admin_ids and self.actions.get(cmd):
+            # /run, /settle and /recap take minutes: on their own thread, so /top, /daily and the buttons keep
+            # answering. The reply is the same text, sent when the action finishes.
+            worker = threading.Thread(target=self._admin_action, args=(cmd, user_id, chat_id, args, upd.get("update_id")),
+                                      daemon=True, name=f"admin{cmd}")
+            self._admin_threads = [t for t in self._admin_threads if t.is_alive()] + [worker]
+            worker.start()
+            return
+        self._answer(cmd, user_id, chat_id, args)
+
+    def _admin_action(self, cmd, user_id, chat_id, args, update_id) -> None:
+        try:
+            self._answer(cmd, user_id, chat_id, args)
+        except Exception:  # noqa: BLE001 - same log line the poll loop writes for a failed update
+            log.error("update %s failed", update_id, exc_info=True)
+
+    def _answer(self, cmd: str, user_id: str, chat_id: str, args: List[str]) -> None:
         try:
             reply = self.handle(cmd, user_id, chat_id, args)
         except (ValueError, KeyError, AttributeError) as e:

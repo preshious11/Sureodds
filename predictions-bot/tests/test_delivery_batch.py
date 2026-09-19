@@ -88,3 +88,33 @@ def test_submissions_are_paced(db, snap, monkeypatch):
     t0 = time.perf_counter()
     deliver_picks(db, Config(), Tg(), snap, now=NOW)
     assert time.perf_counter() - t0 >= 0.25                    # 30 sends at <= 100/s cannot finish faster
+
+
+# ------------------------------------------------------------------ H14: admin actions do not block the poll loop
+def test_a_long_admin_action_does_not_block_other_commands(db):
+    import time
+    from predbot.bot.commands import CommandLoop
+    sent = []
+
+    class TG:
+        token = "t"
+
+        def send(self, text, chat_id=None, **kw):
+            sent.append((time.perf_counter(), text))
+            return True
+
+    def slow():
+        time.sleep(0.5)
+        return "generation done"
+
+    loop = CommandLoop(TG(), db, Config(telegram_admin_ids=["111"]), {"/run": slow})
+    mk = lambda uid, text: {"update_id": uid, "message": {"text": text, "chat": {"id": 1}, "from": {"id": 111}}}
+    t0 = time.perf_counter()
+    loop._handle_update(mk(1, "/run"))
+    loop._handle_update(mk(2, "/help"))
+    assert time.perf_counter() - t0 < 0.3                       # neither call waited for the generation
+    assert any("Commands" in text for _, text in sent)          # /help was answered while /run is still going
+    assert not any(text == "generation done" for _, text in sent)
+    for w in loop._admin_threads:
+        w.join(2)
+    assert sent[-1][1] == "generation done"                      # the same reply, sent when the action finished
