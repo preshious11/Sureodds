@@ -81,7 +81,9 @@ def test_the_old_request_shape_is_one_switch_away():
 def test_the_defaults_are_wired_from_config():
     cfg = Config(sharpapi_key="k", odds_api_key="", sgo_key="")
     p = build_providers(cfg, _Nothing())["sharpapi"]
-    assert p.main_lines_only and p.sport_markets["football"] == ["moneyline", "point_spread", "total_goals"]
+    assert p.main_lines_only and p.sport_markets["football"] == [
+        "moneyline", "point_spread", "total_goals", "double_chance", "draw_no_bet", "both_teams_to_score",
+        "team_total_goals"]
     assert p.sport_markets["baseball"] == ["moneyline", "run_line", "total_runs"]
     assert p.monthly_limit == 3000 and p.max_requests_per_generation == 60
     assert p.league_priority[0] == "england_-_premier_league" and "uefa_-_champions_league" in p.league_priority
@@ -204,3 +206,57 @@ def test_recorded_football_rows_with_exact_names_cost_under_40_rows_per_match():
         per_event.setdefault(r["event_id"], []).append(r)
     assert len(per_event) >= 5 and 200 / len(per_event) < 40
     assert all(r["is_main_line"] and r.get("market_segment") is None for r in payload["data"])
+
+
+# ------------------------------------------------------------------ Phase 3: the wider football market list
+def _recorded_wide():
+    return load("sharp_pl_wide_main.json")["data"]
+
+
+def _line(market_type, selection_type):
+    p = SharpApiProvider("k", _Nothing(), leagues=[])
+    r = next(r for r in _recorded_wide() if r["market_type"] == market_type and r["selection_type"] == selection_type)
+    return p._row_to_line(r, "football")
+
+
+@pytest.mark.parametrize("market_type,selection_type,market,selection", [
+    ("double_chance", "home_draw", "dc", "home_draw"), ("double_chance", "away_draw", "dc", "away_draw"),
+    ("double_chance", "home_away", "dc", "home_away"),
+    ("draw_no_bet", "home", "dnb", "home"), ("draw_no_bet", "away", "dnb", "away"),
+    ("both_teams_to_score", "yes", "btts", "yes"), ("both_teams_to_score", "no", "btts", "no"),
+    ("moneyline", "draw", "result3", "draw"), ("point_spread", "home", "handicap", "home"),
+    ("total_goals", "over", "total", "over")])
+def test_every_market_type_in_the_football_list_parses_from_a_recorded_row(market_type, selection_type, market, selection):
+    ml = _line(market_type, selection_type)
+    assert ml is not None and ml.market == market and ml.selection == selection and ml.stat == "points"
+
+
+@pytest.mark.parametrize("selection_type,side,ou,line", [("home_over", "home", "over", 1.5), ("away_over", "away", "over", 0.5),
+                                                         ("home_under", "home", "under", 1.5), ("away_under", "away", "under", 0.5)])
+def test_team_total_goals_becomes_a_team_total_not_a_dropped_row(selection_type, side, ou, line):
+    """team_total_goals used to be dropped: the generic 'total' branch wanted over/under, not home_over."""
+    ml = _line("team_total_goals", selection_type)
+    assert (ml.market, ml.entity, ml.selection, ml.line, ml.stat) == ("total", side, ou, line, "points")
+
+
+def test_shots_fouls_and_corner_team_totals_are_still_not_mistaken_for_goals():
+    p = SharpApiProvider("k", _Nothing(), leagues=[])
+    for mtype in ("team_total_shots", "team_total_fouls", "team_total_exact"):
+        r = dict(_recorded_wide()[0], market_type=mtype, selection_type="home_over", line=3.5)
+        assert p._row_to_line(r, "football") is None
+
+
+def test_the_recorded_page_becomes_events_with_all_six_market_families():
+    p = SharpApiProvider("k", _Nothing(), leagues=[])
+    events = p._rows_to_events(_recorded_wide(), dt(2026, 9, 19, 0), dt(2026, 10, 12, 0))
+    assert len(events) >= 5
+    fams = {m.market for e in events for m in e.markets}
+    assert {"result3", "handicap", "total", "dc", "dnb", "btts"} <= fams
+
+
+def test_the_wider_list_stays_cheap_per_match():
+    """recorded: 200 rows for 7 matches = 28.6 rows/match, far below the 80-row bar for widening"""
+    per_event = {}
+    for r in _recorded_wide():
+        per_event.setdefault(r["event_id"], []).append(r)
+    assert 200 / len(per_event) <= 80

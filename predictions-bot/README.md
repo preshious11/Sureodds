@@ -220,15 +220,23 @@ rather than failing silently:
 - **SportsGameOdds** — billed per *event object* per month
   (`SGO_MONTHLY_OBJECT_LIMIT`). The bot spreads the monthly allowance across the
   days remaining in the month and keeps a reserve for settlement.
-- **SharpAPI** — rate-limited to `SHARPAPI_MIN_INTERVAL_SEC` between calls
-  (free tier ≈ 12/min). Its `/odds` feed is ordered by kick-off and prices each
-  match with dozens of rows, so the fetch is shaped by `SHARPAPI_MARKETS` (default
-  `moneyline,spread,total`), an **explicit** `SHARPAPI_LEAGUES` list (19 leagues by
-  default, tennis included since ESPN settles it; a configured league that nothing can
-  settle is not fetched and is listed in the startup coverage table and `/lastrun`;
-  there is no sport-level auto-discovery — a configured `SHARPAPI_SPORTS`
-  feed only logs a warning), `SHARPAPI_MAX_PAGES=3` and `SHARPAPI_EVENTS_PER_TARGET`.
-  Paging also stops once a page starts after the pick window ends.
+- **SharpAPI** — the free tier publishes **no monthly quota**, only 12 requests/minute
+  (`X-RateLimit-*` headers). Requests are spaced `SHARPAPI_MIN_INTERVAL_SEC` apart and
+  budgeted by us: `SHARPAPI_MONTHLY_REQUEST_LIMIT` (our own cap, default 3000) is spread
+  over the days left, capped at `SHARPAPI_MAX_REQUESTS_PER_GENERATION` (60), and no feed
+  is starved (every league is owed one page). `/odds` is kick-off ordered and a match
+  used to cost ~200 rows because alternate lines, corners, cards and player rows ride
+  along, so requests now carry `is_main_line=true` (`SHARPAPI_MAIN_LINES_ONLY`) and
+  **exact market names** per sport (`SHARPAPI_MARKETS_FOOTBALL`: moneyline, point_spread,
+  total_goals, double_chance, draw_no_bet, both_teams_to_score, team_total_goals;
+  `SHARPAPI_MARKETS_BASEBALL`: moneyline, run_line, total_runs; other sports use the
+  `SHARPAPI_MARKETS` aliases) — about 29 rows per football match instead of 200. Feeds
+  are fetched in `SHARPAPI_LEAGUE_PRIORITY` order, a page is never requested past the
+  window end, and `SHARPAPI_MAX_PAGES` is a hard per-feed ceiling. `/lastrun` shows each
+  feed's requests, rows, matches in window, rows per match and why it stopped. The league
+  list is explicit (19 by default; a configured league that nothing can settle is not fetched;
+  no sport-level auto-discovery — `SHARPAPI_SPORTS` only logs a warning).
+  Set `SHARPAPI_MAIN_LINES_ONLY=0` to get alternate lines back.
 
 Run `python cli.py budget` any time to see where you stand.
 
