@@ -144,7 +144,7 @@ class FootballDataProvider(BaseProvider):
     def _team_matches(name: str, team) -> bool:
         if not isinstance(team, dict):
             return False
-        return any(t and same_team(name, t) for t in (team.get("name"), team.get("shortName")))
+        return any(t and same_team(name, t) for t in (team.get("name"), team.get("shortName"), team.get("tla")))
 
     @staticmethod
     def _to_result(m: Dict) -> Optional[MatchResult]:
@@ -153,9 +153,10 @@ class FootballDataProvider(BaseProvider):
         if status != "final":
             return result
         score = m.get("score") or {}
-        # Football markets settle on 90 minutes. In v4 fullTime includes extra time
-        # and penalties, so when the match went beyond regulation only regularTime is
-        # safe - and if it is missing the result is not usable.
+        # Football markets settle on 90 minutes. duration REGULAR: fullTime IS the 90
+        # minutes (regularTime is absent). EXTRA_TIME / PENALTY_SHOOTOUT: fullTime
+        # includes extra time and penalties, so only regularTime is safe - and if it
+        # is missing the result is not usable.
         duration = str(score.get("duration", "REGULAR")).upper()
         full = _pair(score.get("fullTime")) if duration == "REGULAR" else _pair(score.get("regularTime"))
         if full is None:

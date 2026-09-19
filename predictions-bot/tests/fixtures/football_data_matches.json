@@ -27,6 +27,11 @@
      "homeTeam": {"id": 58, "name": "Aston Villa FC", "shortName": "Aston Villa", "tla": "AVL"},
      "awayTeam": {"id": 402, "name": "Brentford FC", "shortName": "Brentford", "tla": "BRE"},
      "score": {"winner": null, "duration": "REGULAR",
-               "fullTime": {"home": 1, "away": 0}, "halfTime": {"home": 1, "away": 0}}}
+               "fullTime": {"home": 1, "away": 0}, "halfTime": {"home": 1, "away": 0}}},
+    {"id": 1006, "utcDate": "2030-06-01T19:00:00Z", "status": "FINISHED",
+     "homeTeam": {"id": 73, "name": "Tottenham Hotspur FC", "shortName": "Tottenham", "tla": "TOT"},
+     "awayTeam": {"id": 397, "name": "Brighton & Hove Albion FC", "shortName": "Brighton Hove", "tla": "BHA"},
+     "score": {"winner": "DRAW", "duration": "REGULAR",
+               "fullTime": {"home": 2, "away": 2}, "halfTime": {"home": 1, "away": 0}}}
   ]
 }
