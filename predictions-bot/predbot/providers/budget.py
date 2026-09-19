@@ -1,6 +1,5 @@
 """Free-tier budget accounting so the bot never silently burns a quota.
 
-api_football   : requests per day
 sportsgameodds : *objects* (events) per month, spread over the month
 sharpapi       : requests per minute (handled by RateLimiter) - tracked daily for info only
 """

@@ -1,3 +1,7 @@
+> **Historical.** This report predates the removal of API-Football (Phase 1 of the reconfiguration).
+> Every API-Football reference below describes what the system did at the time; the provider no
+> longer exists in the code. See RECONFIGURATION_REPORT.md for the current provider set.
+
 > Historical investigation. The cache/retry implementation below has been superseded
 > by the SQLite-only architecture documented in SQLITE_CACHE_REPORT.md.
 

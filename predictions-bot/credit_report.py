@@ -8,6 +8,6 @@ db = Database(cfg.db_path)
 day = utcnow().strftime("%Y-%m-%d")
 month = utcnow().strftime("%Y-%m")
 for r in db.query("SELECT provider, bucket, used FROM api_budget "
-                  "WHERE bucket LIKE ? AND provider IN ('oddsapi','api_football','sharpapi','sportsgameodds') "
+                  "WHERE bucket LIKE ? AND provider IN ('oddsapi','sharpapi','sportsgameodds') "
                   "ORDER BY provider, bucket", (month + "%",)):
     print(dict(r))

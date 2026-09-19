@@ -561,7 +561,7 @@ class OddsApiProvider(BaseProvider):
     def fetch_result(self, provider_event_id: str, event_hint: Optional[Dict] = None) -> Optional[MatchResult]:
         """Fetch a result for a known Odds API event id."""
         # Odds API doesn't provide easy result endpoints on the free tier
-        # Settlement will rely on cross-provider lookups (API-Football, SportsGameOdds)
+        # Settlement will rely on cross-provider lookups (SportsGameOdds)
         return None
 
     def find_result(self, sport: str, home: str, away: str, start: datetime) -> Optional[MatchResult]:

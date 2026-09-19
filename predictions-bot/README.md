@@ -20,7 +20,7 @@ as a single Railway **worker** service.
 ## What it does
 
 - **Fallback provider chain.** It queries providers in order (default
-  `api_football → sportsgameodds → sharpapi`) and stops once it has enough
+  `sportsgameodds → sharpapi`) and stops once it has enough
   priced events for the day. If football alone is thin, it reaches into the
   other providers for basketball, tennis, hockey, baseball, etc. Events that
   appear in more than one provider are merged (fuzzy team-name + kickoff match),
@@ -73,8 +73,7 @@ learned calibration:
    else.
 2. **Score-grid model** (football, hockey, handball, baseball). A Dixon-Coles
    adjusted Poisson grid over final scores. Its expected goals are solved so the
-   grid *reproduces* the de-vigged 1X2 and the main Over/Under line, then blended
-   with API-Football's season / last-5 scoring rates when available. One grid
+   grid *reproduces* the de-vigged 1X2 and the main Over/Under line. One grid
    prices **every** score-settled market consistently (1X2, DNB, DC, any total or
    Asian line, team totals, BTTS, handicaps, correct score, odd/even, HT/FT,
    result-combos, clean sheet, win-to-nil, winning margin, half markets).
@@ -83,8 +82,6 @@ learned calibration:
 4. **Elo** per sport, learned from the results the bot settles over time. Its
    weight grows as it accumulates games, so it contributes little on day one and
    more later.
-5. **API-Football `/predictions`** percentages, used as an extra 1X2 signal for
-   football.
 
 These are blended by weight, **shrunk toward the market** (default 80%, so the
 model never wanders far from the books without reason), and passed through a
@@ -115,7 +112,6 @@ The **picker** then applies your rules:
 
 ### 1. Get API keys (all have free tiers)
 
-- **API-Football** — https://www.api-sports.io/ (direct) or via RapidAPI.
 - **SportsGameOdds** — https://sportsgameodds.com/
 - **SharpAPI** — https://sharpapi.io/
 
@@ -136,10 +132,9 @@ Copy `.env.example` to `.env` and fill it in. The important ones:
 ```
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
-API_FOOTBALL_KEY=...
 SPORTSGAMEODDS_KEY=...
 SHARPAPI_KEY=...
-PROVIDER_ORDER=api_football,sportsgameodds,sharpapi
+PROVIDER_ORDER=sportsgameodds,sharpapi
 POST_TIME=09:00
 RECAP_TIME=08:30
 TIMEZONE=Africa/Lagos
@@ -191,8 +186,6 @@ settlement every `SETTLE_INTERVAL_MIN` minutes. Set `ENABLE_COMMANDS=true` and
 The bot tracks usage per provider in the database and refuses to exceed a quota
 rather than failing silently:
 
-- **API-Football** — requests/day (`APIF_DAILY_LIMIT`, default 100). It reserves
-  a slice for end-of-day settlement.
 - **SportsGameOdds** — billed per *event object* per month
   (`SGO_MONTHLY_OBJECT_LIMIT`). The bot spreads the monthly allowance across the
   days remaining in the month and keeps a reserve for settlement.
@@ -231,9 +224,6 @@ Predictions use the existing SQLite database (`DB_PATH`) as the only cache.
 - PARTIAL snapshots remain usable. After `CACHE_RETRY_SECONDS` (default 900), failed
   providers are retried; successful provider portions in `provider_cache` are reused.
   Valid empty results count as completed; a failed football source does not.
-- Successful API-Football generation responses are stored in SQLite as well, so
-  retries reuse fixture/odds/prediction requests already fetched that day. Settlement
-  remains separate because results become available after kickoff.
 - `force_refresh=True` rebuilds Top/Daily selection from canonical provider data.
   Completed source responses remain protected from unnecessary paid refetches.
 - SQLite transactions save both lists/status together; a shared in-process lock
@@ -276,7 +266,7 @@ main.py                 scheduler entrypoint (Railway worker)
 cli.py                  manual commands
 predbot/
   config.py             all env-driven settings
-  providers/            sportsgameodds, sharpapi, api_football, chain, budget
+  providers/            sportsgameodds, sharpapi, oddsapi, chain, budget
   markets/              canonical market catalogue + settlement grading
   model/                devig, poisson score grid, margin model, elo,
                         features, calibration, ensemble

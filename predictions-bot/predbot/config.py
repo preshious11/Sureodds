@@ -87,8 +87,6 @@ class Config:
     enable_commands: bool = field(default_factory=lambda: _bool("ENABLE_COMMANDS", True))
 
     # Providers
-    api_football_key: str = field(default_factory=lambda: _env("API_FOOTBALL_KEY"))
-    api_football_host: str = field(default_factory=lambda: _env("API_FOOTBALL_HOST", "v3.football.api-sports.io"))
     sgo_key: str = field(default_factory=lambda: _env("SPORTSGAMEODDS_KEY"))
     sharpapi_key: str = field(default_factory=lambda: _env("SHARPAPI_KEY"))
     odds_api_key: str = field(default_factory=lambda: _env("ODDS_API_KEY"))
@@ -107,7 +105,7 @@ class Config:
     #: window is guaranteed this many odds keys per cycle before the remaining
     #: credits are ranked by event count, so one busy sport can't starve another.
     oddsapi_min_keys_per_sport: int = field(default_factory=lambda: _int("ODDSAPI_MIN_KEYS_PER_SPORT", 1))
-    provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "api_football,sportsgameodds,sharpapi"))
+    provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "sportsgameodds,sharpapi"))
     #: Provider tried first for the Top ticket only; falls back to
     #: ``provider_order`` when it can't supply enough qualifying picks.
     top_provider_priority: List[str] = field(default_factory=lambda: _list("TOP_PROVIDER_PRIORITY", "oddsapi"))
@@ -130,10 +128,6 @@ class Config:
     sharpapi_events_per_target: int = field(
         default_factory=lambda: _int("SHARPAPI_EVENTS_PER_TARGET", 40))
     sharpapi_min_interval: float = field(default_factory=lambda: _float("SHARPAPI_MIN_INTERVAL_SEC", 5.5))
-    apif_league_ids: List[str] = field(default_factory=lambda: _list("APIF_LEAGUE_IDS"))
-    apif_daily_limit: int = field(default_factory=lambda: _int("APIF_DAILY_LIMIT", 100))
-    apif_predictions_per_run: int = field(default_factory=lambda: _int("APIF_PREDICTIONS_PER_RUN", 25))
-    apif_odds_pages: int = field(default_factory=lambda: _int("APIF_ODDS_PAGES", 3))
 
     # Picks - the daily post is ONE ticket, so combined odds (not pick counts)
     # size the lists; daily_target is only a safety cap on the number of picks.
@@ -158,7 +152,7 @@ class Config:
     top_legs_max: int = field(default_factory=lambda: _int("TOP_LEGS_MAX", 3))
     top_odds_max: float = field(default_factory=lambda: _float("TOP_ODDS_MAX", 2.50))
     #: EV is no longer an edge requirement - this is a confidence product. A
-    #: candidate with an independent signal (apif/elo) is rejected only when
+    #: candidate with an independent signal (elo) is rejected only when
     #: the signal says the market is MATERIALLY overpricing it (ev below the
     #: NEG floor, default -0.05). Market-only candidates skip the gate
     #: entirely: their p_model is de-vigged market probability, so their EV
@@ -239,7 +233,6 @@ class Config:
 
     def enabled_providers(self) -> List[str]:
         keys = {
-            "api_football": bool(self.api_football_key),
             "sportsgameodds": bool(self.sgo_key),
             "sharpapi": bool(self.sharpapi_key),
         }

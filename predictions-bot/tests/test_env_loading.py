@@ -137,14 +137,14 @@ def test_startup_report_names_the_file_the_overrides_and_the_ignored_keys(tmp_pa
 
 def test_secrets_are_masked_everywhere_in_the_report(tmp_path, monkeypatch):
     f = tmp_path / ".env"
-    f.write_text("TELEGRAM_BOT_TOKEN=abc123-very-secret\nAPI_FOOTBALL_KEY=key-999\nSHARPAPI_KEY=k3\n"
+    f.write_text("TELEGRAM_BOT_TOKEN=abc123-very-secret\nSHARPAPI_KEY=k3\n"
                  "SPORTSGAMEODDS_KEY=k4\nODDS_API_KEY=k5\n", encoding="utf-8")
-    _clear(monkeypatch, "TELEGRAM_BOT_TOKEN", "API_FOOTBALL_KEY", "SHARPAPI_KEY", "SPORTSGAMEODDS_KEY", "ODDS_API_KEY")
+    _clear(monkeypatch, "TELEGRAM_BOT_TOKEN", "SHARPAPI_KEY", "SPORTSGAMEODDS_KEY", "ODDS_API_KEY")
 
     cfg = load_config(env_file=str(f))
     everything = "\n".join(startup_lines(cfg)) + repr(cfg.env_report)
 
-    for secret in ("abc123-very-secret", "key-999", "k3", "k4", "k5"):
+    for secret in ("abc123-very-secret", "k3", "k4", "k5"):
         assert secret not in everything.replace("ODDS_API_KEY", "").replace("SHARPAPI_KEY", "")
     assert mask("TELEGRAM_BOT_TOKEN", "x") == "***" and mask("SOME_SERVICE_URL", "x") == "***"
     assert mask("MAX_PICKS_PER_EVENT", 1) == "1"

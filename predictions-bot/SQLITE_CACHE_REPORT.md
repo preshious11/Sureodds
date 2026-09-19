@@ -62,8 +62,7 @@ Additive `CREATE TABLE IF NOT EXISTS` statements run in `Database.__init__`:
 
 A canonical key is `daily_predictions:Africa/Lagos:2030-06-01`. One upserted row
 holds both lists. Snapshot version is **2**; provider data version is **1**.
-Provider rows contain normalized events and coverage metadata. API-Football raw
-successful responses use separate keys in the same `provider_cache` table.
+Provider rows contain normalized events and coverage metadata.
 
 Storage-layer methods: `get_prediction_cache`, `upsert_prediction_cache`,
 `delete_prediction_cache`, `prune_prediction_cache`, `defer_prediction_retry`,
@@ -99,14 +98,6 @@ source; reuse stored baseball even across a process restart. Combine source even
 rerun the unchanged model/selector, then atomically replace both lists and status.
 Source retries operate at provider granularity; a mixed-sport provider may need to
 repeat its own fetch, but separate completed providers are never refetched.
-
-API-Football successful generation responses are cached by day, account/host hash,
-endpoint and parameters. A later failed-source retry reuses successful fixture,
-odds-page and optional prediction responses. Failed responses remain retryable.
-HTTP retries are disabled for that provider; attempted requests, including errors,
-count against the local budget. The existing daily quota/settlement reserve still
-applies. A genuinely exhausted daily quota cannot be recovered by clearing cache.
-Settlement queries deliberately remain separate because final results change.
 
 `get_daily_snapshot(force_refresh=True)` bypasses the canonical snapshot and
 rebuilds selection, allowing failed portions to retry before their cooldown.
@@ -169,7 +160,6 @@ Startup logs the resolved path/existence and `Prediction cache backend=sqlite`.
 | `predbot/cache/__init__.py` | Remove obsolete backend imports |
 | `predbot/cache/manager.py` | Removed the external-cache/file/memory prediction backend |
 | `predbot/providers/chain.py` | Route runtime collection through persisted provider portions |
-| `predbot/providers/api_football.py` | SQLite response reuse and conservative request accounting |
 | `predbot/jobs/daily_picks.py` | Shared service for publication, retain provider coverage, avoid repeat pick inserts |
 | `main.py` | One service shared by commands, schedule and admin refresh |
 | `predbot/bot/pagination.py` | Serve usable partial picks; unavailable text only for empty partial views |

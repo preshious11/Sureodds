@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from predbot.providers.api_football import ApiFootballProvider
 from predbot.providers.sharpapi import SharpApiProvider
 from predbot.providers.sportsgameodds import SportsGameOddsProvider
 
@@ -88,44 +87,3 @@ def test_sharp_best_price_across_books(budget):
         assert m.price == max(m.book_prices)
 
 
-# ------------------------------------------------------------------- API-Football
-def test_apif_fixture_and_odds(budget):
-    p = ApiFootballProvider("k", budget)
-    fx = load("apif_fixtures.json")["response"][0]
-    e = p._fixture_to_event(fx)
-    assert e.home == "Arsenal" and e.away == "Chelsea"
-    item = load("apif_odds.json")["response"][0]
-    p._merge_odds(e, item["bookmakers"])
-    assert e.markets
-    markets = {m.market for m in e.markets}
-    assert "result3" in markets
-    assert "total" in markets
-
-
-def test_apif_parse_value_variety(budget):
-    p = ApiFootballProvider("k", budget)
-    assert p._parse_value("Match Winner", 1, "Home", "1.80").market == "result3"
-    assert p._parse_value("Both Teams Score", 8, "Yes", "1.72").market == "btts"
-    dc = p._parse_value("Double Chance", 12, "Home/Draw", "1.30")
-    assert dc.market == "dc" and dc.selection == "home_draw"
-    ou = p._parse_value("Goals Over/Under", 5, "Over 2.5", "1.85")
-    assert ou.market == "total" and ou.selection == "over" and ou.line == 2.5
-    ah = p._parse_value("Asian Handicap", 4, "Home -1", "1.95")
-    assert ah.market == "handicap" and ah.line == -1.0
-    cs = p._parse_value("Exact Score", 10, "2:1", "8.00")
-    assert cs.market == "correct_score" and cs.selection == "2-1"
-
-
-def test_apif_bad_odds_rejected(budget):
-    p = ApiFootballProvider("k", budget)
-    assert p._parse_value("Match Winner", 1, "Home", "1.00") is None   # <= 1 not a price
-    assert p._parse_value("Unknown Market", 999, "Whatever", "2.0") is None
-
-
-def test_apif_result_final(budget):
-    p = ApiFootballProvider("k", budget)
-    fx = load("apif_fixture_final.json")["response"][0]
-    r = p._parse_fixture_result(fx)
-    assert r.status == "final"
-    assert r.score("full") == (2.0, 1.0)
-    assert r.score("1h") == (1.0, 1.0)

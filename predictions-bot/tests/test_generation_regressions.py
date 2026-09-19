@@ -159,21 +159,6 @@ def test_sgo_probes_each_league_and_reuses_spare_allowance(budget):
     assert sum(c.get('raw_events', 0) for c in p.fetch_counts.values()) == 2
 
 
-def test_api_football_configured_league_filter(budget):
-    import copy
-    from tests.conftest import load
-    from predbot.providers.api_football import ApiFootballProvider
-    fixture = copy.deepcopy(load('apif_fixtures.json')['response'][0])
-    fixture['fixture']['date'] = '2030-06-01T22:00:00Z'
-    fixture['fixture']['status']['short'] = 'NS'
-    odds = copy.deepcopy(load('apif_odds.json')['response'][0])
-    odds['fixture']['id'] = fixture['fixture']['id']
-    for allowed, expected in [([str(fixture['league']['id'])], 1), (['999999'], 0)]:
-        p = ApiFootballProvider('k', budget, league_ids=allowed, predictions_per_run=0)
-        p._call = lambda path, *args, **kwargs: {'response': [fixture] if path == '/fixtures' else [odds]}
-        assert len(p.fetch_events(dt(), dt(hh=23))) == expected
-
-
 def test_partial_snapshot_is_not_presented_as_quality_rejection():
     from predbot.bot.pagination import render_page
     snapshot = DailySnapshot(date='2030-06-01', generation={'complete': False})

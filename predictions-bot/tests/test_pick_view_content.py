@@ -59,7 +59,7 @@ def test_partial_day_without_any_picks_reports_incomplete_data():
     """No picks at all + a failed provider = data problem, not a quality verdict."""
     from predbot.bot.pagination import render_page
     snapshot = DailySnapshot(date='2030-06-01', status='PARTIAL', generation={
-        'providers': {'api_football': {'status': 'failed'}},
+        'providers': {'sharpapi': {'status': 'failed'}},
         'retry_after': '2030-06-01T18:15:00+00:00'})
     text, _ = render_page(snapshot, 'daily', 0, 5, 'UTC')
     assert 'still being assembled' in text

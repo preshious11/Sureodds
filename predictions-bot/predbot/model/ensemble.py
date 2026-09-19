@@ -4,9 +4,8 @@ For each event we build:
   market      de-vigged consensus probability for every selection (always)
   score_model Poisson grid (football/hockey/baseball/handball) or Gaussian
               margin model (basketball/american football) fitted to the main
-              lines and, for football, blended with API-Football goal rates
+              lines
   elo         rating-based result probabilities (weight grows with data)
-  apif        API-Football's own 1X2 percentages when present
 
 Sources are blended in logit space, shrunk toward the market (we are humble by
 default), then passed through the learned calibration.
@@ -19,7 +18,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from predbot.markets.catalog import selection_label, spec
-from predbot.model import features
 from predbot.model.calibration import Calibrator
 from predbot.model.devig import blend_logit, devig, single_side_prob
 from predbot.model.elo import Elo
@@ -85,7 +83,6 @@ class EventModel:
         self.margin_model: Optional[MarginModel] = None
         self.elo_probs: Optional[Tuple[float, float, float]] = None
         self.elo_games = 0
-        self.apif_probs: Optional[Tuple[float, float, float]] = None
         self.notes: Dict = {}
         self._market_index: Dict[Tuple, List[MarketLine]] = {}
         self._build_market_index()
@@ -101,10 +98,6 @@ class EventModel:
         self._market_probs()
         self._score_model()
         self.elo_probs, self.elo_games = self.elo.probs(self.sport, self.ev.home, self.ev.away)
-        pred = self.ev.extra.get("prediction")
-        if pred:
-            self.apif_probs = features.apif_result_probs(pred)
-            self.notes["apif"] = features.apif_summary(pred)
 
     @staticmethod
     def _mean_price(ml: MarketLine) -> float:
@@ -211,14 +204,6 @@ class EventModel:
             if lam is None:
                 return
             lh, la = lam
-            pred = self.ev.extra.get("prediction")
-            if pred and self.sport == "football":
-                stats = features.apif_lambdas(pred)
-                if stats:
-                    sh, sa, conf = stats
-                    w = 0.35 * conf
-                    lh, la = (1 - w) * lh + w * sh, (1 - w) * la + w * sa
-                    self.notes["lambda_stats"] = (round(sh, 2), round(sa, 2), round(conf, 2))
             self.grid_lambdas = (lh, la)
             self.notes["lambda"] = (round(lh, 2), round(la, 2))
         elif self.sport in MARGIN_SPORTS:
@@ -272,13 +257,6 @@ class EventModel:
             if p_elo is not None:
                 sources["elo"] = p_elo
                 weights["elo"] = 0.30 * min(1.0, self.elo_games / 15.0)
-
-        # API-Football
-        if self.apif_probs:
-            p_ap = self._result_prob_from(self.apif_probs, ml)
-            if p_ap is not None:
-                sources["apif"] = p_ap
-                weights["apif"] = 0.35
 
         blended = blend_logit(sources, weights) or p_mkt
         # self.shrink is how much we shrink the model blend TOWARD the market

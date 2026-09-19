@@ -12,7 +12,6 @@ from predbot.cache.models import DailySnapshot, SCHEMA_VERSION
 from predbot.config import Config
 from predbot.jobs import daily_picks
 from predbot.providers.chain import ProviderChain
-from predbot.providers.api_football import ApiFootballProvider
 from predbot.providers.budget import Budget
 from predbot.storage.db import Database
 from predbot.util.http import ProviderError
@@ -34,7 +33,7 @@ class Provider:
 def clock(monkeypatch):
     now = [dt()]
     for module in ('predbot.cache.fetcher', 'predbot.cache.providers',
-                   'predbot.jobs.daily_picks', 'predbot.providers.api_football'):
+                   'predbot.jobs.daily_picks'):
         monkeypatch.setattr(module + '.utcnow', lambda: now[0])
     return now
 
@@ -307,26 +306,6 @@ def test_prune_retains_subscribers_and_history(db, monkeypatch, clock):
     assert db.subscribers_active()
     assert db.picks_for_date(first.date)
     assert db.query('SELECT COUNT(*) n FROM provider_cache')[0]['n'] == 2
-
-
-def test_football_reuses_successful_raw_requests_after_restart(db, clock):
-    p = ApiFootballProvider('fake-key', Budget(db))
-    p.http.get = Mock(return_value={'response': [{'fixture': {'id': 1}}]})
-    response = p._call('/fixtures', {'date': '2030-06-01'}, reserve=15)
-    restarted = ApiFootballProvider('fake-key', Budget(db))
-    restarted.http.get = Mock(side_effect=AssertionError('duplicate football request'))
-    assert restarted._call('/fixtures', {'date': '2030-06-01'}, reserve=15) == response
-    restarted.http.get.assert_not_called()
-    assert Budget(db).used_today('api_football') == 1
-
-
-def test_failed_football_request_can_recover_and_counts_attempts(db, clock):
-    p = ApiFootballProvider('fake-key', Budget(db))
-    p.http.get = Mock(side_effect=[ProviderError('network'), {'response': []}])
-    with pytest.raises(ProviderError): p._call('/fixtures', {}, reserve=15)
-    assert p._call('/fixtures', {}, reserve=15) == {'response': []}
-    assert Budget(db).used_today('api_football') == 2
-    assert p.http.retries == 0
 
 
 def test_force_refresh_retries_failed_source_early(db, monkeypatch, clock):

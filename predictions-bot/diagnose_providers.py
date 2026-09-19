@@ -153,15 +153,6 @@ def _provider_cache_status(name: str, db) -> Dict:
 # Provider purpose matrix
 # ----------------------------------------------------------------------------
 PROVIDER_PURPOSE_MATRIX = {
-    "api_football": {
-        "SPORT_RESTRICTION": "Football only (The Odds API restriction applied via provider API domain)",
-        "FIXTURE_SOURCE": "GET /fixtures?date - fixture list, league, teams, kickoff",
-        "PREDICTION_SOURCE": "GET /predictions?fixture - API-Football model predictions (goal rates, etc.)",
-        "CONFIDENCE_SOURCE": "Model blend: market de-vig + Poisson grid + Elo + API-Football prediction percentages",
-        "ODDS_SOURCE": "GET /odds?date - bookmaker prices per market per fixture",
-        "RATE_LIMIT": "12 req/min free tier, 100/day quota",
-        "PAGINATION": "/odds supports page=N, /fixtures does not paginate",
-    },
     "sportsgameodds": {
         "SPORT_RESTRICTION": "None - all sports accessible at the API key's tier",
         "FIXTURE_SOURCE": "GET /events - fixtures + markets + results in one object (per-event billing)",
@@ -346,11 +337,7 @@ def check_odds_api_restriction(cfg: Config, db):
     print("\n" + "=" * 80)
     print("THE ODDS API RESTRICTION CHECK")
     print("=" * 80)
-    # API-Football is the only provider that implements the football-only restriction
-    football_providers = ["api_football"]
     tennis_allowed = ["sharpapi", "sportsgameodds"]
-    for prov in football_providers:
-        print(f"  {prov}: Football ONLY (product restriction - API-Football is a football-only API)")
     for prov in tennis_allowed:
         print(f"  {prov}: Football and Tennis (and all other accessible sports)")
 
@@ -452,10 +439,7 @@ def final_report(cfg: Config, db):
     print("\n--- OTHER APIS ---")
     print("  All accessible sports discovered from provider catalogs:")
     for info in providers:
-        if info["provider"] == "api_football":
-            print(f"  {info['provider']}: Football only (API domain restriction)")
-        else:
-            print(f"  {info['provider']}: {info.get('sports_accessible', [])}")
+        print(f"  {info['provider']}: {info.get('sports_accessible', [])}")
 
     print("\n--- SPORT-BY-SPORT PIPELINE ---")
     show_today_cache(cfg, db)
@@ -474,7 +458,7 @@ def final_report(cfg: Config, db):
     print("    - provider (which API supplied the odds)")
     print("    - provider_event_id (real fixture ID)")
     print("    - provider_odd_id (real market/odd ID)")
-    print("    - confidence_source (market de-vig, score model, Elo, or API-Football prediction %)")
+    print("    - confidence_source (market de-vig, score model, Elo)")
     print("    - odds_source (real bookmaker price)")
 
     print("\n--- CACHE ---")
@@ -530,8 +514,8 @@ def main():
 
     print(f"\nConfiguration: timezone={cfg.timezone}, db_path={cfg.db_path}")
     print(f"Provider order: {cfg.provider_order}")
-    print(f"API keys: API-Football={'YES' if cfg.api_football_key else 'NO'}, "
-          f"SGO={'YES' if cfg.sgo_key else 'NO'}, SharpAPI={'YES' if cfg.sharpapi_key else 'NO'}")
+    print(f"API keys: SGO={'YES' if cfg.sgo_key else 'NO'}, SharpAPI={'YES' if cfg.sharpapi_key else 'NO'}, "
+          f"OddsAPI={'YES' if cfg.odds_api_key else 'NO'}")
 
     providers = get_provider_info(cfg, db)
     print(f"\nEnabled providers: {[p['provider'] for p in providers if p.get('api_key_enabled')]}")
