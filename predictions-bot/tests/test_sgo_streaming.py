@@ -24,6 +24,8 @@ def test_each_page_is_parsed_before_the_next_is_requested(db):
 
     class Http:
         def get(self, path, params=None):
+            if path == "/leagues":
+                return {"data": [{"leagueID": "MLB", "sportID": "BASEBALL"}, {"leagueID": "MLS", "sportID": "SOCCER"}]}
             order.append(("get", params["leagueID"]))
             ev = copy.deepcopy(base)
             ev["leagueID"], ev["eventID"] = params["leagueID"], "E-" + params["leagueID"]
