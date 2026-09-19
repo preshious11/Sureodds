@@ -148,3 +148,91 @@ def test_config_default_and_bad_value(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         assert Config().cross_tier_same_fixture == "different_outcome"
     assert any("CROSS_TIER_SAME_FIXTURE" in r.message for r in caplog.records)
+
+
+# ------------------------------------------------------------------ render (Phase 3 layer 3)
+def test_the_rendered_card_never_repeats_a_top_block_in_daily():
+    from predbot.bot.format import duplicate_pick_lines, picks_message
+    over = sc(_arsenal("sportsgameodds", pid="2"), "total", "over", 0.66, 1.55, line=2.5, sources=3)
+    ps = _run(over)
+    text = picks_message(ps.top, ps.daily, dt(), "UTC", None)
+    blocks = [b for b in text.split("\n\n") if "Prediction" in b]
+    assert len(blocks) == len(set(blocks)) == len(ps.all())
+    assert duplicate_pick_lines([], []) == []
+
+
+def test_the_card_warns_when_it_is_handed_the_same_pick_in_both_sections(caplog):
+    from predbot.bot.format import PickLine, duplicate_pick_lines, summary_card
+    top = [PickLine("Football", "Arsenal vs Chelsea", "Arsenal to Win", "PL", 0.7, "21:00", 1.4)]
+    daily = [PickLine("Football", "Chelsea vs Arsenal", "Arsenal to Win", "PL", 0.7, "21:00", 1.4)]
+    assert duplicate_pick_lines(top, daily)
+    with caplog.at_level(logging.WARNING):
+        summary_card(top, daily)
+    assert any("same pick in Top and Daily" in r.message for r in caplog.records)
+    assert not duplicate_pick_lines(top, [PickLine("Football", "Arsenal vs Chelsea", "Over 2.5 Goals", "PL", 0.6, "21:00", 1.6)])
+
+
+# ------------------------------------------------------------------ database (Phase 3 layer 2)
+def _row(**kw):
+    row = {"pick_date": "2030-06-01", "tier": "top", "rank": 1, "provider": "oddsapi", "provider_event_id": "1",
+           "sport": "baseball", "league": "MLB", "home": "TEX Rangers", "away": "BOS Red Sox",
+           "start_utc": "2030-06-01T18:10:00Z", "market": "result2", "period": "full", "stat": "points",
+           "entity": "all", "line": None, "selection": "home", "label": "TEX Rangers to Win", "price": 1.6,
+           "prob": 0.7, "ev": 0.05, "p_market": 0.6, "sources": {}, "provider_odd_id": ""}
+    row.update(kw)
+    return row
+
+
+def test_the_same_selection_on_the_same_match_cannot_be_stored_twice_whatever_the_tier(db):
+    import sqlite3
+    db.insert_pick(_row())
+    with pytest.raises(sqlite3.IntegrityError):
+        db.insert_pick(_row(tier="daily", provider="sportsgameodds", provider_event_id="77",
+                            home="Texas Rangers", away="Boston Red Sox"))                  # other provider's spelling
+    db.insert_pick(_row(tier="daily", market="total", selection="over", line=8.5, label="Over 8.5"))     # other selection: fine
+    db.insert_pick(_row(tier="daily", pick_date="2030-06-02"))                                             # other date: fine
+
+
+def test_result_markets_with_no_line_are_constrained_too(db):
+    import sqlite3
+    db.insert_pick(_row(line=None))
+    with pytest.raises(sqlite3.IntegrityError):
+        db.insert_pick(_row(tier="daily", line=None))
+
+
+def test_migration_adds_and_backfills_fixture_key_and_survives_legacy_duplicates(tmp_path):
+    import sqlite3
+    from predbot.storage.db import Database
+    path = str(tmp_path / "old.db")
+    Database(path).close()
+    raw = sqlite3.connect(path)
+    raw.execute("DROP INDEX IF EXISTS uq_picks_fixture_selection")
+    raw.execute("ALTER TABLE picks DROP COLUMN fixture_key")
+    cols = ("pick_date,tier,rank,provider,provider_event_id,sport,league,home,away,start_utc,market,period,stat,entity,"
+            "line,selection,label,price,prob,ev,created_at,status")
+    for tier, pid in (("top", "1"), ("daily", "2"), ("daily", "3")):        # 2 and 3 are legacy duplicates of 1
+        raw.execute(f"INSERT INTO picks({cols}) VALUES('2030-06-01',?,1,'p',?,'baseball','MLB','LA Dodgers','San Diego Padres',"
+                    "'2030-06-01T02:00:00Z','result2','full','points','all',NULL,'home','x',1.5,0.7,0.05,'t','pending')", (tier, pid))
+    raw.execute(f"INSERT INTO picks({cols}) VALUES('2030-06-01','daily',2,'p','9','football','L','A','B','garbage','result3','full',"
+                "'points','all',NULL,'home','y',1.5,0.7,0.05,'t','pending')")
+    raw.commit()
+    raw.close()
+    db = Database(path)
+    keys = [r["fixture_key"] for r in db.query("SELECT fixture_key FROM picks ORDER BY id")]
+    assert all(keys) and len(set(keys)) == 4                                   # every row keyed, legacy dups kept apart
+    assert keys[0] == keys[1].split("#")[0] == keys[2].split("#")[0] and "#dup" in keys[1]
+    assert db.query("SELECT COUNT(*) AS n FROM picks")[0]["n"] == 4            # nothing deleted
+    Database(path).close()                                                     # idempotent
+
+
+def test_store_picks_skips_a_cross_tier_duplicate_and_warns_instead_of_crashing(db, caplog):
+    from predbot.jobs.daily_picks import store_picks
+    from predbot.selection.picker import PickSet
+    top = sc(_arsenal(), "result3", "home", 0.75, 1.40, sources=3)
+    dup = sc(_arsenal("sportsgameodds", pid="2"), "result3", "home", 0.73, 1.38, sources=3)
+    over = sc(_arsenal("sportsgameodds", pid="2"), "total", "over", 0.66, 1.55, line=2.5, sources=3)
+    with caplog.at_level(logging.WARNING):
+        store_picks(PickSet(top=[top], daily=[dup, over]), db, "2030-06-01")
+    rows = db.query("SELECT tier, market FROM picks ORDER BY id")
+    assert [(r["tier"], r["market"]) for r in rows] == [("top", "result3"), ("daily", "total")]
+    assert any("not storing" in r.message for r in caplog.records)

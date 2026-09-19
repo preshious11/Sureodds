@@ -281,7 +281,7 @@ def test_one_broken_job_does_not_stop_the_scheduler_loop(monkeypatch, caplog):
 
 def _insert(db, i, start):
     db.insert_pick({"pick_date": "2030-06-01", "tier": "daily", "rank": i, "provider": "p", "provider_event_id": str(i),
-                    "sport": "football", "league": "L", "home": "A", "away": "B", "start_utc": start,
+                    "sport": "football", "league": "L", "home": f"A{i}", "away": "B", "start_utc": start,
                     "market": "result3", "period": "full", "stat": "points", "entity": "all", "line": None,
                     "selection": "home", "label": "x", "price": 1.5, "prob": 0.7, "ev": 0.05, "p_market": 0.68,
                     "sources": {}, "provider_odd_id": ""})

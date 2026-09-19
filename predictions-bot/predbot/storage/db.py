@@ -172,6 +172,32 @@ class Database:
         if pick_cols and "prob_raw" not in pick_cols:   # pre-calibration probability
             self.conn.execute("ALTER TABLE picks ADD COLUMN prob_raw REAL")
             self.conn.commit()
+        if pick_cols:
+            self._migrate_fixture_key("fixture_key" in pick_cols)
+
+    def _migrate_fixture_key(self, has_column: bool) -> None:
+        """``picks.fixture_key`` + a unique index that forbids the same selection on the same match twice on
+        one date whatever the tier. Old rows are backfilled from their own columns; a legacy duplicate keeps
+        its row but gets a distinct key suffix, so the index can always be built."""
+        if not has_column:
+            self.conn.execute("ALTER TABLE picks ADD COLUMN fixture_key TEXT")
+        rows = self.query("SELECT * FROM picks WHERE fixture_key IS NULL OR fixture_key='' ORDER BY id")
+        if rows:
+            from predbot.util.fixtures import row_fixture_key
+            seen = {(r["pick_date"], r["fixture_key"], r["market"], r["period"], r["stat"], r["entity"], r["line"], r["selection"])
+                    for r in self.query("SELECT pick_date, fixture_key, market, period, stat, entity, line, selection "
+                                        "FROM picks WHERE fixture_key IS NOT NULL AND fixture_key<>''")}
+            for r in rows:
+                key = row_fixture_key(r)
+                ident = (r["pick_date"], key, r["market"], r["period"], r["stat"], r["entity"], r["line"], r["selection"])
+                if ident in seen:
+                    key = f"{key}#dup{r['id']}"
+                    ident = (r["pick_date"], key, r["market"], r["period"], r["stat"], r["entity"], r["line"], r["selection"])
+                seen.add(ident)
+                self.conn.execute("UPDATE picks SET fixture_key=? WHERE id=?", (key, r["id"]))
+        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_picks_fixture_selection ON picks("
+                          "pick_date, fixture_key, market, period, stat, entity, COALESCE(line, -999999), selection)")
+        self.conn.commit()
 
     # ---- generic ----
     def execute(self, sql: str, params: Iterable = ()) -> sqlite3.Cursor:
@@ -236,6 +262,13 @@ class Database:
                               'AND stat=? AND entity=? AND line IS ? AND selection=? LIMIT 1',
                               (date, tier, e.provider, e.provider_event_id, m.market, m.period,
                                m.stat, m.entity, m.line, m.selection)))
+
+    def has_fixture_selection(self, date, fixture_key, scored):
+        """True when this selection on this match is already stored for ``date`` in ANY tier."""
+        m = scored.line
+        return bool(self.query('SELECT id FROM picks WHERE pick_date=? AND fixture_key=? AND market=? AND period=? '
+                               'AND stat=? AND entity=? AND line IS ? AND selection=? LIMIT 1',
+                               (date, fixture_key, m.market, m.period, m.stat, m.entity, m.line, m.selection)))
 
     def deliveries_exist(self, kind: str, post_date: str) -> bool:
         """True once ANY subscriber has been sent ``kind`` for ``post_date``."""
@@ -302,6 +335,9 @@ class Database:
         row = dict(row)
         row.setdefault("created_at", _now())
         row.setdefault("status", "pending")
+        if not row.get("fixture_key"):
+            from predbot.util.fixtures import row_fixture_key
+            row["fixture_key"] = row_fixture_key(row)
         if isinstance(row.get("sources"), dict):
             row["sources"] = json.dumps(row["sources"])
         cols = ",".join(row.keys())
