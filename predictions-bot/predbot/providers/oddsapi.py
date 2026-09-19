@@ -18,7 +18,7 @@ from collections import Counter
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult
+from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, apply_price_mode
 from predbot.providers.budget import Budget
 from predbot.util.http import Http, ProviderError, RateLimiter
 from predbot.util.names import same_team
@@ -68,8 +68,9 @@ class OddsApiProvider(BaseProvider):
                  regions: Optional[List[str]] = None, max_leagues_per_sport: int = 8,
                  monthly_limit: int = 500, max_credits_per_cycle: int = 15,
                  reserve_credits: int = 50, min_keys_per_sport: int = 1,
-                 league_allowlist: Optional[List[str]] = None):
+                 league_allowlist: Optional[List[str]] = None, price_mode: str = "median"):
         self.key = api_key
+        self.price_mode = price_mode
         self.budget = budget
         self.min_interval = min_interval
         self.odds_format = odds_format
@@ -418,6 +419,8 @@ class OddsApiProvider(BaseProvider):
                         else:
                             merged[k] = line
 
+            for m in merged.values():
+                apply_price_mode(m, self.price_mode)
             e.markets = list(merged.values())
             if e.markets:
                 counts[sport + ":normalized_events"] += 1

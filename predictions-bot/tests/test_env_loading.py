@@ -54,7 +54,7 @@ LIST_KEYS = {"ODDS_API_REGIONS": "odds_api_regions", "SGO_LEAGUES": "sgo_leagues
              "DISABLED_MARKETS": "disabled_markets", "SHARPAPI_LEAGUES": "sharpapi_leagues",
              "ODDS_API_LEAGUE_ALLOWLIST": "odds_api_league_allowlist", "SGO_ALLOWED_STATS": "sgo_allowed_stats",
              "SGO_ALLOWED_PERIODS": "sgo_allowed_periods"}
-SCALAR_KEYS = {"DELIVERY_TIME": "delivery_time", "SGO_EVENT_LIMIT": "sgo_event_limit", "SHARPAPI_MAX_PAGES": "sharpapi_max_pages",
+SCALAR_KEYS = {"DELIVERY_TIME": "delivery_time", "PRICE_MODE": "price_mode", "SGO_EVENT_LIMIT": "sgo_event_limit", "SHARPAPI_MAX_PAGES": "sharpapi_max_pages",
                "ODDSAPI_MAX_CREDITS_PER_CYCLE": "oddsapi_max_credits_per_cycle",
                "ODDSAPI_RESERVE_CREDITS": "oddsapi_reserve_credits", "MAX_PLAYER_PROPS": "max_player_props"}
 

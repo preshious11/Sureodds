@@ -125,6 +125,37 @@ def readable_stat(stat: str) -> str:
     return out.title() if out else s
 
 
+_ACRONYMS = {"uefa", "fifa", "nba", "nfl", "mlb", "ncaab", "ncaaf", "wnba", "atp", "wta", "mls", "ufc", "efl",
+             "uk", "usa", "pga", "itf", "cs2"}
+
+
+def _words(text: str) -> str:
+    out = []
+    for w in re.split(r"[\s_]+", text.strip()):
+        if not w:
+            continue
+        out.append(w.upper() if w.lower() in _ACRONYMS or len(w) == 1 else w.capitalize())
+    return " ".join(out)
+
+
+def pretty_league(slug: str, country: str = "") -> str:
+    """A provider league slug as a card label: ``england_-_premier_league`` ->
+    ``England • Premier League``; bare ids stay short (``nba`` -> ``NBA``).
+
+    ``country`` (``event.extra["country"]``) wins over the slug's own prefix when
+    the provider supplies one. Never leaves underscores or lower-case slugs."""
+    raw = str(slug or "").strip()
+    if not raw:
+        return _words(country) if country else ""
+    if "_-_" in raw:
+        prefix, name = raw.split("_-_", 1)
+    else:
+        prefix, name = "", raw
+    name_text = _words(name)
+    country_text = _words(country) if country else _words(prefix)
+    return f"{country_text} \u2022 {name_text}" if country_text and name_text else (name_text or country_text)
+
+
 def prop_outcome(ml: MarketLine, home: str = "", away: str = "") -> str:
     """ONE canonical outcome builder for prop markets.
 
@@ -165,7 +196,7 @@ def selection_label(ml: MarketLine, home: str, away: str, sport: str = "football
     m, s = ml.market, ml.selection
     team = {"home": home, "away": away}
     pts = SPORT_POINTS_WORD.get(sport, "Points")
-    stat_word = STAT_NAMES.get(ml.stat, ml.stat.title()) or pts
+    stat_word = STAT_NAMES.get(ml.stat, readable_stat(ml.stat)) or pts
     per = PERIOD_NAMES.get(ml.period, ml.period)
     suffix = f" ({per})" if per else ""
 
@@ -237,7 +268,7 @@ def short_selection(ml: MarketLine, home: str = "", away: str = "", sport: str =
     m, s = ml.market, ml.selection
     team = {"home": home, "away": away}
     pts = SPORT_POINTS_WORD.get(sport, "Points")
-    stat_word = STAT_NAMES.get(ml.stat, ml.stat.title()) or pts
+    stat_word = STAT_NAMES.get(ml.stat, readable_stat(ml.stat)) or pts
     per = PERIOD_NAMES.get(ml.period, ml.period)
     suffix = f" ({per})" if per and ml.period not in ("full", "reg") else ""
 

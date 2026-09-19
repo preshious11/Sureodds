@@ -78,12 +78,12 @@ def test_sharp_skips_player_props(budget):
 
 
 def test_sharp_best_price_across_books(budget):
-    p = SharpApiProvider("k", budget, ["nba"])
+    p = SharpApiProvider("k", budget, ["nba"], price_mode="best")
     rows = load("sharp_odds.json")["data"]
     events = p._rows_to_events(rows, WIN_START, WIN_END)
     e = events[0]
     for m in e.markets:
-        # book_prices holds every seen price; price is the max of them
+        # book_prices holds every seen price; PRICE_MODE=best keeps the max of them
         assert m.price == max(m.book_prices)
 
 

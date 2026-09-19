@@ -26,7 +26,8 @@ from collections import defaultdict, Counter
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
-from predbot.providers.base import BaseProvider, Event, MarketLine
+from predbot.markets.catalog import pretty_league
+from predbot.providers.base import BaseProvider, Event, MarketLine, apply_price_mode
 from predbot.providers.budget import Budget
 from predbot.util.http import Http, ProviderError, RateLimiter
 from predbot.util.odds import parse_decimal
@@ -154,8 +155,10 @@ class SharpApiProvider(BaseProvider):
 
     def __init__(self, api_key: str, budget: Budget, leagues: List[str], min_interval: float = 5.5,
                  max_pages: int = 12, markets: Optional[List[str]] = None,
-                 sports: Optional[List[str]] = None, events_per_target: int = 40):
+                 sports: Optional[List[str]] = None, events_per_target: int = 40,
+                 price_mode: str = "median"):
         self.key = api_key
+        self.price_mode = price_mode
         self.budget = budget
         self.leagues = leagues
         self.markets = list(markets) if markets else list(DEFAULT_MARKETS)
@@ -306,7 +309,7 @@ class SharpApiProvider(BaseProvider):
                 continue
             counts[sport + ":in_window"] += 1
             e = Event(provider=self.name, provider_event_id=eid, sport=sport,
-                      league=str(r0.get("league", "")).replace("_", " ").upper(), league_id=str(r0.get("league", "")),
+                      league=pretty_league(str(r0.get("league", ""))), league_id=str(r0.get("league", "")),
                       home=r0.get("home_team", ""), away=r0.get("away_team", ""), start=st, sources=[self.name])
             # consolidate the same selection across books -> best price + n_books
             merged: Dict[Tuple, MarketLine] = {}
@@ -323,6 +326,8 @@ class SharpApiProvider(BaseProvider):
                         m.price, m.bookmaker, m.provider_odd_id = ml.price, ml.bookmaker, ml.provider_odd_id
                 else:
                     merged[k] = ml
+            for m in merged.values():
+                apply_price_mode(m, self.price_mode)
             e.markets = list(merged.values())
             if e.markets and e.home and e.away:
                 counts[sport + ":normalized_events"] += 1

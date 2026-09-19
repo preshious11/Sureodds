@@ -19,6 +19,7 @@ line       : numeric line for total/handicap markets, applied to *the selected
 """
 from __future__ import annotations
 
+import statistics
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -51,6 +52,23 @@ class MarketLine:
         """Identifies the market (all selections share it)."""
         return (self.market, self.period, self.stat, self.entity,
                 None if self.line is None else round(abs(self.line), 2))
+
+
+def apply_price_mode(ml: MarketLine, mode: str = "median") -> None:
+    """Set ``ml.price`` from ``ml.book_prices`` according to PRICE_MODE.
+
+    ``median`` (default) prices a line at what a typical book offers, so a single
+    outlier book cannot inflate the card; ``best`` keeps the highest price and the
+    bookmaker that offered it. With a single book the price and its name are kept
+    either way. Idempotent: it only ever reads ``book_prices``."""
+    prices = [p for p in (ml.book_prices or []) if p and p > 1.0] or [ml.price]
+    if len(prices) < 2:
+        return
+    if mode == "best":
+        ml.price = max(prices)
+    else:
+        ml.price = round(float(statistics.median(prices)), 4)
+        ml.bookmaker = "median"
 
 
 @dataclass

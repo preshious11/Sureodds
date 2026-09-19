@@ -117,7 +117,7 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
         priority_events = top_chain.collect(start, end)
         top_priority_report = getattr(top_chain, "last_report", {})
         if priority_events:
-            events = merge_events(events, priority_events)
+            events = merge_events(events, priority_events, cfg.price_mode)
             top_priority_source = top_chain.order[0] if top_chain.order else None
 
     api_usage = _api_usage(chain, usage_before)

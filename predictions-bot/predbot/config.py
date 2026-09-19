@@ -170,6 +170,11 @@ class Config:
     #: subscriber (their own zones only change how times are displayed).
     delivery_time: str = field(default_factory=lambda: _env("DELIVERY_TIME", "09:30"))
 
+    #: How a line is priced from the books that quote it: ``median`` (default: what a
+    #: typical book offers) or ``best`` (the highest price, shown with its bookmaker).
+    #: Region note: ODDS_API_REGIONS=uk adds UK-facing books such as Bet365 (same credit cost, one region).
+    price_mode: str = field(default_factory=lambda: _env("PRICE_MODE", "median").strip().lower())
+
     # Picks - the daily post is ONE ticket, so combined odds (not pick counts)
     # size the lists; daily_target is only a safety cap on the number of picks.
     daily_target: int = field(default_factory=lambda: _int("DAILY_PICKS_TARGET", 20))
@@ -247,6 +252,9 @@ class Config:
         (min > max, an odds target <= 1.0, a probability outside [0,1]) that
         would otherwise only surface downstream as an empty/broken selection
         pipeline with nothing pointing back at the config."""
+        if self.price_mode not in ("median", "best"):
+            log.warning("Config: PRICE_MODE=%r is not median|best - using median", self.price_mode)
+            self.price_mode = "median"
         unknown = [p for p in self.provider_order if p not in KNOWN_PROVIDERS]
         if unknown:
             log.warning("Config: PROVIDER_ORDER names unknown provider(s) %s (known: %s) - they are ignored",

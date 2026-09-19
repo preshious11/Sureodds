@@ -47,6 +47,7 @@ class PickLine(NamedTuple):
     country: str = ""      # "England", "Kazakhstan", etc.
     market_type: str = ""  # "Over/Under", "Match Result", etc.
     state: str = ""        # "", "started" or "finished" - see leg_state()
+    odds_note: str = ""    # " (median of 6 books)" / " (Bet365)" - where the price comes from
 
 
 def _looks_internal(text: str) -> bool:
@@ -155,6 +156,27 @@ def leg_state(start: Optional[datetime], sport: str, now: Optional[datetime] = N
     return "finished" if now >= start + timedelta(hours=hours) else "started"
 
 
+def odds_note(bookmaker: str, n_books: int) -> str:
+    """Where a card's price comes from: `` (median of 6 books)`` under PRICE_MODE=median,
+    `` (Bet365)`` for the best price under PRICE_MODE=best, nothing when unknown."""
+    b = str(bookmaker or "").strip()
+    n = int(n_books or 0)
+    if not b:
+        return ""
+    if b == "median":
+        return f" (median of {n} books)" if n >= 2 else ""
+    if b == "consensus":
+        return f" (consensus of {n} books)" if n >= 2 else ""
+    name = b.replace("_", " ")
+    return f" ({name[:1].upper() + name[1:] if name.islower() else name})"
+
+
+def odds_as_of_label(generated_at: Optional[str], tz: str) -> str:
+    """"odds as of 9:04 AM WAT" - when the prices were read; "" when unknown."""
+    at = parse_iso(generated_at) if generated_at else None
+    return f"odds as of {kickoff_label(at, tz)}" if at else ""
+
+
 def generated_line(generated_at: Optional[str], tz: str) -> str:
     """"<i>Generated 9:04 AM WAT</i>" in the reader's own zone; "" when unknown."""
     at = parse_iso(generated_at) if generated_at else None
@@ -180,7 +202,8 @@ def pick_line_from_record(pick, tz: str, user_tz: Optional[str] = None,
                     state=leg_state(parse_iso(pick.kickoff_utc), pick.sport, now),
                     price=pick.price,
                     country=getattr(pick, "country", ""),
-                    market_type=MARKET_LABEL.get(pick.market, pick.market))
+                    market_type=MARKET_LABEL.get(pick.market, pick.market),
+                    odds_note=odds_note(getattr(pick, "bookmaker", ""), getattr(pick, "n_books", 1)))
 
 
 def kickoff_label(start: Optional[datetime], tz: str, user_tz: Optional[str] = None) -> str:
@@ -222,7 +245,7 @@ def pick_lines(p: PickLine) -> List[str]:
     marker = f" | {STATE_MARKERS[p.state]}" if p.state in STATE_MARKERS else ""
     lines.extend([
         f"<b>Prediction:</b> {esc(p.outcome)}",
-        f"Odds: {p.price:.2f}",
+        f"Odds: {p.price:.2f}{p.odds_note}",
         f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {esc(p.when)}{marker}"
     ])
     return lines
@@ -231,7 +254,7 @@ def pick_lines(p: PickLine) -> List[str]:
 def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str] = None,
                heading: str = HEADING_DAILY,
                total_prices: Optional[Iterable[float]] = None,
-               generated: str = "") -> str:
+               generated: str = "", odds_as_of: str = "") -> str:
     """The daily predictions post: one block per pick, then the ticket totals.
 
     ``total_prices`` lets a caller price a different collection than the cards
@@ -248,7 +271,7 @@ def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str]
     if picks:
         prices = list(total_prices) if total_prices is not None else [p.price for p in picks]
         lines.append(f"Total Picks: {len(picks)}")
-        lines.append(f"Combined Odds: {combined_odds(prices):.2f}")
+        lines.append(f"Combined Odds: {combined_odds(prices):.2f}{' · ' + odds_as_of if odds_as_of else ''}")
     if generated and picks:
         lines.append(generated)
     if stats_line:
@@ -284,11 +307,12 @@ SECTION_COMBINED = "Combined Odds:"
 SECTION_TOTAL = "Total Picks:"
 
 
-def render_section(title: str, picks: List[PickLine]) -> List[str]:
+def render_section(title: str, picks: List[PickLine], odds_as_of: str = "") -> List[str]:
     """ONE canonical section renderer: title, Combined Odds, Total Picks, then
     the pick blocks. Combined odds and Total Picks are computed from EXACTLY
     the picks rendered here - never from another collection."""
-    lines = [title, f"{SECTION_COMBINED} {combined_odds(p.price for p in picks):.2f}",
+    stamp = f" · {odds_as_of}" if odds_as_of else ""
+    lines = [title, f"{SECTION_COMBINED} {combined_odds(p.price for p in picks):.2f}{stamp}",
              f"{SECTION_TOTAL} {len(picks)}"]
     for p in picks:
         lines.extend(pick_lines(p))
@@ -296,7 +320,7 @@ def render_section(title: str, picks: List[PickLine]) -> List[str]:
     return lines
 
 
-def summary_card(top: List[PickLine], daily: List[PickLine], generated: str = "") -> str:
+def summary_card(top: List[PickLine], daily: List[PickLine], generated: str = "", odds_as_of: str = "") -> str:
     """THE canonical results/summary card (one and only one renderer).
 
         📊 TODAY'S RESULTS
@@ -318,10 +342,10 @@ def summary_card(top: List[PickLine], daily: List[PickLine], generated: str = ""
     lines = [SUMMARY_TITLE]
     if top:
         lines.append("")
-        lines.extend(render_section(TOP_SECTION_TITLE, top))
+        lines.extend(render_section(TOP_SECTION_TITLE, top, odds_as_of))
     if daily:
         lines.append("")
-        lines.extend(render_section(DAILY_SECTION_TITLE, daily))
+        lines.extend(render_section(DAILY_SECTION_TITLE, daily, odds_as_of))
     if generated and (top or daily):
         lines.append(generated)
     return "\n".join(lines).rstrip()

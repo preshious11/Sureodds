@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from predbot.config import Config
-from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult
+from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, apply_price_mode
 from predbot.providers.budget import Budget
 from predbot.providers.football_data import FootballDataProvider
 from predbot.providers.oddsapi import OddsApiProvider
@@ -41,9 +41,11 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
                                            min_interval=cfg.sharpapi_min_interval,
                                            max_pages=cfg.sharpapi_max_pages, markets=cfg.sharpapi_markets,
                                            sports=cfg.sharpapi_sports,
-                                           events_per_target=cfg.sharpapi_events_per_target)
+                                           events_per_target=cfg.sharpapi_events_per_target,
+                                           price_mode=cfg.price_mode)
     if cfg.odds_api_key:
         out["oddsapi"] = OddsApiProvider(cfg.odds_api_key, budget, min_interval=cfg.odds_api_min_interval,
+                                         price_mode=cfg.price_mode,
                                          regions=cfg.odds_api_regions,
                                          max_leagues_per_sport=cfg.odds_api_max_leagues_per_sport,
                                          monthly_limit=cfg.odds_api_monthly_limit,
@@ -104,7 +106,7 @@ class ProviderChain:
                                       "normalization": getattr(prov, 'normalization_counts', {}),
                                       "events": dict(Counter(e.sport for e in events)),
                                       "markets": dict(Counter(e.sport for e in events for m in e.markets))}
-            pool = merge_events(pool, events)
+            pool = merge_events(pool, events, getattr(self.cfg, "price_mode", "median"))
             priced = sum(1 for e in pool if _has_main_market(e))
             log.info("chain: after %s -> %d events (%d with main markets)", name, len(pool), priced)
             # A global event count cannot establish coverage of other sports.
@@ -131,7 +133,7 @@ def _has_main_market(e: Event) -> bool:
     return any(m.market in ("result3", "result2", "dnb", "total", "handicap") for m in e.markets)
 
 
-def merge_events(pool: List[Event], new: List[Event]) -> List[Event]:
+def merge_events(pool: List[Event], new: List[Event], price_mode: str = "median") -> List[Event]:
     out = list(pool)
     for ev in new:
         match = None
@@ -150,11 +152,11 @@ def merge_events(pool: List[Event], new: List[Event]) -> List[Event]:
         if match is None:
             out.append(ev)
             continue
-        _merge_markets(match, ev)
+        _merge_markets(match, ev, price_mode)
     return out
 
 
-def _merge_markets(dst: Event, src: Event) -> None:
+def _merge_markets(dst: Event, src: Event, price_mode: str = "median") -> None:
     dst.sources = sorted(set(dst.sources) | set(src.sources))
     for k, v in src.extra.items():
         dst.extra.setdefault(k, v)
@@ -164,17 +166,20 @@ def _merge_markets(dst: Event, src: Event) -> None:
         k = ml.key()
         if k in existing:
             m = existing[k]
+            best_before = max(m.book_prices or [m.price])
+            best_new = max(ml.book_prices or [ml.price])
             m.book_prices.extend(ml.book_prices or [ml.price])
             m.n_books = len(m.book_prices)
             if ml.fair_price and not m.fair_price:
                 m.fair_price = ml.fair_price
-            if ml.price > m.price:
-                # provider_odd_id must always name the same provider as the
-                # price/bookmaker being displayed - it used to only fill in
-                # when unset, which could leave it pointing at an earlier,
-                # lower-priced provider's id (settlement then looks up the
-                # wrong provider's odd_scores for this line).
-                m.price, m.bookmaker, m.provider_odd_id = ml.price, ml.bookmaker, ml.provider_odd_id
+            if best_new > best_before:
+                # provider_odd_id must always name the provider of the BEST price
+                # (the median has no single owner) - a stale id would make
+                # settlement look up the wrong provider's odd_scores for this line.
+                m.price, m.bookmaker, m.provider_odd_id = best_new, ml.bookmaker, ml.provider_odd_id
+            else:
+                m.price = best_before
+            apply_price_mode(m, price_mode)
         else:
             existing[k] = ml
     dst.markets = list(existing.values())
