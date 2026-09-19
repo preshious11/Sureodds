@@ -231,6 +231,11 @@ class Config:
     #: p_model inside top_odds_target..top_odds_max. top_odds_max is a HARD
     #: reject on the combined ticket. Per-leg odds do not matter for this
     #: confidence product - top_leg_odds_min is only a data-sanity floor.
+    #: when the strict Top search finds no ticket: first widen the odds band by TOP_RELAX_BAND on each side, then
+    #: lower the per-leg probability floor by TOP_RELAX_PROB inside that band. Never fewer than 2 or more than 3 legs.
+    top_relaxed_fallback: bool = field(default_factory=lambda: _bool("TOP_RELAXED_FALLBACK", True))
+    top_relax_band: float = field(default_factory=lambda: _float("TOP_RELAX_BAND", 0.25))
+    top_relax_prob: float = field(default_factory=lambda: _float("TOP_RELAX_PROB", 0.04))
     top_legs_min: int = field(default_factory=lambda: _int("TOP_LEGS_MIN", 2))
     top_legs_max: int = field(default_factory=lambda: _int("TOP_LEGS_MAX", 3))
     top_odds_max: float = field(default_factory=lambda: _float("TOP_ODDS_MAX", 2.50))

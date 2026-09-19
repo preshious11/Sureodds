@@ -173,7 +173,10 @@ def test_gates_and_caps_are_untouched(mode):
     events = [s.event for s in ps.all()]
     assert weak.event not in events and cheap.event not in events                   # gates
     assert sum(1 for s in ps.daily if s.event.league == "Same League") <= cfg.daily_max_per_league   # league cap
-    assert sum(1 for s in ps.all() if s.event is same_event) <= 1                    # one pick per match
+    # MAX_PICKS_PER_EVENT counts per tier (CROSS_TIER_SAME_FIXTURE=different_outcome): one Daily pick per match, and
+    # never the Top leg's own tip
+    assert sum(1 for s in ps.daily if s.event is same_event) <= 1
+    assert len({(s.line.market, s.line.selection) for s in ps.all() if s.event is same_event}) ==         sum(1 for s in ps.all() if s.event is same_event)
 
 
 # ------------------------------------------------------------------ the z-score itself
