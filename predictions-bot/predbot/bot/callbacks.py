@@ -2,7 +2,7 @@
 
 Routing
     /top /daily /today /stats   typed commands  -> open_view()
-    pg|{view}|{page}            inline buttons  -> open_view()
+    pg|{view}|{page}[|{day}]    inline buttons  -> open_view()
 
 Commands and buttons deliberately share ONE handler: tapping 🏆 /top and typing
 /top render the same snapshot slice with the same keyboard, so there is no
@@ -151,21 +151,39 @@ def handle_start(db: Database, tg: Telegram, chat_id: str, user: Optional[Dict[s
 
 
 # --------------------------------------------------------------------- routing
+NAVIGATION_MODES = ("new", "edit_pages", "edit")
+
+
+def navigation_mode(cfg: Config) -> str:
+    """``VIEW_NAVIGATION``: new (default) | edit_pages | edit - anything else counts as new."""
+    mode = str(getattr(cfg, "view_navigation", "new") or "new")
+    return mode if mode in NAVIGATION_MODES else "new"
+
+
+def _edits(mode: str, page_turn: bool) -> bool:
+    """Does a button press edit the pressed message (True) or send a new one (False)?"""
+    return mode == "edit" or (mode == "edit_pages" and page_turn)
+
+
 def open_view(view: str, *, service: UnifiedFetcher, tg: Telegram, cfg: Config,
               chat_id: str, db: Optional[Database] = None, page: int = 0,
               message_id: Optional[int] = None,
-              page_size: int = pagination.PAGE_SIZE_DEFAULT) -> Tuple[str, Dict]:
+              page_size: int = pagination.PAGE_SIZE_DEFAULT,
+              day: Optional[str] = None, edit: bool = True) -> Tuple[str, Dict]:
     """Render ``view`` and deliver it - the single handler for taps and types.
 
-    A button press edits the message it came from, a typed command posts a new
-    one; both receive exactly the same text and keyboard.
+    A typed command posts a new message. A button press posts a new message too, unless ``edit`` and the
+    message it came from are given (VIEW_NAVIGATION=edit / edit_pages); both receive the same text and
+    keyboard. ``day`` (page-turn buttons carry it) renders that day's picks instead of today's.
     """
     snapshot = service.get_daily_snapshot()          # cache-first read
+    if day and day != snapshot.date and hasattr(service, "snapshot_for"):
+        snapshot = service.snapshot_for(day)         # an old message keeps turning ITS day's pages
     timezone = resolve_timezone(db.subscriber_timezone(chat_id) if db is not None else "",
                                 cfg.timezone)
     text, markup = pagination.render_view(snapshot, view, page, page_size,
                                           timezone, db=db)
-    if message_id:
+    if message_id and edit:
         tg.edit_message_text(chat_id, int(message_id), text, reply_markup=markup)
     else:
         tg.send(text, chat_id=chat_id, reply_markup=markup)
@@ -196,34 +214,54 @@ def handle_command(cmd: str, chat_id: str, *, service: UnifiedFetcher, tg: Teleg
 def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram,
                     cfg: Config, db: Optional[Database] = None,
                     page_size: int = pagination.PAGE_SIZE_DEFAULT) -> None:
-    """Process one Telegram callback_query update (an inline keyboard press)."""
+    """Process one Telegram callback_query update (an inline keyboard press).
+
+    With the default ``VIEW_NAVIGATION=new`` nothing is ever edited or deleted: every press - a view switch or
+    a page turn - sends a new message with its own keyboard, so the chat keeps the record and older messages
+    keep working buttons. The press is always answered so the button stops spinning."""
     cb_id = str(cb.get("id") or "")
     data = cb.get("data") or ""
     message = cb.get("message") or {}
     chat_id = str((message.get("chat") or {}).get("id"))
     message_id = message.get("message_id")
+    mode = navigation_mode(cfg)
     try:
         if data == "menu":
             user = cb.get("from") or {}
-            if message_id:
-                tg.edit_message_text(chat_id, int(message_id),
-                                     welcome_message(str(user.get("first_name") or "there")),
-                                     reply_markup=menu_markup())
+            welcome = welcome_message(str(user.get("first_name") or "there"))
+            if message_id and _edits(mode, page_turn=False):
+                tg.edit_message_text(chat_id, int(message_id), welcome, reply_markup=menu_markup())
+            else:
+                tg.send(welcome, chat_id=chat_id, reply_markup=menu_markup())
             tg.answer_callback_query(cb_id, text="Menu")
             return
-        parsed = pagination.decode_callback(data)
+        parsed = pagination.parse_callback(data)
         if parsed is None:
             tg.answer_callback_query(cb_id)      # e.g. the page indicator button
             return
-        view, page = parsed
+        view, page, day = parsed
+        page_turn = day is not None              # only page-turn buttons carry the day of their card
+        edit = _edits(mode, page_turn)
         open_view(view, service=service, tg=tg, cfg=cfg, chat_id=chat_id, db=db,
-                  page=page, message_id=message_id, page_size=page_size)
-        tg.answer_callback_query(cb_id, text=_toast(view, page, page_size,
-                                                    service.get_daily_snapshot()))
+                  page=page, message_id=message_id, page_size=page_size, day=day, edit=edit)
+        if mode == "edit":
+            toast = _toast(view, page, page_size, service.get_daily_snapshot())
+        else:
+            toast = _new_toast(view, page, page_turn, service, day, page_size)
+        tg.answer_callback_query(cb_id, text=toast)
     except Exception as exc:  # noqa: BLE001
         log.exception("callback %r failed: %s", data, exc)
         if cb_id:
             tg.answer_callback_query(cb_id, text="Something went wrong.", show_alert=True)
+
+
+def _new_toast(view: str, page: int, page_turn: bool, service, day: Optional[str], size: int) -> str:
+    """The toast when a press sent a message: 'Daily picks ↓' for a view, 'Page 2 of 3' for a turn."""
+    if page_turn and view in (VIEW_TOP, VIEW_DAILY):
+        snapshot = service.snapshot_for(day) if day and hasattr(service, "snapshot_for") else service.get_daily_snapshot()
+        count = len(snapshot.view_items(view))
+        return f"Page {pagination.clamp_page(page, count, size) + 1} of {pagination.total_pages(count, size)}"
+    return f"{pagination.VIEW_LABEL[view]} ↓"
 
 
 def _toast(view: str, page: int, size: int, snapshot) -> str:
@@ -232,5 +270,5 @@ def _toast(view: str, page: int, size: int, snapshot) -> str:
         return "Stats"
     count = len(snapshot.view_items(view))
     page = pagination.clamp_page(page, count, size)   # toast matches the rendered page
-    return (f"{pagination.VIEW_TITLES[view]} · "
+    return (f"{pagination.VIEW_LABEL[view]} · "
             f"page {page + 1}/{pagination.total_pages(count, size)}")

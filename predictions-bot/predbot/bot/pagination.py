@@ -44,23 +44,38 @@ def view_button_label(view: str) -> str:
 
 
 # --------------------------------------------------------------- payload codec
-def encode_callback(view: str, page: int) -> str:
-    """callback_data payload (stays far below Telegram's 64-byte limit)."""
-    return f"{CALLBACK_PREFIX}|{view}|{max(0, int(page))}"
+def encode_callback(view: str, page: int, day: Optional[str] = None) -> str:
+    """callback_data payload (far below Telegram's 64-byte limit). A page-turn button carries the day of the
+    card it sits on (``pg|daily|1|20260920``), so an old message keeps turning ITS day's pages; a view-switch
+    button carries none (``pg|daily|0``) and opens the current day."""
+    base = f"{CALLBACK_PREFIX}|{view}|{max(0, int(page))}"
+    return f"{base}|{str(day).replace('-', '')}" if day else base
 
 
-def decode_callback(data: Optional[str]) -> Optional[Tuple[str, int]]:
-    """Parse a button payload; returns None for anything malformed/unknown."""
+def parse_callback(data: Optional[str]) -> Optional[Tuple[str, int, Optional[str]]]:
+    """Parse a button payload into (view, page, day 'YYYY-MM-DD' or None); None for anything malformed/unknown."""
     if not data:
         return None
     parts = data.split("|")
-    if len(parts) != 3 or parts[0] != CALLBACK_PREFIX or parts[1] not in VIEW_TITLES:
+    if len(parts) not in (3, 4) or parts[0] != CALLBACK_PREFIX or parts[1] not in VIEW_TITLES:
         return None
     try:
         page = int(parts[2])
     except ValueError:
         return None
-    return parts[1], max(0, page)
+    day = None
+    if len(parts) == 4:
+        raw = parts[3]
+        if len(raw) != 8 or not raw.isdigit():
+            return None
+        day = f"{raw[:4]}-{raw[4:6]}-{raw[6:]}"
+    return parts[1], max(0, page), day
+
+
+def decode_callback(data: Optional[str]) -> Optional[Tuple[str, int]]:
+    """(view, page) of a button payload; None for anything malformed/unknown."""
+    parsed = parse_callback(data)
+    return (parsed[0], parsed[1]) if parsed else None
 
 
 # ------------------------------------------------------------------- slicing
@@ -105,15 +120,15 @@ def render_pick(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> str
     return "\n".join(pick_lines(pick_line_from_record(pick, tz, user_tz)))
 
 
-def build_keyboard(view: str, page: int, pages: int) -> Dict:
-    """InlineKeyboardMarkup dict: arrows (when useful) + view-switch row."""
+def build_keyboard(view: str, page: int, pages: int, day: Optional[str] = None) -> Dict:
+    """InlineKeyboardMarkup dict: arrows (when useful) + view-switch row. The arrows carry ``day``."""
     row: List[Dict[str, str]] = []
     if pages > 1:
         if page > 0:
-            row.append({"text": "◀️", "callback_data": encode_callback(view, page - 1)})
+            row.append({"text": "◀️", "callback_data": encode_callback(view, page - 1, day)})
         row.append({"text": f"{page + 1}/{pages}", "callback_data": CALLBACK_NOOP})
         if page < pages - 1:
-            row.append({"text": "▶️", "callback_data": encode_callback(view, page + 1)})
+            row.append({"text": "▶️", "callback_data": encode_callback(view, page + 1, day)})
     switch = [{"text": view_button_label(v), "callback_data": encode_callback(v, 0)}
               for v in (VIEW_TOP, VIEW_DAILY, VIEW_STATS)]
     return {"inline_keyboard": ([row] if row else []) + [switch]}
@@ -185,7 +200,7 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
     if pages > 1:
         text += f"\n<i>Page {page + 1}/{pages}</i>"
 
-    return text, build_keyboard(view, page, pages)
+    return text, build_keyboard(view, page, pages, snapshot.date)
 
 
 def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC",
