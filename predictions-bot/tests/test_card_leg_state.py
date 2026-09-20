@@ -1,19 +1,19 @@
 """A card is built once but read at every subscriber's own 9:30 (New York and
 Honolulu are hours after Lagos) and at every /top and /daily tap. Legs stay in the
-ticket, but a leg that has already started or finished must say so, and the card
-shows when it was generated."""
+ticket, but a leg that has already started must say so (🔴 after its time) and one that has
+finished says 'Finished'. The card no longer carries a 'Generated' line or 'odds as of'."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
 from predbot.bot import broadcast, pagination
-from predbot.bot.format import STATE_MARKERS, generated_line, leg_state, pick_line_from_record
+from predbot.bot.format import FINISHED_MARK, STARTED_MARK, leg_state, pick_line_from_record
 from predbot.config import Config
 from tests.test_subscribers_broadcast import FakeTG, _snapshot
 
 KICK = datetime(2030, 6, 1, 18, 0, tzinfo=timezone.utc)      # the Top leg (football, 2.2h)
 DAILY_KICK = datetime(2030, 6, 1, 20, 0, tzinfo=timezone.utc)
-STARTED, FINISHED = STATE_MARKERS["started"], STATE_MARKERS["finished"]
+STARTED, FINISHED = STARTED_MARK, FINISHED_MARK
 
 
 # ----------------------------------------------------------------- the rule
@@ -30,11 +30,11 @@ def test_the_finish_estimate_follows_the_sport():
     assert leg_state(KICK, "baseball", KICK + timedelta(hours=2, minutes=30)) == "started"     # 3.6h
 
 
-def test_generation_time_is_shown_in_the_readers_own_zone():
-    assert generated_line("2030-06-01T09:00:00Z", "Africa/Lagos") == "<i>Generated 10:00 AM WAT</i>"
-    assert generated_line("2030-06-01T09:00:00Z", "America/New_York") == "<i>Generated 5:00 AM EDT</i>"
-    assert generated_line("2030-06-01T09:00:00Z", "Pacific/Honolulu") == "<i>Generated 11:00 PM HST</i>"
-    assert generated_line("", "Africa/Lagos") == ""
+def test_cards_carry_no_generated_line_and_no_odds_as_of():
+    card = broadcast.picks_text(_snapshot(), "Africa/Lagos", now=KICK - timedelta(hours=1))
+    text, _ = pagination.render_page(_snapshot(), "daily", 0, 10, "Africa/Lagos")
+    for shown in (card, text):
+        assert "Generated" not in shown and "odds as of" not in shown
 
 
 # ------------------------------------------------------------------ the card
@@ -46,7 +46,7 @@ def test_nothing_is_marked_before_any_kickoff():
     card = _card("America/New_York", KICK - timedelta(hours=1))
 
     assert STARTED not in card and FINISHED not in card
-    assert "Generated 5:00 AM EDT" in card
+    assert "times in EDT" in card
 
 
 def test_a_started_leg_is_marked_and_a_later_one_is_not():
@@ -69,16 +69,16 @@ def test_legs_stay_in_the_ticket_when_marked():
     late = _card("Pacific/Honolulu", DAILY_KICK + timedelta(hours=1))
 
     for card in (early, late):
-        assert card.count("Total Picks: 1") == 1 and card.count("Total Picks: 3") == 1
-        assert card.count("Combined Odds: 1.90") == 1 and card.count("Combined Odds: 5.83") == 1
-    assert early.count("Prediction:") == late.count("Prediction:") == 4
+        assert card.count("1 pick ·") == 1 and card.count("3 picks ·") == 1
+        assert card.count("Combined odds 1.90") == 1 and card.count("Combined odds 5.83") == 1
+    assert early.count("🎯") == late.count("🎯") == 4
 
 
 def test_the_views_show_the_same_markers_and_generation_time():
     text, _ = pagination.render_page(_snapshot(), "daily", 0, 10, "Africa/Lagos",
                                      "Pacific/Honolulu", now=KICK + timedelta(hours=1))
 
-    assert text.count(STARTED) == 1 and "Generated 11:00 PM HST" in text and "Total Picks: 4" in text
+    assert text.count(STARTED) == 0 and "times in HST" in text and "3 picks" in text       # the Top leg is not in the Daily view
 
 
 # ------------------------------------------------- the subscribers in the question
@@ -99,21 +99,21 @@ def test_new_york_at_its_930_sees_upcoming_legs_and_when_the_card_was_made(monke
 
     assert sent == 1
     assert STARTED not in text and FINISHED not in text
-    assert "Generated 5:00 AM EDT" in text
+    assert "times in EDT" in text
 
 
 def test_honolulu_at_its_930_sees_the_top_leg_already_started(monkeypatch):
     sent, text = _deliver(monkeypatch, "hnl", "Pacific/Honolulu", datetime(2030, 6, 1, 19, 30, tzinfo=timezone.utc))
 
     assert sent == 1
-    assert text.count(STARTED) == 1 and "Prediction:" in text and text.count("Prediction:") == 4
-    assert "Generated 11:00 PM HST" in text
+    assert text.count(STARTED) == 1 and text.count("🎯") == 4
+    assert "times in HST" in text
 
 
 def test_lagos_at_930_is_unmarked(monkeypatch):
     sent, text = _deliver(monkeypatch, "lag", "Africa/Lagos", datetime(2030, 6, 1, 8, 30, tzinfo=timezone.utc))
 
-    assert sent == 1 and STARTED not in text and "Generated 10:00 AM WAT" in text
+    assert sent == 1 and STARTED not in text and "times in WAT" in text
 
 
 def test_pick_line_carries_the_state():

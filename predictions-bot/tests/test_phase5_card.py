@@ -1,4 +1,4 @@
-"""Phase 5: PRICE_MODE (median / best), readable stats and league names, 'odds as of'."""
+"""Phase 5: PRICE_MODE (median / best), readable stats and league names; no 'odds as of' / 'Generated' on cards."""
 from __future__ import annotations
 
 import logging
@@ -7,7 +7,7 @@ import os
 import pytest
 
 from predbot.bot import broadcast, pagination
-from predbot.bot.format import odds_as_of_label, pick_line_from_record, pick_lines
+from predbot.bot.format import pick_line_from_record, pick_lines
 from predbot.cache.models import DailySnapshot, PickRecord
 from predbot.config import Config
 from predbot.markets.catalog import pretty_league, readable_stat, selection_label, short_selection
@@ -122,8 +122,8 @@ def _record(**kw):
 def test_the_odds_line_carries_no_bookmaker_text(bookmaker, n_books, price):
     lines = pick_lines(pick_line_from_record(_record(price=price, bookmaker=bookmaker, n_books=n_books), "Africa/Lagos"))
     text = " ".join(lines)
-    odds_line = next(ln for ln in lines if ln.startswith("Odds:"))
-    assert odds_line == f"Odds: {price:.2f}"
+    odds_line = next(ln for ln in lines if ln.startswith("💰"))
+    assert odds_line.startswith(f"💰 {price:.2f}  ·  ")
     assert "books" not in text.lower() and "bet365" not in text.lower() and "median" not in text.lower()
 
 
@@ -171,20 +171,11 @@ def test_sharpapi_events_carry_a_pretty_league_not_a_shouted_slug(budget):
     assert all(e.league_id for e in events)                         # the slug is still kept for lookups
 
 
-# ================================================================== 5c odds as of
-def test_odds_as_of_sits_next_to_the_combined_odds_and_generated_stays():
+# ================================================================== 5c no 'odds as of', no 'Generated'
+def test_cards_show_neither_odds_as_of_nor_a_generated_line():
     card = broadcast.picks_text(_snapshot(), "Africa/Lagos", now=dt(hh=0))
-    combined = [ln for ln in card.splitlines() if ln.startswith("Combined Odds:")]
-    assert len(combined) == 2 and all("odds as of" in ln for ln in combined)
-    assert "<i>Generated " in card
-
-
-def test_the_views_show_odds_as_of_too():
     text, _ = pagination.render_page(_snapshot(), "daily", 0, 5, "Africa/Lagos")
-    assert "odds as of" in [ln for ln in text.splitlines() if ln.startswith("Combined Odds:")][0]
-    assert "<i>Generated " in text
-
-
-def test_odds_as_of_label():
-    assert odds_as_of_label("2030-06-01T09:04:00Z", "Africa/Lagos") == "odds as of 10:04 AM WAT"
-    assert odds_as_of_label("", "Africa/Lagos") == "" and odds_as_of_label(None, "UTC") == ""
+    for shown in (card, text):
+        assert "odds as of" not in shown and "Generated" not in shown
+    combined = [ln for ln in card.splitlines() if ln.startswith("🎟 Combined odds")]
+    assert len(combined) == 2 and all(ln.endswith("times in WAT") for ln in combined)

@@ -88,7 +88,7 @@ def test_it_shows_both_slates_exactly_as_the_subscriber_card_renders_them(world)
     text = lastrun_text(db, cfg)
 
     assert "Slates as sent" in text and "09:30" in text
-    assert "TOP PICKS" in text and "DAILY PICKS" in text and "Prediction:" in text
+    assert "TOP PICKS" in text and "DAILY PICKS" in text and "🎯" in text
     assert "Generated 9:00 AM WAT" in text
 
 

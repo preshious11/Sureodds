@@ -156,7 +156,7 @@ def test_the_rendered_card_never_repeats_a_top_block_in_daily():
     over = sc(_arsenal("sportsgameodds", pid="2"), "total", "over", 0.66, 1.55, line=2.5, sources=3)
     ps = _run(over)
     text = picks_message(ps.top, ps.daily, dt(), "UTC", None)
-    blocks = [b for b in text.split("\n\n") if "Prediction" in b]
+    blocks = [b for b in text.split("\n\n") if "🎯" in b]
     assert len(blocks) == len(set(blocks)) == len(ps.all())
     assert duplicate_pick_lines([], []) == []
 

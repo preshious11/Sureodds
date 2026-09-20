@@ -49,7 +49,7 @@ def test_unknown_setting_falls_back_to_new(monkeypatch):
 def test_new_a_view_switch_sends_and_never_edits():
     tg = _press("pg|daily|0", _service(make_snapshot()), "new")
     assert len(tg.sends) == 1 and tg.edits == []
-    assert "Daily Picks" in tg.sends[0]["text"] and tg.sends[0]["chat_id"] == "42"
+    assert "DAILY PICKS" in tg.sends[0]["text"] and tg.sends[0]["chat_id"] == "42"
     assert tg.sends[0]["reply_markup"]["inline_keyboard"]          # its own keyboard
     assert tg.answers == [{"id": "cb1", "text": "Daily Picks ↓"}]
 
@@ -57,7 +57,7 @@ def test_new_a_view_switch_sends_and_never_edits():
 def test_new_a_page_turn_sends_and_never_edits():
     tg = _press("pg|daily|1|20300601", _service(make_snapshot()), "new")
     assert len(tg.sends) == 1 and tg.edits == []
-    assert "Page 2/" in tg.sends[0]["text"]
+    assert "Page 2 of " in tg.sends[0]["text"]
     assert tg.answers[0]["text"].startswith("Page 2 of ")
 
 
@@ -97,7 +97,7 @@ def test_a_page_turn_on_an_old_message_renders_that_days_snapshot():
     tg = _press("pg|daily|1|20300531", _service(today, old), "new")
     text = tg.sends[0]["text"]
     assert "OldHome6" in text and "Home2" not in text                 # page 2 of the OLD day's 7 picks
-    assert "Page 2/2" in text
+    assert "Page 2 of 2" in text
     keyboard = tg.sends[0]["reply_markup"]["inline_keyboard"][0]
     assert [b["callback_data"] for b in keyboard if b["callback_data"] != "noop"] == ["pg|daily|0|20300531"]
 

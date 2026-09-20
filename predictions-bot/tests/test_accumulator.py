@@ -137,6 +137,8 @@ def test_total_counts_are_reported_per_section():
     ps = select(pool, cfg(), now)
     assert len(ps.top) + len(ps.daily) == len(ps.all())
     card = picks_message(ps.top, ps.daily, DAY, "UTC", None)
-    odds_lines = [ln for ln in card.splitlines() if re.fullmatch(r"Odds: \d+\.\d{2}", ln)]
+    odds_lines = [ln for ln in card.splitlines() if ln.startswith("💰")]
     assert len(odds_lines) == len(ps.all())                   # one odds line per pick
-    assert card.count("Confidence level:") == len(ps.all())   # one block per pick
+    assert card.count("📊") == len(ps.all())                  # one block per pick
+    headers = [ln for ln in card.splitlines() if ln.startswith("🎟 Combined odds")]
+    assert [int(re.search(r"· (\d+) picks?", h).group(1)) for h in headers] ==         [n for n in (len(ps.top), len(ps.daily)) if n]        # each header counts its own ticket

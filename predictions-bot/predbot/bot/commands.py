@@ -203,14 +203,14 @@ class CommandLoop(threading.Thread):
         """Text-only commands; the three views go through ``_send_view``."""
         local = to_local(utcnow(), self.cfg.timezone)
         if cmd == "/help":
-            extra = ("\n\n🛠 <b>Admin</b>: /run · /settle · /recap · /lastrun"
+            extra = ("\n\n<b>Admin</b>: /run · /settle · /recap · /lastrun"
                      if user_id in self.cfg.telegram_admin_ids else "")
-            extra = "\n🌍 /timezone Area/City — kick-off times in your zone" + extra
+            extra = "\n/timezone Area/City — kick-off times in your zone" + extra
             zone = resolve_timezone(self.db.subscriber_timezone(chat_id or user_id),
                                     self.cfg.timezone)
-            return ("👋 <b>Commands</b>\n\n" + callbacks.commands_text() + "\n\n"
+            return ("<b>Commands</b>\n\n" + callbacks.commands_text() + "\n\n"
                     f"{self._schedule_text(zone)}\n"
-                    "🛑 /stop — unsubscribe" + extra)
+                    "/stop — unsubscribe" + extra)
         if cmd == "/stop":
             self.db.subscriber_remove(chat_id or user_id)
             return ("🛑 Unsubscribed — no more daily picks. "

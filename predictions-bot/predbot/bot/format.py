@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from predbot.bot.telegram import esc
@@ -27,10 +27,6 @@ MARKET_LABEL = {"result3": "Match Result", "result2": "Moneyline", "dnb": "Draw 
                 "team_to_score": "Team To Score", "winning_margin": "Winning Margin", "prop": "Prop"}
 RESULT_ICON = {"won": "✅", "lost": "❌", "push": "↩️", "half_won": "✅½", "half_lost": "❌½",
                "void": "➖", "pending": "⏳"}
-# The two card headings. Defined once here so the broadcast card, the /top and
-# /daily commands and their inline buttons cannot drift apart again.
-HEADING_TOP = "🏆 Top Picks for Today"
-HEADING_DAILY = "📋 Daily Picks for Today"
 # Bare codes a punter should never have to decode; mapped to plain English.
 _TERSE_CODES = {"1": "{home} to Win", "2": "{away} to Win", "X": "Draw",
                 "1X": "{home} or Draw", "X2": "{away} or Draw", "12": "{home} or {away}",
@@ -45,11 +41,13 @@ class PickLine(NamedTuple):
     outcome: str           # explicit outcome, e.g. "Over 2.5 Goals", "Chelsea to Win"
     league: str            # "Premier League", "La Liga", etc.
     confidence: float      # model probability, 0..1
-    when: str              # local kickoff with its zone, e.g. "19:45 WAT"
+    when: str              # local kickoff time in the reader's zone, e.g. "7:45 PM" (the zone is in the card header)
     price: float
     country: str = ""      # "England", "Kazakhstan", etc.
     market_type: str = ""  # "Over/Under", "Match Result", etc.
     state: str = ""        # "", "started" or "finished" - see leg_state()
+    start: Optional[datetime] = None   # kickoff instant: cards are listed earliest first
+    sport_key: str = ""    # "football", "tennis"...: picks the sport icon
 
 
 def _looks_internal(text: str) -> bool:
@@ -138,7 +136,10 @@ def format_outcome(pick, home: str = "", away: str = "") -> str:
                          getattr(pick, "sport", "football"))
 
 
-STATE_MARKERS = {"started": "🔴 Started", "finished": "🏁 Finished"}
+#: A match that has kicked off carries 🔴 after its time; 🏁 is not part of the card vocabulary, so a match whose
+#: typical length has passed just says so in words.
+STARTED_MARK = " 🔴"
+FINISHED_MARK = " · Finished"
 
 
 def leg_state(start: Optional[datetime], sport: str, now: Optional[datetime] = None) -> str:
@@ -158,16 +159,39 @@ def leg_state(start: Optional[datetime], sport: str, now: Optional[datetime] = N
     return "finished" if now >= start + timedelta(hours=hours) else "started"
 
 
-def odds_as_of_label(generated_at: Optional[str], tz: str) -> str:
-    """"odds as of 9:04 AM WAT" - when the prices were read; "" when unknown."""
-    at = parse_iso(generated_at) if generated_at else None
-    return f"odds as of {kickoff_label(at, tz)}" if at else ""
+def day_label(day) -> str:
+    """'Sat 19 Sep' for a YYYY-MM-DD string (or a date): the date every card carries in its header."""
+    if isinstance(day, str):
+        day = datetime.strptime(day[:10], "%Y-%m-%d")
+    return f"{day.strftime('%a')} {day.day} {day.strftime('%b')}"
 
 
-def generated_line(generated_at: Optional[str], tz: str) -> str:
-    """"<i>Generated 9:04 AM WAT</i>" in the reader's own zone; "" when unknown."""
-    at = parse_iso(generated_at) if generated_at else None
-    return f"<i>Generated {kickoff_label(at, tz)}</i>" if at else ""
+def zone_label(tz: str, day: str = "") -> str:
+    """The reader's zone as it is written on a card: 'WAT', 'BST', 'EDT' (the abbreviation in force on the card's
+    day, so a summer card says BST); the IANA name when the platform only knows a numeric one ('+01')."""
+    try:
+        ref = datetime.strptime(day[:10], "%Y-%m-%d").replace(hour=12, tzinfo=timezone.utc) if day else utcnow()
+    except ValueError:
+        ref = utcnow()
+    name = (to_local(ref, tz).tzname() or "").strip()
+    return name if name and not name[0] in "+-" and not name.isdigit() else tz
+
+
+def clock_label(start: Optional[datetime], tz: str) -> str:
+    """Kickoff time in ``tz`` without the zone ('7:45 PM'); '--:--' when unknown. The zone is written once, in the
+    card's header."""
+    if start is None:
+        return "--:--"
+    return to_local(start, tz).strftime("%I:%M %p").lstrip("0")
+
+
+def kickoff_label(start: Optional[datetime], tz: str, user_tz: Optional[str] = None) -> str:
+    """Local kickoff with its zone abbreviation ("7:45 PM WAT"); "--:--" when unknown."""
+    if start is None:
+        return "--:--"
+    display_tz = user_tz or tz
+    local = to_local(start, display_tz)
+    return f"{local.strftime('%I:%M %p').lstrip('0')} {local.tzname() or display_tz}"
 
 
 def pick_line_from_record(pick, tz: str, user_tz: Optional[str] = None,
@@ -180,25 +204,24 @@ def pick_line_from_record(pick, tz: str, user_tz: Optional[str] = None,
     The outcome is always explicit (entity + side + line + stat for props);
     ambiguous picks come back with outcome='' and are skipped by the renderers.
     """
+    start = parse_iso(pick.kickoff_utc)
     return PickLine(sport=sport_name(pick.sport),
                     match=f"{pick.home} vs {pick.away}",
                     outcome=format_outcome(pick),
                     league=pick.league or sport_name(pick.sport),
                     confidence=pick.prob,
-                    when=kickoff_label(parse_iso(pick.kickoff_utc), tz, user_tz),
-                    state=leg_state(parse_iso(pick.kickoff_utc), pick.sport, now),
+                    when=clock_label(start, user_tz or tz),
+                    state=leg_state(start, pick.sport, now),
                     price=pick.price,
                     country=getattr(pick, "country", ""),
-                    market_type=MARKET_LABEL.get(pick.market, pick.market))
+                    market_type=MARKET_LABEL.get(pick.market, pick.market),
+                    start=start, sport_key=pick.sport)
 
 
-def kickoff_label(start: Optional[datetime], tz: str, user_tz: Optional[str] = None) -> str:
-    """Local kickoff with its zone abbreviation ("7:45 PM WAT"); "--:--" when unknown."""
-    if start is None:
-        return "--:--"
-    display_tz = user_tz or tz
-    local = to_local(start, display_tz)
-    return f"{local.strftime('%I:%M %p').lstrip('0')} {local.tzname() or display_tz}"
+def by_kickoff(lines: Iterable[PickLine]) -> List[PickLine]:
+    """Display order on every card: earliest kickoff first (unknown times last; equal times keep slate order).
+    Only the rendering is sorted - the slate and the stored picks are untouched."""
+    return sorted(lines, key=lambda p: (p.start is None, p.start or datetime.max.replace(tzinfo=timezone.utc)))
 
 
 def combined_odds(prices: Iterable[float]) -> float:
@@ -220,95 +243,93 @@ def combined_odds(prices: Iterable[float]) -> float:
     return total
 
 
+def _icon(p: PickLine) -> str:
+    key = p.sport_key or next((k for k, v in SPORT_LABEL.items() if v == p.sport), "other")
+    return SPORT_ICON.get(key, SPORT_ICON["other"])
+
+
 def pick_lines(p: PickLine) -> List[str]:
-    """Pick display: sport, league+country, fixture, prediction, odds, confidence, kickoff."""
-    league_label = esc(p.league)
-    if hasattr(p, 'country') and p.country:
-        league_label = f"{esc(p.country)} • {league_label}" if league_label else esc(p.country)
+    """One pick block:
 
-    lines = [esc(p.sport), league_label, esc(p.match)]
+        ⚽ England • Premier League · Chelsea vs Man United
+        🎯 Chelsea to Win
+        💰 1.31  ·  📊 76%  ·  🕘 12:30 AM 🔴
+    """
+    league = esc(p.league)
+    if p.country:
+        league = f"{esc(p.country)} • {league}" if league else esc(p.country)
+    mark = STARTED_MARK if p.state == "started" else FINISHED_MARK if p.state == "finished" else ""
+    return [f"{_icon(p)} {league} · {esc(p.match)}",
+            f"🎯 {esc(p.outcome)}",
+            f"💰 {p.price:.2f}  ·  📊 {round(p.confidence * 100)}%  ·  🕘 {esc(p.when)}{mark}"]
 
-    marker = f" | {STATE_MARKERS[p.state]}" if p.state in STATE_MARKERS else ""
-    lines.extend([
-        f"<b>Prediction:</b> {esc(p.outcome)}",
-        f"Odds: {p.price:.2f}",
-        f"Confidence level: <b>{round(p.confidence * 100)}%</b> | {esc(p.when)}{marker}"
-    ])
+
+TOP_TITLE = "🔥 TOP PICKS"
+DAILY_TITLE = "📋 DAILY PICKS"
+NO_SELECTION = "No selection cleared the quality bar today."
+
+
+def n_picks(n: int) -> str:
+    return f"{n} pick" + ("" if n == 1 else "s")
+
+
+def card_header(title: str, day: str, prices: List[float], zone: str = "") -> List[str]:
+    """'🔥 TOP PICKS · Sun 20 Sep' / '🎟 Combined odds 2.01 · 2 picks · 🕘 times in WAT'. The odds and the count
+    are this card's OWN: the whole ticket (every page of it), never the page in hand or another tier."""
+    lines = [f"{title} · {day_label(day)}" if day else title]
+    if prices:
+        odds = f"🎟 Combined odds {combined_odds(prices):.2f} · {n_picks(len(prices))}"
+        lines.append(odds + (f" · 🕘 times in {zone}" if zone else ""))
     return lines
 
 
-def picks_card(picks: List[PickLine], date_label: str, stats_line: Optional[str] = None,
-               heading: str = HEADING_DAILY,
-               total_prices: Optional[Iterable[float]] = None,
-               generated: str = "", odds_as_of: str = "") -> str:
-    """The daily predictions post: one block per pick, then the ticket totals.
+def picks_card(picks: List[PickLine], day: str, title: str = DAILY_TITLE,
+               total_prices: Optional[Iterable[float]] = None, zone: str = "",
+               page: Optional[int] = None, pages: Optional[int] = None,
+               stats_line: Optional[str] = None) -> str:
+    """One ticket card: header, then one block per pick in kickoff order.
 
-    ``total_prices`` lets a caller price a different collection than the cards
-    shown (legacy callers only); when omitted the combined odds are the product
-    of exactly the picks listed here - displayed picks and combined odds can
-    never come from different lists.
-    """
-    lines = [f"{heading} {date_label}", ""]
+    ``total_prices`` prices the WHOLE ticket when ``picks`` is only one page of it (the count is then the whole
+    ticket's too); when omitted the odds are the product of exactly the picks listed. ``page``/``pages`` add the
+    only per-page line, the footer 'Page 2 of 3'."""
+    picks = by_kickoff(picks)
+    prices = list(total_prices) if total_prices is not None else [p.price for p in picks]
+    lines = card_header(title, day, prices if picks else [], zone)
     if not picks:
-        lines.append("No selection cleared the quality bar today.")
+        lines.append(NO_SELECTION)
     for p in picks:
-        lines.extend(pick_lines(p))
-        lines.append("")
-    if picks:
-        prices = list(total_prices) if total_prices is not None else [p.price for p in picks]
-        lines.append(f"Total Picks: {len(picks)}")
-        lines.append(f"Combined Odds: {combined_odds(prices):.2f}{' · ' + odds_as_of if odds_as_of else ''}")
-    if generated and picks:
-        lines.append(generated)
+        lines += ["", *pick_lines(p)]
+    if pages and pages > 1 and page:
+        lines += ["", f"Page {page} of {pages}"]
     if stats_line:
-        lines.append("")
-        lines.append(stats_line)
+        lines += ["", stats_line]
     return "\n".join(lines)
 
 
 def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str]) -> str:
-    """Channel post for the day's selections: top picks first, then the daily ones."""
-    picks: List[PickLine] = []
-    n_top = len(list(top))
-    for s in list(top) + list(daily):
-        e = s.event
-        picks.append(PickLine(sport=sport_name(e.sport),
-                              match=f"{e.home} vs {e.away}",
-                              outcome=outcome_label(s.label, s.line, e.home, e.away, e.sport),
-                              league=e.league or sport_name(e.sport),
-                              confidence=s.p_model, when=kickoff_label(e.start, tz),
-                              price=s.price,
-                              country=str(e.extra.get("country") or ""),
-                              market_type=MARKET_LABEL.get(s.line.market, s.line.market)))
-    for match, outcome in duplicate_pick_lines([p for p in picks[:n_top] if p.outcome], [p for p in picks[n_top:] if p.outcome]):
+    """Channel post for the day's selections, built from scored picks: the Top ticket, then the Daily one."""
+    def lines(items):
+        out = []
+        for s in items:
+            e = s.event
+            out.append(PickLine(sport=sport_name(e.sport), match=f"{e.home} vs {e.away}",
+                                outcome=outcome_label(s.label, s.line, e.home, e.away, e.sport),
+                                league=e.league or sport_name(e.sport), confidence=s.p_model,
+                                when=clock_label(e.start, tz), price=s.price,
+                                country=str(e.extra.get("country") or ""),
+                                market_type=MARKET_LABEL.get(s.line.market, s.line.market),
+                                start=e.start, sport_key=e.sport))
+        return out
+    top_lines, daily_lines = lines(top), lines(daily)
+    for match, outcome in duplicate_pick_lines([p for p in top_lines if p.outcome], [p for p in daily_lines if p.outcome]):
         log.warning("card renders the same pick in Top and Daily: %s - %s", match, outcome)
-    picks = [p for p in picks if p.outcome]
-    return picks_card(picks, to_local(day, tz).strftime("%Y-%m-%d"), stats_line)
+    day_str = to_local(day, tz).strftime("%Y-%m-%d")
+    card = summary_card(top_lines, daily_lines, day_str, zone_label(tz, day_str)) if (top_lines or daily_lines) else \
+        picks_card([], day_str, DAILY_TITLE)
+    return f"{card}\n\n{stats_line}" if stats_line else card
 
 
 # ------------------------------------------------------------ the summary card
-#: The corrected, canonical summary copy. Every summary/recap path renders THIS
-#: structure; any other wording found at runtime is a stale-path regression.
-SUMMARY_TITLE = "📊 TODAY'S RESULTS"
-TOP_SECTION_TITLE = "🔥 TOP PICKS"
-DAILY_SECTION_TITLE = "📋 DAILY PICKS"
-SECTION_COMBINED = "Combined Odds:"
-SECTION_TOTAL = "Total Picks:"
-
-
-def render_section(title: str, picks: List[PickLine], odds_as_of: str = "") -> List[str]:
-    """ONE canonical section renderer: title, Combined Odds, Total Picks, then
-    the pick blocks. Combined odds and Total Picks are computed from EXACTLY
-    the picks rendered here - never from another collection."""
-    stamp = f" · {odds_as_of}" if odds_as_of else ""
-    lines = [title, f"{SECTION_COMBINED} {combined_odds(p.price for p in picks):.2f}{stamp}",
-             f"{SECTION_TOTAL} {len(picks)}"]
-    for p in picks:
-        lines.extend(pick_lines(p))
-        lines.append("")
-    return lines
-
-
 def duplicate_pick_lines(top: Iterable[PickLine], daily: Iterable[PickLine]) -> List[Tuple[str, str]]:
     """(match, outcome) of every Daily block whose text repeats a Top block: the same outcome on the same
     two teams (in either order). The cross-tier rule makes this impossible; the card checks anyway."""
@@ -319,37 +340,24 @@ def duplicate_pick_lines(top: Iterable[PickLine], daily: Iterable[PickLine]) -> 
     return [(p.match, p.outcome) for p in daily if p.outcome and ident(p) in seen]
 
 
-def summary_card(top: List[PickLine], daily: List[PickLine], generated: str = "", odds_as_of: str = "") -> str:
-    """THE canonical results/summary card (one and only one renderer).
+def summary_card(top: List[PickLine], daily: List[PickLine], day: str = "", zone: str = "") -> str:
+    """THE canonical delivered/channel card (one and only one renderer): the Top ticket, then the Daily ticket,
+    each with its own header (own combined odds, own pick count) and its picks in kickoff order.
 
-        📊 TODAY'S RESULTS
-        🔥 TOP PICKS
-        Combined Odds: X.XX
-        Total Picks: X
-        <pick blocks...>
-        📋 DAILY PICKS
-        Combined Odds: X.XX
-        Total Picks: X
-        <pick blocks...>
-
-    The Daily section's odds/picks cover only the Daily selections; the Top
-    section's only the Top ones. An outcome that cannot be stated explicitly is
-    skipped before anything is computed, so the totals always match the cards.
-    """
-    top = [p for p in top if p.outcome]
-    daily = [p for p in daily if p.outcome]
+    An outcome that cannot be stated explicitly is skipped before anything is computed, so the totals always match
+    the blocks shown."""
+    top = by_kickoff(p for p in top if p.outcome)
+    daily = by_kickoff(p for p in daily if p.outcome)
     for match, outcome in duplicate_pick_lines(top, daily):
         log.warning("card renders the same pick in Top and Daily: %s - %s", match, outcome)
-    lines = [SUMMARY_TITLE]
-    if top:
-        lines.append("")
-        lines.extend(render_section(TOP_SECTION_TITLE, top, odds_as_of))
-    if daily:
-        lines.append("")
-        lines.extend(render_section(DAILY_SECTION_TITLE, daily, odds_as_of))
-    if generated and (top or daily):
-        lines.append(generated)
-    return "\n".join(lines).rstrip()
+    sections = []
+    for title, picks in ((TOP_TITLE, top), (DAILY_TITLE, daily)):
+        if picks:
+            lines = card_header(title, day, [p.price for p in picks], zone)
+            for p in picks:
+                lines += ["", *pick_lines(p)]
+            sections.append("\n".join(lines))
+    return "\n\n".join(sections)
 
 
 def _pct(w: int, l: int) -> str:
@@ -376,17 +384,6 @@ def sport_name(sport: str) -> str:
 #: The settled outcome marks. An unsettled pick has none.
 MARK = {"won": "✅", "lost": "❌", "void": "➖", "push": "↩️"}
 NO_RESULTS_YET = "📊 No results yet — the first recap arrives the morning after the first slate."
-
-
-def day_label(day) -> str:
-    """'Sat 19 Sep' for a YYYY-MM-DD string (or a date): the date every card carries in its header."""
-    if isinstance(day, str):
-        day = datetime.strptime(day[:10], "%Y-%m-%d")
-    return f"{day.strftime('%a')} {day.day} {day.strftime('%b')}"
-
-
-def _n_picks(n: int) -> str:
-    return f"{n} pick" + ("" if n == 1 else "s")
 
 
 def counts_line(b: Dict, sep: str = "  ") -> str:
@@ -427,7 +424,7 @@ def yesterday_lines(y: Dict, day: str) -> List[str]:
     head = "🗓 Yesterday" + (f" · {day_label(day)}" if day else "")
     if not y.get("issued"):
         return [f"{head} — no picks were issued."]
-    head += f" · {_n_picks(y['issued'])}"
+    head += f" · {n_picks(y['issued'])}"
     if not y.get("settled"):
         return [f"{head} — results come in after the last match ends."]
     lines = [head, counts_line(y)]
@@ -507,7 +504,7 @@ def yesterday_header(day: str, y: Dict) -> List[str]:
     marks in the list against the card."""
     if not y.get("issued"):
         return [f"🗓 YESTERDAY · {day_label(day)}", "No picks were issued."]
-    return [f"🗓 YESTERDAY · {day_label(day)}", f"{_n_picks(y['issued'])} · {counts_line(y, ' ')}"]
+    return [f"🗓 YESTERDAY · {day_label(day)}", f"{n_picks(y['issued'])} · {counts_line(y, ' ')}"]
 
 
 def yesterday_pick_line(row, kind: Optional[str]) -> str:

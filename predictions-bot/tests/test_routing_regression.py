@@ -89,7 +89,7 @@ def test_removed_subscribe_toggle_cannot_send_predictions(db):
     assert (len(tg.sends), len(tg.edits)) == before   # unknown payloads: nothing happens
     assert db.subscribers_active()                    # and they cannot undo /start
     buttons = [b for row in menu_markup()["inline_keyboard"] for b in row]
-    assert [b["text"] for b in buttons] == ["🏆 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
+    assert [b["text"] for b in buttons] == ["🔥 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
     assert not any(b["callback_data"].startswith("sub|") for b in buttons)
 
 
@@ -114,7 +114,7 @@ def test_command_and_button_render_identically_from_sqlite(db, view):
     assert tg.sends[-1]["text"] == tg.edits[-1]["text"]
     assert tg.sends[-1]["reply_markup"] == tg.edits[-1]["reply_markup"]
     if view != "stats":
-        assert "Combined Odds:" in tg.sends[-1]["text"]
+        assert "Combined odds" in tg.sends[-1]["text"]
 
 
 def test_botname_commands_route_like_plain_commands(db):
@@ -148,7 +148,7 @@ def test_one_definition_of_every_routing_and_rendering_function():
     for name in ("def handle_start(", "def open_view(", "def welcome_message(",
                  "def menu_markup(", "def handle_command(",
                  "def pick_line_from_record(", "def summary_card(",
-                 "def render_section(", "def outcome_label(", "def format_outcome(",
+                 "def outcome_label(", "def format_outcome(",
                  "def picks_text(", "def combined_odds("):
         files = [p for p in PRED.rglob("*.py")
                  if any(ln.strip().startswith(name)
