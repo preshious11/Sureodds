@@ -1,8 +1,10 @@
-"""The gate for every performance change: one recorded day of provider data replayed through the whole
-pipeline (no network) must reproduce tests/fixtures/replay/golden.json byte for byte - picks, order, prices,
-labels, cards, /top and /daily views, deliveries and diagnostics (timing fields excepted).
+"""The gates for every change: one recorded day of provider data replayed through the whole pipeline (no network).
 
-Re-record ONLY for an intended behaviour change:  python tools/replay.py --record"""
+* ``golden_slate.json``  - which picks, their order, prices, labels, deliveries counts and diagnostics (timings
+  excepted). Byte-identical for any presentation or performance change; re-record only for an intended
+  change to what is picked or how a team is named:  python tools/replay.py --record slate
+* ``golden_render.json`` - every text a reader sees (cards, views, pages, deliveries, recap, stats, /yesterday,
+  empty states). Re-record for an intended presentation change:  python tools/replay.py --record render"""
 from __future__ import annotations
 
 import sys
@@ -16,7 +18,12 @@ import replay                                                 # noqa: E402
 
 def test_replay_reproduces_the_golden_slate_byte_for_byte():
     result = replay.run(send_delay=0.0)
-    assert replay.golden_text(result) + "\n" == replay.GOLDEN.read_text(encoding="utf-8")
+    assert replay.golden_text(result, "slate") + "\n" == replay.GOLDEN_SLATE.read_text(encoding="utf-8")
+
+
+def test_replay_reproduces_the_golden_render_byte_for_byte():
+    result = replay.run(send_delay=0.0)
+    assert replay.golden_text(result, "render") + "\n" == replay.GOLDEN_RENDER.read_text(encoding="utf-8")
 
 
 def test_replay_is_offline_and_cross_tier_counters_are_zero():

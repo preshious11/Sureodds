@@ -1,7 +1,7 @@
 """Replay harness: one recorded day of provider data -> the whole pipeline, offline and deterministic.
 
     python tools/replay.py                   # run + print a summary (timings, counts, latencies)
-    python tools/replay.py --record          # (re)write tests/fixtures/replay/golden.json
+    python tools/replay.py --record [slate|render]   # (re)write tests/fixtures/replay/golden_{slate,render}.json
     python tools/replay.py --profile         # cProfile top-30 for score + select
     python tools/replay.py --json out.json   # write the full result
 
@@ -31,11 +31,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 REPLAY_DB = ROOT / "tests" / "fixtures" / "replay" / "replay.db"
-GOLDEN = ROOT / "tests" / "fixtures" / "replay" / "golden.json"
+GOLDEN_SLATE = ROOT / "tests" / "fixtures" / "replay" / "golden_slate.json"
+GOLDEN_RENDER = ROOT / "tests" / "fixtures" / "replay" / "golden_render.json"
 TZ = "Africa/Lagos"
 
 #: keys that hold timings or wall-clock stamps - never part of the golden
-_VOLATILE = {"timings", "generated_at", "retry_after", "updated_at", "at", "collect_s", "select_timings"}
+_VOLATILE = {"timings", "generated_at", "retry_after", "updated_at", "at", "collect_s", "select_timings",
+             "today"}                                # budget.used_today reads the real calendar day, not the pinned clock
 
 
 def strip(obj):
@@ -189,7 +191,8 @@ def run(profile: bool = False, subscribers: int = 300, send_delay: float = 0.03,
             for r in rows:
                 for volatile in ("id", "created_at"):
                     r.pop(volatile, None)
-            slate = {"status": snapshot.status, "date": snapshot.date, "card": card,
+            render = {"card": card}
+            slate = {"status": snapshot.status, "date": snapshot.date,
                      "top": [p.to_dict() if hasattr(p, "to_dict") else str(p) for p in snapshot.top_picks],
                      "daily": [p.to_dict() if hasattr(p, "to_dict") else str(p) for p in snapshot.daily_picks],
                      "stored_picks": rows, "diagnostics": strip(snapshot.generation)}
@@ -242,7 +245,7 @@ def run(profile: bool = False, subscribers: int = 300, send_delay: float = 0.03,
                                                "message": {"chat": {"id": 100}, "message_id": 7}, "from": {}},
                                               service=service, tg=tg, cfg=cfg, db=db)
                     pages[f"{view}:{page}"] = [s[1:] for s in tg.sent]
-            slate["views"], slate["pages"] = views, pages
+            render["views"], render["pages"] = views, pages
 
             # ---- delivery: N subscribers, real per-user rendering, a fake network with a per-send delay
             tzs = ["Africa/Lagos", "Europe/London", "America/New_York", "Asia/Tokyo"]
@@ -264,11 +267,11 @@ def run(profile: bool = False, subscribers: int = 300, send_delay: float = 0.03,
             result["delivery"] = {"subscribers": subscribers, "sent": sent, "second_pass_sent": again,
                                   "wall": round(deliver_wall, 3), "sqlite": dict(db.stats)}
             by_chat = {c: (text) for c, text, _ in dtg.sent}
-            slate["delivery"] = {"sent": sent, "second_pass": again,
-                                 "cards_by_tz": {tz: next(by_chat[str(1000 + i)] for i in range(subscribers) if tzs[i % len(tzs)] == tz)
-                                                 for tz in tzs}, "chats": sorted(by_chat)[:5], "n_deliveries":
-                                     db.query("SELECT COUNT(*) AS n FROM deliveries")[0]["n"]}
-            result["slate"] = slate
+            slate["delivery"] = {"sent": sent, "second_pass": again, "chats": sorted(by_chat)[:5],
+                                 "n_deliveries": db.query("SELECT COUNT(*) AS n FROM deliveries")[0]["n"]}
+            render["delivery"] = {"cards_by_tz": {tz: next(by_chat[str(1000 + i)] for i in range(subscribers) if tzs[i % len(tzs)] == tz)
+                                                  for tz in tzs}}
+            result["slate"], result["render"] = slate, render
             result["peak_rss_mb"] = peak_rss_mb()
     finally:
         try:
@@ -280,18 +283,23 @@ def run(profile: bool = False, subscribers: int = 300, send_delay: float = 0.03,
     return result
 
 
-def golden_text(result: dict) -> str:
-    return json.dumps(result["slate"], indent=1, sort_keys=True, ensure_ascii=False, default=str)
+def golden_text(result: dict, part: str = "slate") -> str:
+    """``slate`` = which picks, their order, prices, labels, diagnostics; ``render`` = every text a reader sees."""
+    return json.dumps(result[part], indent=1, sort_keys=True, ensure_ascii=False, default=str)
 
 
 def main(argv):
     result = run(profile="--profile" in argv)
     if "--record" in argv:
-        GOLDEN.write_text(golden_text(result) + "\n", encoding="utf-8")
-        print("golden written:", GOLDEN, GOLDEN.stat().st_size, "bytes")
+        nxt = argv[argv.index("--record") + 1:][:1]
+        which = nxt[0] if nxt and nxt[0] in ("slate", "render") else "both"
+        for part, path in (("slate", GOLDEN_SLATE), ("render", GOLDEN_RENDER)):
+            if which in (part, "both"):
+                path.write_text(golden_text(result, part) + "\n", encoding="utf-8")
+                print("golden written:", path, path.stat().st_size, "bytes")
     if "--json" in argv:
         Path(argv[argv.index("--json") + 1]).write_text(json.dumps(result, indent=1, default=str), encoding="utf-8")
-    summary = {k: v for k, v in result.items() if k not in ("slate", "profile")}
+    summary = {k: v for k, v in result.items() if k not in ("slate", "render", "profile")}
     print(json.dumps(summary, indent=1, default=str))
     if result.get("profile"):
         print(result["profile"])
