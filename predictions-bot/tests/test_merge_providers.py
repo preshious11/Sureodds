@@ -48,7 +48,7 @@ def test_a_home_away_swapped_pair_merges():
     a = _e("sharpapi", "TEX Rangers", "BOS Red Sox", _t(18, 10), "MLB", "mlb")
     b = _e("sportsgameodds", "Boston Red Sox", "Texas Rangers", _t(18, 10), "MLB", "MLB")
     (m,) = merge_events([a], [b])
-    assert m.home == "TEX Rangers" and m.extra["merged"][0]["swapped"] is True
+    assert m.home == "Texas Rangers" and m.extra["merged"][0]["swapped"] is True     # the fuller spelling is kept
 
 
 def test_different_teams_and_different_competitions_do_not_merge():

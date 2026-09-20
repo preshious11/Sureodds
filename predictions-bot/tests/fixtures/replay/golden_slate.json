@@ -388,7 +388,7 @@
     "swapped": false
    },
    {
-    "kept": "sharpapi: Tampa Bay Rays v BOS Red Sox",
+    "kept": "sharpapi: Tampa Bay Rays v Boston Red Sox",
     "league": "MLB",
     "merged": "sportsgameodds: Tampa Bay Rays v Boston Red Sox",
     "sport": "baseball",
@@ -416,7 +416,7 @@
     "swapped": false
    },
    {
-    "kept": "sharpapi: Texas Rangers v TOR Blue Jays",
+    "kept": "sharpapi: Texas Rangers v Toronto Blue Jays",
     "league": "MLB",
     "merged": "sportsgameodds: Texas Rangers v Toronto Blue Jays",
     "sport": "baseball",
@@ -437,7 +437,7 @@
     "swapped": false
    },
    {
-    "kept": "sharpapi: ARI Diamondbacks v New York Yankees",
+    "kept": "sharpapi: Arizona Diamondbacks v New York Yankees",
     "league": "MLB",
     "merged": "sportsgameodds: Arizona Diamondbacks v New York Yankees",
     "sport": "baseball",
