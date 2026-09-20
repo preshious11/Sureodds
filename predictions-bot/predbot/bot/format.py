@@ -510,5 +510,5 @@ def yesterday_header(day: str, y: Dict) -> List[str]:
 def yesterday_pick_line(row, kind: Optional[str]) -> str:
     """'✅ 🎯 Over 2.5 goals · Venezia vs Lazio · @1.69'; an unsettled pick has no mark."""
     from predbot.jobs.stats import pick_outcome
-    mark = MARK[kind] if kind else "   "
-    return (f"{mark} 🎯 {esc(pick_outcome(row))} · {esc(row['home'])} vs {esc(row['away'])} · @{float(row['price']):.2f}")
+    lead = f"{MARK[kind]} " if kind else "   "
+    return (f"{lead}🎯 {esc(pick_outcome(row))} · {esc(row['home'])} vs {esc(row['away'])} · @{float(row['price']):.2f}")
