@@ -105,8 +105,9 @@ The **picker** then applies your rules:
 - **Top picks** need high model probability *and* positive EV *and* at least two
   agreeing sources; they are added best-first until the ticket is worth
   `TOP_COMBINED_ODDS` (~2.00), preferring different outcome types.
-- **Daily picks** then extend the same ticket until the whole list is worth
-  `DAILY_COMBINED_MIN_ODDS`–`DAILY_COMBINED_MAX_ODDS` (10–20). A pick is only
+- **Daily picks** are sized on their own: the Daily ticket alone is worth
+  `DAILY_COMBINED_MIN_ODDS`–`DAILY_COMBINED_MAX_ODDS` (10–20); the Top legs are
+  checked for duplicates but not counted in its odds. A pick is only
   added when it clears the quality bar, so **it never pads**: if only 11
   qualify, 11 are posted. `DAILY_PICKS_TARGET` is just a safety cap on the
   number of picks in the one list.

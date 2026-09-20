@@ -116,7 +116,11 @@ def _families(ps):
 def test_raw_ranking_offers_every_safe_handicap_before_any_win():
     ps = select(_synthetic_pool(), _cfg("raw"), dt())
     fam = _families(ps)
-    assert fam["handicap_alt"] >= 8 and fam["win"] == 0 and fam["total_main"] == 0        # today's behaviour
+    tables = {}
+    order = [daily_family(s, tables) for s in ps.daily]
+    assert fam["handicap_alt"] >= 8                                                         # every safe handicap is offered ...
+    assert "win" not in order[:fam["handicap_alt"]] and order[:fam["handicap_alt"]].count("handicap_alt") == fam["handicap_alt"]   # ... before any win
+    # (the Daily now grows until ITS OWN odds reach 10, so after the handicaps run out a win can still follow)
 
 
 def test_family_ranking_lets_wins_and_main_line_totals_compete():

@@ -197,9 +197,9 @@ def test_daily_list_is_sized_by_the_combined_odds_window():
     pool = [sc(ev(i), "result3", "home", 0.62, 1.45) for i in range(30)]
     ps = select(pool, cfg(), now)
     c = cfg()
-    ticket = math.prod(s.price for s in ps.all())
+    ticket = math.prod(s.price for s in ps.daily)
 
-    assert c.daily_odds_min <= ticket <= c.daily_odds_max   # 10 .. 20
+    assert c.daily_odds_min <= ticket <= c.daily_odds_max   # 10 .. 20 on the Daily's own legs
     assert len(ps.all()) < 30                               # stops long before the pool runs out
 
 

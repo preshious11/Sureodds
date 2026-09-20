@@ -173,7 +173,8 @@ def lastrun_text(db, cfg, now: Optional[datetime] = None) -> str:
     out += ["", "<b>Funnel</b>"] + _funnel(gen)
     out += ["", "<b>Price sources</b> (not shown on the card)"] + _price_sources(snapshot)
     out += ["", f"<b>Slates</b>: Top {len(snapshot.top_picks)} legs · combined {_product(snapshot.top_picks):.2f} | "
-                f"Daily {len(snapshot.daily_picks)} picks · ticket {_product(snapshot.daily_picks):.2f}"]
+                f"Daily {len(snapshot.daily_picks)} picks · own odds {_product(snapshot.daily_picks):.2f}"
+                f" (with the Top: {_product(snapshot.top_picks) * _product(snapshot.daily_picks):.2f}, old sizing)"]
 
     # Both slates exactly as a subscriber's card renders them at DELIVERY_TIME in the bot's zone.
     d_hour, d_minute = parse_hhmm(cfg.delivery_time, "09:30")
