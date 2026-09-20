@@ -23,7 +23,6 @@ def test_replay_reproduces_the_golden_slate_byte_for_byte():
     assert replay.golden_text(result, "slate") + "\n" == replay.GOLDEN_SLATE.read_text(encoding="utf-8")
 
 
-@pytest.mark.skip(reason="the broadcast/paging/footer/name phases change the render; golden_render.json is re-recorded once, in Phase 6")
 def test_replay_reproduces_the_golden_render_byte_for_byte():
     result = replay.run(send_delay=0.0)
     assert replay.golden_text(result, "render") + "\n" == replay.GOLDEN_RENDER.read_text(encoding="utf-8")
