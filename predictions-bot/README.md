@@ -301,10 +301,10 @@ buttons share the same renderer. Kickoff times are shown in the reader's zone, n
 channel post uses the configured zone. The card shows the plain price; where each price came from (median of
 N books / a bookmaker) is listed in `/lastrun`.
 
-Buttons never wipe a message. `VIEW_NAVIGATION=new` (the default) sends a NEW message for every button press - a
-view switch or a page turn - so the chat keeps its record; `edit_pages` edits only page turns; `edit` edits the
-pressed message (the old behaviour). A page-turn button carries its card's date, so an older message keeps turning
-ITS day's pages.
+Buttons never wipe a message. `VIEW_NAVIGATION=edit_pages` (the default): a page turn (◀ ▶) edits the message
+it was pressed on, and a view switch (Top / Daily / Stats / Yesterday) sends a NEW message, so the chat keeps every
+view it opened. `new` sends a new message for every press; `edit` edits the pressed message every time. A page-turn
+button carries its card's date, so an older message keeps turning ITS day's pages.
 
 `/stats` and the recap show settled results only: yesterday's record, hit rate and ROI (only once every pick of
 that day is settled - otherwise the record so far plus one completeness line), a per-sport split, the last 7 days

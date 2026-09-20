@@ -35,15 +35,22 @@ def _old_day_snapshot():
     return DailySnapshot(date="2030-05-31", origin="db", daily_picks=picks)
 
 
-def test_shipped_default_is_new(monkeypatch):
+def test_shipped_default_is_edit_pages(monkeypatch):
     monkeypatch.delenv("VIEW_NAVIGATION", raising=False)
-    assert Config().view_navigation == "new"
-    assert navigation_mode(Config()) == "new"
+    assert Config().view_navigation == "edit_pages"
+    assert navigation_mode(Config()) == "edit_pages"
+    assert navigation_mode(SimpleNamespace()) == "edit_pages"          # a config without the setting
 
 
-def test_unknown_setting_falls_back_to_new(monkeypatch):
+def test_unknown_setting_falls_back_to_the_default(monkeypatch):
     monkeypatch.setenv("VIEW_NAVIGATION", "sideways")
-    assert Config().view_navigation == "new"
+    assert Config().view_navigation == "edit_pages"
+
+
+def test_the_other_two_modes_stay_available(monkeypatch):
+    for mode in ("new", "edit"):
+        monkeypatch.setenv("VIEW_NAVIGATION", mode)
+        assert Config().view_navigation == mode
 
 
 def test_new_a_view_switch_sends_and_never_edits():
@@ -116,3 +123,36 @@ def test_page_turn_buttons_carry_the_day_and_switch_buttons_do_not():
     assert all(pagination.parse_callback(b["callback_data"])[2] is None for b in markup["inline_keyboard"][-1])
     assert pagination.parse_callback("pg|daily|2|20300601") == ("daily", 2, "2030-06-01")
     assert pagination.parse_callback("pg|daily|2|2030") is None
+
+
+def _default_press(data, service, message_id=90):
+    """A press under the shipped default (no explicit mode)."""
+    tg = FakeTG()
+    handle_callback({"id": "cb1", "data": data, "message": {"message_id": message_id, "chat": {"id": "42"}}},
+                    service=service, tg=tg, cfg=Config(), db=None, page_size=5)
+    return tg
+
+
+def test_by_default_a_page_turn_on_a_delivered_daily_message_edits_that_message():
+    tg = _default_press("pg|daily|1|20300601", _service(make_snapshot()), message_id=90)
+    assert tg.sends == [] and [e["message_id"] for e in tg.edits] == [90]
+    assert "Page 2 of" in tg.edits[0]["text"] and tg.answers[0]["text"].startswith("Page 2 of ")
+
+
+def test_by_default_a_page_turn_on_an_earlier_days_message_edits_it_and_renders_that_day():
+    tg = _default_press("pg|daily|1|20300531", _service(make_snapshot(), _old_day_snapshot()), message_id=91)
+    assert tg.sends == [] and [e["message_id"] for e in tg.edits] == [91]
+    assert "OldHome6" in tg.edits[0]["text"] and "Fri 31 May" in tg.edits[0]["text"]
+
+
+@pytest.mark.parametrize("data", ["pg|top|0", "pg|daily|0", "pg|stats|0", "pg|yesterday|0"])
+def test_by_default_a_view_switch_sends_a_new_message(data):
+    tg = _default_press(data, _service(make_snapshot()))
+    assert tg.edits == [] and len(tg.sends) == 1 and len(tg.answers) == 1
+
+
+def test_by_default_the_menu_button_sends_a_new_welcome():
+    tg = FakeTG()
+    handle_callback({"id": "m", "data": "menu", "from": {"first_name": "Ada"},
+                     "message": {"message_id": 9, "chat": {"id": "42"}}}, service=None, tg=tg, cfg=Config(), db=None)
+    assert tg.edits == [] and tg.sends[0]["text"].startswith("👋 Hi, Ada")
