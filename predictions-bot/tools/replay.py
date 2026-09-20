@@ -10,8 +10,10 @@ SportsGameOdds, recorded by a single live ``cli.py picks --dry-run``) and the cl
 harness copies it to a temp file, pins every ``utcnow`` to that instant, makes every HTTP call raise, and runs
 ``collect_persisted -> merge -> score -> select -> store -> render`` exactly as the scheduler does. It also
 drives /top, /daily, the pagination callbacks and ``deliver_picks`` (300 fake subscribers) against a fake
-Telegram client. What it writes is the *slate*: card text, views, deliveries, stored picks and the selection
-diagnostics with every timing field stripped - byte-identical before and after any optimisation.
+Telegram client. It writes two goldens: the *slate* (stored picks, their order, prices, labels, delivery counts and
+the selection diagnostics with every timing field stripped - byte-identical before and after any optimisation or
+presentation change) and the *render* (every text a reader sees: cards, pages, deliveries, the stats and recap
+cards over a seeded settled history, /yesterday, every empty state).
 """
 from __future__ import annotations
 
@@ -238,14 +240,16 @@ def run(profile: bool = False, subscribers: int = 300, send_delay: float = 0.03,
                 views[cmd] = tg.sent[-1][1:]
                 markup = json.loads(tg.sent[-1][2] or "{}")
             pages = {}
+            day_key = snapshot.date.replace("-", "")
             for view in ("top", "daily"):
-                for page in (0, 1):
+                for page, data in ((0, f"pg|{view}|0"), (1, f"pg|{view}|1|{day_key}")):   # a view switch, then a page turn
                     tg.sent.clear()
-                    callbacks.handle_callback({"id": f"cb-{view}-{page}", "data": f"{view}:{page}",
+                    callbacks.handle_callback({"id": f"cb-{view}-{page}", "data": data,
                                                "message": {"chat": {"id": 100}, "message_id": 7}, "from": {}},
                                               service=service, tg=tg, cfg=cfg, db=db)
                     pages[f"{view}:{page}"] = [s[1:] for s in tg.sent]
             render["views"], render["pages"] = views, pages
+            sizes: dict = {}
 
             # ---- delivery: N subscribers, real per-user rendering, a fake network with a per-send delay
             tzs = ["Africa/Lagos", "Europe/London", "America/New_York", "Asia/Tokyo"]
@@ -269,9 +273,12 @@ def run(profile: bool = False, subscribers: int = 300, send_delay: float = 0.03,
             by_chat = {c: (text) for c, text, _ in dtg.sent}
             slate["delivery"] = {"sent": sent, "second_pass": again, "chats": sorted(by_chat)[:5],
                                  "n_deliveries": db.query("SELECT COUNT(*) AS n FROM deliveries")[0]["n"]}
-            render["delivery"] = {"cards_by_tz": {tz: next(by_chat[str(1000 + i)] for i in range(subscribers) if tzs[i % len(tzs)] == tz)
-                                                  for tz in tzs}}
-            result["slate"], result["render"] = slate, render
+            from predbot.bot.telegram import _split
+            cards = {tz: next(by_chat[str(1000 + i)] for i in range(subscribers) if tzs[i % len(tzs)] == tz) for tz in tzs}
+            render["delivery"] = {"cards_by_tz": cards, "message_lengths": {tz: [len(x) for x in _split(c)] for tz, c in cards.items()}}
+            render.update(_results_renders(db, snapshot, service, now, cfg, tmp, callbacks))
+            sizes = _sizes(render)
+            result["slate"], result["render"], result["sizes"] = slate, render, sizes
             result["peak_rss_mb"] = peak_rss_mb()
     finally:
         try:
@@ -281,6 +288,117 @@ def run(profile: bool = False, subscribers: int = 300, send_delay: float = 0.03,
         if not workdir:
             shutil.rmtree(tmp, ignore_errors=True)
     return result
+
+
+# ---------------------------------------------------------------------------------------------- results cards
+_OUTCOMES = ["won", "won", "lost", "won", "void", "lost", "won", "won", "lost", "won"]
+_COLS = ("tier", "rank", "provider", "provider_event_id", "sport", "league", "home", "away", "start_utc", "market", "period",
+         "stat", "entity", "line", "selection", "label", "price", "prob", "ev", "p_market", "sources", "provider_odd_id")
+
+
+def _seed_history(db, rows, today: str, days=(1, 2, 3, 4)) -> None:
+    """The recorded data has no results of its own: clone the day's slate onto the previous days, with a fixed
+    pattern of outcomes, so the stats, recap and /yesterday cards render real labels and prices."""
+    from datetime import date, timedelta
+    from predbot.util.timeutil import iso, parse_iso
+    base = date.fromisoformat(today)
+    for back in days:
+        for i, r in enumerate(rows):
+            row = {k: r[k] for k in _COLS}
+            row["pick_date"] = (base - timedelta(days=back)).isoformat()
+            row["start_utc"] = iso(parse_iso(r["start_utc"]) - timedelta(days=back))
+            db.settle_pick(db.insert_pick(row), _OUTCOMES[(i + back) % len(_OUTCOMES)])
+
+
+def _results_renders(db, snapshot, service, now, cfg, tmp, callbacks) -> dict:
+    from predbot.bot import pagination
+    from predbot.bot.format import recap_message, stats_message
+    from predbot.cache.models import DailySnapshot
+    from predbot.jobs import stats as stats_mod
+    from predbot.storage.db import Database
+    from predbot.util.timeutil import to_local
+
+    rows = [dict(r) for r in db.picks_for_date(snapshot.date)]
+    from datetime import date, timedelta
+    yesterday = (date.fromisoformat(snapshot.date) - timedelta(days=1)).isoformat()
+    local_now = to_local(now, TZ)
+    out: dict = {}
+
+    def cards(label):
+        stats = stats_mod.compute(db, local_now)
+        text, _ = pagination.render_stats(snapshot, db=db, tz=TZ, now=now)
+        assert text == stats_message(stats)
+        pages, page = [], 0
+        while True:
+            body, markup = pagination.render_yesterday(db, TZ, page, pagination.PAGE_SIZE_DEFAULT, day=yesterday, now=now)
+            pages.append(body)
+            if not any(b["text"] == "▶️" for row in markup["inline_keyboard"] for b in row):
+                break
+            page += 1
+        out[f"stats_{label}"], out[f"recap_{label}"] = text, recap_message(stats)
+        out[f"yesterday_{label}"] = pages
+
+    _seed_history(db, rows, snapshot.date)
+    cards("final")                                             # every pick of yesterday settled
+    db.execute("UPDATE picks SET status='pending', settled_at=NULL WHERE pick_date=? AND (sport='baseball' OR id % 4 = 0)", (yesterday,))
+    cards("partial")                                           # some settled, one sport with nothing settled yet
+
+    # button routing for the new view: a switch, then a page turn on yesterday's audit trail
+    tg = FakeTelegram()
+    db.subscriber_add("100", "u", "User", timezone=TZ)
+    for data in ("pg|stats|0", "pg|yesterday|0", f"pg|yesterday|1|{yesterday.replace('-', '')}"):
+        tg.sent.clear()
+        callbacks.handle_callback({"id": "cb", "data": data, "message": {"chat": {"id": 100}, "message_id": 7}, "from": {}},
+                                  service=service, tg=tg, cfg=cfg, db=db)
+        out[f"callback:{data.split('|')[1]}:{data.split('|')[2]}"] = [x[1:] for x in tg.sent]
+
+    # empty states
+    def fresh(name):
+        return Database(os.path.join(tmp, name))
+
+    empty = fresh("empty.db")
+    out["stats_no_results_yet"] = pagination.render_stats(snapshot, db=empty, tz=TZ, now=now)[0]
+    out["yesterday_no_picks"] = pagination.render_yesterday(empty, TZ, 0, 5, day=yesterday, now=now)[0]
+    only_pending = fresh("pending.db")
+    _seed_history(only_pending, rows, snapshot.date, days=(1, 3))
+    only_pending.execute("UPDATE picks SET status='pending', settled_at=NULL WHERE pick_date=?", (yesterday,))
+    out["stats_nothing_settled_yesterday"] = pagination.render_stats(snapshot, db=only_pending, tz=TZ, now=now)[0]
+    history_only = fresh("history.db")
+    _seed_history(history_only, rows, snapshot.date, days=(2, 3))
+    out["stats_no_picks_yesterday"] = pagination.render_stats(snapshot, db=history_only, tz=TZ, now=now)[0]
+    fewer = fresh("fewer.db")
+    _seed_history(fewer, rows, snapshot.date, days=(1, 2))
+    out["stats_fewer_than_7_days"] = pagination.render_stats(snapshot, db=fewer, tz=TZ, now=now)[0]
+
+    def picks_view(view, snap):
+        return pagination.render_page(snap, view, 0, 5, TZ, now=now)[0]
+
+    out["empty_states"] = {
+        "before_post_time": picks_view("top", DailySnapshot(date=snapshot.date, generation={"reason": "before_post_time", "ready_at": "09:00 WAT"})),
+        "generating": picks_view("daily", DailySnapshot(date=snapshot.date, generation={"reason": "generating"})),
+        "assembling": picks_view("daily", DailySnapshot(date=snapshot.date, status="PARTIAL")),
+        "top_empty": picks_view("top", DailySnapshot(date=snapshot.date, status="COMPLETE", daily_picks=snapshot.daily_picks)),
+        "daily_empty": picks_view("daily", DailySnapshot(date=snapshot.date, status="COMPLETE", top_picks=snapshot.top_picks)),
+    }
+    return out
+
+
+def _sizes(render: dict):
+    """(length, where) of every rendered text, longest first - never part of the golden."""
+    found = []
+
+    def walk(obj, path):
+        if isinstance(obj, str):
+            found.append((len(obj), path))
+        elif isinstance(obj, dict):
+            for k, v in obj.items():
+                walk(v, f"{path}/{k}")
+        elif isinstance(obj, (list, tuple)):
+            for i, v in enumerate(obj):
+                walk(v, f"{path}[{i}]")
+
+    walk(render, "")
+    return sorted(found, reverse=True)[:8]
 
 
 def golden_text(result: dict, part: str = "slate") -> str:

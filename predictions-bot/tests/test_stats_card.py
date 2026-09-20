@@ -258,7 +258,7 @@ def test_yesterday_header_equals_the_stats_yesterday_numbers_to_the_pick(request
 def test_yesterday_shows_unsettled_picks_without_a_mark(partial_db):
     page = _yesterday(partial_db, 0)[0]
     assert page.split("\n")[1] == "5 picks · ✅ 2 ❌ 0 ➖ 0"
-    assert "   🎯 Home Win X · Angels vs Astros · @1.50" in page
+    assert "\n   🎯 Home Win X · Angels vs Astros · @1.50" in page              # three spaces where the mark would be
     assert "✅ 🎯 Under 3.5 Total Goals · Toulouse vs Le Havre · @1.39" in page
     assert "⏳" not in page
 
