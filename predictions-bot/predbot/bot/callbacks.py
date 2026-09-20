@@ -170,12 +170,13 @@ def handle_start(db: Database, tg: Telegram, chat_id: str, user: Optional[Dict[s
 
 # --------------------------------------------------------------------- routing
 NAVIGATION_MODES = ("new", "edit_pages", "edit")
+DEFAULT_NAVIGATION = "edit_pages"
 
 
 def navigation_mode(cfg: Config) -> str:
-    """``VIEW_NAVIGATION``: new (default) | edit_pages | edit - anything else counts as new."""
-    mode = str(getattr(cfg, "view_navigation", "new") or "new")
-    return mode if mode in NAVIGATION_MODES else "new"
+    """``VIEW_NAVIGATION``: edit_pages (default) | new | edit - anything else counts as edit_pages."""
+    mode = str(getattr(cfg, "view_navigation", DEFAULT_NAVIGATION) or DEFAULT_NAVIGATION)
+    return mode if mode in NAVIGATION_MODES else DEFAULT_NAVIGATION
 
 
 def _edits(mode: str, page_turn: bool) -> bool:
@@ -234,9 +235,9 @@ def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram
                     page_size: int = pagination.PAGE_SIZE_DEFAULT) -> None:
     """Process one Telegram callback_query update (an inline keyboard press).
 
-    With the default ``VIEW_NAVIGATION=new`` nothing is ever edited or deleted: every press - a view switch or
-    a page turn - sends a new message with its own keyboard, so the chat keeps the record and older messages
-    keep working buttons. The press is always answered so the button stops spinning."""
+    With the default ``VIEW_NAVIGATION=edit_pages`` a page turn edits the message it was pressed on and a view
+    switch sends a new message (the chat keeps every view it opened; older messages keep working buttons);
+    ``new`` sends a new message for every press, ``edit`` edits for every press. The press is always answered so the button stops spinning."""
     cb_id = str(cb.get("id") or "")
     data = cb.get("data") or ""
     message = cb.get("message") or {}
