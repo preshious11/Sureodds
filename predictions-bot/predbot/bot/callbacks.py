@@ -93,6 +93,16 @@ COMMANDS: Dict[str, str] = {
 
 WAVING = "\U0001F44B"        # 👋
 
+#: What Telegram lists when a reader types "/" (registered at startup with setMyCommands).
+BOT_COMMANDS = [
+    {"command": "top", "description": "Top picks of the day"},
+    {"command": "daily", "description": "Daily picks"},
+    {"command": "stats", "description": "Results so far: yesterday and the last 7 days"},
+    {"command": "yesterday", "description": "Every pick from yesterday, with its result"},
+    {"command": "timezone", "description": "Show kick-off times in your time zone"},
+    {"command": "help", "description": "What the bot can do"},
+]
+
 
 def command_view(cmd: str) -> Optional[str]:
     """Map a typed command to its view (``"/top"`` and ``"top"`` both work)."""

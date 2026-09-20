@@ -69,6 +69,18 @@ class Telegram:
         log.error("editMessageText failed %s: %s", r.status_code, r.text[:200])
         return False
 
+    def set_my_commands(self, commands: List[Dict[str, str]]) -> bool:
+        """Register the commands Telegram lists in the '/' menu (setMyCommands). Idempotent: the same list sent
+        again just replaces itself. Never raises - the menu is a convenience, not a dependency."""
+        try:
+            r = self.session.post(f"{self.base}/setMyCommands", json={"commands": commands}, timeout=10)
+        except requests.RequestException as e:
+            log.warning("setMyCommands transport failure: %s", type(e).__name__)
+            return False
+        if r.status_code != 200:
+            log.warning("setMyCommands failed %s: %s", r.status_code, r.text[:200])
+        return r.status_code == 200
+
     def answer_callback_query(self, callback_query_id: str, text: Optional[str] = None,
                               show_alert: bool = False) -> bool:
         """Acknowledge a button press (stops the client's loading spinner)."""

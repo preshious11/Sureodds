@@ -109,10 +109,23 @@ class CommandLoop(threading.Thread):
         try:
             with PollingLease(self.tg.token):
                 self.instance = log_identity(handle_start)
+                self._register_commands()
                 self._poll()
         except Exception as exc:
             log.critical("Command loop stopped | error_type=%s | check polling ownership and restart the intended instance",
                          type(exc).__name__)
+
+    def _register_commands(self) -> None:
+        """Put the commands in Telegram's '/' menu. Idempotent; a failure is logged and never stops the bot."""
+        register = getattr(self.tg, "set_my_commands", None)
+        if register is None:
+            return
+        try:
+            ok = register(callbacks.BOT_COMMANDS)
+        except Exception as exc:  # noqa: BLE001 - the menu is a convenience
+            log.warning("command menu not registered | error_type=%s", type(exc).__name__)
+            return
+        log.info("command menu %s | commands=%d", "registered" if ok else "not registered", len(callbacks.BOT_COMMANDS))
 
     def _poll(self) -> None:
         while not self._stop_event.is_set():

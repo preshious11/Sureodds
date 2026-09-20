@@ -186,9 +186,17 @@ def _same_match(ex: Event, ev: Event) -> Optional[str]:
     return fixture_orientation(ex, ev, ca, cb)
 
 
+def _fuller(kept: str, other: str) -> str:
+    """The fuller of two spellings of one team: more words wins ('Oakland Athletics' over 'Athletics'), then the
+    longer ('Boston Red Sox' over 'BOS Red Sox'). Always one of the two providers' own names, never a blend; equal
+    spellings keep the first."""
+    return other if (len(other.split()), len(other)) > (len(kept.split()), len(kept)) else kept
+
+
 def merge_events(pool: List[Event], new: List[Event], price_mode: str = "median") -> List[Event]:
     """Fold each new event into the pool event that is the same real match (any provider, either home/away
-    order); a swapped provider's markets are re-expressed on the kept event's sides first."""
+    order); a swapped provider's markets are re-expressed on the kept event's sides first. The kept event
+    carries, for each side, the fuller of the two providers' team names."""
     out = list(pool)
     for ev in new:
         match, orientation = None, None
@@ -202,7 +210,10 @@ def merge_events(pool: List[Event], new: List[Event], price_mode: str = "median"
         if match is None:
             out.append(ev)
             continue
-        _merge_markets(match, ev, price_mode, swapped=orientation == "swapped")
+        swapped = orientation == "swapped"
+        match.home = _fuller(match.home, ev.away if swapped else ev.home)
+        match.away = _fuller(match.away, ev.home if swapped else ev.away)
+        _merge_markets(match, ev, price_mode, swapped=swapped)
     return out
 
 
