@@ -134,7 +134,7 @@ def test_top_and_daily_commands_tell_the_user_when_picks_are_ready(world):
     for cmd in ("/top", "/daily"):
         callbacks.handle_command(cmd, "42", service=fetcher, tg=tg, cfg=cfg, db=db)
 
-    assert [s["text"] for s in tg.sends] == ["Today's picks are ready at 09:00 WAT."] * 2
+    assert [s["text"] for s in tg.sends] == ["📋 Today's picks are ready at 09:00 WAT."] * 2
     built.assert_not_called()
 
 
@@ -145,7 +145,7 @@ def test_after_post_time_the_same_command_shows_the_picks(world):
 
     callbacks.handle_command("/top", "42", service=fetcher, tg=tg, cfg=cfg, db=db)
 
-    assert "ready at" not in tg.sends[0]["text"] and "Top Picks" in tg.sends[0]["text"]
+    assert "ready at" not in tg.sends[0]["text"] and "TOP PICKS" in tg.sends[0]["text"]
 
 
 def test_stats_still_works_before_post_time(world):

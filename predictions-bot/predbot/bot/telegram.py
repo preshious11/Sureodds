@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -96,18 +97,69 @@ class Telegram:
             raise PollingError(f"Telegram getUpdates transport failure ({type(e).__name__})") from None
 
 
-def _split(text: str) -> List[str]:
-    if len(text) <= MAX_LEN:
-        return [text]
-    parts, cur = [], ""
-    for line in text.split("\n"):
-        if len(cur) + len(line) + 1 > MAX_LEN:
-            parts.append(cur)
+_STICKY_HEADER = re.compile(r"^(?:🔥 TOP PICKS|📋 DAILY PICKS) · ")
+_TAG = re.compile(r"<[^<>]*>")
+
+
+def _cut_outside_tag(text: str, limit: int) -> int:
+    """The last index <= limit at which ``text`` can be cut without landing inside an HTML tag or entity."""
+    cut = limit
+    for m in _TAG.finditer(text[:limit + 1]):
+        if m.start() < cut < m.end():
+            cut = m.start()
+    amp = text.rfind("&", 0, cut)
+    if amp != -1 and ";" not in text[amp:cut] and cut - amp < 10:
+        cut = amp
+    return cut or limit
+
+
+def _split_long(paragraph: str, limit: int) -> List[str]:
+    """A block longer than one message (should not happen with a pick block): by lines, then by words, never
+    inside a tag."""
+    out, cur = [], ""
+    for line in paragraph.split("\n"):
+        while len(line) > limit:
+            head = line[:_cut_outside_tag(line, limit)]
+            space = head.rfind(" ")
+            if space > limit // 2:
+                head = head[:space]
+            if cur:
+                out.append(cur)
+                cur = ""
+            out.append(head)
+            line = line[len(head):].lstrip(" ")
+        if len(cur) + len(line) + 1 > limit and cur:
+            out.append(cur)
             cur = ""
-        cur += line + "\n"
+        cur = f"{cur}\n{line}" if cur else line
     if cur:
-        parts.append(cur)
-    return parts
+        out.append(cur)
+    return out
+
+
+def _split(text: str, limit: int = MAX_LEN) -> List[str]:
+    """Split ``text`` into messages of at most ``limit`` characters, only BETWEEN blocks (a blank line), so a
+    three-line pick block is never cut in half, and never inside an HTML tag. A ticket header is kept with the
+    block that follows it."""
+    if len(text) <= limit:
+        return [text]
+    chunks: List[List[str]] = []
+    cur: List[str] = []
+    size = 0
+    for para in text.split("\n\n"):
+        for piece in ([para] if len(para) <= limit else _split_long(para, limit)):
+            add = len(piece) + (2 if cur else 0)
+            if cur and size + add > limit:
+                carry = [cur.pop()] if _STICKY_HEADER.match(cur[-1]) else []
+                if cur:
+                    chunks.append(cur)
+                cur, size = carry, sum(len(c) for c in carry)
+                add = len(piece) + (2 if cur else 0)
+            cur.append(piece)
+            size += add
+    if cur:
+        chunks.append(cur)
+    return ["\n\n".join(c) for c in chunks]
 
 
 def esc(s: str) -> str:

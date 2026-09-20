@@ -116,7 +116,7 @@ def test_menu_has_no_subscription_button():
     """The subscribe/unsubscribe toggle was removed - it must not come back."""
     buttons = [b for row in menu_markup()["inline_keyboard"] for b in row]
     assert [b["text"] for b in buttons] == [
-        "\U0001f3c6 Top Picks", "\U0001f4cb Daily Picks", "\U0001f4ca Stats", "\U0001f5d3 Yesterday"]
+        "\U0001f525 Top Picks", "\U0001f4cb Daily Picks", "\U0001f4ca Stats", "\U0001f5d3 Yesterday"]
     assert [b["callback_data"] for b in buttons] == ["pg|top|0", "pg|daily|0", "pg|stats|0", "pg|yesterday|0"]
     assert not any(b["callback_data"].startswith("sub|") for b in buttons)
     assert [view_button_label(v) for v in ("top", "daily", "stats", "yesterday")] == \
@@ -154,12 +154,12 @@ def test_deliver_picks_reaches_all_subscribers_once(db, monkeypatch):
     assert sent == 2
     assert [s["chat_id"] for s in tg.sends] == ["42", "77"]
     card = tg.sends[0]["text"]
-    assert card.startswith("📊 TODAY'S RESULTS")            # the canonical summary copy
-    assert "🔥 TOP PICKS" in card and "📋 DAILY PICKS" in card
+    assert card.startswith("🔥 TOP PICKS · Sat 1 Jun")       # the canonical summary card
+    assert "📋 DAILY PICKS · Sat 1 Jun" in card
     assert "predictions——" not in card                      # old copy stays gone
-    assert card.count("Confidence level:") == 4       # 1 top + 3 daily picks, one block each
-    assert "Total Picks: 1" in card and "Total Picks: 3" in card
-    assert card.count("Combined Odds:") == 2          # one per section, never one stale line
+    assert card.count("📊") == 4                      # 1 top + 3 daily picks, one block each
+    assert "· 1 pick ·" in card and "· 3 picks ·" in card
+    assert card.count("🎟 Combined odds") == 2        # one per section, never one stale line
 
     # same day again (e.g. a restart): deliveries are de-duplicated per user
     assert broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot, now=now) == 0
@@ -240,9 +240,8 @@ def test_every_zone_is_served_at_the_same_delivery_time_with_its_own_kickoff_tim
     assert [s["chat_id"] for s in tg.sends] == ["tokyo", "lagos", "newyork"]
     assert at(13, 30) == 0                         # and only once each
 
-    assert "3:00 AM JST" in tg.sends[0]["text"]
-    assert "7:00 PM WAT" in tg.sends[1]["text"]
-    assert "2:00 PM EDT" in tg.sends[2]["text"]
+    for send, clock, label in ((tg.sends[0], "3:00 AM", "JST"), (tg.sends[1], "7:00 PM", "WAT"), (tg.sends[2], "2:00 PM", "EDT")):
+        assert f"🕘 {clock}" in send["text"] and f"times in {label}" in send["text"]
 
 
 def test_deliver_picks_uses_the_config_timezone_when_unset(db):
@@ -479,10 +478,10 @@ def test_page_callbacks_still_work_after_router_change(db):
     handle_callback(_cb("pg|top|0"), service=fetcher, tg=tg, db=db, cfg=Config())
 
     assert len(tg.edits) == 1
-    assert tg.edits[0]["text"].startswith("🏆 Top Picks for Today")
+    assert tg.edits[0]["text"].startswith("🔥 TOP PICKS · ")
     assert "predictions——" not in tg.edits[0]["text"]          # old copy stays gone
     assert [b["text"] for row in tg.edits[0]["reply_markup"]["inline_keyboard"] for b in row] == \
-        ["🏆 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
+        ["🔥 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
 
 
 # ----------------------------------------------------------------- helpers

@@ -147,8 +147,8 @@ class DailySnapshot:
         if view == VIEW_TOP:
             return self.top_picks
         if view == VIEW_DAILY:
-            # The picker builds the daily accumulator by extending the top ticket.
-            return self.top_picks + self.daily_picks
+            # Each ticket is its own card with its own odds and count; the Daily never repeats a Top tip.
+            return self.daily_picks
         return []
 
     def total_picks(self) -> int:

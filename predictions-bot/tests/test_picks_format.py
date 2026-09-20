@@ -44,24 +44,19 @@ def test_card_matches_the_requested_layout():
                "Over 1.5 Goals", 0.84, 1.74, market="total", selection="over", line=1.5)
 
     assert picks_message([villa], [overs], DAY, WAT, None) == (
-        "📋 Daily Picks for Today 2026-09-16\n"
+        "🔥 TOP PICKS · Wed 16 Sep\n"
+        "🎟 Combined odds 2.05 · 1 pick · 🕘 times in WAT\n"
         "\n"
-        "Football\n"
-        "Premier League\n"
-        "Home1 vs Away1\n"
-        "<b>Prediction:</b> Aston Villa to win\n"
-        "Odds: 2.05\n"
-        "Confidence level: <b>72%</b> | 7:45 PM WAT\n"
+        "⚽ Premier League · Home1 vs Away1\n"
+        "🎯 Aston Villa to win\n"
+        "💰 2.05  ·  📊 72%  ·  🕘 7:45 PM\n"
         "\n"
-        "Football\n"
-        "La Liga\n"
-        "Home2 vs Away2\n"
-        "<b>Prediction:</b> Over 1.5 Goals\n"
-        "Odds: 1.74\n"
-        "Confidence level: <b>84%</b> | 3:00 PM WAT\n"
+        "📋 DAILY PICKS · Wed 16 Sep\n"
+        "🎟 Combined odds 1.74 · 1 pick · 🕘 times in WAT\n"
         "\n"
-        "Total Picks: 2\n"
-        "Combined Odds: 3.57"
+        "⚽ La Liga · Home2 vs Away2\n"
+        "🎯 Over 1.5 Goals\n"
+        "💰 1.74  ·  📊 84%  ·  🕘 3:00 PM"
     )
 
 
@@ -76,38 +71,41 @@ def test_top_picks_are_listed_first_then_the_daily_ones():
     assert card.count("Top One") == 1 and card.count("Daily One") == 1 and card.count("Daily Two") == 1
 
 
-def test_every_pick_gets_the_six_line_block():
-    card = picks_message([sc(event(1, "Serie A"), "Inter to win", 0.66, 1.95)], [], DAY, WAT, None)
+def test_every_pick_gets_the_three_line_block():
+    card = picks_message([], [sc(event(1, "Serie A"), "Inter to win", 0.66, 1.95)], DAY, WAT, None)
 
     assert card.splitlines() == [
-        "\U0001F4CB Daily Picks for Today 2026-09-16",
+        "📋 DAILY PICKS · Wed 16 Sep",
+        "🎟 Combined odds 1.95 · 1 pick · 🕘 times in WAT",
         "",
-        "Football",
-        "Serie A",
-        "Home1 vs Away1",
-        "<b>Prediction:</b> Inter to win",
-        "Odds: 1.95",
-        "Confidence level: <b>66%</b> | 7:45 PM WAT",
-        "",
-        "Total Picks: 1",
-        "Combined Odds: 1.95",
+        "⚽ Serie A · Home1 vs Away1",
+        "🎯 Inter to win",
+        "💰 1.95  ·  📊 66%  ·  🕘 7:45 PM",
     ]
+
+
+def test_picks_are_listed_earliest_kickoff_first():
+    late = sc(event(1, kickoff="2026-09-16T20:00:00Z"), "Late", 0.60, 1.50)
+    early = sc(event(2, kickoff="2026-09-16T12:00:00Z"), "Early", 0.60, 1.60, selection="away")
+    mid = sc(event(3, kickoff="2026-09-16T16:00:00Z"), "Mid", 0.60, 1.70, market="total", selection="over", line=2.5)
+
+    card = picks_message([], [late, early, mid], DAY, WAT, None)
+
+    assert card.index("Early") < card.index("Mid") < card.index("Late")
 
 
 def test_empty_day_has_a_placeholder_and_no_combined_odds():
     card = picks_message([], [], DAY, WAT, None)
 
     assert "No selection cleared the quality bar today." in card
-    assert "Combined Odds" not in card
+    assert "Combined odds" not in card
 
 
 def test_league_falls_back_to_the_sport_name_and_unknown_kickoff_is_dashed():
     card = picks_message([sc(event(1, league=""), "Home Win", 0.60, 1.50)], [], DAY, WAT, None)
 
-    assert "Football\n" in card
     lines = card.splitlines()
-    assert lines[2] == "Football"  # sport
-    assert lines[3] == "Football"  # league (fallback to sport)
+    assert lines[3] == "⚽ Football · Home1 vs Away1"       # league falls back to the sport name
     assert kickoff_label(None, WAT) == "--:--"
 
 
@@ -116,8 +114,7 @@ def test_match_league_and_outcome_are_html_escaped():
     card = picks_message([sc(ev, "Home <win> & draw", 0.60, 1.50)], [], DAY, WAT, None)
 
     lines = card.splitlines()
-    assert "Benfica &lt;B&gt; vs Away &amp; Co" in lines  # match line escaped
-    assert "Copa &amp; Liga" in lines  # league line escaped
+    assert "⚽ Copa &amp; Liga · Benfica &lt;B&gt; vs Away &amp; Co" in lines  # league + match line escaped
     # Outcome is now in prediction line
     assert any("Home &lt;win&gt; &amp; draw" in line for line in lines)  # outcome line escaped
     assert "<win>" not in card                     # never raw, it would break parse_mode
@@ -148,10 +145,9 @@ def test_subscriber_summary_is_the_canonical_card_and_matches_the_views():
 
     card = picks_text(snapshot, WAT)
 
-    # the exact canonical summary structure, one section per ticket
-    assert card.startswith("📊 TODAY'S RESULTS")
-    assert "🔥 TOP PICKS\nCombined Odds: 2.05\nTotal Picks: 1" in card
-    assert "📋 DAILY PICKS\nCombined Odds: 1.74\nTotal Picks: 1" in card
+    # the exact canonical summary structure, one section per ticket, each with its own odds and count
+    assert card.startswith("🔥 TOP PICKS · Wed 16 Sep\n🎟 Combined odds 2.05 · 1 pick · 🕘 times in WAT")
+    assert "📋 DAILY PICKS · Wed 16 Sep\n🎟 Combined odds 1.74 · 1 pick · 🕘 times in WAT" in card
     # every pick block is byte-identical to the paginated view's card
     from predbot.bot.pagination import render_pick
 

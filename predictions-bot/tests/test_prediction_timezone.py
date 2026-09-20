@@ -15,29 +15,31 @@ from tests.test_picks_format import event, sc
 from tests.test_subscribers_broadcast import FakeTG, _cb
 
 
-@pytest.mark.parametrize('stamp,zone,expected', [
-    ('2030-06-01T01:38:00Z', 'Africa/Lagos', '2:38 AM WAT'),
-    ('2030-06-01T19:07:00Z', 'Africa/Lagos', '8:07 PM WAT'),
-    ('2030-06-01T23:38:00Z', 'Africa/Lagos', '12:38 AM WAT'),
-    ('2030-01-01T18:00:00Z', 'America/New_York', '1:00 PM EST'),
-    ('2030-06-01T18:00:00Z', 'America/New_York', '2:00 PM EDT'),
-    ('2030-01-01T18:00:00Z', 'Europe/London', '6:00 PM GMT'),
-    ('2030-06-01T18:00:00Z', 'Europe/London', '7:00 PM BST'),
-    ('2026-03-08T06:59:00Z', 'America/New_York', '1:59 AM EST'),
-    ('2026-03-08T07:00:00Z', 'America/New_York', '3:00 AM EDT'),
+#: (kickoff, reader's zone, the time shown on the card, the zone label in its header - the abbreviation in force on
+#: the card's day: on a DST-change day one label covers the whole card, so 1:59 AM EST sits under "times in EDT")
+@pytest.mark.parametrize('stamp,zone,clock,label', [
+    ('2030-06-01T01:38:00Z', 'Africa/Lagos', '2:38 AM', 'WAT'),
+    ('2030-06-01T19:07:00Z', 'Africa/Lagos', '8:07 PM', 'WAT'),
+    ('2030-06-01T23:38:00Z', 'Africa/Lagos', '12:38 AM', 'WAT'),
+    ('2030-01-01T18:00:00Z', 'America/New_York', '1:00 PM', 'EST'),
+    ('2030-06-01T18:00:00Z', 'America/New_York', '2:00 PM', 'EDT'),
+    ('2030-01-01T18:00:00Z', 'Europe/London', '6:00 PM', 'GMT'),
+    ('2030-06-01T18:00:00Z', 'Europe/London', '7:00 PM', 'BST'),
+    ('2026-03-08T06:59:00Z', 'America/New_York', '1:59 AM', 'EDT'),
+    ('2026-03-08T07:00:00Z', 'America/New_York', '3:00 AM', 'EDT'),
 ])
 @pytest.mark.parametrize('view', ['top', 'daily'])
-def test_utc_storage_to_local_command_button_and_broadcast(db, stamp, zone, expected, view):
+def test_utc_storage_to_local_command_button_and_broadcast(db, stamp, zone, clock, label, view):
     parsed = parse_iso(stamp)
     assert parsed.tzinfo == timezone.utc
     selection = sc(event(1, kickoff=stamp), 'Home Win', .81, 2.0)
-    store_picks(PickSet(top=[selection]), db, stamp[:10])
+    store_picks(PickSet(top=[selection]) if view == 'top' else PickSet(daily=[selection]), db, stamp[:10])
     fetcher = UnifiedFetcher(None, db, Config())
     rows = db.picks_for_date(stamp[:10])
     snapshot = fetcher._snapshot_from_rows(rows, parsed.date(), 'db')
     original = snapshot.to_dict()
     assert rows[0]['start_utc'] == stamp
-    assert snapshot.top_picks[0].kickoff_utc == stamp
+    assert (snapshot.top_picks or snapshot.daily_picks)[0].kickoff_utc == stamp
     db.subscriber_add('42', timezone=zone)
     tg = FakeTG()
     service = SimpleNamespace(get_daily_snapshot=lambda: snapshot)
@@ -45,7 +47,8 @@ def test_utc_storage_to_local_command_button_and_broadcast(db, stamp, zone, expe
     handle_callback(_cb('pg|' + view + '|0'), service=service, tg=tg, db=db, cfg=Config(timezone='UTC'))
     broadcast = picks_text(snapshot, subscriber_tz(db.subscribers_active()[0], 'UTC'))
     for text in (tg.sends[0]['text'], tg.edits[0]['text'], broadcast):
-        assert f'Confidence level: <b>81%</b> | {expected}' in text
+        assert f'📊 81%  ·  🕘 {clock}' in text
+        assert f'times in {label}' in text
         assert 'UTC' not in text
         if zone != 'Africa/Lagos':
             assert 'WAT' not in text

@@ -11,7 +11,7 @@ from tests.test_subscribers_broadcast import FakeTG, _cb
 
 @pytest.mark.parametrize('view,expected,absent,total', [
     ('top', 'TOP ONLY', 'DAILY ONLY', '3.57'),
-    ('daily', 'DAILY ONLY', 'NEVER INCLUDED', '54.72'),
+    ('daily', 'DAILY ONLY', 'TOP ONLY', '15.34'),        # the Daily card is the Daily ticket alone: 2.0 x 7.67
 ])
 def test_each_route_uses_its_own_picks_and_total(view, expected, absent, total):
     snapshot = DailySnapshot(date='2030-06-01', top_picks=[
@@ -30,7 +30,7 @@ def test_each_route_uses_its_own_picks_and_total(view, expected, absent, total):
     for result in [tg.sends[0], tg.edits[0]]:
         assert expected in result['text']
         assert absent not in result['text']
-        assert f'Combined Odds: {total}' in result['text']
+        assert f'Combined odds {total} · 2 picks' in result['text']
 
 
 def test_empty_top_does_not_fall_back_to_daily():
@@ -80,4 +80,4 @@ def test_complete_day_without_picks_keeps_the_quality_bar_line():
 def test_broadcast_total_is_the_product_of_every_pick(prices, total):
     picks = [PickLine('Football', 'A vs B', 'Home', 'League', 0.7, '--:--', price)
              for price in prices]
-    assert picks_card(picks, '2030-06-01').endswith(f'Combined Odds: {total}')
+    assert f'🎟 Combined odds {total} · 2 picks' in picks_card(picks, '2030-06-01')

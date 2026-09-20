@@ -11,10 +11,10 @@ import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
-from predbot.bot.format import (HEADING_DAILY, HEADING_TOP, NO_RESULTS_YET, PickLine,
-                                format_outcome, generated_line, odds_as_of_label,
-                                pick_line_from_record, pick_lines, picks_card, stats_message,
-                                yesterday_header, yesterday_pick_line)
+from predbot.bot.format import (DAILY_TITLE, NO_RESULTS_YET, TOP_TITLE, PickLine,
+                                by_kickoff, format_outcome, pick_line_from_record, pick_lines,
+                                picks_card, stats_message, yesterday_header, yesterday_pick_line,
+                                zone_label)
 from predbot.cache.models import (DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STATS,
                                   VIEW_TOP, VIEW_YESTERDAY)
 from predbot.util.timeutil import parse_iso, to_local, utcnow
@@ -25,14 +25,14 @@ PAGE_SIZE_DEFAULT = 5
 CALLBACK_PREFIX = "pg"
 CALLBACK_NOOP = "noop"
 
-VIEW_TITLES = {VIEW_TOP: "🏆 TOP PICKS", VIEW_DAILY: "📋 DAILY PICKS", VIEW_STATS: "📊 STATS",
+VIEW_TITLES = {VIEW_TOP: "🔥 TOP PICKS", VIEW_DAILY: "📋 DAILY PICKS", VIEW_STATS: "📊 STATS",
                VIEW_YESTERDAY: "🗓 YESTERDAY"}
 
 #: The three interactive views: emoji, button label, the command that opens the
 #: same view, and a one-line description.  One definition shared by the /start
 #: menu, the welcome screen and the pagination switch row, so a tap and a type
 #: are guaranteed to be the same action.
-VIEW_ICON = {VIEW_TOP: "🏆", VIEW_DAILY: "📋", VIEW_STATS: "📊", VIEW_YESTERDAY: "🗓"}
+VIEW_ICON = {VIEW_TOP: "🔥", VIEW_DAILY: "📋", VIEW_STATS: "📊", VIEW_YESTERDAY: "🗓"}
 VIEW_LABEL = {VIEW_TOP: "Top Picks", VIEW_DAILY: "Daily Picks", VIEW_STATS: "Stats", VIEW_YESTERDAY: "Yesterday"}
 VIEW_COMMAND = {VIEW_TOP: "/top", VIEW_DAILY: "/daily", VIEW_STATS: "/stats", VIEW_YESTERDAY: "/yesterday"}
 VIEW_DESC = {VIEW_TOP: "Top picks of the day",
@@ -100,17 +100,6 @@ def slice_page(items: List[PickRecord], page: int, size: int) -> List[PickRecord
 
 
 # ----------------------------------------------------------------- rendering
-def _kickoff_hhmm(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> str:
-    """Kickoff in the subscriber's own timezone, falling back to the server's."""
-    start = parse_iso(pick.kickoff_utc)
-    if not start:
-        return "--:--"
-    display_tz = user_tz or tz
-    local = to_local(start, display_tz)
-    tz_abbr = local.tzname() or display_tz
-    return f"{local.strftime('%I:%M %p').lstrip('0')} {tz_abbr}"
-
-
 # pick_line_from_record is imported from predbot.bot.format above - the ONE
 # canonical pick-card builder, shared by every view and the broadcast card.
 
@@ -152,9 +141,9 @@ def _retry_until(snapshot: DailySnapshot) -> str:
 
 def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> str:
     if (snapshot.generation or {}).get("reason") == "before_post_time":
-        return f"Today's picks are ready at {snapshot.generation.get('ready_at', 'the scheduled time')}."
+        return f"📋 Today's picks are ready at {snapshot.generation.get('ready_at', 'the scheduled time')}."
     if (snapshot.generation or {}).get("reason") == "generating":
-        return "Today's picks are being generated — try again in a minute."
+        return "📋 Today's picks are being generated — try again in a minute."
     """Why a view has nothing to show - the real reasons, kept distinct.
 
     * an empty tier of an otherwise fine card: top picks are a quality bar, not a
@@ -165,11 +154,11 @@ def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> s
       assembly message, not the quality-bar line
     """
     if snapshot.status == 'PARTIAL' and not snapshot.total_picks():
-        return ("<b>Today's predictions are still being assembled</b> - a data "
+        return ("📋 <b>Today's predictions are still being assembled</b> - a data "
                 f"source did not answer.{_retry_hint(snapshot, tz)}\n"
                 f"The bot retries automatically{_retry_until(snapshot)}; /daily shows the card as "
                 "soon as it is complete.")
-    return picks_card([], snapshot.date, heading="Top" if view == VIEW_TOP else "Today's")
+    return picks_card([], snapshot.date, TOP_TITLE if view == VIEW_TOP else DAILY_TITLE)
 
 
 
@@ -191,19 +180,15 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
     items = [p for p in items if format_outcome(p) and math.isfinite(p.price) and p.price > 1.0]
     if not items:
         return empty_view_message(snapshot, view, tz), build_keyboard(view, 0, 1)
-    pages = total_pages(len(items), size)
-    page = clamp_page(page, len(items), size)
-    chunk = slice_page(items, page, size)
-
-    text = picks_card([pick_line_from_record(p, tz, user_tz, now) for p in chunk],
-                      snapshot.date,
-                      heading=HEADING_TOP if view == VIEW_TOP else HEADING_DAILY,
-                      total_prices=[p.price for p in items],
-                      generated=generated_line(snapshot.generated_at, user_tz or tz),
-                      odds_as_of=odds_as_of_label(snapshot.generated_at, user_tz or tz))
-
-    if pages > 1:
-        text += f"\n<i>Page {page + 1}/{pages}</i>"
+    display_tz = user_tz or tz
+    lines = by_kickoff(pick_line_from_record(p, tz, user_tz, now) for p in items)     # kickoff order, then paged
+    pages = total_pages(len(lines), size)
+    page = clamp_page(page, len(lines), size)
+    # the header (odds AND count) prices the whole ticket - every page of it - never the page in hand
+    text = picks_card(lines[page * size:(page + 1) * size], snapshot.date,
+                      title=TOP_TITLE if view == VIEW_TOP else DAILY_TITLE,
+                      total_prices=[p.price for p in lines], zone=zone_label(display_tz, snapshot.date),
+                      page=page + 1, pages=pages)
 
     return text, build_keyboard(view, page, pages, snapshot.date)
 

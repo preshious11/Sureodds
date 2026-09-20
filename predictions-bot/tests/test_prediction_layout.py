@@ -33,10 +33,13 @@ def snapshot():
                          daily_picks=[pick('Liverpool', 2.0, 'daily'), pick('Villa', 3.98575, 'daily')])
 
 
-@pytest.mark.parametrize('view,heading,total', [('top', '🏆 Top Picks for Today', '2.00'),
-                                                ('daily', '📋 Daily Picks for Today', '15.94')])
-@pytest.mark.parametrize('zone,time', [('Africa/Lagos', '7:00 PM WAT'), ('America/New_York', '2:00 PM EDT')])
-def test_commands_and_buttons_have_exact_layout_and_subscriber_timezone(db, view, heading, total, zone, time):
+NL = "\n"
+
+
+@pytest.mark.parametrize('view,title,total,count', [('top', '🔥 TOP PICKS · Sat 1 Jun', '2.00', 1),
+                                                    ('daily', '📋 DAILY PICKS · Sat 1 Jun', '7.97', 2)])
+@pytest.mark.parametrize('zone,time,label', [('Africa/Lagos', '7:00 PM', 'WAT'), ('America/New_York', '2:00 PM', 'EDT')])
+def test_commands_and_buttons_have_exact_layout_and_subscriber_timezone(db, view, title, total, count, zone, time, label):
     db.subscriber_add('42', timezone=zone)
     service = SimpleNamespace(get_daily_snapshot=snapshot)
     tg = FakeTG()
@@ -45,24 +48,26 @@ def test_commands_and_buttons_have_exact_layout_and_subscriber_timezone(db, view
     text = tg.sends[0]['text']
     assert text == tg.edits[0]['text']
     assert tg.sends[0]['reply_markup'] == tg.edits[0]['reply_markup']
-    # the requested format: sport / league / fixture / market / prediction / odds / confidence | time
-    assert text.startswith(f'{heading} 2030-06-01\n\n'
-                           f'Football\nHidden League\nArsenal vs Chelsea\n'
-                           f'<b>Prediction:</b> Over 1.5 Goals\n'
-                           f'Odds: 2.00\n'
-                           f'Confidence level: <b>84%</b> | {time}\n')
-    assert 'predictions——' not in text          # the superseded copy stays gone
-    picks_in_section = 1 if view == 'top' else 3
-    assert text.endswith(f'Total Picks: {picks_in_section}\nCombined Odds: {total}')
-    assert ('Liverpool' in text) == (view == 'daily')
+    first = 'Arsenal' if view == 'top' else 'Liverpool'
+    plural = 'pick' if count == 1 else 'picks'
+    # header (own odds + count, the reader's zone once), then one block per pick: icon league · match / prediction / odds · confidence · time
+    assert text.startswith(title + NL +
+                           f'🎟 Combined odds {total} · {count} {plural} · 🕘 times in {label}' + NL + NL +
+                           f'⚽ Hidden League · {first} vs Chelsea' + NL +
+                           '🎯 Over 1.5 Goals' + NL +
+                           f'💰 2.00  ·  📊 84%  ·  🕘 {time}')
+    assert 'predictions——' not in text and 'Generated' not in text and 'odds as of' not in text
+    assert ('Liverpool' in text) == (view == 'daily') and ('Arsenal' in text) == (view == 'top')
+    assert 'Page' not in text                     # a single page has no footer
 
 
-def test_every_daily_page_uses_entire_ticket_total():
-    for page, fixture in enumerate(['Arsenal', 'Liverpool', 'Villa']):
+def test_every_daily_page_uses_entire_ticket_total_and_count():
+    for page, fixture in enumerate(['Liverpool', 'Villa']):
         text, _ = render_page(snapshot(), 'daily', page, 1, 'UTC')
         assert fixture + ' vs Chelsea' in text
-        assert text.count('Confidence level:') == 1
-        assert 'Combined Odds: 15.94' in text       # whole ticket, not just this page
+        assert text.count('📊 84%') == 1
+        assert '🎟 Combined odds 7.97 · 2 picks' in text        # the whole ticket, on every page
+        assert text.endswith(f'Page {page + 1} of 2')
 
 
 @pytest.mark.parametrize('zone', ['', 'Not/AZone'])
@@ -71,7 +76,7 @@ def test_invalid_or_unset_subscriber_timezone_uses_config(db, zone):
     tg = FakeTG()
     handle_command('/top', '42', service=SimpleNamespace(get_daily_snapshot=snapshot),
                    tg=tg, cfg=Config(timezone='Africa/Lagos'), db=db)
-    assert '7:00 PM WAT' in tg.sends[0]['text']
+    assert 'times in WAT' in tg.sends[0]['text'] and '🕘 7:00 PM' in tg.sends[0]['text']
 
 
 def test_selected_ticket_survives_database_and_cache_with_correct_totals(db):
@@ -85,8 +90,9 @@ def test_selected_ticket_survives_database_and_cache_with_correct_totals(db):
     top_total = prod(p.price for p in restored.view_items('top'))
     daily_total = prod(p.price for p in restored.view_items('daily'))
     assert top_total == pytest.approx(2.1025)
-    assert 10 <= daily_total <= 20
-    assert len(restored.view_items('daily')) == len(picks.all())
+    assert len(restored.view_items('daily')) == len(picks.daily) and len(restored.view_items('top')) == len(picks.top)
+    assert 4 <= daily_total <= 20
     for view, total in [('top', top_total), ('daily', daily_total)]:
+        n = len(restored.view_items(view))
         text, _ = render_page(restored, view, 0, 1, 'UTC')
-        assert f'Combined Odds: {total:.2f}' in text
+        assert f'Combined odds {total:.2f} · {n} pick' in text

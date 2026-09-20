@@ -119,11 +119,18 @@ def commands_text() -> str:
                      for v in (VIEW_TOP, VIEW_DAILY, VIEW_STATS))
 
 
+#: The welcome screen's command list, kept exactly as it has always read (/start is unchanged); /help lists all
+#: the view commands via commands_text().
+WELCOME_COMMANDS = ("<b>🏆 /top</b> – Top picks of the day\n"
+                    "<b>📋 /daily</b> – Daily picks · Accumulator slip\n"
+                    "<b>📊 /stats</b> – See prediction results")
+
+
 def welcome_message(first_name: str = "there") -> str:
-    """The /start screen: one greeting line, then the three commands."""
+    """The /start screen: one greeting line, then the commands."""
     return (f"{WAVING} Hi, {esc(first_name)}\n\n"
             "Use the menu below or these commands:\n\n"
-            f"{commands_text()}")
+            f"{WELCOME_COMMANDS}")
 
 
 def menu_markup() -> Dict[str, Any]:

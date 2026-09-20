@@ -89,7 +89,7 @@ def test_miss_hit_and_restart_roundtrip(tmp_path, monkeypatch, clock):
     from tests.test_subscribers_broadcast import FakeTG
     tg = FakeTG()
     handle_command('/top', '42', service=fresh, tg=tg, cfg=fresh.cfg)
-    assert 'Top' in tg.sends[0]['text']
+    assert 'TOP PICKS' in tg.sends[0]['text']
     assert '2.03' in tg.sends[0]['text']
     assert fresh.published_snapshot().to_dict() == second.to_dict()
     f2.fetch_events.assert_not_called()

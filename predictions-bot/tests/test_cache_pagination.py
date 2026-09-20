@@ -178,16 +178,16 @@ def test_callback_payload_codec():
 def test_render_page_structure_and_keyboard():
     snap = make_snapshot()
     text, markup = pagination.render_page(snap, VIEW_DAILY, 0, 10, "UTC")
-    assert text.startswith("📋 Daily Picks for Today") and "Page 1/3" in text
+    assert text.startswith("📋 DAILY PICKS · Sat 1 Jun") and "Page 1 of 3" in text and "23 picks" in text
     nav = markup["inline_keyboard"][0]
     assert nav[0]["text"] == "1/3"                # no ◀️ button on the first page
     assert nav[1]["callback_data"] == "pg|daily|1|20300601"      # a page turn carries the day of its card
     assert "◀️" not in [b["text"] for b in nav]
     assert [b["text"] for row in markup["inline_keyboard"][-2:] for b in row] == [
-        "🏆 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]      # two buttons a row
+        "🔥 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]      # two buttons a row
 
     text_last, markup_last = pagination.render_page(snap, VIEW_DAILY, 2, 10, "UTC")
-    assert "Page 3/3" in text_last
+    assert "Page 3 of 3" in text_last and "23 picks" in text_last       # the count is the whole ticket on every page
     buttons = [b["text"] for b in markup_last["inline_keyboard"][0]]
     assert "◀️" in buttons and "▶️" not in buttons
 
@@ -243,7 +243,7 @@ def test_callback_navigation_is_zero_api(db):
     assert len(tg.edits) == 1
     edit = tg.edits[0]
     assert edit["chat_id"] == "-100123" and edit["message_id"] == 77
-    assert edit["text"].startswith("📋 Daily Picks for Today") and "Page 2/3" in edit["text"]
+    assert edit["text"].startswith("📋 DAILY PICKS · ") and "Page 2 of 3" in edit["text"]
     assert edit["reply_markup"]["inline_keyboard"]
     assert tg.answers and tg.answers[0]["id"] == "cb1"
 
