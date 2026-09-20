@@ -291,17 +291,24 @@ default python-requests agent; if ESPN ever blocks the host, its paths fail as
 
 ## Daily cache & zero-API pagination
 
-`/top` and the Top Picks button show the top ticket (target approximately 2.00).
-`/daily` and the Daily Picks button show the complete daily ticket: top selections
-plus the additional daily selections, which the picker sizes toward 10–20 odds.
-Commands and buttons share the same renderer. Each prediction shows its sport
-icon, fixture, outcome, confidence, subscriber-local kickoff time and odds.
-The footer multiplies all odds in the selected ticket, across every page, and
-displays two decimal places. The saved `/timezone` preference (detected from the
-Telegram locale on `/start`, or set with `/timezone Area/City`) applies to both
-commands and buttons; the configured timezone is the fallback. Each ticket header
-shows `odds as of <generation time>`. The card shows the plain price (`Odds: 2.10`); where
-each price came from (median of N books / a bookmaker) is listed in `/lastrun`.
+`/top` and the Top button show the Top ticket (target approximately 2.00); `/daily` and the Daily button show
+the Daily ticket. Each is its own card with its own header - `Combined odds` (every pick's price multiplied) and
+the number of picks in that ticket, the same on every page - and lists its picks in kickoff order. Commands and
+buttons share the same renderer. Kickoff times are shown in the reader's zone, named once in the header
+(`times in WAT`); the saved `/timezone` preference (detected from the Telegram locale on `/start`, or set with
+`/timezone Area/City`) applies to both commands and buttons, the configured timezone is the fallback, and the
+channel post uses the configured zone. The card shows the plain price; where each price came from (median of
+N books / a bookmaker) is listed in `/lastrun`.
+
+Buttons never wipe a message. `VIEW_NAVIGATION=new` (the default) sends a NEW message for every button press - a
+view switch or a page turn - so the chat keeps its record; `edit_pages` edits only page turns; `edit` edits the
+pressed message (the old behaviour). A page-turn button carries its card's date, so an older message keeps turning
+ITS day's pages.
+
+`/stats` and the recap show settled results only: yesterday's record, hit rate and ROI (only once every pick of
+that day is settled - otherwise the record so far plus one completeness line), a per-sport split, the last 7 days
+with a per-day strip, and how often the Top ticket landed. `/yesterday` lists every pick issued yesterday with its
+result mark, and its totals are the `/stats` numbers.
 
 Predictions use the existing SQLite database (`DB_PATH`) as the only cache.
 
