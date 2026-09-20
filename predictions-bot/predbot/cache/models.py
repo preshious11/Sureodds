@@ -14,6 +14,7 @@ SCHEMA_VERSION = 3
 VIEW_TOP = "top"
 VIEW_DAILY = "daily"
 VIEW_STATS = "stats"
+VIEW_YESTERDAY = "yesterday"
 
 
 @dataclass
@@ -78,7 +79,7 @@ class StatsBlock:
             lost=int(data.get("lost", 0)),
             push=int(data.get("push", 0)),
             n=int(data.get("n", 0)),
-            roi=float(data.get("roi", 0.0)),
+            roi=float(data.get("roi") or 0.0),
             profit=float(data.get("profit", 0.0)),
             best_win=data.get("best_win"),
         )

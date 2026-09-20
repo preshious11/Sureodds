@@ -79,13 +79,10 @@ def split_command(text: str) -> Tuple[str, List[str]]:
 
 
 def recap_card(db: Database, local_now: datetime) -> str:
-    """The /yesterday summary card (wins/losses/void, hit rate, per-sport, 7-day, best pick)."""
+    """The recap card: yesterday's settled results, the per-sport split, the last 7 days, the Top ticket record."""
     from predbot.bot.format import recap_message  # local import keeps module import light
 
-    st = stats_mod.compute(db, local_now)
-    yesterday = (local_now - timedelta(days=1)).strftime("%Y-%m-%d")
-    rows = stats_mod.rows_for_recap(db, yesterday)
-    return recap_message("YESTERDAY", stats_mod.by_sport(rows), st)
+    return recap_message(stats_mod.compute(db, local_now))
 
 
 #: admin commands that run a whole job (generation / settlement / recap)
@@ -220,8 +217,6 @@ class CommandLoop(threading.Thread):
                     "Send /start whenever you want them back.")
         if cmd == "/timezone":
             return self._timezone(chat_id or user_id, args or [])
-        if cmd == "/yesterday":
-            return recap_card(self.db, local)
         if cmd == "/lastrun":
             if user_id not in self.cfg.telegram_admin_ids:
                 return "Not allowed."

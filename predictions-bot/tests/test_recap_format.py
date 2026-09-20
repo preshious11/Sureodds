@@ -1,4 +1,4 @@
-"""The yesterday-results card: jobs.stats.by_sport + bot.format.recap_message."""
+"""The recap card (bot.format.recap_message over jobs.stats.compute); the numbers themselves are tested in test_stats_card."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -28,9 +28,7 @@ def _pick(db, *, date=YESTERDAY, status="won", sport="football", label="Home Win
 
 
 def _card(db, today=TODAY) -> str:
-    st = stats_mod.compute(db, today)
-    rows = stats_mod.rows_for_recap(db, YESTERDAY)
-    return recap_message("YESTERDAY", stats_mod.by_sport(rows), st)
+    return recap_message(stats_mod.compute(db, today))
 
 
 # ------------------------------------------------------------------- the layout
@@ -47,25 +45,12 @@ def test_card_matches_the_requested_layout(db):
     for i in range(12):
         _pick(db, date="2030-05-28", rank=200 + i, status="lost", price=2.00)
 
-    assert _card(db) == (
-        "📊 SUREODDS — YESTERDAY\n"
-        "\n"
-        "✅ Wins: 4\n"
-        "❌ Losses: 0\n"
-        "➖ Void: 0\n"
-        "\n"
-        "🎯 Hit Rate: 100.0%\n"
-        "\n"
-        "⚽ Football: 4/4\n"
-        "\n"
-        "📈 LAST 7 DAYS\n"
-        "Wins: 15\n"
-        "Losses: 12\n"
-        "Hit Rate: 55.6%\n"
-        "\n"
-        "🔥 BEST PICK\n"
-        "Geylang International FC Win @ 1.44 ✅"
-    )
+    text = _card(db)
+    assert text.startswith("📊 RESULTS · Sun 2 Jun\n\n🗓 Yesterday · Sat 1 Jun · 4 picks\n✅ 4  ❌ 0  ➖ 0\n")
+    assert "🎯 100%  ·  💹 ROI +" in text
+    assert "🏆 Best: Geylang International FC Win · Geylang International FC 4 Geylang International FC Win vs Away FC · @1.44" in text
+    assert "🏅 By sport\n⚽ Football 4/4" in text
+    assert "📈 Last 5 days\n✅ 15  ❌ 12  ➖ 0  ·  🎯 56%" in text                # 05-28 .. 06-01, first pick on 05-28
 
 
 def test_void_and_push_are_listed_but_not_counted_as_decided(db):
@@ -75,29 +60,24 @@ def test_void_and_push_are_listed_but_not_counted_as_decided(db):
 
     text = _card(db)
 
-    assert "✅ Wins: 1" in text
-    assert "❌ Losses: 0" in text
-    assert "➖ Void: 1" in text
-    assert "↩️ Push: 1" in text
-    assert "🎯 Hit Rate: 100.0%" in text
-    assert "⚽ Football: 1/1" in text                    # void/push are excluded
-    assert "🔥 BEST PICK" in text
+    assert "✅ 1  ❌ 0  ➖ 1  ↩️ 1" in text
+    assert "🎯 100%" in text                             # void and push are not decided
+    assert "⚽ Football 1/3" in text                     # settled = 3 of 3 issued
+    assert "🏆 Best:" in text
 
 
-def test_pending_only_day_shows_a_dash_and_no_best_pick(db):
+def test_pending_only_day_says_so_and_shows_no_percentages_or_best_pick(db):
     _pick(db, status="pending")
 
     text = _card(db)
 
-    assert "✅ Wins: 0" in text and "❌ Losses: 0" in text and "➖ Void: 0" in text
-    assert "🎯 Hit Rate: –" in text
-    assert "📈 LAST 7 DAYS" in text
-    assert "⚽" not in text                              # no decided sport to report
-    assert "BEST PICK" not in text
+    assert "🗓 Yesterday · Sat 1 Jun · 1 pick — results come in after the last match ends." in text
+    assert "🎯" not in text and "🏆" not in text and "⏳" not in text
+    assert "⚽" not in text                              # no per-sport line until something settles
 
 
 # ------------------------------------------------------------ sport breakdown
-def test_sport_breakdown_is_ordered_by_volume_and_skips_undecided(db):
+def test_sport_breakdown_lists_every_sport_with_won_over_settled(db):
     _pick(db, rank=1, sport="football")
     _pick(db, rank=2, sport="football", status="lost")
     _pick(db, rank=3, sport="football", status="half_won")     # halves count as wins
@@ -105,10 +85,9 @@ def test_sport_breakdown_is_ordered_by_volume_and_skips_undecided(db):
     _pick(db, rank=5, sport="baseball", status="pending")
     _pick(db, rank=6, sport="american_football", status="void")
 
-    lines = [ln for ln in _card(db).splitlines()
-             if ln.startswith(("⚽", "🏀", "⚾", "🏈"))]
+    lines = [ln for ln in _card(db).splitlines() if ln.startswith("⚽")]
 
-    assert lines == ["⚽ Football: 2/3", "🏀 Basketball: 1/1"]
+    assert lines == ["⚽ Football 2/3  ·  🏈 American Football 0/1  ·  🏀 Basketball 1/1  ·  ⚾ Baseball —"]
 
 
 def test_by_sport_ties_sort_alphabetically():
@@ -124,11 +103,11 @@ def test_by_sport_ignores_unknown_statuses():
 # --------------------------------------------------------------------- escaping
 def test_best_pick_label_is_html_escaped(db):
     _pick(db, rank=1, label="Brighton & Hove <Win>", price=1.60)
-    assert "Brighton &amp; Hove &lt;Win&gt; @ 1.60 ✅" in _card(db)
+    assert "Brighton &amp; Hove &lt;Win&gt;" in _card(db)
 
 
 # ------------------------------------------------------------------ job wiring
-def test_yesterday_command_serves_the_summary_card(db):
+def test_recap_card_serves_the_summary_card(db):
     from predbot.bot.commands import recap_card
 
     now_utc = datetime.now(timezone.utc)
@@ -137,9 +116,9 @@ def test_yesterday_command_serves_the_summary_card(db):
 
     text = recap_card(db, now_utc)
 
-    assert text.startswith("📊 SUREODDS — YESTERDAY")
-    assert "✅ Wins: 1" in text and "🎯 Hit Rate: 100.0%" in text
-    assert "Geylang International FC Win @ 1.44 ✅" in text
+    assert text.startswith("📊 RESULTS · ")
+    assert "✅ 1  ❌ 0  ➖ 0" in text and "🎯 100%" in text
+    assert "Geylang International FC Win" in text and "@1.44" in text
 
 
 def test_recap_job_renders_the_new_card(db, capsys):
@@ -149,7 +128,7 @@ def test_recap_job_renders_the_new_card(db, capsys):
 
     text = recap.run(db, Config(timezone="UTC"), None, dry_run=True)
 
-    assert text.startswith("📊 SUREODDS — YESTERDAY")
-    assert "⚽ Football: 1/1" in text
-    assert "🔥 BEST PICK" in text
+    assert text.startswith("📊 RESULTS · ")
+    assert "⚽ Football 1/1" in text
+    assert "🏆 Best:" in text
     assert text in capsys.readouterr().out

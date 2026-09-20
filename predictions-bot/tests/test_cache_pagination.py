@@ -183,7 +183,8 @@ def test_render_page_structure_and_keyboard():
     assert nav[0]["text"] == "1/3"                # no ◀️ button on the first page
     assert nav[1]["callback_data"] == "pg|daily|1|20300601"      # a page turn carries the day of its card
     assert "◀️" not in [b["text"] for b in nav]
-    assert len(markup["inline_keyboard"][-1]) == 3  # switch row: top/daily/stats
+    assert [b["text"] for row in markup["inline_keyboard"][-2:] for b in row] == [
+        "🏆 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]      # two buttons a row
 
     text_last, markup_last = pagination.render_page(snap, VIEW_DAILY, 2, 10, "UTC")
     assert "Page 3/3" in text_last
@@ -198,25 +199,28 @@ def test_render_stats_matches_the_stats_command(db):
     from predbot.util.timeutil import to_local
 
     now = datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)
+    _insert_picks(db, "2030-05-31", 2)
+    for row in db.picks_for_date("2030-05-31"):
+        db.settle_pick(row["id"], "won")
     expected = stats_message(stats_mod.compute(db, to_local(now, "UTC")))
 
     text, markup = pagination.render_stats(make_snapshot(), db=db, tz="UTC", now=now)
 
     assert text == expected                     # one renderer, no drift
-    assert "SUREODDS RESULTS — YESTERDAY" in text and "LAST 7 DAYS" in text
-    assert markup["inline_keyboard"][-1][0]["text"] == "🏆 Top Picks"
+    assert text.startswith("📊 STATS · Sat 1 Jun") and "📈 Last 1 day\n" in text
+    assert markup["inline_keyboard"][-1][0]["text"] == "📊 Stats"
 
 
 def test_render_stats_without_db_falls_back_to_the_snapshot():
     text, markup = pagination.render_stats(make_snapshot())
-    assert "SUREODDS RESULTS — YESTERDAY" in text and "LAST 7 DAYS" in text
-    assert "Wins: 3" in text and "Losses: 1" in text
+    assert text.startswith("📊 STATS") and "📈 Last 7 days" in text
+    assert "✅ 3  ❌ 1  ➖ 0" in text and "Yesterday" not in text                 # an older snapshot knows nothing about yesterday
     assert markup["inline_keyboard"]
 
 
 def test_render_stats_reports_an_empty_snapshot_plainly():
     text, _ = pagination.render_stats(DailySnapshot(date="2030-06-01"))
-    assert "No settled picks yet" in text
+    assert text == "📊 No results yet — the first recap arrives the morning after the first slate."
 
 
 # ------------------------------------------------------------- callback handler

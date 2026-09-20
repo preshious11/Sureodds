@@ -271,10 +271,7 @@ def _deliver_recap_after_fixtures(db: Database, cfg, tg: Telegram, kind: str, da
         fixture_end_local = to_local(last_fixture_end, user_tz)
 
         if local >= fixture_end_local:
-            yesterday_local = (local - timedelta(days=1)).strftime("%Y-%m-%d")
-            recap_rows = stats_mod.rows_for_recap(db, yesterday_local)
-            stats = stats_mod.compute(db, local)
-            personalized_text = recap_message("YESTERDAY", stats_mod.by_sport(recap_rows), stats)
+            personalized_text = recap_message(stats_mod.compute(db, local))
             if tg.send(personalized_text, chat_id=chat_id):
                 db.mark_delivery(kind, date_str, chat_id)
                 sent += 1
