@@ -270,12 +270,14 @@ def run(profile: bool = False, subscribers: int = 300, send_delay: float = 0.03,
             broadcast.SENDS_PER_SECOND = 20.0
             result["delivery"] = {"subscribers": subscribers, "sent": sent, "second_pass_sent": again,
                                   "wall": round(deliver_wall, 3), "sqlite": dict(db.stats)}
-            by_chat = {c: (text) for c, text, _ in dtg.sent}
+            by_chat: dict = {}
+            for c, text, _ in dtg.sent:                            # a chat gets two messages: the Top card, then the Daily
+                by_chat.setdefault(c, []).append(text)
             slate["delivery"] = {"sent": sent, "second_pass": again, "chats": sorted(by_chat)[:5],
-                                 "n_deliveries": db.query("SELECT COUNT(*) AS n FROM deliveries")[0]["n"]}
+                                 "n_deliveries": db.query("SELECT COUNT(DISTINCT chat_id) AS n FROM deliveries")[0]["n"]}
             from predbot.bot.telegram import _split
-            cards = {tz: next(by_chat[str(1000 + i)] for i in range(subscribers) if tzs[i % len(tzs)] == tz) for tz in tzs}
-            render["delivery"] = {"cards_by_tz": cards, "message_lengths": {tz: [len(x) for x in _split(c)] for tz, c in cards.items()}}
+            cards = {tz: next(by_chat[str(1000 + i)] for i in range(subscribers) if tzs[i % len(tzs)] == tz) for tz in tzs}    # tz -> [top, daily]
+            render["delivery"] = {"cards_by_tz": cards, "message_lengths": {tz: [[len(x) for x in _split(m)] for m in c] for tz, c in cards.items()}}
             render.update(_results_renders(db, snapshot, service, now, cfg, tmp, callbacks))
             sizes = _sizes(render)
             result["slate"], result["render"], result["sizes"] = slate, render, sizes

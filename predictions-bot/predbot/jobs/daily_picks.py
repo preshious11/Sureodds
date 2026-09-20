@@ -218,21 +218,27 @@ def store_picks(ps: PickSet, db: Database, pick_date: str, replace_pending: bool
 def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram], force: bool = False,
         dry_run: bool = False, service=None):
     from predbot.cache.fetcher import UnifiedFetcher
-    from predbot.bot.broadcast import picks_text
+    from predbot.bot.broadcast import picks_messages, picks_text
     service = service or UnifiedFetcher(chain, db, cfg)
     # dry_run must be genuinely read-only: it used to skip only the Telegram send
     # while still writing the snapshot and picks that /daily serves.
     snapshot = service.get_daily_snapshot(force_refresh=force, persist=not dry_run, scheduled=True)
     if not snapshot.total_picks():
         return snapshot
-    text = picks_text(snapshot, cfg.timezone)
-    if not text:
+    messages = picks_messages(snapshot, cfg.timezone)
+    if not messages:
         return snapshot
     if dry_run:
-        print(text)
+        print(picks_text(snapshot, cfg.timezone))
         return snapshot
-    if tg and tg.enabled() and (force or not db.post_done('picks', snapshot.date)):
-        mid = tg.send(text)
-        if mid:
-            db.mark_post('picks', snapshot.date, mid)
+    if tg and tg.enabled():
+        # the channel gets the same two messages as a subscriber, each recorded on its own: a retry after a
+        # partial failure posts only the missing one, and the Daily is never posted before the Top
+        for kind, text, markup in messages:
+            if not force and db.post_done(kind, snapshot.date):
+                continue
+            mid = tg.send(text, reply_markup=markup)
+            if not mid:
+                break
+            db.mark_post(kind, snapshot.date, mid)
     return snapshot

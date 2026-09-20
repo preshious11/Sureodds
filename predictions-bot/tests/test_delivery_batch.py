@@ -32,7 +32,8 @@ class Tg:
 def snap(monkeypatch):
     snap = DailySnapshot(date="2026-09-19", generated_at="2026-09-19T08:00:00Z", top_picks=[object()], daily_picks=[])
     calls = []
-    monkeypatch.setattr(broadcast, "picks_text", lambda s, tz, now=None: calls.append(tz) or f"card for {tz}")
+    monkeypatch.setattr(broadcast, "picks_messages", lambda s, tz, now=None: calls.append(tz) or [
+        ("picks_top", f"top for {tz}", None), ("picks_daily", f"daily for {tz}", None)])
     snap.render_calls = calls
     return snap
 
@@ -54,11 +55,11 @@ def test_a_large_delivery_renders_once_per_zone_sends_in_a_pool_and_records_in_b
     tg = Tg()
     db.stats.update(executes=0, commits=0)
     sent = deliver_picks(db, Config(), tg, snap, now=NOW)
-    assert sent == 60 and sorted(tg.sent) == sorted(str(100 + i) for i in range(60))
+    assert sent == 60 and sorted(set(tg.sent)) == sorted(str(100 + i) for i in range(60)) and len(tg.sent) == 120   # two messages each
     assert sorted(snap.render_calls) == ["Africa/Lagos", "Asia/Tokyo", "Europe/London"]      # 3 renders, not 60
     assert len(tg.threads) > 1                                                                # a pool, not one thread
     assert db.stats["commits"] <= 60 // broadcast.RECORD_BATCH + 2                            # batched, not one per send
-    assert len(db.deliveries_done("picks", "2026-09-19")) == 60
+    assert len(db.deliveries_done("picks_top", "2026-09-19")) == len(db.deliveries_done("picks_daily", "2026-09-19")) == 60
     assert deliver_picks(db, Config(), Tg(), snap, now=NOW) == 0                              # once per subscriber per day
 
 
@@ -66,9 +67,9 @@ def test_failed_sends_are_not_recorded_and_are_retried_on_the_next_poll(db, snap
     monkeypatch.setattr(broadcast, "SENDS_PER_SECOND", 1e9)
     _subs(db, 20)
     assert deliver_picks(db, Config(), Tg(fail={"105", "110"}), snap, now=NOW) == 18
-    assert db.deliveries_done("picks", "2026-09-19") == {str(100 + i) for i in range(20)} - {"105", "110"}
+    assert db.deliveries_done("picks_top", "2026-09-19") == {str(100 + i) for i in range(20)} - {"105", "110"}
     retry = Tg()
-    assert deliver_picks(db, Config(), retry, snap, now=NOW) == 2 and sorted(retry.sent) == ["105", "110"]
+    assert deliver_picks(db, Config(), retry, snap, now=NOW) == 2 and sorted(retry.sent) == ["105", "105", "110", "110"]
 
 
 def test_subscribers_who_joined_after_the_target_and_early_polls_are_skipped(db, snap, monkeypatch):
@@ -87,7 +88,7 @@ def test_submissions_are_paced(db, snap, monkeypatch):
     _subs(db, 30)
     t0 = time.perf_counter()
     deliver_picks(db, Config(), Tg(), snap, now=NOW)
-    assert time.perf_counter() - t0 >= 0.25                    # 30 sends at <= 100/s cannot finish faster
+    assert time.perf_counter() - t0 >= 0.5                     # 30 chats x 2 messages at <= 100/s cannot finish faster
 
 
 # ------------------------------------------------------------------ H14: admin actions do not block the poll loop

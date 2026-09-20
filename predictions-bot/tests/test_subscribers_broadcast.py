@@ -152,18 +152,19 @@ def test_deliver_picks_reaches_all_subscribers_once(db, monkeypatch):
     sent = broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot, now=now)
 
     assert sent == 2
-    assert [s["chat_id"] for s in tg.sends] == ["42", "77"]
-    card = tg.sends[0]["text"]
-    assert card.startswith("🔥 TOP PICKS · Sat 1 Jun")       # the canonical summary card
-    assert "📋 DAILY PICKS · Sat 1 Jun" in card
+    assert [s["chat_id"] for s in tg.sends] == ["42", "42", "77", "77"]      # two messages each, Top then Daily
+    top, daily = tg.sends[0]["text"], tg.sends[1]["text"]
+    card = top + daily
+    assert top.startswith("🔥 TOP PICKS · Sat 1 Jun")         # the canonical cards
+    assert daily.startswith("📋 DAILY PICKS · Sat 1 Jun") and "DAILY" not in top
     assert "predictions——" not in card                      # old copy stays gone
     assert card.count("📊") == 4                      # 1 top + 3 daily picks, one block each
-    assert "· 1 pick ·" in card and "· 3 picks ·" in card
-    assert card.count("🎟 Combined odds") == 2        # one per section, never one stale line
+    assert "· 1 pick ·" in top and "· 3 picks ·" in daily
+    assert card.count("🎟 Combined odds") == 2        # one per card, never one stale line
 
     # same day again (e.g. a restart): deliveries are de-duplicated per user
     assert broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot, now=now) == 0
-    assert len(tg.sends) == 2
+    assert len(tg.sends) == 4
 
 
 def test_deliver_picks_waits_until_delivery_time(db):
@@ -237,10 +238,10 @@ def test_every_zone_is_served_at_the_same_delivery_time_with_its_own_kickoff_tim
 
     assert at(0, 30) == 0 and at(8, 30) == 0       # nobody's own 9:30 matters any more
     assert at(9, 30) == 3
-    assert [s["chat_id"] for s in tg.sends] == ["tokyo", "lagos", "newyork"]
+    assert [s["chat_id"] for s in tg.sends][::2] == ["tokyo", "lagos", "newyork"]
     assert at(13, 30) == 0                         # and only once each
 
-    for send, clock, label in ((tg.sends[0], "3:00 AM", "JST"), (tg.sends[1], "7:00 PM", "WAT"), (tg.sends[2], "2:00 PM", "EDT")):
+    for send, clock, label in ((tg.sends[0], "3:00 AM", "JST"), (tg.sends[2], "7:00 PM", "WAT"), (tg.sends[4], "2:00 PM", "EDT")):
         assert f"🕘 {clock}" in send["text"] and f"times in {label}" in send["text"]
 
 
@@ -298,7 +299,7 @@ def test_subscribing_before_930_still_gets_todays_card(db, monkeypatch):
 
     assert broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot(),
                                    now=datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)) == 1
-    assert len(tg.sends) == 1
+    assert len(tg.sends) == 2                                # the Top card and the Daily card
 
 
 def test_the_join_gate_is_measured_in_the_config_timezone_not_the_subscribers(db, monkeypatch):

@@ -91,7 +91,7 @@ def _deliver(monkeypatch, chat, tz, now):
     db.subscriber_add(chat, timezone=tz)
     tg = FakeTG()
     sent = broadcast.deliver_picks(db, Config(timezone="Africa/Lagos"), tg, _snapshot(), now=now)
-    return sent, (tg.sends[0]["text"] if tg.sends else "")
+    return sent, "\n\n".join(s["text"] for s in tg.sends)
 
 
 def test_new_york_at_its_930_sees_upcoming_legs_and_when_the_card_was_made(monkeypatch):

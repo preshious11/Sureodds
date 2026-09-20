@@ -176,6 +176,17 @@ class Database:
             self.conn.commit()
         if pick_cols:
             self._migrate_fixture_key("fixture_key" in pick_cols)
+        self._migrate_split_picks_kind()
+
+    def _migrate_split_picks_kind(self) -> None:
+        """The card went out as ONE ``picks`` message; it is now two (``picks_top``, ``picks_daily``). A ``picks`` row
+        already recorded counts as both, so nothing that was sent is sent again. Idempotent."""
+        for kind in ("picks_top", "picks_daily"):
+            self.conn.execute("INSERT OR IGNORE INTO deliveries(kind,post_date,chat_id,created_at) "
+                              "SELECT ?, post_date, chat_id, created_at FROM deliveries WHERE kind='picks'", (kind,))
+            self.conn.execute("INSERT OR IGNORE INTO posts(kind,post_date,message_id,created_at) "
+                              "SELECT ?, post_date, message_id, created_at FROM posts WHERE kind='picks'", (kind,))
+        self.conn.commit()
 
     def _migrate_fixture_key(self, has_column: bool) -> None:
         """``picks.fixture_key`` + a unique index that forbids the same selection on the same match twice on
@@ -276,8 +287,10 @@ class Database:
                                (date, fixture_key, m.market, m.period, m.stat, m.entity, m.line, m.selection)))
 
     def deliveries_exist(self, kind: str, post_date: str) -> bool:
-        """True once ANY subscriber has been sent ``kind`` for ``post_date``."""
-        return bool(self.query("SELECT 1 FROM deliveries WHERE kind=? AND post_date=? LIMIT 1", (kind, post_date)))
+        """True once ANY subscriber has been sent ``kind`` for ``post_date`` (``picks`` = either of its two messages)."""
+        kinds = ("picks", "picks_top", "picks_daily") if kind == "picks" else (kind,)
+        marks = ",".join("?" for _ in kinds)
+        return bool(self.query(f"SELECT 1 FROM deliveries WHERE kind IN ({marks}) AND post_date=? LIMIT 1", (*kinds, post_date)))
 
     def delete_pending_picks_not_in(self, date, keep):
         """Delete ``date``'s still-pending picks that are not in ``keep`` - an iterable of
