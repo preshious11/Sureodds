@@ -7,8 +7,9 @@ Rules (from the brief):
   * top picks are the most solid selections: high probability *and* positive
     expected value with at least two agreeing sources, added best-first until
     the ticket is worth TOP_COMBINED_ODDS (~2.00)
-  * daily picks then extend the same ticket until the whole list is worth
-    DAILY_COMBINED_MIN_ODDS..DAILY_COMBINED_MAX_ODDS (10-20), and only with
+  * daily picks are sized on their OWN: the Daily ticket alone is worth
+    DAILY_COMBINED_MIN_ODDS..DAILY_COMBINED_MAX_ODDS (10-20) - the Top legs are
+    consulted for duplicates but never counted in the Daily's odds - and only with
     selections that clear the quality bar - if only 11 qualify, 11 are posted
     (never padded up to DAILY_PICKS_TARGET)
   * an outcome that is a top pick is never repeated in the daily list; the same
@@ -492,8 +493,8 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
 
     marks.append((time.perf_counter(), time.process_time()))
     # ---------------------------------------------------------- daily picks
-    # One ticket for the whole post: keep filling while it is short of the floor,
-    # stop before a pick would break the ceiling or the pick cap.
+    # The Daily is its own ticket: keep filling while ITS product is short of the floor, stop before a pick would
+    # break the ceiling or the pick cap. (It used to start from the Top's odds, so the Daily alone could stop below 10.)
     cap = cfg.daily_target
     cross_mode = getattr(cfg, "cross_tier_same_fixture", cross_tier.DIFFERENT_OUTCOME)
     pre_cache: Dict[int, tuple] = {}
@@ -698,7 +699,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         exotics += 1 if grp == "exotic" else 0
         return True
 
-    ticket = top_odds
+    ticket = 1.0                                # the Daily's own product - the Top's odds are not part of it
 
     def under_cap() -> bool:
         return len(top) + len(chosen) < cap        # "up to DAILY_PICKS_TARGET picks" in one list
@@ -744,6 +745,9 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     for s in chosen:
         s.tier = "daily"
     ps.daily = chosen
+    ps.diagnostics["daily_own_odds"] = round(ticket, 2) if chosen else None
+    ps.diagnostics["daily_legs"] = len(chosen)
+    ps.diagnostics["daily_odds_with_top"] = round(top_odds * ticket, 2) if chosen else None    # one release only: to compare with the old sizing
     log.info("picker: pool=%d eligible=%d top_pool=%d daily_pool=%d -> top=%d daily=%d ticket=%.2f top_relaxed=%s",
              ps.pool_size, ps.eligible, len(top_pool), len(daily_pool), len(top), len(chosen), ticket, top_relaxed)
     marks.append((time.perf_counter(), time.process_time()))

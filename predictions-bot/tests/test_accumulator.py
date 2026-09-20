@@ -125,9 +125,9 @@ def test_daily_section_lands_in_the_10_to_20_window():
     now = dt()
     pool = [sc(ev(i), "result3", "home", 0.62, 1.45) for i in range(40)]
     ps = select(pool, cfg(), now)
-    ticket = math.prod(s.price for s in ps.all())
+    ticket = math.prod(s.price for s in ps.daily)
     c = cfg()
-    assert c.daily_odds_min <= ticket <= c.daily_odds_max      # 10..20 combined
+    assert c.daily_odds_min <= ticket <= c.daily_odds_max      # 10..20: the Daily ALONE, the Top is not counted
     assert len(ps.all()) <= c.daily_target                     # hard pick cap
 
 
