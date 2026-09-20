@@ -11,11 +11,12 @@ import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
-from predbot.bot.format import (HEADING_DAILY, HEADING_TOP, PickLine,
-                                format_outcome, generated_line, odds_as_of_label, pick_line_from_record,
-                                pick_lines, picks_card, stats_message)
+from predbot.bot.format import (HEADING_DAILY, HEADING_TOP, NO_RESULTS_YET, PickLine,
+                                format_outcome, generated_line, odds_as_of_label,
+                                pick_line_from_record, pick_lines, picks_card, stats_message,
+                                yesterday_header, yesterday_pick_line)
 from predbot.cache.models import (DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STATS,
-                                  VIEW_TOP)
+                                  VIEW_TOP, VIEW_YESTERDAY)
 from predbot.util.timeutil import parse_iso, to_local, utcnow
 
 log = logging.getLogger(__name__)
@@ -24,18 +25,22 @@ PAGE_SIZE_DEFAULT = 5
 CALLBACK_PREFIX = "pg"
 CALLBACK_NOOP = "noop"
 
-VIEW_TITLES = {VIEW_TOP: "🏆 TOP PICKS", VIEW_DAILY: "📋 DAILY PICKS", VIEW_STATS: "📊 STATS"}
+VIEW_TITLES = {VIEW_TOP: "🏆 TOP PICKS", VIEW_DAILY: "📋 DAILY PICKS", VIEW_STATS: "📊 STATS",
+               VIEW_YESTERDAY: "🗓 YESTERDAY"}
 
 #: The three interactive views: emoji, button label, the command that opens the
 #: same view, and a one-line description.  One definition shared by the /start
 #: menu, the welcome screen and the pagination switch row, so a tap and a type
 #: are guaranteed to be the same action.
-VIEW_ICON = {VIEW_TOP: "🏆", VIEW_DAILY: "📋", VIEW_STATS: "📊"}
-VIEW_LABEL = {VIEW_TOP: "Top Picks", VIEW_DAILY: "Daily Picks", VIEW_STATS: "Stats"}
-VIEW_COMMAND = {VIEW_TOP: "/top", VIEW_DAILY: "/daily", VIEW_STATS: "/stats"}
+VIEW_ICON = {VIEW_TOP: "🏆", VIEW_DAILY: "📋", VIEW_STATS: "📊", VIEW_YESTERDAY: "🗓"}
+VIEW_LABEL = {VIEW_TOP: "Top Picks", VIEW_DAILY: "Daily Picks", VIEW_STATS: "Stats", VIEW_YESTERDAY: "Yesterday"}
+VIEW_COMMAND = {VIEW_TOP: "/top", VIEW_DAILY: "/daily", VIEW_STATS: "/stats", VIEW_YESTERDAY: "/yesterday"}
 VIEW_DESC = {VIEW_TOP: "Top picks of the day",
              VIEW_DAILY: "Daily picks · Accumulator slip",
-             VIEW_STATS: "See prediction results"}
+             VIEW_STATS: "See prediction results",
+             VIEW_YESTERDAY: "Every pick from yesterday, with its result"}
+#: the buttons under every card, two to a row
+SWITCH_ROWS = ((VIEW_TOP, VIEW_DAILY), (VIEW_STATS, VIEW_YESTERDAY))
 
 
 def view_button_label(view: str) -> str:
@@ -129,9 +134,9 @@ def build_keyboard(view: str, page: int, pages: int, day: Optional[str] = None) 
         row.append({"text": f"{page + 1}/{pages}", "callback_data": CALLBACK_NOOP})
         if page < pages - 1:
             row.append({"text": "▶️", "callback_data": encode_callback(view, page + 1, day)})
-    switch = [{"text": view_button_label(v), "callback_data": encode_callback(v, 0)}
-              for v in (VIEW_TOP, VIEW_DAILY, VIEW_STATS)]
-    return {"inline_keyboard": ([row] if row else []) + [switch]}
+    switch = [[{"text": view_button_label(v), "callback_data": encode_callback(v, 0)} for v in views]
+              for views in SWITCH_ROWS]
+    return {"inline_keyboard": ([row] if row else []) + switch}
 
 def _retry_hint(snapshot: DailySnapshot, tz: str) -> str:
     """' Retrying around 11:00 Africa/Lagos.' when a partial refresh is scheduled."""
@@ -206,35 +211,60 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
 def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC",
                  now: Optional[datetime] = None,
                  user_tz: Optional[str] = None) -> Tuple[str, Dict]:
-    """The 📊 /stats card - the rolling record the /stats command sends.
+    """The stats card - the one the /stats command and the Stats button send.
 
-    One renderer for the command and the button: with a Database handle the
-    record is computed fresh (7/30-day and all-time W-L, ROI, best picks,
-    calibration, streak), otherwise it falls back to the cached snapshot's
-    stats.
-    """
+    With a Database handle the numbers are computed fresh, on the READER's local dates; without one the cached
+    snapshot's stats are used (older shape: read as a settled day)."""
     raw = None
-    sport_breakdown = None
     display_tz = user_tz or tz          # "today" has to mean the subscriber's today
     if db is not None:
         try:
             from predbot.jobs import stats as stats_mod
 
             raw = stats_mod.compute(db, to_local(now or utcnow(), display_tz))
-            sport_breakdown = stats_mod.by_sport(db.picks_for_date((to_local(now or utcnow(), display_tz) - timedelta(days=1)).strftime("%Y-%m-%d")))
         except Exception as e:  # noqa: BLE001
             log.warning("stats view DB render failed, using snapshot: %s", e)
     if raw is None:
         if snapshot.stats is None:
-            return "📊 STATS\nNo settled picks yet.", build_keyboard(VIEW_STATS, 0, 1)
+            return NO_RESULTS_YET, build_keyboard(VIEW_STATS, 0, 1)
         raw = snapshot.stats.to_raw()
-    return stats_message(raw, sport_breakdown=sport_breakdown), build_keyboard(VIEW_STATS, 0, 1)
+    return stats_message(raw), build_keyboard(VIEW_STATS, 0, 1)
+
+
+def render_yesterday(db=None, tz: str = "UTC", page: int = 0, size: int = PAGE_SIZE_DEFAULT,
+                     day: Optional[str] = None, now: Optional[datetime] = None,
+                     user_tz: Optional[str] = None) -> Tuple[str, Dict]:
+    """/yesterday - the audit trail: EVERY pick issued that day, Top legs first under 🔥 then Daily under 📋, in
+    the order the cards used, each with its result mark (none while unsettled). Its header numbers come from the
+    same helper as the /stats 'Yesterday' block, so marks can be counted against the card."""
+    from predbot.jobs import stats as stats_mod
+
+    if db is None:
+        return NO_RESULTS_YET, build_keyboard(VIEW_YESTERDAY, 0, 1)
+    display_tz = user_tz or tz
+    day = day or (to_local(now or utcnow(), display_tz) - timedelta(days=1)).strftime("%Y-%m-%d")
+    rows = stats_mod.ordered(db.picks_for_date(day))
+    header = yesterday_header(day, stats_mod.day_block(rows))
+    if not rows:
+        return "\n".join(header), build_keyboard(VIEW_YESTERDAY, 0, 1, day)
+    pages = total_pages(len(rows), size)
+    page = clamp_page(page, len(rows), size)
+    lines = list(header)
+    for tier, title in (("top", "🔥 Top"), ("daily", "📋 Daily")):
+        chunk = [r for r in rows[page * size:(page + 1) * size] if (r["tier"] == "top") == (tier == "top")]
+        if chunk:
+            lines += ["", title] + [yesterday_pick_line(r, stats_mod.outcome(r)) for r in chunk]
+    if pages > 1:
+        lines += ["", f"Page {page + 1} of {pages}"]
+    return "\n".join(lines), build_keyboard(VIEW_YESTERDAY, page, pages, day)
 
 
 def render_view(snapshot: DailySnapshot, view: str, page: int, size: int,
                 tz: str, db=None, user_tz: Optional[str] = None,
-                now: Optional[datetime] = None) -> Tuple[str, Dict]:
+                now: Optional[datetime] = None, day: Optional[str] = None) -> Tuple[str, Dict]:
     """Entry point used by both the /daily command and callback navigation."""
     if view == VIEW_STATS:
         return render_stats(snapshot, db=db, tz=tz, user_tz=user_tz)
+    if view == VIEW_YESTERDAY:
+        return render_yesterday(db, tz, page, size, day, now, user_tz)
     return render_page(snapshot, view, page, size, tz, user_tz, now)

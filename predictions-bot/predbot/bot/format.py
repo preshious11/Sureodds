@@ -368,85 +368,150 @@ def stats_line(s: Dict) -> str:
     return " · ".join(parts)
 
 
-def _hit_rate(won: int, lost: int) -> str:
-    """One-decimal hit rate; an em dash when nothing is decided yet."""
-    n = won + lost
-    return f"{100.0 * won / n:.1f}%" if n else "–"
-
-
 def sport_name(sport: str) -> str:
     return SPORT_LABEL.get(sport, sport.replace("_", " ").title())
 
 
-def recap_message(day_label: str, sport_breakdown: List[Dict], s: Dict) -> str:
-    """Yesterday's results card: record, hit rate, per-sport split, 7-day form, best pick.
-
-    ``sport_breakdown`` is ``predbot.jobs.stats.by_sport()`` output; ``s`` is
-    ``predbot.jobs.stats.compute()`` output (or StatsSummary.to_raw(), in which
-    case void/push simply render as 0).
-    """
-    y, seven = s["yesterday"], s["last7"]
-    lines = [f"📊 {BRAND.upper()} — {day_label}", ""]
-    lines.append(f"✅ Wins: {y['won']}")
-    lines.append(f"❌ Losses: {y['lost']}")
-    lines.append(f"➖ Void: {y.get('void', 0)}")
-    if y.get("push"):
-        lines.append(f"↩️ Push: {y['push']}")
-    lines.append("")
-    lines.append(f"🎯 Hit Rate: {_hit_rate(y['won'], y['lost'])}")
-    if sport_breakdown:
-        lines.append("")
-        for b in sport_breakdown:
-            icon = SPORT_ICON.get(b["sport"], SPORT_ICON["other"])
-            lines.append(f"{icon} {sport_name(b['sport'])}: {b['won']}/{b['n']}")
-    lines.append("")
-    lines.append("📈 LAST 7 DAYS")
-    lines.append(f"Wins: {seven['won']}")
-    lines.append(f"Losses: {seven['lost']}")
-    lines.append(f"Hit Rate: {_hit_rate(seven['won'], seven['lost'])}")
-    best = y.get("best_win")
-    if best:
-        lines.append("")
-        lines.append("🔥 BEST PICK")
-        lines.append(f"{esc(best['label'])} @ {best['price']:.2f} ✅")
-    return "\n".join(lines)
+# ------------------------------------------------------------------ results cards (stats, recap, /yesterday)
+#: The settled outcome marks. An unsettled pick has none.
+MARK = {"won": "✅", "lost": "❌", "void": "➖", "push": "↩️"}
+NO_RESULTS_YET = "📊 No results yet — the first recap arrives the morning after the first slate."
 
 
-def stats_message(s: Dict, sport_breakdown: Optional[List[Dict]] = None) -> str:
-    """Yesterday's results card formatted like broadcast recap.
+def day_label(day) -> str:
+    """'Sat 19 Sep' for a YYYY-MM-DD string (or a date): the date every card carries in its header."""
+    if isinstance(day, str):
+        day = datetime.strptime(day[:10], "%Y-%m-%d")
+    return f"{day.strftime('%a')} {day.day} {day.strftime('%b')}"
 
-    Uses the same format as recap_message but for the /stats command view.
-    If sport_breakdown is None, computes it from the stats dict.
-    """
-    y, seven = s.get("yesterday", {}), s.get("last7", {})
-    if not y:
-        y = {"won": 0, "lost": 0, "void": 0, "push": 0, "best_win": None}
 
-    lines = [f"📊 {BRAND.upper()} RESULTS — YESTERDAY", ""]
-    lines.append(f"✅ Wins: {y.get('won', 0)}")
-    lines.append(f"❌ Losses: {y.get('lost', 0)}")
-    lines.append(f"➖ Void: {y.get('void', 0)}")
-    if y.get("push"):
-        lines.append(f"↩️ Push: {y['push']}")
-    lines.append("")
-    lines.append(f"🎯 Hit Rate: {_hit_rate(y.get('won', 0), y.get('lost', 0))}")
+def _n_picks(n: int) -> str:
+    return f"{n} pick" + ("" if n == 1 else "s")
 
-    if sport_breakdown:
-        lines.append("")
-        for b in sport_breakdown:
-            icon = SPORT_ICON.get(b["sport"], SPORT_ICON["other"])
-            lines.append(f"{icon} {sport_name(b['sport'])}: {b['won']}/{b['n']}")
 
-    lines.append("")
-    lines.append("📈 LAST 7 DAYS")
-    lines.append(f"Wins: {seven.get('won', 0)}")
-    lines.append(f"Losses: {seven.get('lost', 0)}")
-    lines.append(f"Hit Rate: {_hit_rate(seven.get('won', 0), seven.get('lost', 0))}")
+def counts_line(b: Dict, sep: str = "  ") -> str:
+    """'✅ 14  ❌ 9  ➖ 2' (plus '↩️ n' when something pushed): ONE helper for /stats, the recap and /yesterday, so the
+    numbers on the card and the marks in the audit trail can never drift apart."""
+    parts = [f"{MARK['won']} {b.get('won', 0)}", f"{MARK['lost']} {b.get('lost', 0)}", f"{MARK['void']} {b.get('void', 0)}"]
+    if b.get("push"):
+        parts.append(f"{MARK['push']} {b['push']}")
+    return sep.join(parts)
 
-    best = y.get("best_win")
-    if best:
-        lines.append("")
-        lines.append("🔥 BEST PICK")
-        lines.append(f"{esc(best['label'])} @ {best['price']:.2f} ✅")
 
-    return "\n".join(lines)
+def _norm(s: Dict) -> Dict:
+    """A stats dict from an older writer (a cached snapshot's ``StatsSummary.to_raw()``) has no issued/final/strip:
+    read it as a fully settled day with no per-sport split, so nothing invents a completeness claim."""
+    y = dict(s.get("yesterday") or {})
+    settled = sum(int(y.get(k, 0) or 0) for k in ("won", "lost", "void", "push"))
+    y["unknown"] = "issued" not in y and not settled            # nothing recorded: say nothing, not "no picks were issued"
+    y.setdefault("issued", settled)
+    y.setdefault("settled", settled)
+    y.setdefault("final", True)
+    y.setdefault("hit_rate", (100.0 * y.get("won", 0) / (y.get("won", 0) + y.get("lost", 0)))
+                 if y.get("won", 0) + y.get("lost", 0) else None)
+    y.setdefault("roi", None)
+    return {**s, "yesterday": y, "last7": dict(s.get("last7") or {}), "by_sport_yesterday": s.get("by_sport_yesterday") or []}
+
+
+def _best_line(best: Optional[Dict], final: bool) -> List[str]:
+    if not best:
+        return []
+    what = esc(best.get("outcome") or best.get("label") or "")
+    match = f" · {esc(best['home'])} vs {esc(best['away'])}" if best.get("home") and best.get("away") else ""
+    return [f"🏆 {'Best' if final else 'Best so far'}: {what}{match} · @{float(best['price']):.2f}"]
+
+
+def yesterday_lines(y: Dict, day: str) -> List[str]:
+    """The 'Yesterday' block. Settled results only - no pending marks, no counters - but a day that is not final
+    says so ONCE, and withholds hit rate and ROI until the last result is in."""
+    head = "🗓 Yesterday" + (f" · {day_label(day)}" if day else "")
+    if not y.get("issued"):
+        return [f"{head} — no picks were issued."]
+    head += f" · {_n_picks(y['issued'])}"
+    if not y.get("settled"):
+        return [f"{head} — results come in after the last match ends."]
+    lines = [head, counts_line(y)]
+    if y.get("final"):
+        hit = f"🎯 {round(y['hit_rate'])}%" if y.get("hit_rate") is not None else "🎯 –"
+        lines.append(f"{hit}  ·  💹 ROI {y['roi']:+.0f}%" if y.get("roi") is not None else hit)
+    else:
+        lines.append(f"{y['settled']} of {y['issued']} settled · final card after the last result")
+    return lines + _best_line(y.get("best_win"), bool(y.get("final")))
+
+
+def by_sport_lines(rows: List[Dict]) -> List[str]:
+    if not rows:
+        return []
+    items = []
+    for b in rows:
+        label = f"{SPORT_ICON.get(b['sport'], SPORT_ICON['other'])} {sport_name(b['sport'])}"
+        items.append(f"{label} {b['won']}/{b['settled']}" if b.get("settled") else f"{label} —")
+    return ["🏅 By sport", "  ·  ".join(items)]
+
+
+def last_days_lines(seven: Dict, top: Optional[Dict]) -> List[str]:
+    window = int(seven.get("window_days", 7) or 0)
+    if not window:
+        return []
+    lines = ["📈 Last 7 days" if window >= 7 else f"📈 Last {window} day" + ("" if window == 1 else "s")]
+    parts = [counts_line(seven)]
+    if seven.get("hit_rate") is not None:
+        parts.append(f"🎯 {round(seven['hit_rate'])}%")
+    streak = str(seven.get("streak") or "")
+    if streak:
+        parts.append(f"🔥 {streak}" if streak.startswith("W") else streak)
+    lines.append("  ·  ".join(parts))
+    strip = ["%s %s" % (datetime.strptime(d["date"], "%Y-%m-%d").strftime("%a"), "".join(MARK[m] for m in d["marks"]))
+             for d in seven.get("strip", [])]
+    if strip:
+        lines.append("  ".join(strip))
+    if top and top.get("days"):
+        span = "the last 7 days" if top["days"] >= 7 else f"{top['days']} settled day" + ("" if top["days"] == 1 else "s")
+        lines += ["", f"🎟 Top ticket hit {top['hit']} of {span}"]
+    return lines
+
+
+def _results_body(s: Dict) -> List[str]:
+    y = s["yesterday"]
+    blocks = [] if y.get("unknown") else [yesterday_lines(y, y.get("date") or "")]
+    if y.get("settled"):
+        blocks.append(by_sport_lines(s["by_sport_yesterday"]))
+    blocks.append(last_days_lines(s["last7"], s.get("top_ticket_7d")))
+    out: List[str] = []
+    for block in (b for b in blocks if b):
+        out += ([""] if out else []) + block
+    return out
+
+
+def _results_card(title: str, s: Dict) -> str:
+    s = _norm(s)
+    if not s.get("settled_ever", 1) and not s["yesterday"]["issued"]:
+        return NO_RESULTS_YET
+    date = f" · {day_label(s['today'])}" if s.get("today") else ""
+    return "\n".join([f"{title}{date}", ""] + _results_body(s))
+
+
+def recap_message(s: Dict) -> str:
+    """Yesterday's results card (the channel post and every delivered recap): the same helpers, and the same
+    settled-only rule, as the /stats card."""
+    return _results_card("📊 RESULTS", s)
+
+
+def stats_message(s: Dict) -> str:
+    """The /stats card."""
+    return _results_card("📊 STATS", s)
+
+
+def yesterday_header(day: str, y: Dict) -> List[str]:
+    """The /yesterday header: its numbers ARE the /stats 'Yesterday' numbers (one helper), so the owner can count the
+    marks in the list against the card."""
+    if not y.get("issued"):
+        return [f"🗓 YESTERDAY · {day_label(day)}", "No picks were issued."]
+    return [f"🗓 YESTERDAY · {day_label(day)}", f"{_n_picks(y['issued'])} · {counts_line(y, ' ')}"]
+
+
+def yesterday_pick_line(row, kind: Optional[str]) -> str:
+    """'✅ 🎯 Over 2.5 goals · Venezia vs Lazio · @1.69'; an unsettled pick has no mark."""
+    from predbot.jobs.stats import pick_outcome
+    mark = MARK[kind] if kind else "   "
+    return (f"{mark} 🎯 {esc(pick_outcome(row))} · {esc(row['home'])} vs {esc(row['away'])} · @{float(row['price']):.2f}")

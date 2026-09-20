@@ -22,7 +22,7 @@ from predbot.bot.pagination import (VIEW_COMMAND, VIEW_DESC, VIEW_ICON,
                                     view_button_label)
 from predbot.bot.telegram import Telegram, esc
 from predbot.cache.fetcher import UnifiedFetcher
-from predbot.cache.models import VIEW_DAILY, VIEW_STATS, VIEW_TOP
+from predbot.cache.models import VIEW_DAILY, VIEW_STATS, VIEW_TOP, VIEW_YESTERDAY
 from predbot.config import Config
 from predbot.storage.db import Database
 from predbot.util.timeutil import resolve_timezone
@@ -88,6 +88,7 @@ COMMANDS: Dict[str, str] = {
     "/daily": VIEW_DAILY,    # every prediction for today
     "/today": VIEW_DAILY,    # alias kept for older clients
     "/stats": VIEW_STATS,    # quick summary
+    "/yesterday": VIEW_YESTERDAY,   # the audit trail: every pick from yesterday with its result
 }
 
 WAVING = "\U0001F44B"        # 👋
@@ -102,7 +103,7 @@ def command_view(cmd: str) -> Optional[str]:
 
 
 def is_view_command(cmd: str) -> bool:
-    """True for /top, /daily, /today and /stats (with or without the slash)."""
+    """True for /top, /daily, /today, /stats and /yesterday (with or without the slash)."""
     return command_view(cmd) is not None
 
 
@@ -133,7 +134,7 @@ def menu_markup() -> Dict[str, Any]:
     """
     return {"inline_keyboard": [
         [view_button(VIEW_TOP), view_button(VIEW_DAILY)],
-        [view_button(VIEW_STATS)],
+        [view_button(VIEW_STATS), view_button(VIEW_YESTERDAY)],
     ]}
 
 
@@ -177,12 +178,12 @@ def open_view(view: str, *, service: UnifiedFetcher, tg: Telegram, cfg: Config,
     keyboard. ``day`` (page-turn buttons carry it) renders that day's picks instead of today's.
     """
     snapshot = service.get_daily_snapshot()          # cache-first read
-    if day and day != snapshot.date and hasattr(service, "snapshot_for"):
+    if day and view in (VIEW_TOP, VIEW_DAILY) and day != snapshot.date and hasattr(service, "snapshot_for"):
         snapshot = service.snapshot_for(day)         # an old message keeps turning ITS day's pages
     timezone = resolve_timezone(db.subscriber_timezone(chat_id) if db is not None else "",
                                 cfg.timezone)
     text, markup = pagination.render_view(snapshot, view, page, page_size,
-                                          timezone, db=db)
+                                          timezone, db=db, day=day)
     if message_id and edit:
         tg.edit_message_text(chat_id, int(message_id), text, reply_markup=markup)
     else:
@@ -261,13 +262,15 @@ def _new_toast(view: str, page: int, page_turn: bool, service, day: Optional[str
         snapshot = service.snapshot_for(day) if day and hasattr(service, "snapshot_for") else service.get_daily_snapshot()
         count = len(snapshot.view_items(view))
         return f"Page {pagination.clamp_page(page, count, size) + 1} of {pagination.total_pages(count, size)}"
+    if page_turn:
+        return f"Page {page + 1}"
     return f"{pagination.VIEW_LABEL[view]} ↓"
 
 
 def _toast(view: str, page: int, size: int, snapshot) -> str:
     """Short confirmation shown at the top of the chat when a button is used."""
-    if view == VIEW_STATS:
-        return "Stats"
+    if view in (VIEW_STATS, VIEW_YESTERDAY):
+        return pagination.VIEW_LABEL[view]
     count = len(snapshot.view_items(view))
     page = pagination.clamp_page(page, count, size)   # toast matches the rendered page
     return (f"{pagination.VIEW_LABEL[view]} · "
