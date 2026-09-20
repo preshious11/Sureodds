@@ -117,7 +117,7 @@ def day_block(rows: List) -> Dict:
             "n": staked, "profit": round(profit, 2),
             "hit_rate": (100.0 * counts["won"] / decided) if final and decided else None,
             "roi": (100.0 * profit / staked) if final and staked else None,
-            "best_win": ({"label": best[1]["label"], "home": best[1]["home"], "away": best[1]["away"],
+            "best_win": ({"label": best[1]["label"], "home": best[1]["home"], "away": best[1]["away"], "sport": best[1]["sport"],
                           "price": float(best[1]["price"]), "outcome": pick_outcome(best[1])} if best else None)}
 
 

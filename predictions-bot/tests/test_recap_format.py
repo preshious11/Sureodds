@@ -46,7 +46,7 @@ def test_card_matches_the_requested_layout(db):
         _pick(db, date="2030-05-28", rank=200 + i, status="lost", price=2.00)
 
     text = _card(db)
-    assert text.startswith("📊 RESULTS · Sun 2 Jun\n\n🗓 Yesterday · Sat 1 Jun · 4 picks\n✅ 4  ❌ 0  ➖ 0\n")
+    assert text.startswith("📊 RESULTS · Sat 1 Jun\n\n🗓 Yesterday · Sat 1 Jun · 4 picks\n✅ 4  ❌ 0  ➖ 0\n")
     assert "🎯 100%  ·  💹 ROI +" in text
     assert "🏆 Best: Geylang International FC Win · Geylang International FC 4 Geylang International FC Win vs Away FC · @1.44" in text
     assert "🏅 By sport\n⚽ Football 4/4" in text

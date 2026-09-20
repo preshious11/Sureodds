@@ -8,6 +8,7 @@ from typing import Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from predbot.bot.telegram import esc
 from predbot.markets.catalog import short_selection
+from predbot.util.display_names import display_name, display_text
 from predbot.providers.base import MarketLine
 from predbot.util.timeutil import parse_iso, to_local, utcnow
 from predbot.util.duration import DURATION_H
@@ -206,8 +207,8 @@ def pick_line_from_record(pick, tz: str, user_tz: Optional[str] = None,
     """
     start = parse_iso(pick.kickoff_utc)
     return PickLine(sport=sport_name(pick.sport),
-                    match=f"{pick.home} vs {pick.away}",
-                    outcome=format_outcome(pick),
+                    match=f"{display_name(pick.home, pick.sport)} vs {display_name(pick.away, pick.sport)}",
+                    outcome=display_text(format_outcome(pick), pick.home, pick.away, pick.sport),
                     league=pick.league or sport_name(pick.sport),
                     confidence=pick.prob,
                     when=clock_label(start, user_tz or tz),
@@ -309,8 +310,9 @@ def picks_message(top, daily, day: datetime, tz: str) -> str:
         out = []
         for s in items:
             e = s.event
-            out.append(PickLine(sport=sport_name(e.sport), match=f"{e.home} vs {e.away}",
-                                outcome=outcome_label(s.label, s.line, e.home, e.away, e.sport),
+            out.append(PickLine(sport=sport_name(e.sport), match=f"{display_name(e.home, e.sport)} vs {display_name(e.away, e.sport)}",
+                                outcome=display_text(outcome_label(s.label, s.line, e.home, e.away, e.sport),
+                                                     e.home, e.away, e.sport),
                                 league=e.league or sport_name(e.sport), confidence=s.p_model,
                                 when=clock_label(e.start, tz), price=s.price,
                                 country=str(e.extra.get("country") or ""),
@@ -394,8 +396,10 @@ def _norm(s: Dict) -> Dict:
 def _best_line(best: Optional[Dict], final: bool) -> List[str]:
     if not best:
         return []
-    what = esc(best.get("outcome") or best.get("label") or "")
-    match = f" · {esc(best['home'])} vs {esc(best['away'])}" if best.get("home") and best.get("away") else ""
+    sport = best.get("sport") or ""
+    what = esc(display_text(best.get("outcome") or best.get("label") or "", best.get("home", ""), best.get("away", ""), sport))
+    match = (f" · {esc(display_name(best['home'], sport))} vs {esc(display_name(best['away'], sport))}"
+             if best.get("home") and best.get("away") else "")
     return [f"🏆 {'Best' if final else 'Best so far'}: {what}{match} · @{float(best['price']):.2f}"]
 
 
@@ -461,18 +465,20 @@ def _results_body(s: Dict) -> List[str]:
     return out
 
 
-def _results_card(title: str, s: Dict) -> str:
+def _results_card(title: str, s: Dict, describes_yesterday: bool = False) -> str:
     s = _norm(s)
     if not s.get("settled_ever", 1) and not s["yesterday"]["issued"]:
         return NO_RESULTS_YET
-    date = f" · {day_label(s['today'])}" if s.get("today") else ""
+    # /stats is dated the day it is read; a recap is dated the day it DESCRIBES (it may be sent the next morning)
+    day = (s["yesterday"].get("date") if describes_yesterday else None) or s.get("today")
+    date = f" · {day_label(day)}" if day else ""
     return "\n".join([f"{title}{date}", ""] + _results_body(s))
 
 
 def recap_message(s: Dict) -> str:
     """Yesterday's results card (the channel post and every delivered recap): the same helpers, and the same
     settled-only rule, as the /stats card."""
-    return _results_card("📊 RESULTS", s)
+    return _results_card("📊 RESULTS", s, describes_yesterday=True)
 
 
 def stats_message(s: Dict) -> str:
@@ -492,4 +498,7 @@ def yesterday_pick_line(row, kind: Optional[str]) -> str:
     """'✅ 🎯 Over 2.5 goals · Venezia vs Lazio · @1.69'; an unsettled pick has no mark."""
     from predbot.jobs.stats import pick_outcome
     lead = f"{MARK[kind]} " if kind else "   "
-    return (f"{lead}🎯 {esc(pick_outcome(row))} · {esc(row['home'])} vs {esc(row['away'])} · @{float(row['price']):.2f}")
+    sport = row["sport"]
+    outcome = display_text(pick_outcome(row), row["home"], row["away"], sport)
+    return (f"{lead}🎯 {esc(outcome)} · {esc(display_name(row['home'], sport))} vs {esc(display_name(row['away'], sport))}"
+            f" · @{float(row['price']):.2f}")

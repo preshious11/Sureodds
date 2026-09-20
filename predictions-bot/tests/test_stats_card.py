@@ -217,7 +217,7 @@ def test_recap_renders_through_the_same_helpers_and_the_same_rule(request, fixtu
     raw = stats_mod.compute(db_, TODAY)
     stats_body = stats_message(raw).split("\n", 2)[2]
     recap = recap_message(raw)
-    assert recap.startswith("📊 RESULTS · Sun 2 Jun\n\n")
+    assert recap.startswith("📊 RESULTS · Sat 1 Jun\n\n")
     assert recap.split("\n", 2)[2] == stats_body
     assert ("2 of 5 settled · final card after the last result" in recap) == (fixture == "partial_db")
 
