@@ -63,7 +63,7 @@ def test_empty_list_combined_odds_is_neutral():
 def test_empty_pool_returns_empty_sections_and_placeholder_card():
     ps = select([], cfg(), dt())
     assert ps.top == [] and ps.daily == []
-    card = picks_message([], [], DAY, "UTC", None)
+    card = picks_message([], [], DAY, "UTC")
     assert "No selection cleared the quality bar today." in card
     assert "Combined odds" not in card
 
@@ -136,7 +136,7 @@ def test_total_counts_are_reported_per_section():
     pool = [sc(ev(i), "result3", "home", 0.70, 1.45) for i in range(12)]
     ps = select(pool, cfg(), now)
     assert len(ps.top) + len(ps.daily) == len(ps.all())
-    card = picks_message(ps.top, ps.daily, DAY, "UTC", None)
+    card = picks_message(ps.top, ps.daily, DAY, "UTC")
     odds_lines = [ln for ln in card.splitlines() if ln.startswith("💰")]
     assert len(odds_lines) == len(ps.all())                   # one odds line per pick
     assert card.count("📊") == len(ps.all())                  # one block per pick

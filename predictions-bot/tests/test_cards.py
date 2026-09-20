@@ -151,7 +151,7 @@ def test_the_channel_post_uses_the_configured_zone():
     from predbot.bot.format import picks_message
     from tests.test_picks_format import event, sc
     card = picks_message([sc(event(1), "Home Win", 0.70, 1.60)], [], datetime(2026, 9, 16, 9, tzinfo=timezone.utc),
-                         "America/New_York", None)
+                         "America/New_York")
     assert "🕘 times in EDT" in card and "WAT" not in card
 
 
