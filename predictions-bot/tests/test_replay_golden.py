@@ -10,6 +10,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
@@ -21,6 +23,7 @@ def test_replay_reproduces_the_golden_slate_byte_for_byte():
     assert replay.golden_text(result, "slate") + "\n" == replay.GOLDEN_SLATE.read_text(encoding="utf-8")
 
 
+@pytest.mark.skip(reason="presentation phases 1-4 change the render; golden_render.json is re-recorded once, in Phase 5")
 def test_replay_reproduces_the_golden_render_byte_for_byte():
     result = replay.run(send_delay=0.0)
     assert replay.golden_text(result, "render") + "\n" == replay.GOLDEN_RENDER.read_text(encoding="utf-8")

@@ -204,6 +204,14 @@ class UnifiedFetcher:
                  snapshot.date, snapshot.status, snapshot.sport_status,
                  len(snapshot.top_picks), len(snapshot.daily_picks))
 
+    def snapshot_for(self, day):
+        """The picks issued for ``day`` (YYYY-MM-DD): today's cached snapshot, or an earlier day rebuilt from the
+        picks table. Never generates and never calls a provider - a page turn on an old message reads history."""
+        current = self.get_daily_snapshot(allow_api_call=False)
+        if str(day) == current.date:
+            return current
+        return self._snapshot_from_rows(self.db.picks_for_date(str(day)), str(day), 'db')
+
     def published_snapshot(self):
         """Today's same canonical snapshot; never yesterday's latest picks table."""
         return self.get_daily_snapshot(allow_api_call=False)

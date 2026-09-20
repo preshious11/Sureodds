@@ -73,6 +73,14 @@ def _cross_tier(value: str) -> str:
     return "different_outcome"
 
 
+def _view_navigation(value: str) -> str:
+    v = str(value or "").strip().lower()
+    if v in ("new", "edit_pages", "edit"):
+        return v
+    log.warning("VIEW_NAVIGATION=%r is not new, edit_pages or edit - using new", value)
+    return "new"
+
+
 def _bool(name: str, default: bool) -> bool:
     value = _env(name, "true" if default else "false").strip().lower() in ("1", "true", "yes", "on")
     KNOWN_KEYS[name] = (default, value)
@@ -286,6 +294,9 @@ class Config:
 
     # Cache / pagination
     page_size: int = field(default_factory=lambda: _int("PAGE_SIZE", 5))
+    #: what a button press does: ``new`` = every press sends a NEW message (the chat keeps its record);
+    #: ``edit_pages`` = view switches send, page turns edit in place; ``edit`` = every press edits the pressed message
+    view_navigation: str = field(default_factory=lambda: _view_navigation(_env("VIEW_NAVIGATION", "new")))
 
     # Storage / logging
     db_path: str = field(default_factory=lambda: _env("DB_PATH", "./data/predbot.db"))

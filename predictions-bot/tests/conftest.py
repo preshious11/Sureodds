@@ -29,3 +29,13 @@ def budget(db):
 
 def dt(y=2030, m=6, d=1, hh=18, mm=0):
     return datetime(y, m, d, hh, mm, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _classic_button_navigation(request, monkeypatch):
+    """The suite predates VIEW_NAVIGATION=new: its fakes only implement ``edit_message_text`` for buttons.
+    They keep pinning the classic ``edit`` behaviour (still supported); tests/test_view_navigation.py covers all
+    three modes, and the shipped default, with explicit settings."""
+    if request.module.__name__.rsplit(".", 1)[-1] != "test_view_navigation":
+        from predbot.bot import callbacks
+        monkeypatch.setattr(callbacks, "navigation_mode", lambda cfg: "edit")
