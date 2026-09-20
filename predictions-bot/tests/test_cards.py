@@ -250,7 +250,7 @@ def test_telegram_send_uses_the_block_aware_split(monkeypatch):
     tg = Telegram("token", "1")
     tg.session = Session()
     snap = DailySnapshot(date=DAY, daily_picks=_long_picks(24))
-    text = broadcast.picks_text(snap, LAGOS, now=NOW)
+    text = broadcast.picks_messages(snap, LAGOS, now=NOW)[1][1]                # the Daily message
     assert tg.send(text, chat_id="9")
     assert len(bodies) >= 2 and all(len(b) <= MAX_LEN for b in bodies)
     assert all(b.startswith("⚽") or b.startswith("📋") for b in bodies)      # every message starts at a block boundary

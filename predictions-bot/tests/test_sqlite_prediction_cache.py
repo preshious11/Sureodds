@@ -380,8 +380,9 @@ def test_scheduled_publication_uses_same_snapshot(db, monkeypatch, clock):
     assert app.api_batches == 1
     f.fetch_events.assert_called_once()
     b.fetch_events.assert_called_once()
+    assert tg.send.call_count == 2                           # the Top card, then the Daily card
     daily_picks.run(app.chain, db, app.cfg, tg, service=app)
-    tg.send.assert_called_once()
+    assert tg.send.call_count == 2                           # each is recorded: a second run posts nothing
 
 
 def _diagnose(db, monkeypatch, clock):
