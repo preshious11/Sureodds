@@ -285,8 +285,7 @@ def card_header(title: str, day: str, prices: List[float], zone: str = "") -> Li
 
 def picks_card(picks: List[PickLine], day: str, title: str = DAILY_TITLE,
                total_prices: Optional[Iterable[float]] = None, zone: str = "",
-               page: Optional[int] = None, pages: Optional[int] = None,
-               stats_line: Optional[str] = None) -> str:
+               page: Optional[int] = None, pages: Optional[int] = None) -> str:
     """One ticket card: header, then one block per pick in kickoff order.
 
     ``total_prices`` prices the WHOLE ticket when ``picks`` is only one page of it (the count is then the whole
@@ -301,12 +300,10 @@ def picks_card(picks: List[PickLine], day: str, title: str = DAILY_TITLE,
         lines += ["", *pick_lines(p)]
     if pages and pages > 1 and page:
         lines += ["", f"Page {page} of {pages}"]
-    if stats_line:
-        lines += ["", stats_line]
     return "\n".join(lines)
 
 
-def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str]) -> str:
+def picks_message(top, daily, day: datetime, tz: str) -> str:
     """Channel post for the day's selections, built from scored picks: the Top ticket, then the Daily one."""
     def lines(items):
         out = []
@@ -326,7 +323,7 @@ def picks_message(top, daily, day: datetime, tz: str, stats_line: Optional[str])
     day_str = to_local(day, tz).strftime("%Y-%m-%d")
     card = summary_card(top_lines, daily_lines, day_str, zone_label(tz, day_str)) if (top_lines or daily_lines) else \
         picks_card([], day_str, DAILY_TITLE)
-    return f"{card}\n\n{stats_line}" if stats_line else card
+    return card
 
 
 # ------------------------------------------------------------ the summary card
@@ -358,22 +355,6 @@ def summary_card(top: List[PickLine], daily: List[PickLine], day: str = "", zone
                 lines += ["", *pick_lines(p)]
             sections.append("\n".join(lines))
     return "\n\n".join(sections)
-
-
-def _pct(w: int, l: int) -> str:
-    n = w + l
-    return f"{round(100 * w / n)}%" if n else "–"
-
-
-def stats_line(s: Dict) -> str:
-    seven = s["last7"]
-    parts = [f"📊 7d: {seven['won']}W-{seven['lost']}L ({_pct(seven['won'], seven['lost'])}) · ROI {seven['roi']:+.1f}%"]
-    y = s.get("yesterday")
-    if y and (y["won"] + y["lost"]):
-        parts.append(f"Yesterday {y['won']}W-{y['lost']}L")
-        if y.get("best_win"):
-            parts.append(f"Best win: {esc(y['best_win']['label'])} @ {y['best_win']['price']:.2f}")
-    return " · ".join(parts)
 
 
 def sport_name(sport: str) -> str:

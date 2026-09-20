@@ -8,7 +8,6 @@ from collections import Counter
 from types import SimpleNamespace
 from typing import Dict, List, Optional
 
-from predbot.bot.format import stats_line
 from predbot.bot.telegram import Telegram
 from predbot.config import Config
 from predbot.jobs import stats as stats_mod

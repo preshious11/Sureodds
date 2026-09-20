@@ -95,9 +95,6 @@ def picks_messages(snapshot: DailySnapshot, tz: str, now: Optional[datetime] = N
     zone = zone_label(tz, snapshot.date)
     top_text = summary_card(top, [], snapshot.date, zone) if top else picks_card([], snapshot.date, TOP_TITLE)
     daily_text = summary_card([], daily, snapshot.date, zone) if daily else picks_card([], snapshot.date, DAILY_TITLE)
-    footer = _record_line(snapshot)
-    if footer:
-        daily_text = f"{daily_text}\n{footer}"
     return [("picks_top", top_text, build_keyboard("top", 0, 1)), ("picks_daily", daily_text, build_keyboard("daily", 0, 1))]
 
 
@@ -105,14 +102,6 @@ def picks_text(snapshot: DailySnapshot, tz: str, now: Optional[datetime] = None)
     """Both cards as one text (the /lastrun 'slates as sent' view and the dry-run print). What is SENT is
     :func:`picks_messages`, one message per card."""
     return "\n\n".join(text for _, text, _ in picks_messages(snapshot, tz, now))
-
-
-def _record_line(snapshot: DailySnapshot) -> Optional[str]:
-    """7-day record footer - only once there is settled history worth showing."""
-    if snapshot.stats is None or not snapshot.stats.all.n:
-        return None
-    seven = snapshot.stats.to_raw()["last7"]
-    return f"📊 7d: {seven['won']}W-{seven['lost']}L · ROI {seven['roi']:+.1f}%"
 
 
 def deliver_picks(db: Database, cfg, tg: Telegram,
