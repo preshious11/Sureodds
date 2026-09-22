@@ -262,6 +262,7 @@ class Config:
     #: selection may enter the Top ticket (0.50 = the historical bar). Lowering
     #: it admits model-vs-market disagreement picks; the default is unchanged.
     top_min_agreement: float = field(default_factory=lambda: _float("TOP_MIN_AGREEMENT", 0.50))
+    top_min_books: int = field(default_factory=lambda: _int("TOP_MIN_BOOKS", 2))
     #: One selection per real fixture across Top + Daily: two legs on one match are
     #: correlated, so the slate never carries both.
     max_picks_per_event: int = field(default_factory=lambda: _int("MAX_PICKS_PER_EVENT", 1))
@@ -283,6 +284,7 @@ class Config:
     cross_tier_same_fixture: str = field(default_factory=lambda: _cross_tier(_env("CROSS_TIER_SAME_FIXTURE", "different_outcome")))
     daily_max_sport_share: float = field(default_factory=lambda: _float("DAILY_MAX_SPORT_SHARE", 0.60))
     daily_max_per_league: int = field(default_factory=lambda: _int("DAILY_MAX_PER_LEAGUE", 3))
+    daily_max_period_share: float = field(default_factory=lambda: _float("DAILY_MAX_PERIOD_SHARE", 0.15))
     model_shrink: float = field(default_factory=lambda: _float("MODEL_SHRINK_TO_MARKET", 0.80))
 
     # Schedule
@@ -333,6 +335,7 @@ class Config:
             ("DAILY_MAX_NEG_EV in [-1,0.5]", -1.0 <= self.daily_max_neg_ev <= 0.5),
             ("TOP_MAX_NEG_EV in [-1,0.5]", -1.0 <= self.top_max_neg_ev <= 0.5),
             ("TOP_MIN_AGREEMENT in [0,1]", 0.0 <= self.top_min_agreement <= 1.0),
+            ("TOP_MIN_BOOKS >= 1", self.top_min_books >= 1),
             ("MODEL_SHRINK_TO_MARKET in [0,1]", 0.0 <= self.model_shrink <= 1.0),
             ("TOP_LEGS_MIN >= 1", self.top_legs_min >= 1),
             ("TOP_LEGS_MAX >= TOP_LEGS_MIN", self.top_legs_max >= self.top_legs_min),
@@ -341,6 +344,7 @@ class Config:
             ("DAILY_MAX_STAT_SHARE in (0,1]", 0.0 < self.daily_max_stat_share <= 1.0),
             ("DAILY_MAX_SPORT_SHARE in (0,1]", 0.0 < self.daily_max_sport_share <= 1.0),
             ("DAILY_MAX_PER_LEAGUE >= 1", self.daily_max_per_league >= 1),
+            ("DAILY_MAX_PERIOD_SHARE in (0,1]", 0.0 < self.daily_max_period_share <= 1.0),
         ]
         for name, ok in checks:
             if not ok:

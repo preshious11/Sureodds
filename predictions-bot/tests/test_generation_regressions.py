@@ -83,9 +83,13 @@ def test_top_three_pick_combination():
 
 
 def test_football_above50_precedes_many_lower_probability_baseball():
+    # DAILY_MIN_PROB is a real, respected floor (picker.py's "preferred" filter
+    # honours cfg.daily_min_prob rather than a hardcoded 0.5) - set it
+    # explicitly so this scenario's premise (0.49 is below the floor, 0.60 is
+    # above it) still holds regardless of DAILY_MIN_PROB's own default.
     pool = [sc(ev(i, sport='baseball'), 'result2', 'home', .49, 2.5) for i in range(40)]
     pool += [sc(ev(100), 'result3', 'home', .60, 1.8)]
-    result = select(pool, Config(), dt())
+    result = select(pool, Config(daily_min_prob=0.5), dt())
     assert result.all()
     assert {s.event.sport for s in result.all()} == {'football'}
 

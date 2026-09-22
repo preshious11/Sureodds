@@ -438,6 +438,10 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             top_rejected["INSUFFICIENT_SOURCES"] += 1
             _note(s, "top: INSUFFICIENT_SOURCES (<2)")
             continue
+        if s.line.n_books < cfg.top_min_books:
+            top_rejected["INSUFFICIENT_BOOKS"] += 1
+            _note(s, f"top: n_books < TOP_MIN_BOOKS ({cfg.top_min_books})")
+            continue
         top_pool.append(s)
     # Odds API is tried first for the Top ticket: only fall back to the full
     # pool (the other providers) when it can't reach the combined odds target.
@@ -537,7 +541,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             _note(s, f"daily: agreement < 0.30 ({s.agreement:.2f})")
             continue
         daily_pool.append(s)
-    preferred = [s for s in daily_pool if s.p_model >= .5]
+    preferred = [s for s in daily_pool if s.p_model >= cfg.daily_min_prob]
     if preferred:
         preferred_ids = {id(s) for s in preferred}
         for s in daily_pool:
@@ -597,6 +601,7 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     # how one of them ends up filling the whole list.
     market_count: Dict[Tuple[str, str], int] = {}
     stat_count: Dict[str, int] = {}
+    period_count: Dict[str, int] = {}
     sport_count: Dict[str, int] = {}
     league_count: Dict[str, int] = {}
     favs = props = exotics = 0
@@ -661,7 +666,9 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         if grp == "exotic" and exotics >= caps["exotic"]:
             _note(s, "cap: exotics")
             return False
-        over = {"market": share_exceeded(market_count.get(mkey, 0), market_share),
+        over = {"period": (s.line.period not in ("full", "reg", "", None)
+                           and share_exceeded(period_count.get(s.line.period, 0), cfg.daily_max_period_share)),
+                "market": share_exceeded(market_count.get(mkey, 0), market_share),
                 # "points" is the DEFAULT stat every main market carries (match
                 # result, totals, handicaps); it is not a derived stat like
                 # corners/cards. Capping it here would cap all main-line bets
@@ -692,6 +699,8 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         market_count[mkey] = market_count.get(mkey, 0) + 1
         if s.line.stat and s.line.stat != "points":
             stat_count[s.line.stat] = stat_count.get(s.line.stat, 0) + 1
+        if s.line.period not in ("full", "reg", "", None):
+            period_count[s.line.period] = period_count.get(s.line.period, 0) + 1
         sport_count[s.event.sport] = sport_count.get(s.event.sport, 0) + 1
         league_count[s.event.league] = league_count.get(s.event.league, 0) + 1
         favs += 1 if s.price < 1.50 else 0

@@ -20,7 +20,16 @@ from predbot.providers.base import MarketLine
 
 MAX_GOALS = {"football": 10, "baseball": 20}
 DEFAULT_RHO = {"football": -0.10, "baseball": 0.0}
-PERIOD_SCALE = {"full": 1.0, "reg": 1.0, "1h": 0.44, "2h": 0.56, "1i5": 0.55}
+_PERIOD_SCALE_FOOTBALL = {"full": 1.0, "reg": 1.0, "1h": 0.44, "2h": 0.56, "1i5": 0.55}
+_PERIOD_SCALE_DEFAULT  = {"full": 1.0, "reg": 1.0, "1h": 1.0,  "2h": 1.0,  "1i5": 0.55}
+# Back-compat alias (same values as the original module-level constant): a
+# sport-blind lookup is still meaningful for football, which is what earlier
+# code and tests that reference PERIOD_SCALE directly assume.
+PERIOD_SCALE = _PERIOD_SCALE_FOOTBALL
+
+def _period_scale(period: str, sport: str) -> float:
+    table = _PERIOD_SCALE_FOOTBALL if sport == "football" else _PERIOD_SCALE_DEFAULT
+    return table.get(period, 1.0)
 
 
 @lru_cache(maxsize=4096)
@@ -254,7 +263,7 @@ def lambdas_from_market(p_home: Optional[float], p_draw: Optional[float], p_away
 def grid_for_period(lh: float, la: float, period: str, sport: str) -> ScoreGrid:
     """Memoised: the same (lambdas, period, sport) always yields the same grid,
     so an event's markets share one grid instead of rebuilding it per market."""
-    s = PERIOD_SCALE.get(period, 1.0)
+    s = _period_scale(period, sport)
     return ScoreGrid(lh * s, la * s, DEFAULT_RHO.get(sport, 0.0), MAX_GOALS.get(sport, 10))
 
 

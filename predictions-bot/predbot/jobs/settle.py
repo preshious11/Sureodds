@@ -154,6 +154,60 @@ def _prefetch(resolver: ResultsResolver, rows, now: datetime, cache: Dict[str, M
         list(pool.map(work, groups.values()))
 
 
+def _harvest_elo_from_espn(resolver: "ResultsResolver", db: Database, elo: Elo) -> int:
+    """Feed every final ESPN scoreboard result into Elo, so ratings accumulate
+    from the full day's slate rather than only from the bot's own picks.
+    Zero extra API calls: ESPN caches boards in memory for the run.
+    Returns the number of new results learned."""
+    from predbot.markets.competitions import COMPETITIONS
+    from predbot.util.timeutil import utcnow
+
+    espn = resolver.providers.get("espn")
+    if espn is None or not hasattr(espn, "_days") or not hasattr(espn, "_candidates"):
+        return 0
+
+    learned = 0
+    for comp in COMPETITIONS:
+        if not comp.espn or not comp.sport:
+            continue
+        for (espn_slug, day_str, _groups), events in list(espn._days.items()):
+            if espn_slug != comp.espn:
+                continue
+            for c in espn._candidates(comp, events):
+                # Only process finals
+                from predbot.providers.espn import FINAL as ESPN_FINAL
+                name = str(((c.get("status") or {}).get("type") or {}).get("name", "")).upper()
+                if name not in ESPN_FINAL:
+                    continue
+                sides = c.get("competitors") or []
+                from predbot.providers.espn import _by_side, _num
+                pair = _by_side(sides)
+                if pair is None:
+                    continue
+                h, a = pair
+                hs = _num(h.get("score"))
+                as_ = _num(a.get("score"))
+                if hs is None or as_ is None:
+                    continue
+                # Use the same names ESPN would match on (first displayName)
+                from predbot.providers.espn import _names
+                h_name = next(iter(_names(h)), None)
+                a_name = next(iter(_names(a)), None)
+                if not h_name or not a_name:
+                    continue
+                when_str = str(c.get("date") or "")
+                from predbot.util.timeutil import parse_iso
+                when = parse_iso(when_str)
+                if when is None:
+                    continue
+                key = f"{comp.sport}|{h_name}|{a_name}|{when.strftime('%Y%m%d')}"
+                if not db.result_seen(key):
+                    db.mark_result_seen(key, hs, as_)
+                    elo.update(comp.sport, h_name, a_name, hs, as_)
+                    learned += 1
+    return learned
+
+
 def run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]:
     """Settle every pending pick whose event should be over. Never raises for a
     single pick: a provider or data error is counted in ``errors`` and the run
@@ -181,5 +235,11 @@ def run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]:
             Calibrator(db).refit()
         except (ValueError, KeyError, TypeError) as e:
             log.error("calibration refit failed (probabilities may be stale): %s", e)
+    try:
+        harvested = _harvest_elo_from_espn(resolver, db, elo)
+        if harvested:
+            log.info("settlement: harvested %d new Elo results from ESPN scoreboards", harvested)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Elo harvest from ESPN failed (non-fatal): %s", e)
     log.info("settlement: %s", counts)
     return counts
