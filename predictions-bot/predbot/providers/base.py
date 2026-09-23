@@ -133,7 +133,7 @@ class Event:
 
 @dataclass
 class MatchResult:
-    status: str                                   # final | in_progress | postponed | cancelled | unknown
+    status: str                                   # scheduled | in_progress | final | postponed | cancelled | unknown
     scores: Dict[str, Tuple[float, float]] = field(default_factory=dict)   # period -> (home, away) points
     stats: Dict[Tuple[str, str], Tuple[float, float]] = field(default_factory=dict)  # (stat, period) -> (home, away)
     odd_scores: Dict[str, float] = field(default_factory=dict)   # provider odd id -> settled stat value

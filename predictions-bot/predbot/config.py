@@ -288,6 +288,8 @@ class Config:
     model_shrink: float = field(default_factory=lambda: _float("MODEL_SHRINK_TO_MARKET", 0.80))
 
     # Schedule
+    live_updates_enabled: bool = field(default_factory=lambda: _bool("LIVE_UPDATES_ENABLED", True))
+    live_poll_minutes: int = field(default_factory=lambda: _int("LIVE_POLL_MINUTES", 5))
     timezone: str = field(default_factory=lambda: _env("TIMEZONE", "Africa/Lagos"))
     # POST_TIME is in TIMEZONE; every subscriber receives the same scheduled instant.
     post_time: str = field(default_factory=lambda: _env("POST_TIME", "09:00"))
@@ -313,6 +315,8 @@ class Config:
         (min > max, an odds target <= 1.0, a probability outside [0,1]) that
         would otherwise only surface downstream as an empty/broken selection
         pipeline with nothing pointing back at the config."""
+        if self.live_poll_minutes < 1:
+            raise ValueError("LIVE_POLL_MINUTES must be >= 1")
         if self.price_mode not in ("median", "best"):
             log.warning("Config: PRICE_MODE=%r is not median|best - using median", self.price_mode)
             self.price_mode = "median"

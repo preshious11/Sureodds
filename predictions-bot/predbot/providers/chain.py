@@ -278,6 +278,8 @@ class ResultsResolver:
 
     def __init__(self, providers: Dict[str, BaseProvider]):
         self.providers = providers
+        # Live and fallback settlement share result-provider caches/rate limiters.
+        self.run_lock = threading.RLock()
         # settlement looks results up from one thread per source (see jobs.settle): a provider is asked by one
         # thread at a time, so its per-run response caches and rate limiter behave exactly as when serial
         self._locks: Dict[str, threading.RLock] = {}

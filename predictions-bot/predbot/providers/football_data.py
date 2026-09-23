@@ -43,6 +43,7 @@ LEAGUE_TO_COMPETITION = {ident: c.football_data for c in COMPETITION_TABLE if c.
                          for ident in (c.sharp, c.oddsapi, c.sgo) if ident}
 
 STATUS_MAP = {
+    "SCHEDULED": "scheduled", "TIMED": "scheduled",
     "FINISHED": "final", "AWARDED": "final",
     "IN_PLAY": "in_progress", "PAUSED": "in_progress", "LIVE": "in_progress",
     "POSTPONED": "postponed", "SUSPENDED": "postponed",

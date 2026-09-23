@@ -513,3 +513,28 @@ def yesterday_pick_line(row, kind: Optional[str]) -> str:
     outcome = display_text(pick_outcome(row), row["home"], row["away"], sport)
     return (f"{lead}🎯 {esc(outcome)} · {esc(display_name(row['home'], sport))} vs {esc(display_name(row['away'], sport))}"
             f" · @{float(row['price']):.2f}")
+
+
+def live_match_message(rows, result, ended: bool = False) -> str:
+    """One fixture, with only predictions from this recipient's delivered cards."""
+    from types import SimpleNamespace
+    row = rows[0]
+    sport = row["sport"]
+    home, away = display_name(row["home"], sport), display_name(row["away"], sport)
+    score = result.score("full") if ended else None
+    match = f"{home} {score[0]:g}–{score[1]:g} {away}" if score else f"{home} vs {away}"
+    lines = ["🏁 Match Ended" if ended else "🟢 Match Started", "",
+             f"{SPORT_ICON.get(sport, SPORT_ICON['other'])} {sport_name(sport)}"]
+    if row["league"]:
+        lines.append(f"🏆 {esc(row['league'])}")
+    lines.extend([esc(match), ""])
+    icons = {**RESULT_ICON, "half_won": "✅", "half_lost": "❌", "void": "⚪"}
+    for pick in rows:
+        outcome = format_outcome(SimpleNamespace(**dict(pick))) or "Prediction"
+        label = esc(display_text(outcome, pick["home"], pick["away"], sport))
+        if ended:
+            status = pick["status"]
+            lines.append(f"{icons.get(status, '⏳')} {label} — {status.replace('_', ' ').upper()}")
+        else:
+            lines.append(f"🎯 {label}")
+    return "\n".join(lines)
