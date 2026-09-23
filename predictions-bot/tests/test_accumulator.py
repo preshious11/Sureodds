@@ -63,7 +63,7 @@ def test_empty_list_combined_odds_is_neutral():
 def test_empty_pool_returns_empty_sections_and_placeholder_card():
     ps = select([], cfg(), dt())
     assert ps.top == [] and ps.daily == []
-    card = picks_message([], [], DAY, "UTC", None)
+    card = picks_message([], [], DAY, "UTC")
     assert "Predictions being analyzed" in card
     assert "Combined odds" not in card
 
@@ -92,13 +92,15 @@ def test_no_duplicate_outcome_between_top_and_daily_sections():
                 assert not is_equivalent(t.line, d.line)
 
 
-def test_same_match_with_different_outcomes_is_allowed():
+def test_same_match_with_different_outcomes_is_capped_at_one_pick():
+    """MAX_PICKS_PER_EVENT=1: two legs on one match are correlated, so even
+    genuinely different outcomes never both make the slate."""
     now = dt()
     e = ev(1)
     pool = [sc(e, "result3", "home", 0.70, 1.80),
             sc(e, "total", "over", 0.64, 1.80, line=2.5)]
     ps = select(pool, cfg(), now)
-    assert len(ps.all()) == 2        # both survive, distinct outcomes
+    assert len(ps.all()) == 1
 
 
 # -------------------------------------------------- section total counts
@@ -123,9 +125,9 @@ def test_daily_section_lands_in_the_10_to_20_window():
     now = dt()
     pool = [sc(ev(i), "result3", "home", 0.62, 1.45) for i in range(40)]
     ps = select(pool, cfg(), now)
-    ticket = math.prod(s.price for s in ps.all())
+    ticket = math.prod(s.price for s in ps.daily)
     c = cfg()
-    assert c.daily_odds_min <= ticket <= c.daily_odds_max      # 10..20 combined
+    assert c.daily_odds_min <= ticket <= c.daily_odds_max      # 10..20: the Daily ALONE, the Top is not counted
     assert len(ps.all()) <= c.daily_target                     # hard pick cap
 
 
@@ -134,7 +136,9 @@ def test_total_counts_are_reported_per_section():
     pool = [sc(ev(i), "result3", "home", 0.70, 1.45) for i in range(12)]
     ps = select(pool, cfg(), now)
     assert len(ps.top) + len(ps.daily) == len(ps.all())
-    card = picks_message(ps.top, ps.daily, DAY, "UTC", None)
-    odds_lines = [ln for ln in card.splitlines() if re.fullmatch(r"Odds: \d+\.\d{2}", ln)]
+    card = picks_message(ps.top, ps.daily, DAY, "UTC")
+    odds_lines = [ln for ln in card.splitlines() if ln.startswith("💰")]
     assert len(odds_lines) == len(ps.all())                   # one odds line per pick
-    assert card.count("Confidence level:") == len(ps.all())   # one block per pick
+    assert card.count("📊") == len(ps.all())                  # one block per pick
+    headers = [ln for ln in card.splitlines() if ln.startswith("🎟 Combined odds")]
+    assert [int(re.search(r"· (\d+) picks?", h).group(1)) for h in headers] ==         [n for n in (len(ps.top), len(ps.daily)) if n]        # each header counts its own ticket

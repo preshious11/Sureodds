@@ -5,32 +5,33 @@ failed providers after the configured cooldown. Recaps use already-fetched text.
 send is de-duplicated per (kind, card date, chat) in the ``deliveries`` table, so
 restarts and repeated job runs never double-send.
 
-Picks land at 09:30 in each subscriber's OWN zone (their stored IANA zone, else
-``TIMEZONE``), and only for people whose subscription already existed at that
-moment: joining, /start or re-subscribing after 09:30 is never itself a reason to
-be sent today's card, which arrives with the next scheduled broadcast instead.
+Picks land at ``DELIVERY_TIME`` (default 09:30) in ``TIMEZONE`` - ONE shared instant for
+every subscriber. A subscriber's own zone only changes how kick-off times are shown on
+their card. Only people whose subscription already existed at that moment get it:
+joining, /start or re-subscribing after it is never itself a reason to be sent today's
+card, which arrives with the next scheduled broadcast instead.
 Onboarding is therefore menu-only - it never triggers a prediction send.
 """
 from __future__ import annotations
 
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import Callable, Optional, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
-from predbot.bot.format import pick_line_from_record, summary_card
+from predbot.bot.format import (DAILY_TITLE, TOP_TITLE, pick_line_from_record, picks_card, summary_card,
+                                zone_label)
 from predbot.bot.telegram import Telegram
 from predbot.cache.models import DailySnapshot
 from predbot.storage.db import Database
-from predbot.util.timeutil import resolve_timezone, local_reached, parse_iso, to_local, utcnow
+from predbot.util.timeutil import parse_hhmm, resolve_timezone, local_reached, parse_iso, to_local, utcnow
 
 log = logging.getLogger(__name__)
 
 #: Resolves the canonical card to deliver; ``UnifiedFetcher.published_snapshot``.
 SnapshotProvider = Callable[[], Optional[DailySnapshot]]
 
-
-#: Picks land at 9:30 in each subscriber's OWN zone, not one shared instant.
-BROADCAST_HOUR, BROADCAST_MINUTE = 9, 30
 
 
 def subscriber_tz(row, fallback_tz: str) -> str:
@@ -74,41 +75,43 @@ def _joined_before_target(row, date_str: str, hour: int, minute: int, user_tz: s
     return True
 
 
-def picks_text(snapshot: DailySnapshot, tz: str) -> str:
-    """THE subscriber summary card (single canonical renderer, no drift).
+#: the two messages of a day's picks, in the order they are sent; each is recorded in ``deliveries`` / ``posts``
+#: under its own kind so a retry after a partial failure sends only what is missing
+PICKS_KINDS = ("picks_top", "picks_daily")
 
-    Every pick line is built by ``pagination.pick_line_from_record`` - the same
-    builder the /top and /daily views use - so a pick cannot render one way in
-    the views and another way here. Ambiguous picks (no explicit outcome) are
-    dropped BEFORE any totals are computed.
-    """
-    top = [pick_line_from_record(p, tz) for p in snapshot.top_picks]
-    daily = [pick_line_from_record(p, tz) for p in snapshot.daily_picks]
-    top = [p for p in top if p.outcome]
-    daily = [p for p in daily if p.outcome]
+
+def picks_messages(snapshot: DailySnapshot, tz: str, now: Optional[datetime] = None) -> List[Tuple[str, str, Dict]]:
+    """THE subscriber cards: ``[(kind, text, keyboard)]`` - the Top card, then the Daily card, each its own message
+    with the four-button keyboard. An empty tier still gets its message (the card says no selection cleared the
+    bar); both tiers empty -> ``[]``.
+
+    Every pick line is built by ``format.pick_line_from_record`` - the same builder the /top and /daily views use.
+    Ambiguous picks (no explicit outcome) are dropped BEFORE any totals are computed."""
+    from predbot.bot.pagination import build_keyboard
+    top = [p for p in (pick_line_from_record(r, tz, None, now) for r in snapshot.top_picks) if p.outcome]
+    daily = [p for p in (pick_line_from_record(r, tz, None, now) for r in snapshot.daily_picks) if p.outcome]
     if not top and not daily:
-        return ""
-    card = summary_card(top, daily)
-    footer = _record_line(snapshot)
-    return f"{card}\n{footer}" if footer else card
+        return []
+    zone = zone_label(tz, snapshot.date)
+    top_text = summary_card(top, [], snapshot.date, zone) if top else picks_card([], snapshot.date, TOP_TITLE, zone=zone)
+    daily_text = summary_card([], daily, snapshot.date, zone) if daily else picks_card([], snapshot.date, DAILY_TITLE, zone=zone)
+    return [("picks_top", top_text, build_keyboard("top", 0, 1)), ("picks_daily", daily_text, build_keyboard("daily", 0, 1))]
 
 
-def _record_line(snapshot: DailySnapshot) -> Optional[str]:
-    """7-day record footer - only once there is settled history worth showing."""
-    if snapshot.stats is None or not snapshot.stats.all.n:
-        return None
-    seven = snapshot.stats.to_raw()["last7"]
-    return f"📊 7d: {seven['won']}W-{seven['lost']}L · ROI {seven['roi']:+.1f}%"
+def picks_text(snapshot: DailySnapshot, tz: str, now: Optional[datetime] = None) -> str:
+    """Both cards as one text (the /lastrun 'slates as sent' view and the dry-run print). What is SENT is
+    :func:`picks_messages`, one message per card."""
+    return "\n\n".join(text for _, text, _ in picks_messages(snapshot, tz, now))
 
 
 def deliver_picks(db: Database, cfg, tg: Telegram,
                   snapshot: Union[DailySnapshot, SnapshotProvider, None],
                   now: Optional[datetime] = None) -> int:
-    """Send today's card to each subscriber at 9:30 AM in THEIR OWN timezone.
+    """Send today's card to every subscriber at ``DELIVERY_TIME`` in ``TIMEZONE``.
 
-    Deliberately not one shared broadcast instant: a subscriber in Lagos and one
-    in New York each get the card at their own 9:30, and the ``deliveries`` table
-    keeps it to once per person per day.
+    One shared instant (default 09:30 Lagos): a subscriber in New York gets it at the
+    same moment as one in Lagos, with kick-offs shown in their own zone, and the
+    ``deliveries`` table keeps it to once per person per day.
 
     Accepts either a snapshot or a zero-argument provider (``published_snapshot``),
     so the scheduler can poll without forcing a provider fetch.
@@ -119,9 +122,9 @@ def deliver_picks(db: Database, cfg, tg: Telegram,
         snapshot = snapshot()
     if snapshot is None or not (snapshot.top_picks or snapshot.daily_picks):
         return 0
+    hour, minute = parse_hhmm(cfg.delivery_time, "09:30")
     return _deliver_per_user_at_time(db, cfg, tg, "picks", snapshot.date, snapshot,
-                                     BROADCAST_HOUR, BROADCAST_MINUTE, "daily picks",
-                                     now=now)
+                                     hour, minute, "daily picks", now=now)
 
 
 def deliver_recap(db: Database, cfg, tg: Telegram, text: Optional[str]) -> int:
@@ -132,26 +135,10 @@ def deliver_recap(db: Database, cfg, tg: Telegram, text: Optional[str]) -> int:
     return _deliver_recap_after_fixtures(db, cfg, tg, "recap", yesterday, text, "recap")
 
 
-def _deliver(db: Database, tg: Telegram, kind: str, date_str: str, text: str, label: str) -> int:
-    if not tg.token:
-        return 0  # no Telegram token configured - nothing to deliver
-    sent = 0
-    for row in db.subscribers_active():
-        chat_id = str(row["chat_id"])
-        if db.delivery_done(kind, date_str, chat_id):
-            continue
-        if tg.send(text, chat_id=chat_id):
-            db.mark_delivery(kind, date_str, chat_id)
-            sent += 1
-    if sent:
-        log.info("broadcast: %s delivered to %d subscriber(s)", label, sent)
-    return sent
-
-
 def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_str: str,
                               snapshot: DailySnapshot, target_hour: int, target_minute: int,
                               label: str, now: Optional[datetime] = None) -> int:
-    """Send to each subscriber once their target time has arrived in their zone.
+    """Send to each subscriber once the target time has arrived in ``cfg.timezone``.
 
     "At or past" rather than an exact-minute window: the scheduler polls every few
     minutes, so a narrow window would silently skip a subscriber whose minute was
@@ -164,33 +151,98 @@ def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_s
     if not tg.token:
         return 0
     now = now or utcnow()
-    sent = 0
+    local = to_local(now, cfg.timezone)                  # one instant for every subscriber
+    if local.strftime("%Y-%m-%d") < date_str:
+        return 0                          # the card's day hasn't started yet
+    if (local.hour, local.minute) < (target_hour, target_minute):
+        return 0                          # DELIVERY_TIME hasn't arrived
+    done = {k: db.deliveries_done(k, date_str) for k in PICKS_KINDS}       # one query per kind, not one per subscriber
+    cards: Dict[str, List[Tuple[str, str, Dict]]] = {}     # the cards differ only by the subscriber's zone: render once per zone
+    pending: List[Tuple[str, List[Tuple[str, str, Dict]]]] = []
     for row in db.subscribers_active():
         chat_id = str(row["chat_id"])
-        if db.delivery_done(kind, date_str, chat_id):
+        if all(chat_id in done[k] for k in PICKS_KINDS):
             continue
-        user_tz = subscriber_tz(row, cfg.timezone)
-        local = to_local(now, user_tz)
-        if local.strftime("%Y-%m-%d") < date_str:
-            continue                      # their day hasn't started yet
-        if (local.hour, local.minute) < (target_hour, target_minute):
-            continue                      # their 9:30 hasn't arrived
-        if not _joined_before_target(row, date_str, target_hour, target_minute, user_tz):
+        user_tz = subscriber_tz(row, cfg.timezone)      # display only
+        if not _joined_before_target(row, date_str, target_hour, target_minute, cfg.timezone):
             continue                      # joined after today's card was due - starts tomorrow
         # Deliberately "at or past" rather than an exact-minute window: the
         # scheduler polls every few minutes, so a narrow window would silently
-        # skip a subscriber whose minute was never sampled.  delivery_done()
-        # is what keeps this to one card per person per day.
-        text = picks_text(snapshot, user_tz)
-        if not text:
-            continue                      # nothing explicit to show - never send a blank card
-        if tg.send(text, chat_id=chat_id):
-            db.mark_delivery(kind, date_str, chat_id)
-            sent += 1
+        # skip a subscriber whose minute was never sampled.  deliveries is
+        # what keeps this to one card per person per day.
+        if user_tz not in cards:
+            cards[user_tz] = picks_messages(snapshot, user_tz, now=now)
+        missing = [m for m in cards[user_tz] if chat_id not in done[m[0]]]
+        if missing:                       # nothing explicit to show -> never a blank card
+            pending.append((chat_id, missing))
+    sent = _send_all(db, tg, date_str, pending)
     if sent:
-        log.info("broadcast: %s delivered to %d subscriber(s) at their %02d:%02d",
+        log.info("broadcast: %s delivered to %d subscriber(s) at %02d:%02d",
                  label, sent, target_hour, target_minute)
     return sent
+
+
+#: Below this many recipients the sends stay sequential (order, and nothing to gain from threads).
+PARALLEL_MIN = 8
+#: Telegram allows ~30 messages/s to different chats; stay well under it.
+SENDS_PER_SECOND = 20.0
+SEND_WORKERS = 8
+RECORD_BATCH = 20                         # deliveries recorded in one transaction per this many sends
+
+
+def _send_chat(tg: Telegram, chat_id: str, messages: List[Tuple[str, str, Dict]]) -> List[str]:
+    """One chat's messages, in order. Stops at the first failure (a Daily must never arrive before its Top), and
+    returns the kinds that went out - a retry sends only what is missing."""
+    ok: List[str] = []
+    for kind, text, markup in messages:
+        if not tg.send(text, chat_id=chat_id, reply_markup=markup):
+            break
+        ok.append(kind)
+    return ok
+
+
+def _send_all(db: Database, tg: Telegram, date_str: str,
+              pending: List[Tuple[str, List[Tuple[str, str, Dict]]]]) -> int:
+    """Send each chat its missing messages; record every success per kind in ``deliveries``. Returns how many chats
+    received at least one message. The 20 msg/s cap counts every message, both cards of a chat included."""
+    if len(pending) < PARALLEL_MIN:
+        served = 0
+        for chat_id, messages in pending:
+            ok = _send_chat(tg, chat_id, messages)
+            for kind in ok:
+                db.mark_delivery(kind, date_str, chat_id)
+            served += bool(ok)
+        return served
+    served = 0
+    interval = 1.0 / SENDS_PER_SECOND
+    with ThreadPoolExecutor(max_workers=SEND_WORKERS, thread_name_prefix="deliver") as pool:
+        futures, next_slot = [], time.monotonic()
+        for chat_id, messages in pending:
+            wait = next_slot - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)                                  # <= SENDS_PER_SECOND messages per second
+            next_slot = max(next_slot, time.monotonic()) + interval * len(messages)
+            futures.append((chat_id, pool.submit(_send_chat, tg, chat_id, messages)))
+        ok: List[Tuple[str, str]] = []
+        for chat_id, fut in futures:
+            try:
+                kinds = fut.result()
+                ok.extend((kind, chat_id) for kind in kinds)
+                served += bool(kinds)
+            except Exception:  # noqa: BLE001 - one failed send never stops the rest; it is retried on the next poll
+                log.exception("broadcast: send to %s raised", chat_id)
+            if len(ok) >= RECORD_BATCH * len(PICKS_KINDS):        # RECORD_BATCH chats' worth of messages
+                _record(db, date_str, ok)
+                ok = []
+        _record(db, date_str, ok)
+    return served
+
+
+def _record(db: Database, date_str: str, sent: List[Tuple[str, str]]) -> None:
+    if sent:
+        with db.transaction():
+            for kind, chat_id in sent:
+                db.mark_delivery(kind, date_str, chat_id)
 
 
 def _get_last_fixture_end_time(db: Database, pick_date: str) -> Optional[datetime]:
@@ -233,10 +285,7 @@ def _deliver_recap_after_fixtures(db: Database, cfg, tg: Telegram, kind: str, da
         fixture_end_local = to_local(last_fixture_end, user_tz)
 
         if local >= fixture_end_local:
-            yesterday_local = (local - timedelta(days=1)).strftime("%Y-%m-%d")
-            recap_rows = stats_mod.rows_for_recap(db, yesterday_local)
-            stats = stats_mod.compute(db, local)
-            personalized_text = recap_message("YESTERDAY", stats_mod.by_sport(recap_rows), stats)
+            personalized_text = recap_message(stats_mod.compute(db, local))
             if tg.send(personalized_text, chat_id=chat_id):
                 db.mark_delivery(kind, date_str, chat_id)
                 sent += 1

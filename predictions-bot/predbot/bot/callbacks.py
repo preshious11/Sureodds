@@ -2,7 +2,7 @@
 
 Routing
     /top /daily /today /stats   typed commands  -> open_view()
-    pg|{view}|{page}            inline buttons  -> open_view()
+    pg|{view}|{page}[|{day}]    inline buttons  -> open_view()
 
 Commands and buttons deliberately share ONE handler: tapping 🏆 /top and typing
 /top render the same snapshot slice with the same keyboard, so there is no
@@ -22,7 +22,7 @@ from predbot.bot.pagination import (VIEW_COMMAND, VIEW_DESC, VIEW_ICON,
                                     view_button_label)
 from predbot.bot.telegram import Telegram, esc
 from predbot.cache.fetcher import UnifiedFetcher
-from predbot.cache.models import VIEW_DAILY, VIEW_STATS, VIEW_TOP
+from predbot.cache.models import VIEW_DAILY, VIEW_STATS, VIEW_TOP, VIEW_YESTERDAY
 from predbot.config import Config
 from predbot.storage.db import Database
 from predbot.util.timeutil import resolve_timezone
@@ -55,13 +55,28 @@ LOCALE_TO_TIMEZONE = {
     "en_NZ": "Pacific/Auckland",
 }
 
+_LOCALES = {k.lower(): v for k, v in LOCALE_TO_TIMEZONE.items()}
+#: A bare English locale (Telegram often sends just "en") defaults to the bot's home market.
+BARE_ENGLISH_TIMEZONE = "Africa/Lagos"
+
+
 def _detect_user_timezone(user: Dict[str, Any]) -> Optional[str]:
-    """Detect a subscriber's timezone from the locale Telegram already sends."""
+    """Detect a subscriber's timezone from the locale Telegram already sends.
+
+    Telegram uses BCP-47 tags (``en-US``, ``pt-br``, bare ``en``) while the table is
+    keyed ``en_US``: hyphens are normalised and the match ignores case. A bare
+    ``en`` maps to Africa/Lagos; anything else unknown returns None (the bot's own
+    zone applies)."""
     if not user:
         return None
-    locale = user.get("language_code") or user.get("language")
-    if locale:
-        return LOCALE_TO_TIMEZONE.get(locale)
+    locale = str(user.get("language_code") or user.get("language") or "").strip()
+    if not locale:
+        return None
+    key = locale.replace("-", "_").lower()
+    if key in _LOCALES:
+        return _LOCALES[key]
+    if key == "en":
+        return BARE_ENGLISH_TIMEZONE
     return None
 
 
@@ -73,9 +88,20 @@ COMMANDS: Dict[str, str] = {
     "/daily": VIEW_DAILY,    # every prediction for today
     "/today": VIEW_DAILY,    # alias kept for older clients
     "/stats": VIEW_STATS,    # quick summary
+    "/yesterday": VIEW_YESTERDAY,   # the audit trail: every pick from yesterday with its result
 }
 
 WAVING = "\U0001F44B"        # 👋
+
+#: What Telegram lists when a reader types "/" (registered at startup with setMyCommands).
+BOT_COMMANDS = [
+    {"command": "top", "description": "Top picks of the day"},
+    {"command": "daily", "description": "Daily picks"},
+    {"command": "stats", "description": "Results so far: yesterday and the last 7 days"},
+    {"command": "yesterday", "description": "Every pick from yesterday, with its result"},
+    {"command": "timezone", "description": "Show kick-off times in your time zone"},
+    {"command": "help", "description": "What the bot can do"},
+]
 
 
 def command_view(cmd: str) -> Optional[str]:
@@ -87,7 +113,7 @@ def command_view(cmd: str) -> Optional[str]:
 
 
 def is_view_command(cmd: str) -> bool:
-    """True for /top, /daily, /today and /stats (with or without the slash)."""
+    """True for /top, /daily, /today, /stats and /yesterday (with or without the slash)."""
     return command_view(cmd) is not None
 
 
@@ -103,11 +129,18 @@ def commands_text() -> str:
                      for v in (VIEW_TOP, VIEW_DAILY, VIEW_STATS))
 
 
+#: The welcome screen's command list, kept exactly as it has always read (/start is unchanged); /help lists all
+#: the view commands via commands_text().
+WELCOME_COMMANDS = ("<b>🏆 /top</b> – Top picks of the day\n"
+                    "<b>📋 /daily</b> – Daily picks · Accumulator slip\n"
+                    "<b>📊 /stats</b> – See prediction results")
+
+
 def welcome_message(first_name: str = "there") -> str:
-    """The /start screen: one greeting line, then the three commands."""
+    """The /start screen: one greeting line, then the commands."""
     return (f"{WAVING} Hi, {esc(first_name)}\n\n"
             "Use the menu below or these commands:\n\n"
-            f"{commands_text()}")
+            f"{WELCOME_COMMANDS}")
 
 
 def menu_markup() -> Dict[str, Any]:
@@ -118,7 +151,7 @@ def menu_markup() -> Dict[str, Any]:
     """
     return {"inline_keyboard": [
         [view_button(VIEW_TOP), view_button(VIEW_DAILY)],
-        [view_button(VIEW_STATS)],
+        [view_button(VIEW_STATS), view_button(VIEW_YESTERDAY)],
     ]}
 
 
@@ -136,21 +169,40 @@ def handle_start(db: Database, tg: Telegram, chat_id: str, user: Optional[Dict[s
 
 
 # --------------------------------------------------------------------- routing
+NAVIGATION_MODES = ("new", "edit_pages", "edit")
+DEFAULT_NAVIGATION = "edit_pages"
+
+
+def navigation_mode(cfg: Config) -> str:
+    """``VIEW_NAVIGATION``: edit_pages (default) | new | edit - anything else counts as edit_pages."""
+    mode = str(getattr(cfg, "view_navigation", DEFAULT_NAVIGATION) or DEFAULT_NAVIGATION)
+    return mode if mode in NAVIGATION_MODES else DEFAULT_NAVIGATION
+
+
+def _edits(mode: str, page_turn: bool) -> bool:
+    """Does a button press edit the pressed message (True) or send a new one (False)?"""
+    return mode == "edit" or (mode == "edit_pages" and page_turn)
+
+
 def open_view(view: str, *, service: UnifiedFetcher, tg: Telegram, cfg: Config,
               chat_id: str, db: Optional[Database] = None, page: int = 0,
               message_id: Optional[int] = None,
-              page_size: int = pagination.PAGE_SIZE_DEFAULT) -> Tuple[str, Dict]:
+              page_size: int = pagination.PAGE_SIZE_DEFAULT,
+              day: Optional[str] = None, edit: bool = True) -> Tuple[str, Dict]:
     """Render ``view`` and deliver it - the single handler for taps and types.
 
-    A button press edits the message it came from, a typed command posts a new
-    one; both receive exactly the same text and keyboard.
+    A typed command posts a new message. A button press posts a new message too, unless ``edit`` and the
+    message it came from are given (VIEW_NAVIGATION=edit / edit_pages); both receive the same text and
+    keyboard. ``day`` (page-turn buttons carry it) renders that day's picks instead of today's.
     """
     snapshot = service.get_daily_snapshot()          # cache-first read
+    if day and view in (VIEW_TOP, VIEW_DAILY) and day != snapshot.date and hasattr(service, "snapshot_for"):
+        snapshot = service.snapshot_for(day)         # an old message keeps turning ITS day's pages
     timezone = resolve_timezone(db.subscriber_timezone(chat_id) if db is not None else "",
                                 cfg.timezone)
     text, markup = pagination.render_view(snapshot, view, page, page_size,
-                                          timezone, db=db)
-    if message_id:
+                                          timezone, db=db, day=day)
+    if message_id and edit:
         tg.edit_message_text(chat_id, int(message_id), text, reply_markup=markup)
     else:
         tg.send(text, chat_id=chat_id, reply_markup=markup)
@@ -167,49 +219,77 @@ def handle_command(cmd: str, chat_id: str, *, service: UnifiedFetcher, tg: Teleg
     view = command_view(cmd)
     if view is None:
         return False
-    open_view(view, service=service, tg=tg, cfg=cfg, chat_id=chat_id, db=db,
-              page_size=page_size)
+    try:
+        open_view(view, service=service, tg=tg, cfg=cfg, chat_id=chat_id, db=db,
+                  page_size=page_size)
+    except Exception as exc:  # noqa: BLE001
+        # Match the button path (handle_callback): one bad pick/price/network
+        # blip must not crash the whole command loop for a typed command.
+        log.exception("command %r failed: %s", cmd, exc)
+        tg.send("Something went wrong.", chat_id=chat_id)
     return True
 
 
 def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram,
                     cfg: Config, db: Optional[Database] = None,
                     page_size: int = pagination.PAGE_SIZE_DEFAULT) -> None:
-    """Process one Telegram callback_query update (an inline keyboard press)."""
+    """Process one Telegram callback_query update (an inline keyboard press).
+
+    With the default ``VIEW_NAVIGATION=edit_pages`` a page turn edits the message it was pressed on and a view
+    switch sends a new message (the chat keeps every view it opened; older messages keep working buttons);
+    ``new`` sends a new message for every press, ``edit`` edits for every press. The press is always answered so the button stops spinning."""
     cb_id = str(cb.get("id") or "")
     data = cb.get("data") or ""
     message = cb.get("message") or {}
     chat_id = str((message.get("chat") or {}).get("id"))
     message_id = message.get("message_id")
+    mode = navigation_mode(cfg)
     try:
         if data == "menu":
             user = cb.get("from") or {}
-            if message_id:
-                tg.edit_message_text(chat_id, int(message_id),
-                                     welcome_message(str(user.get("first_name") or "there")),
-                                     reply_markup=menu_markup())
+            welcome = welcome_message(str(user.get("first_name") or "there"))
+            if message_id and _edits(mode, page_turn=False):
+                tg.edit_message_text(chat_id, int(message_id), welcome, reply_markup=menu_markup())
+            else:
+                tg.send(welcome, chat_id=chat_id, reply_markup=menu_markup())
             tg.answer_callback_query(cb_id, text="Menu")
             return
-        parsed = pagination.decode_callback(data)
+        parsed = pagination.parse_callback(data)
         if parsed is None:
             tg.answer_callback_query(cb_id)      # e.g. the page indicator button
             return
-        view, page = parsed
+        view, page, day = parsed
+        page_turn = day is not None              # only page-turn buttons carry the day of their card
+        edit = _edits(mode, page_turn)
         open_view(view, service=service, tg=tg, cfg=cfg, chat_id=chat_id, db=db,
-                  page=page, message_id=message_id, page_size=page_size)
-        tg.answer_callback_query(cb_id, text=_toast(view, page, page_size,
-                                                    service.get_daily_snapshot()))
+                  page=page, message_id=message_id, page_size=page_size, day=day, edit=edit)
+        if mode == "edit":
+            toast = _toast(view, page, page_size, service.get_daily_snapshot())
+        else:
+            toast = _new_toast(view, page, page_turn, service, day, page_size)
+        tg.answer_callback_query(cb_id, text=toast)
     except Exception as exc:  # noqa: BLE001
         log.exception("callback %r failed: %s", data, exc)
         if cb_id:
             tg.answer_callback_query(cb_id, text="Something went wrong.", show_alert=True)
 
 
+def _new_toast(view: str, page: int, page_turn: bool, service, day: Optional[str], size: int) -> str:
+    """The toast when a press sent a message: 'Daily picks ↓' for a view, 'Page 2 of 3' for a turn."""
+    if page_turn and view in (VIEW_TOP, VIEW_DAILY):
+        snapshot = service.snapshot_for(day) if day and hasattr(service, "snapshot_for") else service.get_daily_snapshot()
+        count = len(snapshot.view_items(view))
+        return f"Page {pagination.clamp_page(page, count, size) + 1} of {pagination.total_pages(count, size)}"
+    if page_turn:
+        return f"Page {page + 1}"
+    return f"{pagination.VIEW_LABEL[view]} ↓"
+
+
 def _toast(view: str, page: int, size: int, snapshot) -> str:
     """Short confirmation shown at the top of the chat when a button is used."""
-    if view == VIEW_STATS:
-        return "Stats"
+    if view in (VIEW_STATS, VIEW_YESTERDAY):
+        return pagination.VIEW_LABEL[view]
     count = len(snapshot.view_items(view))
     page = pagination.clamp_page(page, count, size)   # toast matches the rendered page
-    return (f"{pagination.VIEW_TITLES[view]} · "
+    return (f"{pagination.VIEW_LABEL[view]} · "
             f"page {page + 1}/{pagination.total_pages(count, size)}")

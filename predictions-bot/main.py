@@ -5,12 +5,15 @@ import logging
 
 from predbot.bot import broadcast
 from predbot.bot.commands import CommandLoop
+from predbot.bot.runtime import CommandLoopSupervisor
 from predbot.bot.telegram import Telegram
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import load_config
 from predbot.jobs import daily_picks, recap, settle
 from predbot.jobs.scheduler import DailyJob, DynamicJob, IntervalJob, loop
 from predbot.log import setup_logging
+from predbot.config import require_provider_keys, startup_lines
+from predbot.markets.settlement import log_coverage
 from predbot.providers.chain import ProviderChain, ResultsResolver, build_providers
 from predbot.storage.db import Database
 from predbot.util.timeutil import to_local, utcnow
@@ -23,12 +26,14 @@ DELIVERY_POLL_MINUTES = 5
 
 def main() -> None:
     cfg = load_config()
-    setup_logging(cfg.log_level)
+    setup_logging(cfg.log_level, cfg.log_file)
+    for line in startup_lines(cfg):
+        log.info(line)
+    require_provider_keys(cfg)
     db = Database(cfg.db_path)
     providers = build_providers(cfg, db)
-    if not providers:
-        log.error("No API keys configured - set at least one of API_FOOTBALL_KEY / SPORTSGAMEODDS_KEY / SHARPAPI_KEY")
-    chain = ProviderChain(providers, cfg.provider_order, cfg.chain_min_events)
+    log_coverage(cfg, providers)
+    chain = ProviderChain(providers, cfg.provider_order)
     resolver = ResultsResolver(providers)
     tg = Telegram(cfg.telegram_token, cfg.telegram_chat_id)
     service = UnifiedFetcher(chain, db, cfg)
@@ -41,7 +46,10 @@ def main() -> None:
         settle.run(resolver, db, cfg)
 
     def job_recap():
-        job_settle()               # make sure yesterday is graded first
+        try:
+            job_settle()           # make sure yesterday is graded first
+        except Exception:  # noqa: BLE001 - a settlement failure must not cancel the recap
+            log.exception("settlement before recap failed; recap continues")
         text = recap.run(db, cfg, tg)                # channel mirror (optional)
         if text:
             db.set_kv("recap_text", text)            # cache recap for broadcast job
@@ -53,12 +61,16 @@ def main() -> None:
             broadcast.deliver_recap(db, cfg, tg, text)
 
     def job_deliver():
-        """Poll: hand the card to every subscriber whose own 9:30 AM has arrived."""
+        """Poll: hand the card to every subscriber once DELIVERY_TIME has arrived."""
         # Prevent API calls during delivery polling; only use cached data.
         snapshot = service.get_daily_snapshot(allow_api_call=False)
         if not snapshot.total_picks():
             return
         broadcast.deliver_picks(db, cfg, tg, snapshot)
+
+    def job_retry_partial():
+        """A PARTIAL slate is retried until DELIVERY_TIME, while nothing has been sent."""
+        service.retry_partial()
 
     def job_picks():
         daily_picks.run(chain, db, cfg, tg, service=service)          # channel mirror (optional)
@@ -72,12 +84,14 @@ def main() -> None:
         DailyJob("recap", cfg.recap_time, cfg.timezone, job_recap),
         DailyJob("picks", cfg.post_time, cfg.timezone, job_picks),
         # Per-subscriber local-time gates, so both must poll rather than fire once.
-        IntervalJob("deliver", DELIVERY_POLL_MINUTES, job_deliver),   # each subscriber's 9:30 AM
+        IntervalJob("deliver", DELIVERY_POLL_MINUTES, job_deliver),   # everyone's card at DELIVERY_TIME
+        IntervalJob("retry_partial", max(1, cfg.cache_retry_seconds // 60), job_retry_partial),
         IntervalJob("broadcast_recap", 5, job_broadcast_recap),       # their last fixture ending
         DynamicJob("settle", cfg.timezone, compute_settle_deadline, job_settle),
     ]
 
     commands = None
+    supervisor = None
     if cfg.enable_commands and cfg.telegram_token:
         # Users DM the bot directly (/start menu); TELEGRAM_CHAT_ID is optional
         # and only mirrors the daily posts to a channel when set.
@@ -86,19 +100,31 @@ def main() -> None:
             "/settle": lambda: f"Settlement: {settle.run(resolver, db, cfg)}",
             "/recap": lambda: recap.run(db, cfg, tg, force=True) or "Nothing to recap.",
         }
-        commands = CommandLoop(tg, db, cfg, actions, service=service, page_size=cfg.page_size)
-        commands.start()
+
+        def start_commands():
+            loop_thread = CommandLoop(tg, db, cfg, actions, service=service,
+                                      page_size=cfg.page_size)
+            loop_thread.start()
+            return loop_thread
+
+        supervisor = CommandLoopSupervisor(start_commands)
+        commands = supervisor.start()
 
     def check_commands():
-        if commands is not None and not commands.is_alive():
-            raise RuntimeError("Telegram command consumer stopped; refusing a scheduler-only zombie process")
+        """A dead Telegram poller costs commands, never picks or delivery.
+
+        It used to raise here and kill the worker: one transient Telegram outage
+        silenced the whole bot.  Now the poller is restarted (with backoff while
+        the restart keeps failing) and the scheduler keeps running.
+        """
+        if supervisor is not None:
+            supervisor.ensure()
 
     try:
         loop(jobs, health_check=check_commands)
     finally:
-        if commands is not None:
-            commands.stop()
-            commands.join(timeout=35)
+        if supervisor is not None:
+            supervisor.stop()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,811 @@
+{
+ "events": [
+  {
+   "id": "189-2026",
+   "date": "2026-08-24T04:00Z",
+   "endDate": "2026-09-14T03:59Z",
+   "major": true,
+   "name": "US Open",
+   "shortName": "US Open",
+   "groupings": [
+    {
+     "grouping": {
+      "id": "1",
+      "slug": "mens-singles",
+      "displayName": "Men's Singles"
+     },
+     "competitions": [
+      {
+       "id": "184608",
+       "date": "2026-08-24T15:10Z",
+       "startDate": "2026-08-24T15:10Z",
+       "timeValid": true,
+       "recent": false,
+       "status": {
+        "period": 3,
+        "type": {
+         "id": "3",
+         "name": "STATUS_FINAL",
+         "state": "post",
+         "completed": true,
+         "description": "Final",
+         "detail": "Final",
+         "shortDetail": "Final"
+        }
+       },
+       "competitors": [
+        {
+         "id": "3574",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "winner": false,
+         "linescores": [
+          {
+           "value": 3.0,
+           "winner": false
+          },
+          {
+           "value": 7.0,
+           "tiebreak": 7,
+           "winner": true
+          },
+          {
+           "value": 5.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "displayName": "Juan Pablo Varillas",
+          "shortName": "J. Varillas",
+          "fullName": "Juan Pablo Varillas"
+         }
+        },
+        {
+         "id": "14707",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "winner": true,
+         "linescores": [
+          {
+           "value": 6.0,
+           "winner": true
+          },
+          {
+           "value": 6.0,
+           "tiebreak": 3,
+           "winner": false
+          },
+          {
+           "value": 7.0,
+           "winner": true
+          }
+         ],
+         "athlete": {
+          "displayName": "Luka Pavlovic",
+          "shortName": "L. Pavlovic",
+          "fullName": "Luka Pavlovic"
+         }
+        }
+       ],
+       "tournamentId": 189,
+       "type": {
+        "id": "1",
+        "text": "Men's Singles",
+        "slug": "mens-singles"
+       },
+       "round": {
+        "id": "11",
+        "displayName": "Qualifying 1st Round"
+       },
+       "wasSuspended": false
+      }
+     ]
+    }
+   ],
+   "status": {
+    "period": 2,
+    "type": {
+     "id": "3",
+     "name": "STATUS_FINAL",
+     "state": "post",
+     "completed": true,
+     "description": "Final",
+     "detail": "Final",
+     "shortDetail": "Final"
+    }
+   }
+  },
+  {
+   "id": "189-2026",
+   "date": "2026-08-24T04:00Z",
+   "endDate": "2026-09-14T03:59Z",
+   "major": true,
+   "name": "US Open",
+   "shortName": "US Open",
+   "groupings": [
+    {
+     "grouping": {
+      "id": "1",
+      "slug": "mens-singles",
+      "displayName": "Men's Singles"
+     },
+     "competitions": [
+      {
+       "id": "184607",
+       "date": "2026-08-24T15:05Z",
+       "startDate": "2026-08-24T15:05Z",
+       "timeValid": true,
+       "recent": false,
+       "status": {
+        "period": 2,
+        "type": {
+         "id": "3",
+         "name": "STATUS_FINAL",
+         "state": "post",
+         "completed": true,
+         "description": "Final",
+         "detail": "Final",
+         "shortDetail": "Final"
+        }
+       },
+       "competitors": [
+        {
+         "id": "2012",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "winner": false,
+         "linescores": [
+          {
+           "value": 6.0,
+           "tiebreak": 3,
+           "winner": false
+          },
+          {
+           "value": 3.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "displayName": "Roberto Carballes Baena",
+          "shortName": "R. Carballes Baena",
+          "fullName": "Roberto Carballes Baena"
+         }
+        },
+        {
+         "id": "11685",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "winner": true,
+         "linescores": [
+          {
+           "value": 7.0,
+           "tiebreak": 7,
+           "winner": true
+          },
+          {
+           "value": 6.0,
+           "winner": true
+          }
+         ],
+         "athlete": {
+          "displayName": "Jacob Fearnley",
+          "shortName": "J. Fearnley",
+          "fullName": "Jacob Fearnley"
+         }
+        }
+       ],
+       "tournamentId": 189,
+       "type": {
+        "id": "1",
+        "text": "Men's Singles",
+        "slug": "mens-singles"
+       },
+       "round": {
+        "id": "11",
+        "displayName": "Qualifying 1st Round"
+       },
+       "wasSuspended": false
+      }
+     ]
+    }
+   ],
+   "status": {
+    "period": 2,
+    "type": {
+     "id": "3",
+     "name": "STATUS_FINAL",
+     "state": "post",
+     "completed": true,
+     "description": "Final",
+     "detail": "Final",
+     "shortDetail": "Final"
+    }
+   }
+  },
+  {
+   "id": "189-2026",
+   "date": "2026-08-24T04:00Z",
+   "endDate": "2026-09-14T03:59Z",
+   "major": true,
+   "name": "US Open",
+   "shortName": "US Open",
+   "groupings": [
+    {
+     "grouping": {
+      "id": "1",
+      "slug": "mens-singles",
+      "displayName": "Men's Singles"
+     },
+     "competitions": [
+      {
+       "id": "184599",
+       "date": "2026-08-25T15:05Z",
+       "startDate": "2026-08-25T15:05Z",
+       "timeValid": true,
+       "recent": false,
+       "status": {
+        "period": 3,
+        "type": {
+         "id": "38",
+         "name": "STATUS_RETIRED",
+         "state": "post",
+         "completed": true,
+         "description": "Retired",
+         "detail": "Retired",
+         "shortDetail": "Retired"
+        }
+       },
+       "competitors": [
+        {
+         "id": "1769",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "winner": true,
+         "linescores": [
+          {
+           "value": 4.0,
+           "winner": false
+          },
+          {
+           "value": 7.0,
+           "winner": true
+          },
+          {
+           "value": 3.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "displayName": "Dusan Lajovic",
+          "shortName": "D. Lajovic",
+          "fullName": "Dusan Lajovic"
+         }
+        },
+        {
+         "id": "2872",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "winner": false,
+         "linescores": [
+          {
+           "value": 6.0,
+           "winner": true
+          },
+          {
+           "value": 5.0,
+           "winner": false
+          },
+          {
+           "value": 1.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "displayName": "SoonWoo Kwon",
+          "shortName": "S. Kwon",
+          "fullName": "SoonWoo Kwon"
+         }
+        }
+       ],
+       "tournamentId": 189,
+       "type": {
+        "id": "1",
+        "text": "Men's Singles",
+        "slug": "mens-singles"
+       },
+       "round": {
+        "id": "11",
+        "displayName": "Qualifying 1st Round"
+       },
+       "wasSuspended": false
+      }
+     ]
+    }
+   ],
+   "status": {
+    "period": 2,
+    "type": {
+     "id": "3",
+     "name": "STATUS_FINAL",
+     "state": "post",
+     "completed": true,
+     "description": "Final",
+     "detail": "Final",
+     "shortDetail": "Final"
+    }
+   }
+  },
+  {
+   "id": "189-2026",
+   "date": "2026-08-24T04:00Z",
+   "endDate": "2026-09-14T03:59Z",
+   "major": true,
+   "name": "US Open",
+   "shortName": "US Open",
+   "groupings": [
+    {
+     "grouping": {
+      "id": "1",
+      "slug": "mens-singles",
+      "displayName": "Men's Singles"
+     },
+     "competitions": [
+      {
+       "id": "184769",
+       "date": "2026-08-27T16:30Z",
+       "startDate": "2026-08-27T16:30Z",
+       "timeValid": true,
+       "recent": false,
+       "status": {
+        "period": 1,
+        "type": {
+         "id": "40",
+         "name": "STATUS_WALKOVER",
+         "state": "post",
+         "completed": true,
+         "description": "Walkover",
+         "detail": "Walkover",
+         "shortDetail": "Walkover"
+        }
+       },
+       "competitors": [
+        {
+         "id": "1287",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "winner": true,
+         "athlete": {
+          "displayName": "Grigor Dimitrov",
+          "shortName": "G. Dimitrov",
+          "fullName": "Grigor Dimitrov"
+         }
+        },
+        {
+         "id": "4099",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "winner": false,
+         "athlete": {
+          "displayName": "Otto Virtanen",
+          "shortName": "O. Virtanen",
+          "fullName": "Otto Virtanen"
+         }
+        }
+       ],
+       "tournamentId": 189,
+       "type": {
+        "id": "1",
+        "text": "Men's Singles",
+        "slug": "mens-singles"
+       },
+       "round": {
+        "id": "14",
+        "displayName": "Qualifying Final"
+       },
+       "wasSuspended": false
+      }
+     ]
+    }
+   ],
+   "status": {
+    "period": 2,
+    "type": {
+     "id": "3",
+     "name": "STATUS_FINAL",
+     "state": "post",
+     "completed": true,
+     "description": "Final",
+     "detail": "Final",
+     "shortDetail": "Final"
+    }
+   }
+  },
+  {
+   "id": "871-2026",
+   "date": "2026-09-13T04:00Z",
+   "endDate": "2026-09-21T03:59Z",
+   "major": false,
+   "name": "BBVA Open Internacional De Valencia",
+   "shortName": "BBVA Open Internacional De Valencia",
+   "groupings": [
+    {
+     "grouping": {
+      "id": "2",
+      "slug": "womens-singles",
+      "displayName": "Women's Singles"
+     },
+     "competitions": [
+      {
+       "id": "183772",
+       "date": "2026-09-19T16:30Z",
+       "startDate": "2026-09-19T16:30Z",
+       "timeValid": true,
+       "recent": true,
+       "status": {
+        "period": 1,
+        "type": {
+         "id": "1",
+         "name": "STATUS_SCHEDULED",
+         "state": "pre",
+         "completed": false,
+         "description": "Scheduled",
+         "detail": "Sat, September 19th at 12:30 PM EDT",
+         "shortDetail": "9/19 - 12:30 PM EDT"
+        }
+       },
+       "competitors": [
+        {
+         "id": "8318",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "athlete": {
+          "displayName": "Yasmine Kabbaj",
+          "shortName": "Y. Kabbaj",
+          "fullName": "Yasmine Kabbaj"
+         }
+        },
+        {
+         "id": "4629",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "athlete": {
+          "displayName": "Alicia Herrero Linana",
+          "shortName": "A. Herrero Linana",
+          "fullName": "Alicia Herrero Linana"
+         }
+        }
+       ],
+       "tournamentId": 871,
+       "type": {
+        "id": "2",
+        "text": "Women's Singles",
+        "slug": "womens-singles"
+       },
+       "round": {
+        "id": "6",
+        "displayName": "Semifinal"
+       },
+       "wasSuspended": false
+      }
+     ]
+    }
+   ],
+   "status": {
+    "period": 2,
+    "type": {
+     "id": "3",
+     "name": "STATUS_FINAL",
+     "state": "post",
+     "completed": true,
+     "description": "Final",
+     "detail": "Final",
+     "shortDetail": "Final"
+    }
+   }
+  },
+  {
+   "id": "871-2026",
+   "date": "2026-09-13T04:00Z",
+   "endDate": "2026-09-21T03:59Z",
+   "major": false,
+   "name": "BBVA Open Internacional De Valencia",
+   "shortName": "BBVA Open Internacional De Valencia",
+   "groupings": [
+    {
+     "grouping": {
+      "id": "2",
+      "slug": "womens-singles",
+      "displayName": "Women's Singles"
+     },
+     "competitions": [
+      {
+       "id": "183771",
+       "date": "2026-09-19T15:05Z",
+       "startDate": "2026-09-19T15:05Z",
+       "timeValid": true,
+       "recent": true,
+       "status": {
+        "period": 1,
+        "type": {
+         "id": "2",
+         "name": "STATUS_IN_PROGRESS",
+         "state": "in",
+         "completed": false,
+         "description": "In Progress",
+         "detail": "1st Set",
+         "shortDetail": "1st"
+        }
+       },
+       "competitors": [
+        {
+         "id": "18968",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "possession": false,
+         "linescores": [
+          {
+           "value": 1.0
+          }
+         ],
+         "athlete": {
+          "displayName": "Joelle Lilly Sophie Steur",
+          "shortName": "J. Lilly Sophie Steur",
+          "fullName": "Joelle Lilly Sophie Steur"
+         }
+        },
+        {
+         "id": "3508",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "possession": true,
+         "linescores": [
+          {
+           "value": 3.0
+          }
+         ],
+         "athlete": {
+          "displayName": "Clara Burel",
+          "shortName": "C. Burel",
+          "fullName": "Clara Burel"
+         }
+        }
+       ],
+       "situation": {
+        "onFirst": false,
+        "onSecond": false,
+        "onThird": false
+       },
+       "tournamentId": 871,
+       "type": {
+        "id": "2",
+        "text": "Women's Singles",
+        "slug": "womens-singles"
+       },
+       "round": {
+        "id": "6",
+        "displayName": "Semifinal"
+       },
+       "wasSuspended": false
+      }
+     ]
+    }
+   ],
+   "status": {
+    "period": 2,
+    "type": {
+     "id": "3",
+     "name": "STATUS_FINAL",
+     "state": "post",
+     "completed": true,
+     "description": "Final",
+     "detail": "Final",
+     "shortDetail": "Final"
+    }
+   }
+  },
+  {
+   "id": "1005-2026",
+   "date": "2026-09-12T04:00Z",
+   "endDate": "2026-09-21T03:59Z",
+   "major": false,
+   "name": "SP Open",
+   "shortName": "SP Open",
+   "groupings": [
+    {
+     "grouping": {
+      "id": "2",
+      "slug": "womens-singles",
+      "displayName": "Women's Singles"
+     },
+     "competitions": [
+      {
+       "id": "183857",
+       "date": "2026-09-20T04:00Z",
+       "startDate": "2026-09-20T04:00Z",
+       "timeValid": false,
+       "recent": false,
+       "status": {
+        "period": 1,
+        "type": {
+         "id": "5",
+         "name": "STATUS_CANCELED",
+         "state": "post",
+         "completed": false,
+         "description": "Canceled",
+         "detail": "Canceled",
+         "shortDetail": "Canceled"
+        }
+       },
+       "competitors": [
+        {
+         "id": "-4",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "athlete": {
+          "displayName": "TBD",
+          "shortName": "TBD",
+          "fullName": "TBD"
+         }
+        },
+        {
+         "id": "-3",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "athlete": {
+          "displayName": "TBD",
+          "shortName": "TBD",
+          "fullName": "TBD"
+         }
+        }
+       ],
+       "tournamentId": 1005,
+       "type": {
+        "id": "2",
+        "text": "Women's Singles",
+        "slug": "womens-singles"
+       },
+       "round": {
+        "id": "7",
+        "displayName": "Final"
+       },
+       "wasSuspended": false
+      }
+     ]
+    }
+   ],
+   "status": {
+    "period": 2,
+    "type": {
+     "id": "3",
+     "name": "STATUS_FINAL",
+     "state": "post",
+     "completed": true,
+     "description": "Final",
+     "detail": "Final",
+     "shortDetail": "Final"
+    }
+   }
+  },
+  {
+   "id": "887-2026",
+   "date": "2026-09-12T04:00Z",
+   "endDate": "2026-09-20T03:59Z",
+   "major": false,
+   "name": "Guadalajara Open presentado por Santander",
+   "shortName": "Guadalajara Open presentado por Santander",
+   "groupings": [
+    {
+     "grouping": {
+      "id": "2",
+      "slug": "womens-singles",
+      "displayName": "Women's Singles"
+     },
+     "competitions": [
+      {
+       "id": "185909",
+       "date": "2026-09-12T16:05Z",
+       "startDate": "2026-09-12T16:05Z",
+       "timeValid": true,
+       "recent": false,
+       "status": {
+        "period": 2,
+        "type": {
+         "id": "3",
+         "name": "STATUS_FINAL",
+         "state": "post",
+         "completed": true,
+         "description": "Final",
+         "detail": "Final",
+         "shortDetail": "Final"
+        }
+       },
+       "competitors": [
+        {
+         "id": "7812",
+         "type": "athlete",
+         "order": 2,
+         "homeAway": "away",
+         "winner": true,
+         "linescores": [
+          {
+           "value": 6.0,
+           "winner": true
+          },
+          {
+           "value": 6.0,
+           "winner": true
+          }
+         ],
+         "athlete": {
+          "displayName": "Katrina Scott",
+          "shortName": "K. Scott",
+          "fullName": "Katrina Scott"
+         }
+        },
+        {
+         "id": "1455",
+         "type": "athlete",
+         "order": 1,
+         "homeAway": "home",
+         "winner": false,
+         "linescores": [
+          {
+           "value": 2.0,
+           "winner": false
+          },
+          {
+           "value": 4.0,
+           "winner": false
+          }
+         ],
+         "athlete": {
+          "displayName": "Alexandra Panova",
+          "shortName": "A. Panova",
+          "fullName": "Alexandra Panova"
+         }
+        }
+       ],
+       "tournamentId": 887,
+       "type": {
+        "id": "2",
+        "text": "Women's Singles",
+        "slug": "womens-singles"
+       },
+       "round": {
+        "id": "11",
+        "displayName": "Qualifying 1st Round"
+       },
+       "wasSuspended": false
+      }
+     ]
+    }
+   ],
+   "status": {
+    "period": 2,
+    "type": {
+     "id": "3",
+     "name": "STATUS_FINAL",
+     "state": "post",
+     "completed": true,
+     "description": "Final",
+     "detail": "Final",
+     "shortDetail": "Final"
+    }
+   }
+  }
+ ]
+}

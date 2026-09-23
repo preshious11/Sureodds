@@ -9,9 +9,17 @@ __pycache__/
 
 # ---- Runtime artifacts (local db + logs) ----
 *.db
+!tests/fixtures/replay/replay.db
 *.db-journal
 *.db-shm
 *.db-wal
 *.log
 data/
 .pytest_cache/
+
+# ---- Scratch / diagnostic output (never commit) ----
+_*.txt
+_*.py
+*_diagnostic*.json
+!__init__.py
+

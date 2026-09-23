@@ -3,10 +3,10 @@ objects so the model, picker and settlement code never touch raw API shapes.
 
 Canonical vocabulary
 --------------------
-sport      : football (soccer), basketball, american_football, hockey, baseball,
-             tennis, mma, handball, other
+sport      : football (soccer), basketball, american_football, baseball,
+             tennis, mma, other
 period     : full  (whole match incl. overtime where the sport has it, or 90'
-             for football), reg (regulation only), 1h, 2h, 1q..4q, 1p..3p, 1s..
+             for football), reg (regulation only), 1h, 2h, 1q..4q, 1s..
 stat       : points (goals/points/runs), corners, cards, sets, games, or a
              provider-specific stat id for props (e.g. "player:points")
 entity     : all | home | away | <player name>
@@ -19,9 +19,13 @@ line       : numeric line for total/handicap markets, applied to *the selected
 """
 from __future__ import annotations
 
+import statistics
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+
+
+_SIDE_SWAP = {"home": "away", "away": "home", "home_draw": "away_draw", "away_draw": "home_draw"}
 
 
 @dataclass
@@ -34,9 +38,10 @@ class MarketLine:
     entity: str = "all"
     line: Optional[float] = None
     fair_price: Optional[float] = None   # provider de-vigged price when supplied
+    provider_prob: Optional[float] = None   # provider-supplied probability (0..1) when present, e.g. SharpAPI odds_probability
     bookmaker: str = ""
     n_books: int = 1
-    provider_odd_id: str = ""            # SGO oddID / SharpAPI row id / APIF "bet:value"
+    provider_odd_id: str = ""            # SGO oddID / SharpAPI row id
     label: str = ""                      # human readable selection label
     market_name: str = ""                # human readable market name
     is_player_prop: bool = False
@@ -46,10 +51,60 @@ class MarketLine:
         return (self.market, self.period, self.stat, self.entity,
                 None if self.line is None else round(self.line, 2), self.selection)
 
+    def mirrored(self) -> "MarketLine":
+        """The same bet as a provider that lists home and away the other way round would state it: sides
+        exchanged (selection, a team total's entity, a correct score's digits). A handicap's ``line`` is
+        applied to the SELECTED side (see the module docstring, and settlement's ``_handicap(sel, opp, line)``),
+        so it does NOT change sign when the label changes: "their home -1.5" is "our away -1.5" - the same
+        team keeps the same line. (Negating it would describe the opposite bet.)"""
+        import re
+        from dataclasses import replace
+        sel = self.selection
+        if self.market == "correct_score" and re.fullmatch(r"\d+-\d+", sel or ""):
+            a, b = sel.split("-")
+            sel = f"{b}-{a}"
+        else:
+            sel = _SIDE_SWAP.get(sel, sel)
+        return replace(self, selection=sel, entity=_SIDE_SWAP.get(self.entity, self.entity))
+
     def market_key(self) -> Tuple:
         """Identifies the market (all selections share it)."""
         return (self.market, self.period, self.stat, self.entity,
                 None if self.line is None else round(abs(self.line), 2))
+
+
+def apply_price_mode(ml: MarketLine, mode: str = "median") -> None:
+    """Set ``ml.price`` from ``ml.book_prices`` according to PRICE_MODE.
+
+    ``median`` (default) prices a line at what a typical book offers, so a single
+    outlier book cannot inflate the card; ``best`` keeps the highest price and the
+    bookmaker that offered it. With a single book the price and its name are kept
+    either way. Idempotent: it only ever reads ``book_prices``."""
+    prices = [p for p in (ml.book_prices or []) if p and p > 1.0] or [ml.price]
+    if len(prices) < 2:
+        return
+    if mode == "best":
+        ml.price = max(prices)
+    else:
+        ml.price = round(float(statistics.median(prices)), 4)
+        ml.bookmaker = "median"
+
+
+def consolidate_lines(markets: List["MarketLine"]) -> List["MarketLine"]:
+    """One line per bet: lines with an identical key (SportsGameOdds lists a football market under both its
+    ``game`` and ``reg`` period, which we map to the same ``full``) collapse into the one quoted by most books,
+    keeping its price and adding the others' books. Order of first appearance is kept."""
+    groups: Dict[Tuple, List["MarketLine"]] = {}
+    for m in markets:
+        groups.setdefault(m.key(), []).append(m)
+    out: List["MarketLine"] = []
+    for group in groups.values():
+        primary = group[0] if len(group) == 1 else max(group, key=lambda m: m.n_books)   # ties: first seen
+        if len(group) > 1:
+            primary.book_prices = [p for m in group for p in (m.book_prices or [m.price])]
+            primary.n_books = len(primary.book_prices)
+        out.append(primary)
+    return out
 
 
 @dataclass
@@ -63,7 +118,7 @@ class Event:
     start: datetime
     markets: List[MarketLine] = field(default_factory=list)
     league_id: str = ""            # provider league identifier
-    extra: Dict = field(default_factory=dict)   # e.g. API-Football predictions payload
+    extra: Dict = field(default_factory=dict)
     sources: List[str] = field(default_factory=list)  # providers merged into this event
 
     @property

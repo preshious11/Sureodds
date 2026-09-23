@@ -5,12 +5,25 @@ from __future__ import annotations
 import re
 import unicodedata
 from difflib import SequenceMatcher
+from functools import lru_cache
 
+#: Generic club-name affixes only, never a word that distinguishes one real
+#: club from another (e.g. "united"/"city"/"real"/"atletico" must stay OUT of
+#: this list - stripping them made "Manchester United" == "Manchester City"
+#: and "Real Madrid" == "Atletico Madrid" under same_team()).
 _STOP = {"fc", "cf", "sc", "afc", "club", "de", "the", "cd", "ac", "as", "us", "ss", "bk", "if", "sk",
-         "fk", "cs", "rc", "sv", "vfb", "vfl", "tsg", "1", "sporting", "athletic", "atletico", "united",
-         "city", "real"}
+         "fk", "cs", "rc", "sv", "vfb", "vfl", "tsg", "1", "sporting", "rcd", "ud", "sd"}
+
+#: Sports whose US-style names come as "BOS Red Sox" / "LA Dodgers" / "Athletics" on one provider
+#: and "Boston Red Sox" / "Los Angeles Dodgers" / "Oakland Athletics" on another.
+NICKNAME_SPORTS = {"baseball", "basketball", "american_football"}
+
+#: A reserve/youth-team qualifier is never noise to strip: "Barcelona" and
+#: "Barcelona B" are different clubs, not the same club spelled differently.
+_RESERVE_SUFFIXES = {"b", "ii", "iii", "reserves", "reserve", "u23", "u21", "u20", "u19", "u18", "youth"}
 
 
+@lru_cache(maxsize=65536)
 def normalize(name: str) -> str:
     if not name:
         return ""
@@ -21,17 +34,68 @@ def normalize(name: str) -> str:
     return " ".join(tokens) if tokens else s.strip()
 
 
-def similarity(a: str, b: str) -> float:
+@lru_cache(maxsize=262144)
+def similarity(a: str, b: str, floor: float = 0.0) -> float:
+    """Name similarity in [0, 1]. ``floor`` is an optimisation only: when the cheap upper bounds of the ratio
+    already prove it is below ``floor``, 0.0 is returned without running the full matcher - so a caller that
+    only asks "is it >= floor?" (same_team) gets the identical answer."""
     na, nb = normalize(a), normalize(b)
     if not na or not nb:
         return 0.0
     if na == nb:
         return 1.0
     ta, tb = set(na.split()), set(nb.split())
-    if ta and tb and (ta <= tb or tb <= ta):
+    extra = (ta - tb) | (tb - ta)
+    if extra and extra <= _RESERVE_SUFFIXES:
+        return 0.0
+    if ta and tb and len(ta) > 1 and len(tb) > 1 and (ta <= tb or tb <= ta):
         return 0.92
-    return SequenceMatcher(None, na, nb).ratio()
+    sm = SequenceMatcher(None, na, nb)
+    if floor and (sm.real_quick_ratio() < floor or sm.quick_ratio() < floor):
+        return 0.0
+    return sm.ratio()
 
 
-def same_team(a: str, b: str, threshold: float = 0.82) -> bool:
-    return similarity(a, b) >= threshold
+def is_doubles(home: str, away: str) -> bool:
+    """A tennis doubles fixture: a side is a pair ("Dabrowski / Stefani"). Neither SharpAPI's ``/odds`` rows nor
+    the Odds API carry a doubles flag or participant count, so the pair separator is the indicator."""
+    return " / " in (home or "") or " / " in (away or "")
+
+
+def strip_abbreviation(name: str) -> str:
+    """Drop a leading/trailing all-caps 2-3 letter city code ("BOS Red Sox" -> "Red Sox", "LA Dodgers" ->
+    "Dodgers"); a name that is nothing but the code is left alone."""
+    tokens = (name or "").split()
+    if len(tokens) >= 2 and tokens[0].isalpha() and tokens[0].isupper() and len(tokens[0]) <= 3:
+        tokens = tokens[1:]
+    if len(tokens) >= 2 and tokens[-1].isalpha() and tokens[-1].isupper() and len(tokens[-1]) <= 3:
+        tokens = tokens[:-1]
+    return " ".join(tokens)
+
+
+def canonical_team(name: str, sport: str = "") -> str:
+    """A spelling-independent token for a team, used to build fixture keys. Football keeps the normalised
+    name; US-style sports reduce to the nickname (the last word, "red sox"/"white sox" keep two)."""
+    if sport not in NICKNAME_SPORTS:
+        return normalize(name)
+    tokens = normalize(strip_abbreviation(name)).split()
+    if not tokens:
+        return normalize(name)
+    return " ".join(tokens[-2:]) if tokens[-1] == "sox" and len(tokens) > 1 else tokens[-1]
+
+
+def same_team(a: str, b: str, threshold: float = 0.82, sport: str = "") -> bool:
+    """Fuzzy same-club test. ``sport`` (optional) switches on the US-sports rules: city abbreviations are
+    stripped, and when one name's words are the END of the other's ("Rangers" / "Texas Rangers",
+    "Athletics" / "Oakland Athletics") they are the same team. The threshold is never lowered."""
+    if similarity(a, b, threshold) >= threshold:
+        return True
+    if sport in NICKNAME_SPORTS:
+        sa, sb = strip_abbreviation(a), strip_abbreviation(b)
+        if similarity(sa, sb, threshold) >= threshold:
+            return True
+        ta, tb = normalize(sa).split(), normalize(sb).split()
+        if ta and tb:
+            short, long_ = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+            return long_[-len(short):] == short
+    return False

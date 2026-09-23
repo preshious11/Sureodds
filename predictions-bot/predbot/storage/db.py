@@ -7,7 +7,7 @@ import sqlite3
 import threading
 import logging
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 SCHEMA = """
@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS picks (
     prob REAL NOT NULL,
     ev REAL NOT NULL,
     p_market REAL,
+    prob_raw REAL,                       -- model probability BEFORE calibration (what refit trains on)
     sources TEXT,                        -- json {source: prob}
     provider_odd_id TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
@@ -142,13 +143,22 @@ class Database:
             key = os.path.normcase(os.path.abspath(path)) if path != ':memory:' else id(self)
             self.prediction_lock = self._prediction_locks.setdefault(key, threading.RLock())
         self._transaction_depth = 0
+        #: instrumentation: statements executed / commits issued (see tools/replay.py)
+        self.stats = {"executes": 0, "commits": 0}
         d = os.path.dirname(os.path.abspath(path))
         os.makedirs(d, exist_ok=True)
         self._lock = threading.RLock()
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        # timeout=30s: the in-process lock only coordinates threads within one
+        # process: a manual `cli.py` command and the scheduler's `main.py`
+        # worker are separate processes sharing this file, so SQLite's own
+        # busy-wait is the only thing standing between them and an immediate
+        # "database is locked" error during a longer write (e.g. picks
+        # generation blocked on a provider API call).
+        self.conn = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.execute("PRAGMA busy_timeout=30000")
         with self._lock:
             self.conn.executescript(SCHEMA)
             self.conn.commit()
@@ -160,13 +170,56 @@ class Database:
         if "timezone" not in cols:                      # per-subscriber local delivery zone
             self.conn.execute("ALTER TABLE subscribers ADD COLUMN timezone TEXT NOT NULL DEFAULT ''")
             self.conn.commit()
+        pick_cols = {str(r["name"]) for r in self.query("PRAGMA table_info(picks)")}
+        if pick_cols and "prob_raw" not in pick_cols:   # pre-calibration probability
+            self.conn.execute("ALTER TABLE picks ADD COLUMN prob_raw REAL")
+            self.conn.commit()
+        if pick_cols:
+            self._migrate_fixture_key("fixture_key" in pick_cols)
+        self._migrate_split_picks_kind()
+
+    def _migrate_split_picks_kind(self) -> None:
+        """The card went out as ONE ``picks`` message; it is now two (``picks_top``, ``picks_daily``). A ``picks`` row
+        already recorded counts as both, so nothing that was sent is sent again. Idempotent."""
+        for kind in ("picks_top", "picks_daily"):
+            self.conn.execute("INSERT OR IGNORE INTO deliveries(kind,post_date,chat_id,created_at) "
+                              "SELECT ?, post_date, chat_id, created_at FROM deliveries WHERE kind='picks'", (kind,))
+            self.conn.execute("INSERT OR IGNORE INTO posts(kind,post_date,message_id,created_at) "
+                              "SELECT ?, post_date, message_id, created_at FROM posts WHERE kind='picks'", (kind,))
+        self.conn.commit()
+
+    def _migrate_fixture_key(self, has_column: bool) -> None:
+        """``picks.fixture_key`` + a unique index that forbids the same selection on the same match twice on
+        one date whatever the tier. Old rows are backfilled from their own columns; a legacy duplicate keeps
+        its row but gets a distinct key suffix, so the index can always be built."""
+        if not has_column:
+            self.conn.execute("ALTER TABLE picks ADD COLUMN fixture_key TEXT")
+        rows = self.query("SELECT * FROM picks WHERE fixture_key IS NULL OR fixture_key='' ORDER BY id")
+        if rows:
+            from predbot.util.fixtures import row_fixture_key
+            seen = {(r["pick_date"], r["fixture_key"], r["market"], r["period"], r["stat"], r["entity"], r["line"], r["selection"])
+                    for r in self.query("SELECT pick_date, fixture_key, market, period, stat, entity, line, selection "
+                                        "FROM picks WHERE fixture_key IS NOT NULL AND fixture_key<>''")}
+            for r in rows:
+                key = row_fixture_key(r)
+                ident = (r["pick_date"], key, r["market"], r["period"], r["stat"], r["entity"], r["line"], r["selection"])
+                if ident in seen:
+                    key = f"{key}#dup{r['id']}"
+                    ident = (r["pick_date"], key, r["market"], r["period"], r["stat"], r["entity"], r["line"], r["selection"])
+                seen.add(ident)
+                self.conn.execute("UPDATE picks SET fixture_key=? WHERE id=?", (key, r["id"]))
+        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_picks_fixture_selection ON picks("
+                          "pick_date, fixture_key, market, period, stat, entity, COALESCE(line, -999999), selection)")
+        self.conn.commit()
 
     # ---- generic ----
     def execute(self, sql: str, params: Iterable = ()) -> sqlite3.Cursor:
         with self._lock:
             cur = self.conn.execute(sql, tuple(params))
+            self.stats["executes"] += 1
             if not self._transaction_depth:
                 self.conn.commit()
+                self.stats["commits"] += 1
             return cur
 
     @contextmanager
@@ -180,6 +233,7 @@ class Database:
                 yield
                 if outer:
                     self.conn.commit()
+                    self.stats["commits"] += 1
             except BaseException:
                 if outer:
                     self.conn.rollback()
@@ -193,6 +247,11 @@ class Database:
 
     def get_prediction_cache(self, cache_key):
         rows = self.query('SELECT * FROM prediction_cache WHERE cache_key=?', (cache_key,))
+        return dict(rows[0]) if rows else None
+
+    def latest_prediction_cache_row(self):
+        """The most recently generated snapshot row, whatever its day (or None)."""
+        rows = self.query("SELECT * FROM prediction_cache ORDER BY generated_at DESC LIMIT 1")
         return dict(rows[0]) if rows else None
 
     def upsert_prediction_cache(self, row):
@@ -219,6 +278,35 @@ class Database:
                               'AND stat=? AND entity=? AND line IS ? AND selection=? LIMIT 1',
                               (date, tier, e.provider, e.provider_event_id, m.market, m.period,
                                m.stat, m.entity, m.line, m.selection)))
+
+    def has_fixture_selection(self, date, fixture_key, scored):
+        """True when this selection on this match is already stored for ``date`` in ANY tier."""
+        m = scored.line
+        return bool(self.query('SELECT id FROM picks WHERE pick_date=? AND fixture_key=? AND market=? AND period=? '
+                               'AND stat=? AND entity=? AND line IS ? AND selection=? LIMIT 1',
+                               (date, fixture_key, m.market, m.period, m.stat, m.entity, m.line, m.selection)))
+
+    def deliveries_exist(self, kind: str, post_date: str) -> bool:
+        """True once ANY subscriber has been sent ``kind`` for ``post_date`` (``picks`` = either of its two messages)."""
+        kinds = ("picks", "picks_top", "picks_daily") if kind == "picks" else (kind,)
+        marks = ",".join("?" for _ in kinds)
+        return bool(self.query(f"SELECT 1 FROM deliveries WHERE kind IN ({marks}) AND post_date=? LIMIT 1", (*kinds, post_date)))
+
+    def delete_pending_picks_not_in(self, date, keep):
+        """Delete ``date``'s still-pending picks that are not in ``keep`` - an iterable of
+        (tier, provider, provider_event_id, market, period, stat, entity, line, selection)
+        tuples (the ``has_pick_selection`` identity). Returns the number deleted."""
+        keep = set(keep)
+        gone = []
+        for r in self.query("SELECT id, tier, provider, provider_event_id, market, period, stat, entity, line, "
+                            "selection FROM picks WHERE pick_date=? AND status='pending'", (date,)):
+            ident = (r["tier"], r["provider"], r["provider_event_id"], r["market"], r["period"], r["stat"],
+                     r["entity"], r["line"], r["selection"])
+            if ident not in keep:
+                gone.append(r["id"])
+        for pid in gone:
+            self.execute("DELETE FROM picks WHERE id=?", (pid,))
+        return len(gone)
 
     def prune_prediction_cache(self, before_date):
         with self.transaction():
@@ -265,6 +353,9 @@ class Database:
         row = dict(row)
         row.setdefault("created_at", _now())
         row.setdefault("status", "pending")
+        if not row.get("fixture_key"):
+            from predbot.util.fixtures import row_fixture_key
+            row["fixture_key"] = row_fixture_key(row)
         if isinstance(row.get("sources"), dict):
             row["sources"] = json.dumps(row["sources"])
         cols = ",".join(row.keys())
@@ -299,12 +390,17 @@ class Database:
 
     def all_settled_for_calibration(self, limit: int = 3000) -> List[sqlite3.Row]:
         return self.query(
-            "SELECT prob, status, price FROM picks WHERE status IN ('won','lost','half_won','half_lost') "
+            "SELECT prob, prob_raw, status, price FROM picks WHERE status IN ('won','lost','half_won','half_lost') "
             "ORDER BY id DESC LIMIT ?", (limit,))
 
-    def recent_pick_keys(self, days: int = 1) -> List[sqlite3.Row]:
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
-        return self.query("SELECT provider_event_id, market, period, stat, entity, line, selection, home, away FROM picks WHERE pick_date>=?", (since,))
+    def previous_pick_fixtures(self, before_date: str, lookback_days: int = 2) -> List[sqlite3.Row]:
+        """sport/home/away/start_utc of picks stored on the ``lookback_days``
+        days strictly before ``before_date`` - used to keep a late-evening
+        fixture from being posted on two consecutive days. Bounded on purpose:
+        an all-time lookup would also drop a genuine rematch months later."""
+        since = (date.fromisoformat(before_date) - timedelta(days=lookback_days)).isoformat()
+        return self.query("SELECT DISTINCT sport, home, away, start_utc FROM picks "
+                          "WHERE pick_date<? AND pick_date>=?", (before_date, since))
 
     # ---- ratings ----
     def get_rating(self, sport: str, team: str):
@@ -390,6 +486,11 @@ class Database:
     def delivery_done(self, kind: str, post_date: str, chat_id: str) -> bool:
         return bool(self.query("SELECT 1 FROM deliveries WHERE kind=? AND post_date=? AND chat_id=?",
                                (kind, post_date, str(chat_id))))
+
+    def deliveries_done(self, kind: str, post_date: str) -> set:
+        """chat ids already sent ``kind`` for ``post_date`` - one query instead of one per subscriber."""
+        return {str(r["chat_id"]) for r in self.query("SELECT chat_id FROM deliveries WHERE kind=? AND post_date=?",
+                                                     (kind, post_date))}
 
     def mark_delivery(self, kind: str, post_date: str, chat_id: str) -> None:
         self.execute("INSERT OR IGNORE INTO deliveries(kind,post_date,chat_id,created_at) VALUES(?,?,?,?)",

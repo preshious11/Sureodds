@@ -7,6 +7,7 @@ complete results source. Billing is per *event object*, tracked in Budget.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -21,13 +22,16 @@ log = logging.getLogger(__name__)
 
 SPORT_MAP = {
     "SOCCER": "football", "BASKETBALL": "basketball", "FOOTBALL": "american_football",
-    "HOCKEY": "hockey", "BASEBALL": "baseball", "TENNIS": "tennis", "MMA": "mma",
-    "HANDBALL": "handball", "GOLF": "golf",
+    "BASEBALL": "baseball", "TENNIS": "tennis", "MMA": "mma",
+    "GOLF": "golf",
 }
 SPORT_TO_SGO = {v: k for k, v in SPORT_MAP.items()}
 
+DEFAULT_ALLOWED_STATS = ("points", "cornerKicks", "yellowCards", "weightedCards", "bothTeamsScored")
+DEFAULT_ALLOWED_PERIODS = ("game", "reg", "1h", "2h")
+
 PERIOD_MAP = {"game": "full", "reg": "reg", "1h": "1h", "2h": "2h", "1q": "1q", "2q": "2q", "3q": "3q",
-              "4q": "4q", "1p": "1p", "2p": "2p", "3p": "3p", "1s": "1s", "2s": "2s", "3s": "3s",
+              "4q": "4q", "1s": "1s", "2s": "2s", "3s": "3s",
               "1i5": "1i5"}
 STAT_MAP = {"points": "points", "cornerKicks": "corners", "weightedCards": "cards", "yellowCards": "cards",
             "bothTeamsScored": "btts"}
@@ -40,18 +44,41 @@ def _f(v) -> Optional[float]:
         return None
 
 
+def _merge_sport_state(current: str, state: str) -> str:
+    """Combine per-league states into one per-sport state.  A FAILED league fails
+    the whole sport; else PARTIAL wins; else the sport is EMPTY until any event
+    actually parses (callers upgrade to SUCCESS when events > 0)."""
+    if state == "failed" or current == "failed":
+        return "failed"
+    if state == "partial" or current == "partial":
+        return "partial"
+    return "empty"
+
+
 class SportsGameOddsProvider(BaseProvider):
     name = "sportsgameodds"
 
     def __init__(self, api_key: str, budget: Budget, sports: List[str], leagues: List[str],
-                 event_limit: int = 25, monthly_limit: int = 1000):
+                 event_limit: int = 25, monthly_limit: int = 1000,
+                 allowed_stats: Optional[List[str]] = None, allowed_periods: Optional[List[str]] = None,
+                 max_player_props: int = 0):
         self.key = api_key
+        # Odd objects outside these stat/period ids are rejected at parse time
+        # (SGO lists hundreds of inning/quarter/player variants per event).
+        self.allowed_stats = set(DEFAULT_ALLOWED_STATS if allowed_stats is None else allowed_stats)
+        self.allowed_periods = set(DEFAULT_ALLOWED_PERIODS if allowed_periods is None else allowed_periods)
+        self.max_player_props = max(0, max_player_props)
         self.budget = budget
         self.sports = sports
         self.leagues = leagues
         self.event_limit = event_limit
         self.monthly_limit = monthly_limit
         self._available_leagues: Optional[set] = None
+        self._league_sport: Dict[str, str] = {}          # leagueID -> SPORT (SGO id)
+        self._parsed_sport_by_league: Dict[str, str] = {}  # leagueID -> canonical sport seen in parsed events
+        self.sport_status: Dict[str, Dict] = {}          # canonical sport -> status/events/leagues
+        self.skipped_no_results: List[str] = []          # configured leagues with no results path (not fetched)
+        self.parse_counts: Counter = Counter()           # rejection reasons
         self.http = Http("https://api.sportsgameodds.com/v2", headers={"X-Api-Key": api_key},
                          rate=RateLimiter(1.0))
 
@@ -63,6 +90,8 @@ class SportsGameOddsProvider(BaseProvider):
 
         GET /leagues is a cheap metadata call (it does not bill event objects).
         Returns None when the call fails - callers then keep their configured list.
+        Also caches the league -> sport mapping used to keep event queries
+        sport-consistent (SGO 400s when a leagueID does not match sportID).
         """
         if self._available_leagues is not None:
             return self._available_leagues
@@ -72,15 +101,29 @@ class SportsGameOddsProvider(BaseProvider):
             log.warning("SGO: could not list leagues: %s", e)
             return None
         rows = data.get("data", []) if isinstance(data, dict) else []
-        ids = {r.get("leagueID") for r in rows if isinstance(r, dict) and r.get("leagueID")}
+        ids = set()
+        league_sport: Dict[str, str] = {}
+        for r in rows:
+            if not isinstance(r, dict) or not r.get("leagueID"):
+                continue
+            ids.add(r["leagueID"])
+            sport = r.get("sportID")
+            if not sport and isinstance(r.get("sport"), dict):
+                sport = r["sport"].get("sportID")
+            if sport:
+                league_sport[r["leagueID"]] = str(sport).upper()
         log.info("SGO: %d leagues available at this tier", len(ids))
         self._available_leagues = ids
+        self._league_sport = league_sport
         return ids
 
     # ------------------------------------------------------------------ fetch
     def fetch_events(self, start: datetime, end: datetime) -> List[Event]:
         self.last_fetch_complete = True
         self.fetch_counts = {}
+        self.parse_counts = Counter()
+        self.sport_status = {}
+        self._parsed_sport_by_league = {}
         allowance = self.budget.monthly_daily_allowance(self.name, self.monthly_limit)
         limit = max(0, min(self.event_limit, allowance))
         if limit <= 0:
@@ -90,37 +133,77 @@ class SportsGameOddsProvider(BaseProvider):
         if self.budget.is_exhausted(self.name):
             self.last_fetch_complete = False
             return []                              # tier/quota problem already seen today
-        if not self.leagues:
-            self.last_fetch_complete = False
-            # the free tier requires a leagueID (or eventID) - sportID-only queries 400
-            log.warning("SGO: this subscription tier requires a leagueID - set SGO_LEAGUES "
-                        "(comma-separated sportsgameodds.com league IDs) to enable this provider")
-            self.budget.mark_exhausted(self.name, "free tier requires SGO_LEAGUES")
-            return []
-        # Drop configured leagues this key's tier does not cover (EPL etc. on free plans).
-        avail = self.available_leagues()
-        if avail is not None:
-            usable = [lg for lg in self.leagues if lg in avail]
-            if not usable:
+        # Auto-discover leagues when none are configured: use ALL leagues
+        # available to this key (paid tiers get every sport; free tiers
+        # get whatever the /leagues endpoint returns).
+        leagues = list(self.leagues) if self.leagues else None
+        if not leagues:
+            avail = self.available_leagues()
+            if avail is not None and avail:
+                leagues = sorted(avail)
+                log.info("SGO: auto-discovered %d leagues from provider catalog", len(leagues))
+            else:
                 self.last_fetch_complete = False
-                log.warning("SGO: none of the configured leagues (%s) are available at this "
-                            "subscription tier. Check GET /leagues for what this key covers, "
-                            "or upgrade the plan.", ",".join(self.leagues))
-                self.budget.mark_exhausted(self.name, "configured leagues unavailable at tier")
+                self.budget.mark_exhausted(self.name, "no leagues available for this key")
+                log.warning("SGO: no leagues configured and auto-discovery returned empty - "
+                            "check API key access or set SGO_LEAGUES")
                 return []
-            if len(usable) < len(self.leagues):
-                dropped = [lg for lg in self.leagues if lg not in avail]
-                log.warning("SGO: dropping leagues not covered by this tier: %s", ",".join(dropped))
-            leagues = usable
         else:
-            leagues = self.leagues                 # could not verify - try as configured
-        events = []
+            # When leagues are explicitly configured, drop any not covered by this
+            # key's tier (e.g. EPL on a free plan).  This requires the /leagues
+            # catalog, which is a cheap metadata call (not billed per event object).
+            avail = self.available_leagues()
+            if avail is not None and avail:
+                before = len(leagues)
+                leagues = [lg for lg in leagues if lg in avail]
+                dropped = before - len(leagues)
+                if dropped:
+                    log.warning("SGO: dropping %d leagues not covered by this tier", dropped)
+                if not leagues:
+                    self.last_fetch_complete = False
+                    self.budget.mark_exhausted(self.name, "configured leagues unavailable at tier")
+                    return []
+        leagues = [lg for lg in leagues if lg not in self.skipped_no_results]      # nothing can settle these
+        if not leagues:
+            self.last_fetch_complete = False
+            return []
+        # Filter by configured sports when provided (empty sgo_sports = all sports).
+        # The league -> sport map comes from the provider catalog so the filter
+        # never relies on a hardcoded sports list.
+        if self.sports and leagues and not getattr(self, '_league_sport', None):
+            try:
+                self.available_leagues()
+            except Exception:  # noqa: BLE001
+                pass
+        avail_map = getattr(self, '_league_sport', None) or {}
+        if avail_map and self.sports:
+            sports_upper = {s.upper() for s in self.sports}
+            mapped_leagues = [lg for lg in leagues if avail_map.get(lg, '')]
+            if mapped_leagues:
+                leagues = [lg for lg in leagues if avail_map.get(lg, '').upper() in sports_upper]
+                log.info("SGO: filtered to %d leagues matching configured sports %s",
+                         len(leagues), self.sports)
+        n_raw = 0                     # raw event objects fetched (the object allowance is measured in these)
+        out: List[Event] = []
         pending = []
         self.fetch_counts = {}
+
+        def absorb(batch):
+            """Parse a fetched page straight away and let go of the raw payload: an SGO event carries ~1,000 odds
+            objects, so keeping every raw page until the end held the whole response in memory at once."""
+            for ev in batch:
+                try:
+                    e = self._parse_event(ev)
+                    if e and e.markets and start <= e.start < end:
+                        out.append(e)
+                        self._parsed_sport_by_league[str(ev.get("leagueID", ""))] = e.sport
+                except Exception as ex:  # noqa: BLE001
+                    log.debug("SGO parse error %s: %s", ev.get("eventID"), ex)
+            batch.clear()
         # Share the existing object allowance across configured leagues so the
         # first sport in a multi-league response cannot consume the whole page.
         for index, league in enumerate(leagues):
-            remaining = limit - len(events)
+            remaining = limit - n_raw
             if remaining <= 0:
                 self.last_fetch_complete = False
                 break
@@ -142,13 +225,14 @@ class SportsGameOddsProvider(BaseProvider):
             self.budget.spend(self.name, len(batch))
             self.fetch_counts[league] = {"status": "complete", "raw_events": len(batch),
                                         "capped": bool(data.get("nextCursor"))}
-            events.extend(batch)
+            n_raw += len(batch)
+            absorb(batch)
             if data.get("nextCursor"):
                 pending.append((league, params, data["nextCursor"]))
         # Reuse spare allowance from empty leagues without changing cursor filters.
         while pending:
             league, params, cursor = pending.pop(0)
-            if len(events) + params["limit"] > limit:
+            if n_raw + params["limit"] > limit:
                 continue
             try:
                 data = self.http.get("/events", {**params, "cursor": cursor})
@@ -158,23 +242,47 @@ class SportsGameOddsProvider(BaseProvider):
                 continue
             batch = data.get("data", [])
             self.budget.spend(self.name, len(batch))
-            events.extend(batch)
+            n_raw += len(batch)
             self.fetch_counts[league]["raw_events"] += len(batch)
             self.fetch_counts[league]["capped"] = bool(data.get("nextCursor"))
-            if batch and data.get("nextCursor") and data["nextCursor"] != cursor:
+            more = bool(batch and data.get("nextCursor") and data["nextCursor"] != cursor)
+            absorb(batch)
+            if more:
                 pending.append((league, params, data["nextCursor"]))
         if self.fetch_counts and all(v["status"] == "failed" for v in self.fetch_counts.values()):
             raise ProviderError("All configured SGO league requests failed")
-        out: List[Event] = []
-        for ev in events:
-            try:
-                e = self._parse_event(ev)
-                if e and e.markets and start <= e.start < end:
-                    out.append(e)
-            except Exception as ex:  # noqa: BLE001
-                log.debug("SGO parse error %s: %s", ev.get("eventID"), ex)
-        log.info("SGO: %d events with markets (spent %d objects, %d used this month)",
-                 len(out), len(events), self.budget.used_month(self.name))
+        # Per-sport payload status (SUCCESS / EMPTY / PARTIAL / FAILED) so the
+        # cache tracks each sport independently: one league's failure must not
+        # paint another sport complete.  League id -> sport comes from the
+        # provider catalog where available, else from parsed events.
+        league_sport = getattr(self, '_league_sport', None) or {}
+        for league, rec in self.fetch_counts.items():
+            sgo_id = league_sport.get(league)
+            # SGO's own sport id (SOCCER, FOOTBALL = American football, ...) -> the bot's canonical
+            # name, so the status and the event counter below share one key space
+            sport = (SPORT_MAP.get(str(sgo_id).upper(), 'other') if sgo_id
+                     else self._parsed_sport_by_league.get(league) or 'other')
+            got = rec.get('raw_events', 0)
+            origin = rec.get('status', 'failed')
+            if origin == 'complete':
+                state = 'success' if got else 'empty'
+            elif origin == 'partial':
+                state = 'partial'
+            else:
+                state = 'failed'
+            cur = self.sport_status.setdefault(sport, {'status': state, 'events': 0, 'leagues': 0})
+            cur['leagues'] += 1
+            cur['status'] = _merge_sport_state(cur['status'], state)
+        for e in out:
+            if e.sport in self.sport_status:
+                entry = self.sport_status[e.sport]
+                entry['events'] += 1
+                if entry['status'] == 'empty':
+                    entry['status'] = 'success'
+        log.info("SGO: %d events with markets (spent %d objects, %d used this month) | "
+                 "rejections: %s | sport status: %s",
+                 len(out), n_raw, self.budget.used_month(self.name),
+                 dict(self.parse_counts), self.sport_status)
         return out
 
     # ------------------------------------------------------------------ parse
@@ -184,25 +292,46 @@ class SportsGameOddsProvider(BaseProvider):
         away = (teams.get("away") or {}).get("names", {}).get("long") or (teams.get("away") or {}).get("names", {}).get("medium")
         start = parse_iso((ev.get("status") or {}).get("startsAt", ""))
         if not (home and away and start):
+            self.parse_counts["MISSING_TEAM_OR_START"] += 1
             return None
         sport = SPORT_MAP.get(str(ev.get("sportID", "")).upper(), "other")
         players = ev.get("players") or {}
         e = Event(provider=self.name, provider_event_id=ev["eventID"], sport=sport,
                   league=str(ev.get("leagueID", "")).replace("_", " "), league_id=ev.get("leagueID", ""),
                   home=home, away=away, start=start, sources=[self.name])
+        player_props = 0
         for odd_id, o in (ev.get("odds") or {}).items():
             ml = self._parse_odd(odd_id, o, sport, players)
             if ml:
+                if ml.is_player_prop:
+                    if player_props >= self.max_player_props:
+                        self.parse_counts["PLAYER_PROP_LIMIT"] += 1
+                        continue
+                    player_props += 1
                 e.markets.append(ml)
+        if not e.markets:
+            self.parse_counts["NO_USABLE_MARKETS"] += 1
+            return None
         return e
 
     def _parse_odd(self, odd_id: str, o: Dict, sport: str, players: Dict) -> Optional[MarketLine]:
         if o.get("cancelled") or o.get("betTypeID") == "prop":
+            self.parse_counts["CANCELLED_OR_PROP"] += 1
             return None
         if not o.get("bookOddsAvailable", True) and not o.get("bookOdds"):
+            self.parse_counts["NO_BOOK_ODDS"] += 1
             return None
         stat_id = o.get("statID", "")
-        entity_id = o.get("statEntityID", "")
+        if stat_id not in self.allowed_stats:
+            self.parse_counts["UNSUPPORTED_STAT"] += 1
+            return None
+        if o.get("periodID", "game") not in self.allowed_periods:
+            self.parse_counts["UNSUPPORTED_PERIOD"] += 1
+            return None
+        # A missing statEntityID means "the match itself", not "a player" -
+        # defaulting to "" (falsy) here made is_player=True for every odd
+        # object missing this field, silently misrouting team markets.
+        entity_id = o.get("statEntityID") or "all"
         period = PERIOD_MAP.get(o.get("periodID", "game"), o.get("periodID", "game"))
         if sport == "football" and period == "reg":
             period = "full"
@@ -214,6 +343,7 @@ class SportsGameOddsProvider(BaseProvider):
         if not price and book_prices:
             price = max(book_prices)
         if not price:
+            self.parse_counts["MISSING_PRICE"] += 1
             return None
         n_books = max(1, len(book_prices))
         fair = american_to_decimal(o.get("fairOdds"))
@@ -238,6 +368,7 @@ class SportsGameOddsProvider(BaseProvider):
             elif side == "not_draw":
                 market, selection = "dc", "home_away"
             else:
+                self.parse_counts["UNKNOWN_SELECTION"] += 1
                 return None
         elif bet == "ml" and stat == "points" and not is_player:
             # 2-way moneyline: a level score pushes. In football that is
@@ -245,17 +376,26 @@ class SportsGameOddsProvider(BaseProvider):
             market = "dnb" if sport == "football" else "result2"
             selection = side
             if selection not in ("home", "away"):
+                self.parse_counts["UNKNOWN_SELECTION"] += 1
                 return None
         elif bet == "sp" and not is_player:
             line = _f(o.get("bookSpread") if o.get("bookSpread") is not None else o.get("fairSpread"))
-            if line is None or side not in ("home", "away"):
+            if line is None:
+                self.parse_counts["MISSING_LINE"] += 1
+                return None
+            if side not in ("home", "away"):
+                self.parse_counts["UNKNOWN_SELECTION"] += 1
                 return None
             if _f(o.get("fairSpread")) != line:
                 fair = None
             market, selection = "handicap", side
         elif bet == "ou":
             line = _f(o.get("bookOverUnder") if o.get("bookOverUnder") is not None else o.get("fairOverUnder"))
-            if line is None or side not in ("over", "under"):
+            if line is None:
+                self.parse_counts["MISSING_LINE"] += 1
+                return None
+            if side not in ("over", "under"):
+                self.parse_counts["UNKNOWN_SELECTION"] += 1
                 return None
             if _f(o.get("fairOverUnder")) != line:
                 fair = None
@@ -271,6 +411,7 @@ class SportsGameOddsProvider(BaseProvider):
         elif bet == "eo":
             market, selection = ("prop", side) if is_player else ("odd_even", side)
         else:
+            self.parse_counts["UNKNOWN_MARKET"] += 1
             return None
 
         ml = MarketLine(market=market, selection=selection, price=price, period=period, stat=stat,
@@ -279,6 +420,7 @@ class SportsGameOddsProvider(BaseProvider):
                         label=market_name, market_name=market_name, is_player_prop=is_player,
                         book_prices=book_prices)
         if market == "prop" and not o.get("scoringSupported", False):
+            self.parse_counts["PROP_UNSETTLEABLE"] += 1
             return None   # cannot be settled -> never a candidate
         return ml
 
@@ -297,11 +439,41 @@ class SportsGameOddsProvider(BaseProvider):
         sgo_sport = SPORT_TO_SGO.get(sport)
         if not sgo_sport:
             return None
-        if not self.budget.can_spend(self.name, 10, monthly_limit=self.monthly_limit):
+        query_limit = 50
+        if not self.budget.can_spend(self.name, query_limit, monthly_limit=self.monthly_limit):
             return None
         params = {"sportID": sgo_sport, "startsAfter": iso(start - timedelta(hours=2)),
                   "startsBefore": iso(start + timedelta(hours=2)), "type": "match",
-                  "expandResults": "true", "limit": 50}
+                  "expandResults": "true", "limit": query_limit}
+        # The free tier rejects sport-only event queries ("specify either a
+        # leagueID or an eventID"); scoping to the configured leagues keeps the
+        # cross-provider team+time lookup usable instead of a guaranteed 400.
+        # Leagues the subscription tier does not cover (EPL etc. on free plans)
+        # make the whole query fail with a 400, so they are dropped here the
+        # same way fetch_events drops them - otherwise every settlement lookup
+        # for a single out-of-tier league would return nothing at all.
+        if self.leagues:
+            avail = self.available_leagues()
+            usable = [lg for lg in self.leagues if avail is None or lg in avail]
+            if not usable:
+                log.info("SGO find_result: none of the configured leagues (%s) are "
+                         "available at this tier; skipping the lookup", ",".join(self.leagues))
+                return None
+            # SGO rejects a query whose leagueID does not match sportID ("the
+            # league NBA is not compatible with the provided sportIDs"), so the
+            # leagues are narrowed to the queried sport when the league->sport map
+            # is available.  When unknown, keep sportID and all usable leagues -
+            # SGO accepts a sportID+leagueID query when they match.
+            league_sport = getattr(self, '_league_sport', None) or {}
+            if league_sport:
+                matched = [lg for lg in usable if league_sport.get(lg, '').upper() == sgo_sport]
+                if matched:
+                    params["leagueID"] = ",".join(matched)
+                else:
+                    params["leagueID"] = ",".join(usable)
+                    params.pop("sportID", None)
+            else:
+                params["leagueID"] = ",".join(usable)
         try:
             data = self.http.get("/events", params)
         except ProviderError as e:

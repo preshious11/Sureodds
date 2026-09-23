@@ -26,8 +26,7 @@ def run(db: Database, cfg: Config, tg: Optional[Telegram], force: bool = False, 
     if not rows:
         log.info("no picks for %s, skipping recap", y_str)
         return None
-    st = stats_mod.compute(db, local)
-    text = recap_message("YESTERDAY", stats_mod.by_sport(rows), st)
+    text = recap_message(stats_mod.compute(db, local))
     if dry_run:
         print(text)
         return text

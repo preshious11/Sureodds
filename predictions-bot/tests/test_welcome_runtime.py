@@ -186,3 +186,55 @@ def test_scheduler_detects_dead_consumer_before_running_jobs(monkeypatch):
     with pytest.raises(RuntimeError, match='consumer stopped'):
         scheduler.loop([job], health_check=health)
     job.due.assert_not_called()
+
+
+# ------------------------------------------------------- command loop supervisor
+class FakeLoop:
+    def __init__(self):
+        self.alive = True
+        self.stopped = 0
+
+    def is_alive(self):
+        return self.alive
+
+    def stop(self):
+        self.stopped += 1
+
+
+def test_supervisor_restarts_dead_consumer_and_backs_off_on_failure():
+    from predbot.bot.runtime import CommandLoopSupervisor
+    first, second = FakeLoop(), FakeLoop()
+    # start, then one failing restart (e.g. the polling lease is held), then success
+    factory = Mock(side_effect=[first, RuntimeError('lease held'), second])
+    sup = CommandLoopSupervisor(factory, cooldown=60, backoff_max=600)
+    sup.start(now=0)
+    assert sup.loop is first
+
+    sup.ensure(now=10)                        # alive -> untouched
+    assert factory.call_count == 1
+
+    first.alive = False
+    sup.ensure(now=100)                       # dead + cooldown passed -> restart fails
+    assert sup.loop is first                  # old loop kept, nothing replaced it
+    assert first.stopped == 0
+    assert factory.call_count == 2
+
+    sup.ensure(now=130)                       # inside the doubled (120s) backoff
+    assert factory.call_count == 2
+
+    sup.ensure(now=221)                       # backoff elapsed -> restart succeeds
+    assert sup.loop is second
+    assert first.stopped == 1                 # the dead loop is shut down
+    assert factory.call_count == 3
+
+    sup.ensure(now=300)                       # alive again -> untouched
+    assert factory.call_count == 3
+
+
+def test_supervisor_stop_shuts_the_live_loop_down():
+    from predbot.bot.runtime import CommandLoopSupervisor
+    loop = FakeLoop()
+    sup = CommandLoopSupervisor(lambda: loop, cooldown=60)
+    sup.start()
+    sup.stop(join_timeout=0)
+    assert loop.stopped == 1

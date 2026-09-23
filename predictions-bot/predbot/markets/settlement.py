@@ -5,9 +5,17 @@ Outcomes: won | lost | push | half_won | half_lost | void | pending
 """
 from __future__ import annotations
 
-from typing import Optional, Tuple
+import logging
+from dataclasses import dataclass, replace
+from types import SimpleNamespace
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
+from predbot.util.names import is_doubles
 from predbot.providers.base import MarketLine, MatchResult
+from predbot.markets.competitions import (BY_ID, competition_for_event, lookup, normalise_period, path_periods,
+                                          path_stats)
+
+log = logging.getLogger(__name__)
 
 WON, LOST, PUSH, HALF_WON, HALF_LOST, VOID, PENDING = (
     "won", "lost", "push", "half_won", "half_lost", "void", "pending")
@@ -85,12 +93,14 @@ def grade(ml: MarketLine, res: MatchResult, sport: str = "football") -> str:
         if out is not None:
             return out
 
+    if sport == "tennis" and ml.market in ("total", "handicap") and ml.stat == "points":
+        ml = replace(ml, stat="games")            # a tennis total / handicap line is in GAMES, not sets
     m = ml.market
     period = ml.period if ml.period != "reg" or sport != "football" else "full"
 
-    if m in ("result3", "result2", "dnb", "dc", "handicap", "ht_ft", "correct_score",
+    if m in ("result3", "result2", "dnb", "dc", "ht_ft", "correct_score",
              "result_total", "result_btts", "clean_sheet", "win_to_nil", "winning_margin",
-             "btts", "odd_even", "team_to_score") or (m == "total" and ml.stat == "points"):
+             "btts", "team_to_score") or (m in ("total", "handicap", "odd_even") and ml.stat == "points"):
         sc = res.score(period)
         if sc is None:
             return PENDING
@@ -132,19 +142,26 @@ def grade(ml: MarketLine, res: MatchResult, sport: str = "football") -> str:
             if st is None:
                 return PENDING
             h, a = st
+        if ml.selection not in ("home", "away"):
+            return VOID
         sel, opp = (h, a) if ml.selection == "home" else (a, h)
         return _handicap(sel, opp, ml.line)
     if m == "odd_even":
         st = (h, a) if ml.stat == "points" else res.stat(ml.stat, period)
         if st is None:
             return PENDING
+        if ml.entity not in ("all", "home", "away"):
+            return VOID
         tot = int(st[0] + st[1]) if ml.entity == "all" else int(st[0] if ml.entity == "home" else st[1])
         return WON if (tot % 2 == 0) == (ml.selection == "even") else LOST
     if m == "ht_ft":
         ht = res.score("1h")
         if ht is None:
             return PENDING
-        want_ht, want_ft = (ml.selection.split("/") + [""])[:2]
+        parts = ml.selection.split("/")
+        if len(parts) != 2:
+            return VOID
+        want_ht, want_ft = parts
         return WON if _result_of(*ht) == want_ht and _result_of(h, a) == want_ft else LOST
     if m == "correct_score":
         try:
@@ -166,25 +183,52 @@ def grade(ml: MarketLine, res: MatchResult, sport: str = "football") -> str:
         both = h > 0 and a > 0
         return WON if _result_of(h, a) == t and both == (yn == "yes") else LOST
     if m == "clean_sheet":
+        if ml.entity not in ("home", "away"):
+            return VOID
         conceded = a if ml.entity == "home" else h
         cs = conceded == 0
         return WON if cs == (ml.selection == "yes") else LOST
     if m == "win_to_nil":
+        if ml.entity not in ("home", "away"):
+            return VOID
         won_nil = (h > a and a == 0) if ml.entity == "home" else (a > h and h == 0)
         return WON if won_nil == (ml.selection == "yes") else LOST
     if m == "team_to_score":
+        if ml.entity not in ("home", "away"):
+            return VOID
         scored = (h if ml.entity == "home" else a) > 0
         return WON if scored == (ml.selection == "yes") else LOST
     if m == "winning_margin":
-        t, band = ml.selection.split("_", 1)
+        parts = ml.selection.split("_", 1)
+        if len(parts) != 2:
+            return VOID
+        t, band = parts
         r = _result_of(h, a)
         margin = abs(h - a)
         if t == "draw":
             return WON if r == "draw" else LOST
         if r != t:
             return LOST
+        if not _band_is_valid(band):
+            return VOID
         return WON if _in_band(margin, band) else LOST
     return PENDING
+
+
+def _band_is_valid(band: str) -> bool:
+    band = band.replace("plus", "+")
+    try:
+        if band.endswith("+"):
+            float(band[:-1])
+        elif "-" in band:
+            lo, hi = band.split("-", 1)
+            float(lo)
+            float(hi)
+        else:
+            float(band)
+        return True
+    except ValueError:
+        return False
 
 
 def _in_band(margin: float, band: str) -> bool:
@@ -194,10 +238,7 @@ def _in_band(margin: float, band: str) -> bool:
     if "-" in band:
         lo, hi = band.split("-", 1)
         return float(lo) <= margin <= float(hi)
-    try:
-        return margin == float(band)
-    except ValueError:
-        return False
+    return margin == float(band)
 
 
 def _grade_from_value(ml: MarketLine, v: float, res: MatchResult) -> Optional[str]:
@@ -210,3 +251,154 @@ def _grade_from_value(ml: MarketLine, v: float, res: MatchResult) -> Optional[st
         return WON if (v > 0) == (ml.selection == "yes") else LOST
     # moneyline/handicap style props need the opposing value; fall through to score-based grading
     return None
+
+
+# ------------------------------------------------------------ results-path gate
+#: Sports SportsGameOdds can look results up for (SPORT_TO_SGO) by teams + time.
+SGO_RESULT_SPORTS = ("football", "basketball", "american_football", "baseball")
+
+
+@dataclass(frozen=True)
+class ResultPath:
+    """One way to settle a pick, with what it can grade. ``periods`` / ``stats`` of
+    ``None`` mean unrestricted."""
+    name: str
+    periods: Optional[frozenset] = None
+    stats: Optional[frozenset] = None
+
+    def allows_period(self, period: str) -> bool:
+        return self.periods is None or normalise_period(period) in self.periods
+
+    def allows_stat(self, stat: str) -> bool:
+        return self.stats is None or (stat or "points") in self.stats
+
+
+def _path(name: str, comp) -> ResultPath:
+    periods, stats = path_periods(name, comp), path_stats(name, comp)
+    return ResultPath(name, None if periods is None else frozenset(periods),
+                      None if stats is None else frozenset(stats))
+
+
+def _sgo_covers(event, sgo, comp) -> bool:
+    if getattr(event, "sport", "") not in SGO_RESULT_SPORTS or comp is None or not comp.sgo:
+        return False
+    available = getattr(sgo, "_available_leagues", None)
+    covered = set(available) if available else set(getattr(sgo, "leagues", None) or [])
+    return comp.sgo in covered
+
+
+def result_paths(event, cfg, providers: Dict) -> List[ResultPath]:
+    """Every provider that can settle a pick on this event, cheapest and most reliable
+    first, each with the periods/stats it can grade. Empty = nothing can settle it.
+
+    ``event`` only needs ``sport``, ``league``, ``league_id``, ``provider``, ``sources``
+    and ``extra`` (a stored pick works too). Order: the origin SportsGameOdds id,
+    football-data.org, ESPN, EuroLeague, The Odds API ``/scores`` (costs credits, so
+    last), then a SportsGameOdds team+time lookup.
+    """
+    providers = providers or {}
+    if getattr(event, "sport", "") == "tennis" and is_doubles(getattr(event, "home", ""), getattr(event, "away", "")):
+        return []                             # ESPN's tennis parser grades singles only; nothing can settle doubles
+    comp = competition_for_event(event)
+    sources: Set[str] = set(getattr(event, "sources", None) or []) | {getattr(event, "provider", "")}
+    extra = getattr(event, "extra", None) or {}
+    out: List[ResultPath] = []
+    sgo = providers.get("sportsgameodds")
+    if sgo is not None and "sportsgameodds" in sources:
+        out.append(_path("sportsgameodds", comp))
+    if providers.get("football_data") is not None and getattr(event, "sport", "") == "football"             and comp is not None and comp.football_data:
+        out.append(_path("football_data", comp))
+    if providers.get("espn") is not None and comp is not None and comp.espn:
+        out.append(_path("espn", comp))
+    if providers.get("euroleague") is not None and comp is not None and comp.euroleague:
+        out.append(_path("euroleague", comp))
+    if providers.get("oddsapi") is not None and "oddsapi" in sources             and str(extra.get("sport_key") or "").startswith("soccer_"):
+        out.append(_path("oddsapi", comp))
+    if sgo is not None and not any(p.name == "sportsgameodds" for p in out) and _sgo_covers(event, sgo, comp):
+        out.append(_path("sportsgameodds", comp))
+    return out
+
+
+def results_path(event, cfg, providers: Dict) -> Optional[str]:
+    """Name of the first (preferred) path that can settle the event, or None."""
+    paths = result_paths(event, cfg, providers)
+    return paths[0].name if paths else None
+
+
+def unsettleable_reason(paths, period: str, stat: str) -> Optional[str]:
+    """``"period"`` / ``"stat"`` when no path can grade this market's period / stat, else None.
+    ``paths`` may be ResultPaths or plain names (a name is taken as unrestricted)."""
+    graders = [p for p in (paths or []) if isinstance(p, ResultPath)]
+    if not graders or len(graders) < len(paths):
+        return None
+    if not any(p.allows_period(period) for p in graders):
+        return "period"
+    if not any(p.allows_period(period) and p.allows_stat(stat) for p in graders):
+        return "stat"
+    return None
+
+
+def make_results_gate(cfg, providers: Dict) -> Callable:
+    """``gate(event) -> Optional[List[ResultPath]]`` around result_paths that logs each
+    league without any path once per run (per gate instance)."""
+    logged: Set[str] = set()
+
+    def gate(event):
+        paths = result_paths(event, cfg, providers)
+        if not paths:
+            league = str(getattr(event, "league_id", "") or getattr(event, "league", "") or "?")
+            if league not in logged:
+                logged.add(league)
+                log.info("NO_RESULTS_PATH: no provider can settle %s (%s) - its picks are skipped",
+                         league, getattr(event, "sport", "?"))
+            return None
+        return paths
+
+    return gate
+
+
+def league_has_results(competition_id_or_comp, providers: Dict) -> bool:
+    """Would an event of this competition (from its own fixture provider) have a results path?"""
+    comp = competition_id_or_comp
+    if isinstance(comp, str):
+        comp = BY_ID.get(comp)
+    if comp is None:
+        return False
+    for origin, ident in (("sharpapi", comp.sharp), ("oddsapi", comp.oddsapi), ("sportsgameodds", comp.sgo)):
+        if not ident:
+            continue
+        event = SimpleNamespace(sport=comp.sport, league="", league_id=ident, provider=origin,
+                                sources=[origin], extra={"sport_key": comp.oddsapi} if origin == "oddsapi" else {})
+        if result_paths(event, None, providers):
+            return True
+    return False
+
+
+def coverage_table(cfg, providers: Dict) -> List[Tuple[str, str, List[str]]]:
+    """(provider, configured league identifier, path names) for every configured league."""
+    rows: List[Tuple[str, str, List[str]]] = []
+    lists = (("sharpapi", getattr(cfg, "sharpapi_leagues", []) or []),
+             ("oddsapi", getattr(cfg, "odds_api_league_allowlist", []) or []),
+             ("sportsgameodds", getattr(cfg, "sgo_leagues", []) or []))
+    for origin, idents in lists:
+        for ident in idents:
+            comp = lookup(ident)
+            event = SimpleNamespace(sport=comp.sport if comp else "", league="", league_id=ident, provider=origin,
+                                    sources=[origin], extra={"sport_key": ident} if origin == "oddsapi" else {})
+            rows.append((origin, ident, [p.name for p in result_paths(event, cfg, providers)]))
+    return rows
+
+
+def coverage_lines(cfg, providers: Dict) -> List[str]:
+    """The startup results-coverage table: every configured league -> the paths that can
+    settle it, or NONE (a config smell: picks there are rejected NO_RESULTS_PATH and the
+    league is not fetched)."""
+    lines = ["results coverage (configured league -> settlement path, in order):"]
+    for origin, ident, paths in coverage_table(cfg, providers):
+        lines.append(f"  {origin:<14} {ident:<38} -> {' > '.join(paths) if paths else 'NONE'}")
+    return lines
+
+
+def log_coverage(cfg, providers: Dict) -> None:
+    for line in coverage_lines(cfg, providers):
+        (log.warning if line.rstrip().endswith("NONE") else log.info)(line)

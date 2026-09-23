@@ -5,11 +5,16 @@ from dataclasses import asdict, dataclass, field
 from math import prod
 from typing import Any, Dict, List, Optional
 
-SCHEMA_VERSION = 2
+#: Bump whenever selection/scoring logic changes: UnifiedFetcher._read() treats
+#: a snapshot written under an older version as a cache miss, so a slate built
+#: by superseded code is regenerated instead of being served for the rest of
+#: the day. 3 = per-(market, stat) / sport / league diversity quotas.
+SCHEMA_VERSION = 3
 
 VIEW_TOP = "top"
 VIEW_DAILY = "daily"
 VIEW_STATS = "stats"
+VIEW_YESTERDAY = "yesterday"
 
 
 @dataclass
@@ -74,7 +79,7 @@ class StatsBlock:
             lost=int(data.get("lost", 0)),
             push=int(data.get("push", 0)),
             n=int(data.get("n", 0)),
-            roi=float(data.get("roi", 0.0)),
+            roi=float(data.get("roi") or 0.0),
             profit=float(data.get("profit", 0.0)),
             best_win=data.get("best_win"),
         )
@@ -142,8 +147,8 @@ class DailySnapshot:
         if view == VIEW_TOP:
             return self.top_picks
         if view == VIEW_DAILY:
-            # The picker builds the daily accumulator by extending the top ticket.
-            return self.top_picks + self.daily_picks
+            # Each ticket is its own card with its own odds and count; the Daily never repeats a Top tip.
+            return self.daily_picks
         return []
 
     def total_picks(self) -> int:

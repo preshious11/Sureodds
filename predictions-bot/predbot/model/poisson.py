@@ -1,10 +1,9 @@
-"""Score-grid model for low-scoring sports (football, hockey, baseball, handball).
+"""Score-grid model for low-scoring sports (football, baseball).
 
 A Dixon-Coles adjusted independent Poisson grid P(home=i, away=j). Expected
 goals (lambda) come from two places and are blended by the ensemble:
   * the market  - solved so the grid reproduces the de-vigged 1X2 and main
                   Over/Under line (see `lambdas_from_market`)
-  * team stats  - API-Football season/last-5 goal rates (see model.features)
 
 From one grid we price *every* score-settled market consistently: 1X2, DNB,
 DC, totals on any line (incl. Asian quarter lines), team totals, BTTS, Asian
@@ -19,9 +18,18 @@ from typing import Dict, List, Optional, Tuple
 
 from predbot.providers.base import MarketLine
 
-MAX_GOALS = {"football": 10, "hockey": 12, "handball": 60, "baseball": 20}
-DEFAULT_RHO = {"football": -0.10, "hockey": -0.05, "baseball": 0.0, "handball": 0.0}
-PERIOD_SCALE = {"full": 1.0, "reg": 1.0, "1h": 0.44, "2h": 0.56, "1p": 0.33, "2p": 0.33, "3p": 0.34, "1i5": 0.55}
+MAX_GOALS = {"football": 10, "baseball": 20}
+DEFAULT_RHO = {"football": -0.10, "baseball": 0.0}
+_PERIOD_SCALE_FOOTBALL = {"full": 1.0, "reg": 1.0, "1h": 0.44, "2h": 0.56, "1i5": 0.55}
+_PERIOD_SCALE_DEFAULT  = {"full": 1.0, "reg": 1.0, "1h": 1.0,  "2h": 1.0,  "1i5": 0.55}
+# Back-compat alias (same values as the original module-level constant): a
+# sport-blind lookup is still meaningful for football, which is what earlier
+# code and tests that reference PERIOD_SCALE directly assume.
+PERIOD_SCALE = _PERIOD_SCALE_FOOTBALL
+
+def _period_scale(period: str, sport: str) -> float:
+    table = _PERIOD_SCALE_FOOTBALL if sport == "football" else _PERIOD_SCALE_DEFAULT
+    return table.get(period, 1.0)
 
 
 @lru_cache(maxsize=4096)
@@ -50,14 +58,19 @@ class ScoreGrid:
         self.la = max(0.05, lam_away)
         self.rho = rho
         self.n = max_goals
+        # The Poisson terms are looked up once per row/column and _tau is only non-trivial in the four low-score
+        # cells (elsewhere it is exactly 1.0, so the product is unchanged): the same floating-point operations in
+        # the same order as the cell-by-cell form, with a fraction of the calls.
+        pois_h = [_pois(i, self.lh) for i in range(self.n + 1)]
+        pois_a = [_pois(j, self.la) for j in range(self.n + 1)]
+        low = {(i, j): _tau(i, j, self.lh, self.la, rho) for i in (0, 1) for j in (0, 1)}
         grid: List[List[float]] = []
         tot = 0.0
         for i in range(self.n + 1):
-            row = []
-            for j in range(self.n + 1):
-                p = _pois(i, self.lh) * _pois(j, self.la) * _tau(i, j, self.lh, self.la, rho)
-                p = max(p, 0.0)
-                row.append(p)
+            ph = pois_h[i]
+            row = [max(ph * pj * low[i, j], 0.0) if (i < 2 and j < 2) else max(ph * pj, 0.0)
+                   for j, pj in enumerate(pois_a)]
+            for p in row:
                 tot += p
             grid.append(row)
         self.grid = [[p / tot for p in row] for row in grid]
@@ -212,7 +225,7 @@ def lambdas_from_market(p_home: Optional[float], p_draw: Optional[float], p_away
     falls back to sport priors."""
     rho = DEFAULT_RHO.get(sport, 0.0) if rho is None else rho
     n = MAX_GOALS.get(sport, 10)
-    prior_total = {"football": 2.6, "hockey": 6.0, "baseball": 8.5, "handball": 55.0}.get(sport, 2.6)
+    prior_total = {"football": 2.6, "baseball": 8.5}.get(sport, 2.6)
 
     # 1) total lambda
     if total_line is not None and p_over is not None and 0.02 < p_over < 0.98:
@@ -250,7 +263,7 @@ def lambdas_from_market(p_home: Optional[float], p_draw: Optional[float], p_away
 def grid_for_period(lh: float, la: float, period: str, sport: str) -> ScoreGrid:
     """Memoised: the same (lambdas, period, sport) always yields the same grid,
     so an event's markets share one grid instead of rebuilding it per market."""
-    s = PERIOD_SCALE.get(period, 1.0)
+    s = _period_scale(period, sport)
     return ScoreGrid(lh * s, la * s, DEFAULT_RHO.get(sport, 0.0), MAX_GOALS.get(sport, 10))
 
 
@@ -266,9 +279,9 @@ def price_line(ml: MarketLine, lh: float, la: float, sport: str) -> Optional[flo
         return {"home": h, "draw": d, "away": a}.get(s)
     if m in ("result2", "dnb"):
         h, d, a = g.result()
-        if sport in ("football", "hockey", "handball") and ml.period in ("full", "reg", "1h", "2h") and m == "dnb":
+        if sport == "football" and ml.period in ("full", "reg", "1h", "2h") and m == "dnb":
             return {"home": h / (h + a), "away": a / (h + a)}.get(s)
-        if sport in ("hockey", "baseball") and ml.period == "full":
+        if sport == "baseball" and ml.period == "full":
             # overtime / extra innings: draw resolved ~ by strength
             share = h / (h + a)
             return {"home": h + d * share, "away": a + d * (1 - share)}.get(s)

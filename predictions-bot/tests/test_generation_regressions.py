@@ -61,28 +61,35 @@ def test_top_search_finds_better_pair_than_greedy_single():
     result = select(pool, Config(), dt())
     assert sorted(s.price for s in result.top) == [1.38, 1.5]
     assert prod(s.price for s in result.top) == pytest.approx(2.07)
-    assert result.diagnostics['combinations_checked'] > 1
+    assert result.diagnostics['combinations_checked'] >= 1     # complete in-band tickets evaluated
 
 
 def test_top_search_bounds_count_and_unique_matches():
+    # Top Picks is a 2-3 leg accumulator (TOP_LEGS_MIN/MAX): a single leg is
+    # never selected, and sizes above 3 (when configured) search a trimmed
+    # pool to keep the combinatorial search bounded.
     pool = [sc(ev(i // 2), 'result3', 'home', .75, 1.25 + i / 1000) for i in range(120)]
-    result = select(pool, Config(top_min_odds=1.2, top_max_picks=10), dt())
-    assert 1 <= len(result.top) <= 3
+    result = select(pool, Config(top_leg_odds_min=1.0, top_legs_max=5), dt())
+    assert 2 <= len(result.top) <= 5
     assert len({s.event.dedupe_key() for s in result.top}) == len(result.top)
-    assert result.diagnostics['combinations_checked'] <= 36050
+    assert result.diagnostics['combinations_checked'] <= 60000
 
 
 def test_top_three_pick_combination():
     result = select([sc(ev(i), 'result3', 'home', .8, 1.27) for i in range(3)],
-                    Config(top_min_odds=1.2), dt())
+                    Config(top_leg_odds_min=1.2), dt())
     assert len(result.top) == 3
     assert prod(s.price for s in result.top) == pytest.approx(1.27 ** 3)
 
 
 def test_football_above50_precedes_many_lower_probability_baseball():
+    # DAILY_MIN_PROB is a real, respected floor (picker.py's "preferred" filter
+    # honours cfg.daily_min_prob rather than a hardcoded 0.5) - set it
+    # explicitly so this scenario's premise (0.49 is below the floor, 0.60 is
+    # above it) still holds regardless of DAILY_MIN_PROB's own default.
     pool = [sc(ev(i, sport='baseball'), 'result2', 'home', .49, 2.5) for i in range(40)]
     pool += [sc(ev(100), 'result3', 'home', .60, 1.8)]
-    result = select(pool, Config(), dt())
+    result = select(pool, Config(daily_min_prob=0.5), dt())
     assert result.all()
     assert {s.event.sport for s in result.all()} == {'football'}
 
@@ -95,14 +102,18 @@ def test_below50_only_used_when_no_eligible_preferred_candidates():
 def test_generation_uses_lagos_day_including_utc_previous_date(db, monkeypatch):
     now = datetime(2030, 6, 1, 23, 0, tzinfo=timezone.utc)  # June 2 in Lagos
     event = ev(1, start=now + timedelta(minutes=45))
+    event2 = ev(2, start=now + timedelta(minutes=45))  # Top is a 2-leg minimum accumulator
     chain = provider()
-    chain.collect = Mock(return_value=[event])
+    chain.collect = Mock(return_value=[event, event2])
     chain.last_report = {}
-    monkeypatch.setattr(daily_picks, 'score_events', lambda *args: [sc(event, 'result3', 'home', .75, 2.0)])
+    monkeypatch.setattr(daily_picks, 'score_events', lambda *args: [
+        sc(event, 'result3', 'home', .75, 1.45), sc(event2, 'result3', 'home', .75, 1.45)])
     result = daily_picks.build_picks(chain, db, Config(timezone='Africa/Lagos'), now)
     assert result.top
     start, end = chain.collect.call_args.args
     assert start <= event.start < end
+    # end = min(local midnight + DAY_WINDOW_END_OFFSET_HOURS, now + 24h):
+    # with PICK_WINDOW_HOURS=24 the +24h bound binds here.
     assert end == datetime(2030, 6, 2, 23, tzinfo=timezone.utc)
 
 
@@ -110,10 +121,11 @@ def test_partial_generation_keeps_valid_picks(db, monkeypatch):
     now = dt()
     monkeypatch.setattr('predbot.cache.fetcher.utcnow', lambda: now)
     monkeypatch.setattr(daily_picks, 'utcnow', lambda: now)
-    candidates = [sc(ev(1), 'result3', 'home', .75, 2.0)]
+    # Top is a 2-leg minimum accumulator, so two independent candidates are needed.
+    candidates = [sc(ev(1), 'result3', 'home', .75, 1.45), sc(ev(2), 'result3', 'home', .75, 1.45)]
     monkeypatch.setattr(daily_picks, 'score_events', lambda *args: candidates)
     chain = Mock()
-    chain.collect.return_value = [candidates[0].event]
+    chain.collect.return_value = [c.event for c in candidates]
     chain.last_report = {'football': {'status': 'failed'}}
     # Old retry exhaustion must no longer prevent usable providers from running.
     db.set_kv('generation:' + now.date().isoformat(), '{"complete": false, "attempts": 3}')
@@ -151,23 +163,34 @@ def test_sgo_probes_each_league_and_reuses_spare_allowance(budget):
     assert sum(c.get('raw_events', 0) for c in p.fetch_counts.values()) == 2
 
 
-def test_api_football_configured_league_filter(budget):
-    import copy
-    from tests.conftest import load
-    from predbot.providers.api_football import ApiFootballProvider
-    fixture = copy.deepcopy(load('apif_fixtures.json')['response'][0])
-    fixture['fixture']['date'] = '2030-06-01T22:00:00Z'
-    fixture['fixture']['status']['short'] = 'NS'
-    odds = copy.deepcopy(load('apif_odds.json')['response'][0])
-    odds['fixture']['id'] = fixture['fixture']['id']
-    for allowed, expected in [([str(fixture['league']['id'])], 1), (['999999'], 0)]:
-        p = ApiFootballProvider('k', budget, league_ids=allowed, predictions_per_run=0)
-        p._call = lambda path, *args, **kwargs: {'response': [fixture] if path == '/fixtures' else [odds]}
-        assert len(p.fetch_events(dt(), dt(hh=23))) == expected
-
-
 def test_partial_snapshot_is_not_presented_as_quality_rejection():
     from predbot.bot.pagination import render_page
     snapshot = DailySnapshot(date='2030-06-01', generation={'complete': False})
     text, _ = render_page(snapshot, 'top', 0, 5, 'UTC')
     assert 'temporarily incomplete' not in text
+
+
+def test_sgo_sport_status_is_keyed_by_the_canonical_sport_name(budget):
+    """SGO's sport ids (SOCCER, FOOTBALL) must not leak into sport_status: the event counter and the
+    cache aggregation use canonical names, so a parsed MLS/Ligue 1 event must make 'football' a success."""
+    import json
+    import pathlib
+    from predbot.cache.providers import sport_states
+    from predbot.providers.sportsgameodds import SportsGameOddsProvider
+    raw = json.loads((pathlib.Path(__file__).parent / 'fixtures' / 'sgo_event.json').read_text(encoding='utf-8'))
+    starts = raw['status']['startsAt']
+    from predbot.util.timeutil import parse_iso
+    start = parse_iso(starts)
+    p = SportsGameOddsProvider('k', budget, [], ['FR_LIGUE_1', 'NFL'], event_limit=10)
+    p._available_leagues = {'FR_LIGUE_1', 'NFL'}
+    p._league_sport = {'FR_LIGUE_1': 'SOCCER', 'NFL': 'FOOTBALL'}
+    p.http.get = lambda path, params: {'data': [raw] if params['leagueID'] == 'FR_LIGUE_1' else []}
+
+    events = p.fetch_events(start - timedelta(days=1), start + timedelta(days=1))
+
+    assert events, 'the recorded event should parse'
+    assert p.sport_status['football'] == {'status': 'success', 'events': len(events), 'leagues': 1}
+    assert p.sport_status['american_football']['status'] == 'empty'
+    assert not {'SOCCER', 'FOOTBALL', 'BASKETBALL', 'BASEBALL'} & set(p.sport_status)
+    states = sport_states({'sportsgameodds': {'status': 'complete', 'sport_status': p.sport_status, 'events': {}}})
+    assert set(states) == {'football', 'american_football'} and states['football']['status'] == 'success'

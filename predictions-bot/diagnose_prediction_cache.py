@@ -78,6 +78,18 @@ def report(cfg: Config) -> Dict[str, Any]:
     return out
 
 
+def _display_ts(raw: Optional[str], tz: str) -> str:
+    """Human-readable local timestamp ('2026-09-17 12:35 PM WAT') for a stored
+    ISO-8601 UTC value ('2026-09-17T11:35:24Z'). The trailing ``Z`` marker is
+    correct ISO-8601 for UTC but reads like a placeholder; diagnostics show the
+    named local zone instead. Storage keeps the machine-readable ISO format."""
+    dt = timeutil.parse_iso(raw or "")
+    if dt is None:
+        return str(raw or "n/a")
+    local = timeutil.to_local(dt, tz)
+    return f"{local:%Y-%m-%d} {local.strftime('%I:%M %p').lstrip('0')} {local.tzname() or tz}"
+
+
 def render(info: Dict[str, Any]) -> List[str]:
     lines = [f"Prediction cache backend={info['backend']}",
              f"Database path: {info['db_path']} | exists={info['db_exists']}",
@@ -99,11 +111,11 @@ def render(info: Dict[str, Any]) -> List[str]:
               f"Baseball count: {info['baseball_count']}",
               f"Top Picks count: {info['top_picks_count']}",
               f"Daily Picks count: {info['daily_picks_count']}",
-              f"Generated time: {info['generated_at']}",
-              f"Updated time: {info['updated_at']}",
-              f"Expires time: {info['expires_at']}"]
+              f"Generated time: {_display_ts(info['generated_at'], info['timezone'])}",
+              f"Updated time: {_display_ts(info['updated_at'], info['timezone'])}",
+              f"Expires time: {_display_ts(info['expires_at'], info['timezone'])}"]
     if info["status"] == "PARTIAL":
-        lines.append(f"Retry-after: {info['retry_after']}")
+        lines.append(f"Retry-after: {_display_ts(info['retry_after'], info['timezone'])}")
     lines.append(f"Cache version: {info['cache_version']}")
     return lines
 

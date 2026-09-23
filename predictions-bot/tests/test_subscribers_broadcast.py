@@ -1,6 +1,8 @@
 """Tests for subscriber management, daily broadcasts and the /start menu."""
 from __future__ import annotations
 
+import pytest
+
 from datetime import datetime, timezone
 
 from predbot.bot import broadcast, callbacks
@@ -114,11 +116,24 @@ def test_menu_has_no_subscription_button():
     """The subscribe/unsubscribe toggle was removed - it must not come back."""
     buttons = [b for row in menu_markup()["inline_keyboard"] for b in row]
     assert [b["text"] for b in buttons] == [
-        "\U0001f3c6 Top Picks", "\U0001f4cb Daily Picks", "\U0001f4ca Stats"]
-    assert [b["callback_data"] for b in buttons] == ["pg|top|0", "pg|daily|0", "pg|stats|0"]
+        "\U0001f525 Top Picks", "\U0001f4cb Daily Picks", "\U0001f4ca Stats", "\U0001f5d3 Yesterday"]
+    assert [b["callback_data"] for b in buttons] == ["pg|top|0", "pg|daily|0", "pg|stats|0", "pg|yesterday|0"]
     assert not any(b["callback_data"].startswith("sub|") for b in buttons)
-    assert [view_button_label(v) for v in ("top", "daily", "stats")] == \
+    assert [view_button_label(v) for v in ("top", "daily", "stats", "yesterday")] == \
         [b["text"] for b in buttons]          # menu and switch row share one definition
+
+
+@pytest.fixture(autouse=True)
+def _subscribers_joined_before_the_fixtures(monkeypatch):
+    """Pin subscribed_at for every test in this module.
+
+    db.subscriber_add() stamps subscribed_at from the REAL clock, and the delivery
+    gate skips anyone who "joined after today's 9:30 card was due" by comparing it
+    with the fixtures' date (2030-06-01). Left unpinned these tests pass only
+    while the real date is before 2030-06-01 and start failing the day after.
+    Tests that care about the join time override this with _join_at()."""
+    import predbot.storage.db as db_mod
+    monkeypatch.setattr(db_mod, "_now", lambda: "2030-01-01T00:00:00Z")
 
 
 # ------------------------------------------------------------------- broadcasts
@@ -137,21 +152,22 @@ def test_deliver_picks_reaches_all_subscribers_once(db, monkeypatch):
     sent = broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot, now=now)
 
     assert sent == 2
-    assert [s["chat_id"] for s in tg.sends] == ["42", "77"]
-    card = tg.sends[0]["text"]
-    assert card.startswith("📊 TODAY'S RESULTS")            # the canonical summary copy
-    assert "🔥 TOP PICKS" in card and "📋 DAILY PICKS" in card
+    assert [s["chat_id"] for s in tg.sends] == ["42", "42", "77", "77"]      # two messages each, Top then Daily
+    top, daily = tg.sends[0]["text"], tg.sends[1]["text"]
+    card = top + daily
+    assert top.startswith("🔥 TOP PICKS · Sat 1 Jun")         # the canonical cards
+    assert daily.startswith("📋 DAILY PICKS · Sat 1 Jun") and "DAILY" not in top
     assert "predictions——" not in card                      # old copy stays gone
-    assert card.count("Confidence level:") == 4       # 1 top + 3 daily picks, one block each
-    assert "Total Picks: 1" in card and "Total Picks: 3" in card
-    assert card.count("Combined Odds:") == 2          # one per section, never one stale line
+    assert card.count("📊") == 4                      # 1 top + 3 daily picks, one block each
+    assert "· 1 pick ·" in top and "· 3 picks ·" in daily
+    assert card.count("🎟 Combined odds") == 2        # one per card, never one stale line
 
     # same day again (e.g. a restart): deliveries are de-duplicated per user
     assert broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot, now=now) == 0
-    assert len(tg.sends) == 2
+    assert len(tg.sends) == 4
 
 
-def test_deliver_picks_waits_until_930_in_subscriber_timezone(db):
+def test_deliver_picks_waits_until_delivery_time(db):
     db.subscriber_add("42")
     tg = FakeTG()
     cfg = Config(timezone="UTC")
@@ -164,22 +180,31 @@ def test_deliver_picks_waits_until_930_in_subscriber_timezone(db):
     assert broadcast.deliver_picks(db, cfg, tg, _snapshot(), now=due) == 1
 
 
-def test_deliver_picks_uses_each_subscribers_own_timezone(db):
-    """The whole point: 9:30 means 9:30 where the subscriber is, not one instant."""
-    db.subscriber_add("lagos", timezone="Africa/Lagos")   # UTC+1 -> their 9:30 == 08:30 UTC
+def test_delivery_is_one_shared_instant_and_zones_only_change_the_display(db):
+    """DELIVERY_TIME is measured in TIMEZONE for everyone; a subscriber's own zone is display-only."""
+    db.subscriber_add("lagos", timezone="Africa/Lagos")
     db.subscriber_add("utc")
     tg = FakeTG()
-    cfg = Config(timezone="UTC")
+    cfg = Config(timezone="Africa/Lagos")                 # 09:30 WAT == 08:30 UTC
 
-    lagos_930 = datetime(2030, 6, 1, 8, 30, tzinfo=timezone.utc)
-    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(), now=lagos_930) == 1
-    assert tg.sends[0]["chat_id"] == "lagos"             # the UTC subscriber waits
-    assert "WAT" in tg.sends[0]["text"]                  # kickoffs in their zone
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 8, 29, tzinfo=timezone.utc)) == 0
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 8, 30, tzinfo=timezone.utc)) == 2
+    assert {s["chat_id"] for s in tg.sends} == {"lagos", "utc"}
+    assert any("WAT" in s["text"] for s in tg.sends)      # kickoffs still rendered per zone
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 9, 0, tzinfo=timezone.utc)) == 0   # once each
 
-    utc_930 = datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)
-    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(), now=utc_930) == 1
-    assert tg.sends[1]["chat_id"] == "utc"
-    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(), now=utc_930) == 0   # once each
+
+def test_delivery_time_is_configurable(db):
+    db.subscriber_add("42")
+    cfg = Config(timezone="UTC", delivery_time="11:15")
+    tg = FakeTG()
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)) == 0
+    assert broadcast.deliver_picks(db, cfg, tg, _snapshot(),
+                                   now=datetime(2030, 6, 1, 11, 15, tzinfo=timezone.utc)) == 1
 
 
 def test_deliver_picks_survives_a_missed_poll_tick(db):
@@ -198,11 +223,11 @@ def test_deliver_picks_skips_empty_snapshot(db):
                                    lambda: empty, now=now) == 0
 
 
-def test_each_zone_is_served_at_its_own_930(db):
-    """Tokyo, New York and Lagos each get the card at their own 9:30, not a shared one."""
-    db.subscriber_add("tokyo", timezone="Asia/Tokyo")          # UTC+9  -> 00:30 UTC
-    db.subscriber_add("lagos", timezone="Africa/Lagos")        # UTC+1  -> 08:30 UTC
-    db.subscriber_add("newyork", timezone="America/New_York")  # UTC-4  -> 13:30 UTC
+def test_every_zone_is_served_at_the_same_delivery_time_with_its_own_kickoff_times(db):
+    """Tokyo, New York and Lagos get the card together at DELIVERY_TIME; only the display differs."""
+    db.subscriber_add("tokyo", timezone="Asia/Tokyo")
+    db.subscriber_add("lagos", timezone="Africa/Lagos")
+    db.subscriber_add("newyork", timezone="America/New_York")
     tg = FakeTG()
     cfg = Config(timezone="UTC")
 
@@ -211,16 +236,13 @@ def test_each_zone_is_served_at_its_own_930(db):
             db, cfg, tg, _snapshot(),
             now=datetime(2030, 6, 1, hour, minute, tzinfo=timezone.utc))
 
-    assert at(0, 0) == 0                       # nobody's 9:30 yet
-    assert at(0, 30) == 1 and tg.sends[-1]["chat_id"] == "tokyo"
-    assert at(8, 30) == 1 and tg.sends[-1]["chat_id"] == "lagos"
-    assert at(13, 30) == 1 and tg.sends[-1]["chat_id"] == "newyork"
-    assert at(13, 30) == 0                     # and only once each
+    assert at(0, 30) == 0 and at(8, 30) == 0       # nobody's own 9:30 matters any more
+    assert at(9, 30) == 3
+    assert [s["chat_id"] for s in tg.sends][::2] == ["tokyo", "lagos", "newyork"]
+    assert at(13, 30) == 0                         # and only once each
 
-    # each card carries kickoffs rendered in that subscriber's own zone
-    assert "3:00 AM JST" in tg.sends[0]["text"]
-    assert "7:00 PM WAT" in tg.sends[1]["text"]
-    assert "2:00 PM EDT" in tg.sends[2]["text"]
+    for send, clock, label in ((tg.sends[0], "3:00 AM", "JST"), (tg.sends[2], "7:00 PM", "WAT"), (tg.sends[4], "2:00 PM", "EDT")):
+        assert f"🕘 {clock}" in send["text"] and f"times in {label}" in send["text"]
 
 
 def test_deliver_picks_uses_the_config_timezone_when_unset(db):
@@ -277,14 +299,14 @@ def test_subscribing_before_930_still_gets_todays_card(db, monkeypatch):
 
     assert broadcast.deliver_picks(db, Config(timezone="UTC"), tg, _snapshot(),
                                    now=datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)) == 1
-    assert len(tg.sends) == 1
+    assert len(tg.sends) == 2                                # the Top card and the Daily card
 
 
-def test_the_join_gate_is_measured_in_the_subscribers_own_zone(db, monkeypatch):
-    """Own-zone 9:30: 09:30 UTC is 10:30 WAT (missed) but 08:00 JST (in time)."""
-    _join_at(monkeypatch, "2030-06-01T09:30:00Z")            # Lagos: 10:30 WAT
-    db.subscriber_add("lagos", timezone="Africa/Lagos")
-    _join_at(monkeypatch, "2030-05-31T23:00:00Z")            # Tokyo: 08:00 JST on 1 June
+def test_the_join_gate_is_measured_in_the_config_timezone_not_the_subscribers(db, monkeypatch):
+    """DELIVERY_TIME is one instant: 00:35 UTC is 09:35 JST but still before the 09:30 UTC card."""
+    _join_at(monkeypatch, "2030-06-01T09:31:00Z")            # a minute after the shared instant
+    db.subscriber_add("late", timezone="Africa/Lagos")
+    _join_at(monkeypatch, "2030-06-01T00:35:00Z")            # 09:35 JST, but well before 09:30 UTC
     db.subscriber_add("tokyo", timezone="Asia/Tokyo")
     tg = FakeTG()
 
@@ -410,11 +432,11 @@ def _loop(db) -> CommandLoop:
     return CommandLoop(FakeTG(), db, Config(timezone="UTC"), {}, service=None)
 
 
-def test_there_is_no_manual_timezone_command(db):
-    """Zones are detected, never asked for - /timezone must not come back."""
-    assert _loop(db).handle("/timezone", "1", "42", ["Africa/Lagos"]) is None
-    assert not hasattr(CommandLoop, "_timezone")
-    assert "/timezone" not in (_loop(db).handle("/help", "1", "42") or "")
+def test_the_timezone_command_is_back_and_is_advertised(db):
+    """/timezone Area/City sets the DISPLAY zone (delivery stays one shared instant)."""
+    assert "Africa/Lagos" in _loop(db).handle("/timezone", "1", "42", ["Africa/Lagos"])
+    assert db.subscriber_timezone("42") == "Africa/Lagos"
+    assert "/timezone" in _loop(db).handle("/help", "1", "42")
 
 
 def test_stop_command_unsubscribes(db):
@@ -457,10 +479,10 @@ def test_page_callbacks_still_work_after_router_change(db):
     handle_callback(_cb("pg|top|0"), service=fetcher, tg=tg, db=db, cfg=Config())
 
     assert len(tg.edits) == 1
-    assert tg.edits[0]["text"].startswith("🏆 Top Picks for Today")
+    assert tg.edits[0]["text"].startswith("🔥 TOP PICKS · ")
     assert "predictions——" not in tg.edits[0]["text"]          # old copy stays gone
-    assert [b["text"] for b in tg.edits[0]["reply_markup"]["inline_keyboard"][-1]] == \
-        ["🏆 Top Picks", "📋 Daily Picks", "📊 Stats"]
+    assert [b["text"] for row in tg.edits[0]["reply_markup"]["inline_keyboard"] for b in row] == \
+        ["🔥 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
 
 
 # ----------------------------------------------------------------- helpers

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import signal
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Callable, Optional
@@ -16,6 +17,13 @@ log = logging.getLogger(__name__)
 def _parse_hhmm(s: str):
     h, m = s.split(":")
     return int(h), int(m)
+
+
+def _run_fn(name: str, fn: Callable[[], None]) -> None:
+    try:
+        fn()
+    except Exception as e:  # noqa: BLE001
+        log.exception("job %s failed: %s", name, e)
 
 
 class DailyJob:
@@ -32,11 +40,15 @@ class DailyJob:
         return (local.hour, local.minute) >= (self.h, self.m)
 
     def run(self, now: datetime) -> None:
+        # Marking "ran today" happens synchronously (so the scheduler's next
+        # tick never double-dispatches this job); the job body itself - which
+        # can mean provider API calls, scoring, or a settlement scan - runs on
+        # its own thread so a catch-up run due right at process start (e.g.
+        # after a redeploy that lands past post_time) can never compete with
+        # or delay the Telegram polling thread.
         self.last_run_date = to_local(now, self.tz).strftime("%Y-%m-%d")
-        try:
-            self.fn()
-        except Exception as e:  # noqa: BLE001
-            log.exception("job %s failed: %s", self.name, e)
+        threading.Thread(target=_run_fn, args=(self.name, self.fn),
+                         name=f"job-{self.name}", daemon=True).start()
 
 
 class IntervalJob:
@@ -49,36 +61,34 @@ class IntervalJob:
 
     def run(self, now: datetime) -> None:
         self.next = now + self.every
-        try:
-            self.fn()
-        except Exception as e:  # noqa: BLE001
-            log.exception("job %s failed: %s", self.name, e)
+        threading.Thread(target=_run_fn, args=(self.name, self.fn),
+                         name=f"job-{self.name}", daemon=True).start()
 
 
 class DynamicJob:
-    """Runs once when a computed deadline is reached (e.g., after all daily matches end)."""
+    """Runs when a computed deadline is reached (e.g., after all daily matches end).
+
+    The once-only guard is keyed on the deadline INSTANT, not the calendar day: a
+    run at 01:30 for yesterday's late match must not stop the 23:00 deadline of
+    today's matches from running."""
     def __init__(self, name: str, tz: str, compute_next_fn: Callable[[datetime], Optional[datetime]], fn: Callable[[], None]):
         self.name, self.tz, self.fn = name, tz, fn
         self.compute_next_fn = compute_next_fn
         self.next: Optional[datetime] = None
-        self.last_run_date: Optional[str] = None
+        self.last_run_deadline: Optional[datetime] = None
 
     def due(self, now: datetime) -> bool:
-        if self.next is None:
-            self.next = self.compute_next_fn(now)
-        if self.next is None:
-            return False
-        if self.last_run_date == to_local(now, self.tz).strftime("%Y-%m-%d"):
+        if self.next is None or self.next == self.last_run_deadline:
+            self.next = self.compute_next_fn(now)      # re-derive: the last deadline already ran
+        if self.next is None or self.next == self.last_run_deadline:
             return False
         return now >= self.next
 
     def run(self, now: datetime) -> None:
-        self.last_run_date = to_local(now, self.tz).strftime("%Y-%m-%d")
+        self.last_run_deadline = self.next
         self.next = None
-        try:
-            self.fn()
-        except Exception as e:  # noqa: BLE001
-            log.exception("job %s failed: %s", self.name, e)
+        threading.Thread(target=_run_fn, args=(self.name, self.fn),
+                         name=f"job-{self.name}", daemon=True).start()
 
 
 def loop(jobs, poll_seconds: int = 30, health_check=None) -> None:
@@ -98,9 +108,12 @@ def loop(jobs, poll_seconds: int = 30, health_check=None) -> None:
             health_check()
         now = utcnow()
         for j in jobs:
-            if j.due(now):
-                log.info("running job %s", j.name)
-                j.run(now)
+            try:
+                if j.due(now):
+                    log.info("running job %s", j.name)
+                    j.run(now)
+            except Exception:  # noqa: BLE001 - one broken job must not stop the scheduler
+                log.exception("scheduler: job %s failed to check/dispatch", getattr(j, "name", "?"))
         time.sleep(poll_seconds)
 
     log.info("scheduler stopped")

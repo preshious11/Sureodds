@@ -2,11 +2,10 @@
 
 For each event we build:
   market      de-vigged consensus probability for every selection (always)
-  score_model Poisson grid (football/hockey/baseball/handball) or Gaussian
+  score_model Poisson grid (football/baseball) or Gaussian
               margin model (basketball/american football) fitted to the main
-              lines and, for football, blended with API-Football goal rates
+              lines
   elo         rating-based result probabilities (weight grows with data)
-  apif        API-Football's own 1X2 percentages when present
 
 Sources are blended in logit space, shrunk toward the market (we are humble by
 default), then passed through the learned calibration.
@@ -19,7 +18,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from predbot.markets.catalog import selection_label, spec
-from predbot.model import features
 from predbot.model.calibration import Calibrator
 from predbot.model.devig import blend_logit, devig, single_side_prob
 from predbot.model.elo import Elo
@@ -29,10 +27,26 @@ from predbot.providers.base import Event, MarketLine
 
 log = logging.getLogger(__name__)
 
-GRID_SPORTS = {"football", "hockey", "baseball", "handball"}
+GRID_SPORTS = {"football", "baseball"}
 MARGIN_SPORTS = {"basketball", "american_football"}
-SCORE_MODEL_WEIGHT = {"football": 0.60, "hockey": 0.45, "baseball": 0.35, "handball": 0.35,
+SCORE_MODEL_WEIGHT = {"football": 0.60, "baseball": 0.35,
                       "basketball": 0.50, "american_football": 0.45}
+
+
+def _reliable_pair(prices: Dict[str, float]) -> bool:
+    """True when these selections' implied probabilities sum past 100%, i.e.
+    a real bookmaker margin - the only case devig() can safely remove.
+
+    Each price here is a *cross-book average* (_mean_price): the two sides of
+    a pair can be averaged from different, non-identical sets of bookmakers,
+    so their implied probabilities are not guaranteed to sum above 1 even for
+    a perfectly healthy market - on thin lines this dips under 100% purely
+    from book-to-book disagreement, not genuine arbitrage. devig() then
+    trusts that as-is and normalises it, extremising the split into an
+    overconfident probability on one side. When the sum doesn't clear 100%
+    the caller skips devig() and lets each line fall back to
+    single_side_prob() below, which prices it off its own price alone."""
+    return sum(1.0 / p for p in prices.values() if p and p > 1.0) > 1.0
 
 
 @dataclass
@@ -50,6 +64,7 @@ class Scored:
     rank_score: float = 0.0
     tier: str = ""
     notes: Dict = field(default_factory=dict)
+    p_raw: Optional[float] = None     # blended probability BEFORE calibration (stored as prob_raw)
 
     @property
     def price(self) -> float:
@@ -69,7 +84,6 @@ class EventModel:
         self.margin_model: Optional[MarginModel] = None
         self.elo_probs: Optional[Tuple[float, float, float]] = None
         self.elo_games = 0
-        self.apif_probs: Optional[Tuple[float, float, float]] = None
         self.notes: Dict = {}
         self._market_index: Dict[Tuple, List[MarketLine]] = {}
         self._build_market_index()
@@ -85,10 +99,6 @@ class EventModel:
         self._market_probs()
         self._score_model()
         self.elo_probs, self.elo_games = self.elo.probs(self.sport, self.ev.home, self.ev.away)
-        pred = self.ev.extra.get("prediction")
-        if pred:
-            self.apif_probs = features.apif_result_probs(pred)
-            self.notes["apif"] = features.apif_summary(pred)
 
     @staticmethod
     def _mean_price(ml: MarketLine) -> float:
@@ -101,22 +111,52 @@ class EventModel:
         for ml in self.ev.markets:
             groups.setdefault(ml.market_key(), []).append(ml)
         for mk, lines in groups.items():
-            ways = spec(mk[0]).ways
+            market, ways = mk[0], spec(mk[0]).ways
             sels = {ml.selection for ml in lines}
-            complete = False
-            if ways == 3 and mk[0] == "result3":
-                complete = sels >= {"home", "draw", "away"}
-            elif ways == 2:
-                complete = len(sels) == 2 and any(
-                    {a, b} <= sels for a, b in (("home", "away"), ("over", "under"), ("yes", "no"), ("even", "odd")))
-            elif mk[0] == "dc":
-                complete = False  # derive from result3 instead
-            if complete:
-                probs = devig({ml.selection: self._mean_price(ml) for ml in lines})
-                for ml in lines:
-                    if ml.selection in probs:
-                        self.p_market[ml.key()] = probs[ml.selection]
-                        self.market_complete[ml.key()] = True
+            if market == "handicap" and ways == 2:
+                # market_key() groups by abs(line), so this bucket can hold
+                # MORE than one true pair when both signs of the same
+                # magnitude are quoted (e.g. home+2.0/away+2.0 AND
+                # home-2.0/away-2.0 - two different, non-complementary
+                # propositions, not two sides of one market). A selection-
+                # keyed dict comprehension over the whole bucket would let a
+                # later pair's price silently overwrite an earlier pair's and
+                # broadcast one devig result across every line in the group.
+                # Each home line must devig against its own signed mirror
+                # (home.line == -away.line) only.
+                homes = [ml for ml in lines if ml.selection == "home"]
+                aways = [ml for ml in lines if ml.selection == "away"]
+                for h in homes:
+                    mirror = next((a for a in aways if a.line == -h.line), None)
+                    if mirror is None:
+                        continue
+                    prices = {"home": self._mean_price(h), "away": self._mean_price(mirror)}
+                    if not _reliable_pair(prices):
+                        continue
+                    probs = devig(prices)
+                    if "home" in probs:
+                        self.p_market[h.key()] = probs["home"]
+                        self.market_complete[h.key()] = True
+                    if "away" in probs:
+                        self.p_market[mirror.key()] = probs["away"]
+                        self.market_complete[mirror.key()] = True
+            else:
+                complete = False
+                if ways == 3 and market == "result3":
+                    complete = sels >= {"home", "draw", "away"}
+                elif ways == 2:
+                    complete = len(sels) == 2 and any(
+                        {a, b} <= sels for a, b in (("home", "away"), ("over", "under"), ("yes", "no"), ("even", "odd")))
+                elif market == "dc":
+                    complete = False  # derive from result3 instead
+                if complete:
+                    prices = {ml.selection: self._mean_price(ml) for ml in lines}
+                    if _reliable_pair(prices):
+                        probs = devig(prices)
+                        for ml in lines:
+                            if ml.selection in probs:
+                                self.p_market[ml.key()] = probs[ml.selection]
+                                self.market_complete[ml.key()] = True
             for ml in lines:
                 if ml.key() in self.p_market:
                     continue
@@ -165,14 +205,6 @@ class EventModel:
             if lam is None:
                 return
             lh, la = lam
-            pred = self.ev.extra.get("prediction")
-            if pred and self.sport == "football":
-                stats = features.apif_lambdas(pred)
-                if stats:
-                    sh, sa, conf = stats
-                    w = 0.35 * conf
-                    lh, la = (1 - w) * lh + w * sh, (1 - w) * la + w * sa
-                    self.notes["lambda_stats"] = (round(sh, 2), round(sa, 2), round(conf, 2))
             self.grid_lambdas = (lh, la)
             self.notes["lambda"] = (round(lh, 2), round(la, 2))
         elif self.sport in MARGIN_SPORTS:
@@ -227,18 +259,14 @@ class EventModel:
                 sources["elo"] = p_elo
                 weights["elo"] = 0.30 * min(1.0, self.elo_games / 15.0)
 
-        # API-Football
-        if self.apif_probs:
-            p_ap = self._result_prob_from(self.apif_probs, ml)
-            if p_ap is not None:
-                sources["apif"] = p_ap
-                weights["apif"] = 0.35
-
         blended = blend_logit(sources, weights) or p_mkt
-        p_final = p_mkt + self.shrink * (blended - p_mkt)
+        # self.shrink is how much we shrink the model blend TOWARD the market
+        # (MODEL_SHRINK_TO_MARKET): shrink=1.0 -> pure market, shrink=0.0 -> pure model.
+        p_final = p_mkt + (1.0 - self.shrink) * (blended - p_mkt)
         # market-only lines (no model view) are shaded to the market entirely
         if len(sources) == 1:
             p_final = p_mkt
+        p_raw = max(0.02, min(0.98, p_final))
         p_final = self.cal.apply(p_final)
         p_final = max(0.02, min(0.98, p_final))
 
@@ -250,7 +278,7 @@ class EventModel:
         edge = p_final - p_mkt
         liquidity = min(1.0, ml.n_books / 3.0)
         label = selection_label(ml, self.ev.home, self.ev.away, self.sport)
-        return Scored(event=self.ev, line=ml, p_market=p_mkt, p_model=p_final, sources=sources,
+        return Scored(event=self.ev, line=ml, p_market=p_mkt, p_model=p_final, p_raw=p_raw, sources=sources,
                       agreement=agreement, ev=ev, edge=edge, label=label, liquidity=liquidity,
                       notes=dict(self.notes))
 

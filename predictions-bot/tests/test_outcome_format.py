@@ -18,10 +18,9 @@ import pytest
 from predbot.bot import pagination
 from predbot.bot.broadcast import picks_text
 from predbot.bot.callbacks import handle_callback, handle_command
-from predbot.bot.format import (DAILY_SECTION_TITLE, SECTION_COMBINED, SECTION_TOTAL,
-                                SUMMARY_TITLE, TOP_SECTION_TITLE, combined_odds,
+from predbot.bot.format import (DAILY_TITLE, TOP_TITLE, card_header, combined_odds,
                                 format_outcome, outcome_label, pick_line_from_record,
-                                render_section, summary_card)
+                                summary_card, zone_label)
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.cache.models import DailySnapshot, PickRecord, VIEW_DAILY, VIEW_TOP
 from predbot.config import Config
@@ -70,17 +69,17 @@ def test_baseball_team_prop_names_team_and_stat():
 def test_baseball_match_total_uses_runs():
     r = rec(sport="baseball", home="Guardians", away="Tigers", label="Over 8.5",
             market="total", selection="over", line=8.5)
-    assert format_outcome(r) == "Over 8.5 Runs"
+    assert format_outcome(r) == "Over 8.5 Total Runs"
 
 
 def test_football_total_uses_goals():
     r = rec(market="total", selection="over", line=2.5)
-    assert format_outcome(r) == "Over 2.5 Goals"
+    assert format_outcome(r) == "Over 2.5 Total Goals"
 
 
 def test_football_corners_and_team_totals():
     r = rec(market="total", selection="over", line=8.5, stat="corners")
-    assert format_outcome(r) == "Over 8.5 Corners"
+    assert format_outcome(r) == "Over 8.5 Total Corners"
     team = rec(market="total", selection="over", line=1.5, stat="points", entity="home")
     assert format_outcome(team) == "Chelsea Over 1.5 Goals"
 
@@ -101,7 +100,7 @@ def test_basketball_prop_and_team_total():
     assert format_outcome(p) == "LeBron James Over 25.5 Points"
     t = rec(sport="basketball", home="Lakers", away="Celtics", market="total",
             selection="over", line=110.5)
-    assert format_outcome(t) == "Over 110.5 Points"
+    assert format_outcome(t) == "Over 110.5 Total Points"
 
 
 # ================================================================ 7: ambiguity
@@ -116,7 +115,7 @@ def test_ambiguous_props_are_never_rendered():
 
 def test_ambiguous_labels_fall_through_to_canonical_fields():
     r = rec(label="Over 1.5", market="total", selection="over", line=1.5)
-    assert format_outcome(r) == "Over 1.5 Goals"   # unit restored from canonical fields
+    assert format_outcome(r) == "Over 1.5 Total Goals"   # unit restored from canonical fields
     bad = rec(label="Over/Under", market="prop", selection="", line=None, stat="",
               entity="")
     assert format_outcome(bad) == ""
@@ -144,19 +143,15 @@ def _summary_snapshot():
 
 def test_every_card_has_league_match_outcome_confidence_time_and_odds():
     snap = _summary_snapshot()
-    for p in snap.view_items(VIEW_DAILY):
+    for p in snap.top_picks + snap.daily_picks:
         block = pagination.render_pick(p, WAT).splitlines()
-        assert len(block) >= 6                               # sport, league, match, market, prediction, odds, confidence
-        assert block[0] in ("Football", "Baseball")          # sport
-        assert block[1]                                      # league
-        assert " vs " in block[2]                            # match
-        assert block[3] and " " in block[3]                  # market or prediction
-        # Find odds line (should be present)
-        odds_line = [ln for ln in block if ln.startswith("Odds: ")]
-        assert odds_line                                     # individual odds must exist
-        # Find confidence line (should be present)
-        confidence_line = [ln for ln in block if ln.startswith("Confidence level: <b>")]
-        assert confidence_line                               # confidence + time must exist
+        assert len(block) == 3                               # league + match, prediction, odds + confidence + time
+        assert block[0][0] in "⚽⚾" and block[0][1] == " "     # sport icon
+        assert " · " in block[0] and " vs " in block[0]      # league · match
+        assert block[1].startswith("🎯 ") and len(block[1]) > 3      # the explicit prediction
+        assert block[2].startswith("💰 ")                    # odds
+        assert "  ·  📊 " in block[2] and "%" in block[2]     # confidence
+        assert "  ·  🕘 " in block[2]                        # kickoff time (the zone is in the card header)
 
 
 def test_no_raw_identifiers_anywhere_in_user_copy():
@@ -185,28 +180,27 @@ def test_section_totals_use_only_that_sections_picks():
     card = picks_text(snap, WAT)
     top_prod = math.prod(p.price for p in snap.top_picks)
     daily_prod = math.prod(p.price for p in snap.daily_picks)
-    assert f"{TOP_SECTION_TITLE}\n{SECTION_COMBINED} {top_prod:.2f}\n{SECTION_TOTAL} 2" in card
-    assert f"{DAILY_SECTION_TITLE}\n{SECTION_COMBINED} {daily_prod:.2f}\n{SECTION_TOTAL} 2" in card
+    zone = zone_label(WAT, snap.date)
+    assert f"{TOP_TITLE} · Sat 1 Jun\n🎟 Combined odds {top_prod:.2f} · 2 picks · 🕘 times in {zone}" in card
+    assert f"{DAILY_TITLE} · Sat 1 Jun\n🎟 Combined odds {daily_prod:.2f} · 2 picks · 🕘 times in {zone}" in card
 
 
-def test_render_section_totals_match_rendered_cards():
+def test_a_section_header_matches_the_blocks_rendered_under_it():
     snap = _summary_snapshot()
     top_lines = [pick_line_from_record(p, WAT) for p in snap.top_picks]
-    rendered = render_section(TOP_SECTION_TITLE, top_lines)
-    odds_lines = [ln for ln in rendered if ln.startswith(SECTION_COMBINED)]
-    cards = [ln for ln in rendered if ln.startswith("Odds: ")]
-    assert len(cards) == 2                            # Total Picks == number of cards
-    expected = f"{SECTION_COMBINED} {combined_odds(p.price for p in top_lines):.2f}"
-    assert odds_lines == [expected]
+    card = summary_card(top_lines, [], snap.date, "WAT")
+    header = card_header(TOP_TITLE, snap.date, [p.price for p in top_lines], "WAT")
+    assert card.startswith("\n".join(header))
+    assert card.count("💰") == 2                       # one block per counted pick
+    assert header[1].startswith(f"🎟 Combined odds {combined_odds(p.price for p in top_lines):.2f} · 2 picks")
 
 
 def test_view_combined_odds_come_from_the_same_list_as_the_cards():
     snap = _summary_snapshot()
-    for view, items in ((VIEW_TOP, snap.top_picks),
-                        (VIEW_DAILY, snap.top_picks + snap.daily_picks)):
+    for view, items in ((VIEW_TOP, snap.top_picks), (VIEW_DAILY, snap.daily_picks)):
         text, _ = pagination.render_page(snap, view, 0, 20, WAT)
         expected = combined_odds(p.price for p in items if format_outcome(p))
-        assert f"Combined Odds: {expected:.4f}" in text
+        assert f"Combined odds {expected:.2f} · {len(items)} picks" in text
 
 
 # ================================================ 14/15: command == button parity
@@ -230,8 +224,8 @@ def test_all_summary_paths_share_one_canonical_copy():
     # the broadcast card IS the canonical summary, built from the same pick cards
     top = [pick_line_from_record(p, WAT) for p in snap.top_picks]
     daily = [pick_line_from_record(p, WAT) for p in snap.daily_picks]
-    assert broadcast == summary_card(top, daily)
-    assert SUMMARY_TITLE in broadcast
+    assert broadcast == summary_card(top, daily, snap.date, zone_label(WAT, snap.date))
+    assert broadcast.startswith(TOP_TITLE) and DAILY_TITLE in broadcast
     # /yesterday and the recap job share the recap formatter (see test_recap_format)
 
 
@@ -283,16 +277,16 @@ def test_restart_from_existing_sqlite_needs_no_provider_calls(tmp_path):
     second = service.get_daily_snapshot()
     assert picks_text(second, WAT) == picks_text(snap, WAT)
     text, _ = pagination.render_page(second, VIEW_DAILY, 0, 20, WAT)
-    assert "Alec Bohm" not in text and "Over 1.5 Goals" in text
+    assert "Alec Bohm" not in text and "Over 1.5 Total Goals" in text
     db.close()
 
 
 # ===================================================== 20: sports format coverage
 @pytest.mark.parametrize("sport,market,stat,entity,selection,line,expected", [
-    ("football", "total", "corners", "all", "under", 9.5, "Under 9.5 Corners"),
-    ("football", "total", "cards", "all", "over", 3.5, "Over 3.5 Cards"),
+    ("football", "total", "corners", "all", "under", 9.5, "Under 9.5 Total Corners"),
+    ("football", "total", "cards", "all", "over", 3.5, "Over 3.5 Total Cards"),
     ("football", "total", "shots", "away", "over", 4.5, "Arsenal Over 4.5 Shots"),
-    ("baseball", "total", "points", "all", "under", 7.5, "Under 7.5 Runs"),
+    ("baseball", "total", "points", "all", "under", 7.5, "Under 7.5 Total Runs"),
     ("baseball", "prop", "rbis", "Bryce Harper", "over", 0.5, "Bryce Harper Over 0.5 RBIs"),
     ("baseball", "prop", "homeRuns", "Bryce Harper", "under", 1.5,
      "Bryce Harper Under 1.5 Home Runs"),
