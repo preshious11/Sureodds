@@ -15,6 +15,7 @@ Onboarding is therefore menu-only - it never triggers a prediction send.
 from __future__ import annotations
 
 import logging
+import hashlib
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -28,6 +29,52 @@ from predbot.storage.db import Database
 from predbot.util.timeutil import parse_hhmm, resolve_timezone, local_reached, parse_iso, to_local, utcnow
 
 log = logging.getLogger(__name__)
+
+
+def live_delivery_kind(fixture_key: str, ended: bool) -> str:
+    digest = hashlib.sha256(fixture_key.encode("utf-8")).hexdigest()
+    return f"match_{'end' if ended else 'start'}:{digest}"
+
+
+def deliver_live(db: Database, tg: Telegram, pick_date: str, fixture_key: str,
+                 rows, result, ended: bool = False):
+    """Return (sent, complete), persisting each success before the next send.
+
+    The live job serializes runs. Delivery history supplies both eligibility and
+    deduplication; a failed send remains retryable after the fixture is settled.
+    """
+    from predbot.bot.format import live_match_message
+    from predbot.jobs.live_results import orient_result
+    kind = live_delivery_kind(fixture_key, ended)
+    received = {tier: db.deliveries_done(f"picks_{tier}", pick_date) for tier in ("top", "daily")}
+    done = db.deliveries_done(kind, pick_date)
+    sent = 0
+    subscribers = db.subscribers_active()
+    for user in subscribers:
+        chat_id = str(user["chat_id"])
+        relevant = [r for r in rows if chat_id in received.get(r["tier"], set())]
+        if not relevant or chat_id in done:
+            continue
+        if not tg.token:
+            continue
+        text = live_match_message(relevant, orient_result(result, rows[0], relevant[0]), ended)
+        try:
+            success = tg.send(text, chat_id=chat_id)
+        except Exception:  # one failed recipient must not stop other deliveries
+            log.warning("live: notification send failed; will retry")
+            continue
+        if success:
+            db.mark_delivery(kind, pick_date, chat_id)
+            done.add(chat_id)
+            sent += 1
+        time.sleep(1.0 / SENDS_PER_SECOND)
+    # Re-evaluate only the recipients attempted in this run, without another API call.
+    complete = all(str(u["chat_id"]) in done or not any(
+        str(u["chat_id"]) in received.get(r["tier"], set()) for r in rows)
+        for u in subscribers)
+    if sent:
+        log.info("live: %s notification delivered to %d subscribers", "end" if ended else "start", sent)
+    return sent, complete
 
 #: Resolves the canonical card to deliver; ``UnifiedFetcher.published_snapshot``.
 SnapshotProvider = Callable[[], Optional[DailySnapshot]]
@@ -93,8 +140,8 @@ def picks_messages(snapshot: DailySnapshot, tz: str, now: Optional[datetime] = N
     if not top and not daily:
         return []
     zone = zone_label(tz, snapshot.date)
-    top_text = summary_card(top, [], snapshot.date, zone) if top else picks_card([], snapshot.date, TOP_TITLE)
-    daily_text = summary_card([], daily, snapshot.date, zone) if daily else picks_card([], snapshot.date, DAILY_TITLE)
+    top_text = summary_card(top, [], snapshot.date, zone) if top else picks_card([], snapshot.date, TOP_TITLE, zone=zone)
+    daily_text = summary_card([], daily, snapshot.date, zone) if daily else picks_card([], snapshot.date, DAILY_TITLE, zone=zone)
     return [("picks_top", top_text, build_keyboard("top", 0, 1)), ("picks_daily", daily_text, build_keyboard("daily", 0, 1))]
 
 

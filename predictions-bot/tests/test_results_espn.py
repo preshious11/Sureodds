@@ -60,17 +60,34 @@ def test_europa_league_super_lig_and_mls_are_reachable_by_their_provider_ids():
 
 
 @pytest.mark.parametrize("status,expected", [("STATUS_POSTPONED", "postponed"), ("STATUS_CANCELED", "cancelled"),
-                                             ("STATUS_IN_PROGRESS", "in_progress"), ("STATUS_SCHEDULED", "in_progress")])
+                                             ("STATUS_IN_PROGRESS", "in_progress"), ("STATUS_SCHEDULED", "scheduled")])
 def test_non_final_statuses(status, expected):
     payload = copy.deepcopy(load("espn_soccer.json"))
     e = payload["events"][0]
-    e["status"]["type"]["name"] = status
-    e["competitions"][0]["status"]["type"]["name"] = status
+    e["status"]["type"] = {"name": status}
+    e["competitions"][0]["status"]["type"] = {"name": status}
     home, away, ko = _first("espn_soccer.json")
     p = ESPNProvider()
     p.http = _Http(payload)
     r = p.find_result("football", home, away, ko, league_id="england_-_premier_league")
     assert r.status == expected and r.scores == {}
+
+
+@pytest.mark.parametrize("status_type,expected", [
+    ({"state": "pre"}, "scheduled"),
+    ({"state": "in"}, "in_progress"),
+    ({"name": "STATUS_SCHEDULED", "state": "in"}, "in_progress"),
+    ({"name": "STATUS_FINAL"}, "final"),
+    ({"completed": True, "state": "post"}, "final"),
+    ({"state": "post"}, "unknown"),
+    ({}, "unknown"),
+    ({"name": "STATUS_POSTPONED", "state": "pre"}, "postponed"),
+    ({"name": "STATUS_CANCELLED", "completed": True}, "cancelled"),
+])
+def test_status_type_state_and_completion(status_type, expected):
+    result = ESPNProvider()._to_result(lookup("soccer_epl"), {"status": {"type": status_type}},
+                                       {"score": "2"}, {"score": "1"})
+    assert result.status == expected
 
 
 def test_extra_time_without_period_scores_is_not_guessed():
@@ -225,7 +242,7 @@ def test_a_straight_sets_match():
     ("SoonWoo Kwon", "Dusan Lajovic", "2026-08-25T15:05Z", "cancelled"),            # retired
     ("Otto Virtanen", "Grigor Dimitrov", "2026-08-27T16:30Z", "cancelled"),         # walkover
     ("Clara Burel", "Joelle Lilly Sophie Steur", "2026-09-19T15:05Z", "in_progress"),
-    ("Alicia Herrero Linana", "Yasmine Kabbaj", "2026-09-19T16:30Z", "in_progress"),
+    ("Alicia Herrero Linana", "Yasmine Kabbaj", "2026-09-19T16:30Z", "scheduled"),
 ])
 def test_tennis_statuses(home, away, when, expected):
     league = "atp" if "08-2" in when else "wta"

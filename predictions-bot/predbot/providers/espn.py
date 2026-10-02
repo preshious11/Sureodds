@@ -181,14 +181,24 @@ class ESPNProvider(BaseProvider):
 
     def _to_result(self, comp: Competition, c: Dict, home: Dict, away: Dict) -> MatchResult:
         name = self._status(c)
-        result = MatchResult(status="in_progress", source=self.name)
+        status_type = (c.get("status") or {}).get("type") or {}
+        state = str(status_type.get("state", "")).lower()
+        result = MatchResult(status="unknown", source=self.name)
         if name in POSTPONED:
             result.status = "postponed"
             return result
         if name in CANCELLED:
             result.status = "cancelled"
             return result
-        if name not in FINAL and name not in BEYOND_REGULATION:
+        if name not in FINAL and name not in BEYOND_REGULATION and not status_type.get("completed"):
+            if state == "pre":
+                result.status = "scheduled"
+            elif state == "in":
+                result.status = "in_progress"
+            elif name == "STATUS_SCHEDULED":
+                result.status = "scheduled"
+            elif name == "STATUS_IN_PROGRESS":
+                result.status = "in_progress"
             return result
         if comp.sport == "tennis":
             return self._tennis(result, home, away)

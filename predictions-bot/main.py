@@ -9,7 +9,7 @@ from predbot.bot.runtime import CommandLoopSupervisor
 from predbot.bot.telegram import Telegram
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import load_config
-from predbot.jobs import daily_picks, recap, settle
+from predbot.jobs import daily_picks, live_results, recap, settle
 from predbot.jobs.scheduler import DailyJob, DynamicJob, IntervalJob, loop
 from predbot.log import setup_logging
 from predbot.config import require_provider_keys, startup_lines
@@ -44,6 +44,9 @@ def main() -> None:
 
     def job_settle():
         settle.run(resolver, db, cfg)
+
+    def job_live_results():
+        live_results.run(resolver, db, cfg, tg)
 
     def job_recap():
         try:
@@ -89,6 +92,9 @@ def main() -> None:
         IntervalJob("broadcast_recap", 5, job_broadcast_recap),       # their last fixture ending
         DynamicJob("settle", cfg.timezone, compute_settle_deadline, job_settle),
     ]
+
+    if cfg.live_updates_enabled:
+        jobs.append(IntervalJob("live_results", cfg.live_poll_minutes, job_live_results))
 
     commands = None
     supervisor = None

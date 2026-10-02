@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 
@@ -90,9 +91,28 @@ def _settle_row(r, resolver: ResultsResolver, db: Database, elo: Elo, now: datet
         else:
             counts["pending"] += 1
         return
+    settle_result(r, res, db, elo, now, counts, expire_missing=True)
+
+
+def settle_result(r, res: MatchResult, db: Database, elo: Elo, now: datetime,
+                  counts: Dict[str, int], *, expire_missing: bool = False) -> None:
+    """Grade a known result without a duration gate; learning and grading commit together.
+
+    Recheck the stored status under SQLite's write lock: concurrent live/fallback
+    runs and stale row snapshots must never grade or learn the same pick twice.
+    """
+    with db.transaction():
+        current = db.query("SELECT status FROM picks WHERE id=?", (r["id"],))
+        if not current or current[0]["status"] != PENDING:
+            return
+        _apply_result(r, res, db, elo, now, counts, expire_missing)
+
+
+def _apply_result(r, res, db, elo, now, counts, expire_missing):
+    start = parse_iso(r["start_utc"])
     outcome = grade(_row_to_line(r), res, r["sport"])
     if outcome == PENDING:
-        if res.status == "final" and start < now - timedelta(days=MAX_PENDING_DAYS):
+        if expire_missing and res.status == "final" and start < now - timedelta(days=MAX_PENDING_DAYS):
             outcome = VOID
         else:
             counts["pending"] += 1
@@ -103,6 +123,18 @@ def _settle_row(r, resolver: ResultsResolver, db: Database, elo: Elo, now: datet
     # learn from the final score
     sc = res.score("full")
     if res.status == "final" and sc:
+        # The fixture key unifies providers, including reversed home/away names.
+        # Always learn in the first stored leg's orientation so another market
+        # on that fixture cannot create a second results_seen/Elo update.
+        canonical = db.query("SELECT * FROM picks WHERE fixture_key=? ORDER BY id LIMIT 1",
+                             (r["fixture_key"],))
+        if canonical:
+            from predbot.util.names import same_team
+            first = canonical[0]
+            if not same_team(r["home"], first["home"], sport=r["sport"]):
+                sc = (sc[1], sc[0])
+            r = first
+            start = parse_iso(r["start_utc"])
         key = f"{r['sport']}|{r['home']}|{r['away']}|{start.strftime('%Y%m%d')}"
         if not db.result_seen(key):
             db.mark_result_seen(key, sc[0], sc[1])
@@ -209,6 +241,11 @@ def _harvest_elo_from_espn(resolver: "ResultsResolver", db: Database, elo: Elo) 
 
 
 def run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]:
+    with getattr(resolver, "run_lock", nullcontext()):
+        return _run(resolver, db, cfg)
+
+
+def _run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]:
     """Settle every pending pick whose event should be over. Never raises for a
     single pick: a provider or data error is counted in ``errors`` and the run
     moves on, so one bad row cannot stop the rest (or crash the caller)."""

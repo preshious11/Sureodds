@@ -98,7 +98,7 @@ def test_picks_are_listed_earliest_kickoff_first():
 def test_empty_day_has_a_placeholder_and_no_combined_odds():
     card = picks_message([], [], DAY, WAT)
 
-    assert "No selection cleared the quality bar today." in card
+    assert "Predictions being analyzed" in card
     assert "Combined odds" not in card
 
 

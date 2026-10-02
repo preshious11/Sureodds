@@ -124,6 +124,20 @@ CREATE TABLE IF NOT EXISTS deliveries (
     created_at TEXT NOT NULL,
     UNIQUE(kind, post_date, chat_id)
 );
+CREATE TABLE IF NOT EXISTS live_fixture_state (
+    pick_date TEXT NOT NULL,
+    fixture_key TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT,
+    final_at TEXT,
+    last_checked_at TEXT,
+    result_source TEXT,
+    result_json TEXT,
+    settlement_done INTEGER NOT NULL DEFAULT 0,
+    notifications_done INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (pick_date, fixture_key)
+);
 """
 
 
@@ -385,6 +399,57 @@ class Database:
         if before_utc:
             return self.query("SELECT * FROM picks WHERE status='pending' AND start_utc<=? ORDER BY start_utc", (before_utc,))
         return self.query("SELECT * FROM picks WHERE status='pending' ORDER BY start_utc")
+
+    def live_picks(self, earliest: str, latest: str) -> List[sqlite3.Row]:
+        """All legs of due pending fixtures, plus durable unfinished lifecycle work.
+
+        Terminal delivery retries are not tied to pending picks or the stale watch
+        window. Nonterminal watches expire with the ordinary settlement safety net.
+        """
+        return self.query("""
+            SELECT p.* FROM picks p WHERE EXISTS (
+                SELECT 1 FROM picks q WHERE q.pick_date=p.pick_date
+                AND q.fixture_key=p.fixture_key AND q.status='pending'
+                AND q.start_utc BETWEEN ? AND ?
+            ) OR EXISTS (
+                SELECT 1 FROM live_fixture_state s WHERE s.pick_date=p.pick_date
+                AND s.fixture_key=p.fixture_key AND s.notifications_done=0
+                AND (s.status IN ('final','postponed','cancelled') OR p.start_utc BETWEEN ? AND ?)
+            ) ORDER BY p.id
+        """, (earliest, latest, earliest, latest))
+
+    def live_state(self, pick_date: str, fixture_key: str):
+        rows = self.query("SELECT * FROM live_fixture_state WHERE pick_date=? AND fixture_key=?",
+                          (pick_date, fixture_key))
+        return rows[0] if rows else None
+
+    def save_live_result(self, pick_date: str, fixture_key: str, result, checked_at: str) -> None:
+        """Persist the complete result, including tuple-keyed stats, for crash recovery."""
+        payload = {"status": result.status, "scores": result.scores, "source": result.source,
+                   "stats": [[stat, period, list(value)] for (stat, period), value in result.stats.items()],
+                   "odd_scores": result.odd_scores}
+        self.execute("""
+            INSERT INTO live_fixture_state
+                (pick_date,fixture_key,status,started_at,final_at,last_checked_at,result_source,result_json,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(pick_date,fixture_key) DO UPDATE SET
+                status=excluded.status,
+                started_at=COALESCE(live_fixture_state.started_at,excluded.started_at),
+                final_at=COALESCE(live_fixture_state.final_at,excluded.final_at),
+                last_checked_at=excluded.last_checked_at,result_source=excluded.result_source,
+                result_json=excluded.result_json,updated_at=excluded.updated_at
+        """, (pick_date, fixture_key, result.status,
+              checked_at if result.status == "in_progress" else None,
+              checked_at if result.status == "final" else None,
+              checked_at, result.source, json.dumps(payload), checked_at))
+
+    def complete_live_settlement(self, pick_date: str, fixture_key: str) -> None:
+        self.execute("UPDATE live_fixture_state SET settlement_done=1,updated_at=? "
+                     "WHERE pick_date=? AND fixture_key=?", (_now(), pick_date, fixture_key))
+
+    def complete_live_notifications(self, pick_date: str, fixture_key: str) -> None:
+        self.execute("UPDATE live_fixture_state SET notifications_done=1,updated_at=? "
+                     "WHERE pick_date=? AND fixture_key=?", (_now(), pick_date, fixture_key))
 
     def settle_pick(self, pick_id: int, status: str, result: Optional[Dict] = None) -> None:
         self.execute("UPDATE picks SET status=?, settled_at=?, result_json=? WHERE id=?",

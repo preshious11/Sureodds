@@ -158,7 +158,8 @@ def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> s
                 f"source did not answer.{_retry_hint(snapshot, tz)}\n"
                 f"The bot retries automatically{_retry_until(snapshot)}; /daily shows the card as "
                 "soon as it is complete.")
-    return picks_card([], snapshot.date, TOP_TITLE if view == VIEW_TOP else DAILY_TITLE)
+    return picks_card([], snapshot.date, TOP_TITLE if view == VIEW_TOP else DAILY_TITLE,
+                      zone=zone_label(tz, snapshot.date))
 
 
 

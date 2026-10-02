@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from predbot.bot import broadcast
+from predbot.bot.format import no_selection_message
 from predbot.cache.models import DailySnapshot
 from predbot.config import Config
 from predbot.jobs import daily_picks
@@ -83,7 +84,7 @@ def test_an_empty_top_says_so_and_the_daily_still_goes_out(db):
     tg = FakeTG()
     broadcast.deliver_picks(db, CFG, tg, snap, now=NOW)
     assert len(tg.sends) == 2
-    assert tg.sends[0]["text"] == "🔥 TOP PICKS · Sat 1 Jun\nNo selection cleared the quality bar today."
+    assert tg.sends[0]["text"] == f"🔥 TOP PICKS · Sat 1 Jun\n{no_selection_message('UTC')}"
     assert tg.sends[1]["text"].startswith("📋 DAILY PICKS") and "3 picks" in tg.sends[1]["text"]
 
 
@@ -94,7 +95,7 @@ def test_an_empty_daily_says_so_and_the_top_still_goes_out(db):
     tg = FakeTG()
     broadcast.deliver_picks(db, CFG, tg, snap, now=NOW)
     assert tg.sends[0]["text"].startswith("🔥 TOP PICKS") and "1 pick" in tg.sends[0]["text"]
-    assert tg.sends[1]["text"] == "📋 DAILY PICKS · Sat 1 Jun\nNo selection cleared the quality bar today."
+    assert tg.sends[1]["text"] == f"📋 DAILY PICKS · Sat 1 Jun\n{no_selection_message('UTC')}"
 
 
 def test_nothing_at_all_sends_nothing(db):

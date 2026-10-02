@@ -267,7 +267,17 @@ def pick_lines(p: PickLine) -> List[str]:
 
 TOP_TITLE = "🔥 TOP PICKS"
 DAILY_TITLE = "📋 DAILY PICKS"
-NO_SELECTION = "No selection cleared the quality bar today."
+
+
+def no_selection_message(zone: str = "") -> str:
+    """Friendly placeholder shown while no pick has cleared the quality bar yet
+    (before the scheduled post, or a slow provider day). ``zone`` is the
+    reader's own zone abbreviation, e.g. "WAT" - falls back to UTC."""
+    tz_label = zone or "UTC"
+    return ("🕘 <i>Predictions being analyzed...</i>\n\n"
+            "Our model is carefully reviewing today's fixtures to find the best value selections. "
+            "We only recommend picks that meet our strict quality standards.\n\n"
+            f"✅ Check back soon! Predictions typically available by 09:00 AM {tz_label}.")
 
 
 def n_picks(n: int) -> str:
@@ -296,7 +306,7 @@ def picks_card(picks: List[PickLine], day: str, title: str = DAILY_TITLE,
     prices = list(total_prices) if total_prices is not None else [p.price for p in picks]
     lines = card_header(title, day, prices if picks else [], zone)
     if not picks:
-        lines.append(NO_SELECTION)
+        lines.append(no_selection_message(zone))
     for p in picks:
         lines += ["", *pick_lines(p)]
     if pages and pages > 1 and page:
@@ -323,8 +333,9 @@ def picks_message(top, daily, day: datetime, tz: str) -> str:
     for match, outcome in duplicate_pick_lines([p for p in top_lines if p.outcome], [p for p in daily_lines if p.outcome]):
         log.warning("card renders the same pick in Top and Daily: %s - %s", match, outcome)
     day_str = to_local(day, tz).strftime("%Y-%m-%d")
-    card = summary_card(top_lines, daily_lines, day_str, zone_label(tz, day_str)) if (top_lines or daily_lines) else \
-        picks_card([], day_str, DAILY_TITLE)
+    zone = zone_label(tz, day_str)                     # the reader's own zone, on the empty card too
+    card = summary_card(top_lines, daily_lines, day_str, zone) if (top_lines or daily_lines) else \
+        picks_card([], day_str, DAILY_TITLE, zone=zone)
     return card
 
 
@@ -502,3 +513,28 @@ def yesterday_pick_line(row, kind: Optional[str]) -> str:
     outcome = display_text(pick_outcome(row), row["home"], row["away"], sport)
     return (f"{lead}🎯 {esc(outcome)} · {esc(display_name(row['home'], sport))} vs {esc(display_name(row['away'], sport))}"
             f" · @{float(row['price']):.2f}")
+
+
+def live_match_message(rows, result, ended: bool = False) -> str:
+    """One fixture, with only predictions from this recipient's delivered cards."""
+    from types import SimpleNamespace
+    row = rows[0]
+    sport = row["sport"]
+    home, away = display_name(row["home"], sport), display_name(row["away"], sport)
+    score = result.score("full") if ended else None
+    match = f"{home} {score[0]:g}–{score[1]:g} {away}" if score else f"{home} vs {away}"
+    lines = ["🏁 Match Ended" if ended else "🟢 Match Started", "",
+             f"{SPORT_ICON.get(sport, SPORT_ICON['other'])} {sport_name(sport)}"]
+    if row["league"]:
+        lines.append(f"🏆 {esc(row['league'])}")
+    lines.extend([esc(match), ""])
+    icons = {**RESULT_ICON, "half_won": "✅", "half_lost": "❌", "void": "⚪"}
+    for pick in rows:
+        outcome = format_outcome(SimpleNamespace(**dict(pick))) or "Prediction"
+        label = esc(display_text(outcome, pick["home"], pick["away"], sport))
+        if ended:
+            status = pick["status"]
+            lines.append(f"{icons.get(status, '⏳')} {label} — {status.replace('_', ' ').upper()}")
+        else:
+            lines.append(f"🎯 {label}")
+    return "\n".join(lines)

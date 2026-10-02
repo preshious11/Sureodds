@@ -139,10 +139,18 @@ class UnifiedFetcher:
                 if persist:
                     self.db.defer_prediction_retry(self._key(day), iso(now + timedelta(seconds=self.cfg.cache_retry_seconds)))
                 return cached
+            # If all providers exhausted their quota, use a 24h backoff instead of
+            # the short retry so a spent-out day doesn't keep re-attempting calls.
+            if 'quota exhausted' in str(exc).lower() or 'exhausted' in str(exc).lower():
+                backoff = 86400  # 24 hours
+                log.info('Provider quota exhausted; backoff 24h for %s', day)
+            else:
+                backoff = self.cfg.cache_retry_seconds
             snapshot = DailySnapshot(date=day, generated_at=iso(now), origin='sqlite',
                                      status='PARTIAL', generation={'complete': False,
                                      'error_type': type(exc).__name__})
             if persist:
+                self.db.defer_prediction_retry(self._key(day), iso(now + timedelta(seconds=backoff)))
                 self._store(snapshot, now)
             return snapshot
 

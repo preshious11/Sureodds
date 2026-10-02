@@ -11,8 +11,8 @@ from types import SimpleNamespace
 import pytest
 
 from predbot.bot import broadcast, pagination
-from predbot.bot.format import (DAILY_TITLE, NO_SELECTION, TOP_TITLE, picks_card, pick_line_from_record,
-                                summary_card, zone_label)
+from predbot.bot.format import (DAILY_TITLE, TOP_TITLE, no_selection_message, picks_card,
+                                pick_line_from_record, summary_card, zone_label)
 from predbot.bot.telegram import MAX_LEN, Telegram, _split
 from predbot.cache.models import DailySnapshot, PickRecord
 
@@ -90,8 +90,8 @@ def test_empty_states_keep_their_wording_and_gain_the_lead_emoji():
 
     assert view({"reason": "before_post_time", "ready_at": "09:00 WAT"}) == "📋 Today's picks are ready at 09:00 WAT."
     assert view({"reason": "generating"}) == "📋 Today's picks are being generated — try again in a minute."
-    assert view({}) == nl("🔥 TOP PICKS · Sat 1 Jun", NO_SELECTION)
-    assert view({}, view_="daily") == nl("📋 DAILY PICKS · Sat 1 Jun", NO_SELECTION)
+    assert view({}) == nl("🔥 TOP PICKS · Sat 1 Jun", no_selection_message("WAT"))
+    assert view({}, view_="daily") == nl("📋 DAILY PICKS · Sat 1 Jun", no_selection_message("WAT"))
     assert view({}, "PARTIAL").startswith("📋 <b>Today's predictions are still being assembled</b>")
 
 
