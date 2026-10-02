@@ -87,9 +87,9 @@
  "empty_states": {
   "assembling": "📋 <b>Today's predictions are still being assembled</b> - a data source did not answer.\nThe bot retries automatically; /daily shows the card as soon as it is complete.",
   "before_post_time": "📋 Today's picks are ready at 09:00 WAT.",
-  "daily_empty": "📋 DAILY PICKS · Sat 19 Sep\nNo selection cleared the quality bar today.",
+  "daily_empty": "📋 DAILY PICKS · Sat 19 Sep\n🕘 <i>Predictions being analyzed...</i>\n\nOur model is carefully reviewing today's fixtures to find the best value selections. We only recommend picks that meet our strict quality standards.\n\n✅ Check back soon! Predictions typically available by 09:00 AM WAT.",
   "generating": "📋 Today's picks are being generated — try again in a minute.",
-  "top_empty": "🔥 TOP PICKS · Sat 19 Sep\nNo selection cleared the quality bar today."
+  "top_empty": "🔥 TOP PICKS · Sat 19 Sep\n🕘 <i>Predictions being analyzed...</i>\n\nOur model is carefully reviewing today's fixtures to find the best value selections. We only recommend picks that meet our strict quality standards.\n\n✅ Check back soon! Predictions typically available by 09:00 AM WAT."
  },
  "pages": {
   "daily:0": [
