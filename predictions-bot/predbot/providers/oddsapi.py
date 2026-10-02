@@ -19,7 +19,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
-from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, apply_price_mode
+from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, apply_price_mode, norm_book
 from predbot.providers.budget import Budget
 from predbot.util.http import Http, ProviderError, RateLimiter
 from predbot.util.names import is_doubles, same_team
@@ -422,6 +422,8 @@ class OddsApiProvider(BaseProvider):
                             m = merged[k]
                             m.book_prices.append(line.price)
                             m.n_books = len(m.book_prices)
+                            for book, quoted in line.book_quotes.items():
+                                m.book_quotes.setdefault(book, quoted)
                             if line.price > m.price:
                                 m.price, m.bookmaker, m.provider_odd_id = line.price, line.bookmaker, line.provider_odd_id
                         else:
@@ -496,7 +498,7 @@ class OddsApiProvider(BaseProvider):
                 market=market, selection=selection, price=price,
                 bookmaker=bookmaker, n_books=1,
                 provider_odd_id=f"{bookmaker}:h2h:{selection}",
-                book_prices=[price]
+                book_prices=[price], book_quotes={norm_book(bookmaker): price}
             ))
 
         return lines
@@ -536,7 +538,7 @@ class OddsApiProvider(BaseProvider):
                 market="handicap", selection=selection, price=price, line=line,
                 bookmaker=bookmaker, n_books=1,
                 provider_odd_id=f"{bookmaker}:spread:{selection}:{point}",
-                book_prices=[price]
+                book_prices=[price], book_quotes={norm_book(bookmaker): price}
             ))
 
         return lines
@@ -576,7 +578,7 @@ class OddsApiProvider(BaseProvider):
                 market="total", selection=selection, price=price, line=point,
                 bookmaker=bookmaker, n_books=1,
                 provider_odd_id=f"{bookmaker}:total:{selection}:{point}",
-                book_prices=[price]
+                book_prices=[price], book_quotes={norm_book(bookmaker): price}
             ))
 
         return lines

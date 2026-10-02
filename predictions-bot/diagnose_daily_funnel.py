@@ -83,8 +83,8 @@ def stage_table(cfg, scored, now):
         rows.append((f"disagreement floor (ev>={cfg.daily_max_neg_ev} if elo)", len(items)))
         items = [s for s in items if s.agreement >= 0.30]
         rows.append(("agreement>=0.30", len(items)))
-        preferred = [s for s in items if s.p_model >= 0.5]
-        rows.append(("preferred p_model>=0.5 filter (hidden rule)", len(preferred) if preferred else len(items)))
+        # (there is no second "preferred" probability pass any more: DAILY_MIN_PROB above is the only floor; the
+        #  book-coverage / dispersion / sharp-edge / lower-bound gates are reported by the picker's own diagnostics)
         print(f"  --- {sport} ---")
         for name, n in rows:
             print(f"    {name:56s} {n:6d}")
@@ -97,7 +97,6 @@ def unselected(cfg, scored, ps, now, trace):
     lead = now + timedelta(minutes=cfg.min_lead_minutes)
     chosen = {id(s) for s in ps.all()}
     ranked = sorted((s for s in scored if id(s) not in chosen), key=lambda s: -s.p_model)
-    preferred_exists = any(base_valid(s, lead) == "" and s.p_model >= 0.5 for s in scored)
     print(f"\n== 20 highest p_model candidates NOT selected (of {len(ranked)} unselected; slate={len(ps.all())})")
     for s in ranked[:20]:
         print(f"  p={s.p_model:.3f} {s.event.sport:10s} {s.event.provider:12s} "
@@ -108,7 +107,7 @@ def unselected(cfg, scored, ps, now, trace):
                    and cfg.daily_min_odds <= s.price <= cfg.daily_max_odds
                    and s.p_model >= cfg.daily_min_prob
                    and not (INDEPENDENT_SIGNALS & set(s.sources) and s.ev < cfg.daily_max_neg_ev)
-                   and s.agreement >= 0.30 and (s.p_model >= 0.5 or not preferred_exists)]
+                   and s.agreement >= 0.30]
     print(f"\n== 20 highest p_model ELIGIBLE candidates NOT selected "
           f"(passed every gate; {len(ranked_elig)} such)")
     for s in ranked_elig[:20]:

@@ -16,7 +16,7 @@ from predbot.markets.catalog import is_equivalent
 from predbot.selection.picker import select
 
 from tests.conftest import dt
-from tests.test_picker import cfg, ev, sc
+from tests.test_picker import _fx, cfg, ev, sc
 
 DAY = dt()
 
@@ -121,13 +121,14 @@ def test_top_ticket_never_overshoots_the_target():
     assert ticket <= cfg().top_odds_target * 1.7
 
 
-def test_daily_section_lands_in_the_10_to_20_window():
+def test_daily_section_lands_in_the_10_to_12_window():
     now = dt()
-    pool = [sc(ev(i), "result3", "home", 0.62, 1.45) for i in range(40)]
+    pool = [sc(_fx(i), "result3", "home" if i % 2 == 0 else "away", 0.62, 1.35) for i in range(40)]
     ps = select(pool, cfg(), now)
     ticket = math.prod(s.price for s in ps.daily)
     c = cfg()
-    assert c.daily_odds_min <= ticket <= c.daily_odds_max      # 10..20: the Daily ALONE, the Top is not counted
+    assert (c.daily_odds_min, c.daily_odds_max) == (10.0, 12.0)
+    assert c.daily_odds_min <= ticket <= c.daily_odds_max      # 10..12: the Daily ALONE, the Top is not counted
     assert len(ps.all()) <= c.daily_target                     # hard pick cap
 
 

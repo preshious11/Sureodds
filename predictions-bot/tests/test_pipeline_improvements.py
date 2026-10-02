@@ -59,11 +59,11 @@ def test_period_cap_limits_1h_legs():
     pool = []
     for i in range(20):
         m, s = combos[i % len(combos)]
-        pool.append(sc(ev(i), market=m, selection=s, period="1h", n_books=3, p_model=0.75, price=1.60))
+        pool.append(sc(ev(i), market=m, selection=s, period="1h", n_books=5, p_model=0.75, price=1.60))
     for i in range(20, 40):
         m, s = combos[i % len(combos)]
-        pool.append(sc(ev(i), market=m, selection=s, period="full", n_books=3, p_model=0.72, price=1.60))
-    c = cfg(daily_max_period_share=0.15, daily_min_prob=0.65, daily_odds_min=1.01)
+        pool.append(sc(ev(i), market=m, selection=s, period="full", n_books=5, p_model=0.72, price=1.60))
+    c = cfg(daily_max_period_share=0.15, daily_min_prob=0.65)
     ps = select(pool, c, now)
     period_picks = [p for p in ps.daily if p.line.period not in ("full", "reg", "", None)]
     n = len(ps.daily)

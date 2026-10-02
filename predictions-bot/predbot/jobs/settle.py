@@ -242,4 +242,10 @@ def run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]:
     except Exception as e:  # noqa: BLE001
         log.warning("Elo harvest from ESPN failed (non-fatal): %s", e)
     log.info("settlement: %s", counts)
+    if counts["settled"]:
+        try:
+            from predbot.jobs import stats as stats_mod
+            log.info("accuracy: %s", stats_mod.accuracy_summary(stats_mod.accuracy_report(db)))
+        except Exception as e:  # noqa: BLE001 - a report must never break settlement
+            log.warning("accuracy report failed (non-fatal): %s", e)
     return counts

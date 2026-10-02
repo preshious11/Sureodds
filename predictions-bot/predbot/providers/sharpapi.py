@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from predbot.markets.catalog import pretty_league
-from predbot.providers.base import BaseProvider, Event, MarketLine, apply_price_mode
+from predbot.providers.base import BaseProvider, Event, MarketLine, apply_price_mode, norm_book
 from predbot.providers.budget import Budget
 from predbot.util.http import Http, ProviderError, RateLimiter
 from predbot.util.names import is_doubles
@@ -394,6 +394,8 @@ class SharpApiProvider(BaseProvider):
                     m = merged[k]
                     m.book_prices.append(ml.price)
                     m.n_books = len(m.book_prices)
+                    for book, quoted in ml.book_quotes.items():
+                        m.book_quotes.setdefault(book, quoted)
                     if ml.price > m.price:
                         m.price, m.bookmaker, m.provider_odd_id = ml.price, ml.bookmaker, ml.provider_odd_id
                 else:
@@ -534,4 +536,5 @@ class SharpApiProvider(BaseProvider):
         return MarketLine(market=market, selection=selection, price=price, period=period, stat=stat,
                           entity=entity, line=line, bookmaker=str(r.get("sportsbook", "")), n_books=1,
                           provider_odd_id=str(r.get("id", "")), market_name=mtype.replace("_", " ").title(),
-                          book_prices=[price], provider_prob=prob)
+                          book_prices=[price], provider_prob=prob,
+                          book_quotes={norm_book(r.get("sportsbook", "")): price} if r.get("sportsbook") else {})

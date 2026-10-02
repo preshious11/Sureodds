@@ -39,6 +39,37 @@ def devig(prices: Dict[str, float]) -> Dict[str, float]:
     return {s: 0.5 * (mult[s] + powr[s]) for s in q}
 
 
+def shin_devig(prices: Dict[str, float], iters: int = 80) -> Dict[str, float]:
+    """Shin (1993) de-vigging, the usual choice for a SHARP book's prices.
+
+    Shin models the overround as protection against a share ``z`` of insider money, so it takes proportionally
+    more margin off longshots than off favourites (the favourite-longshot bias) - unlike the multiplicative
+    method, which scales every outcome alike. With implied probabilities q_i (sum S > 1) the fair probability
+    is ``p_i = (sqrt(z^2 + 4(1-z) q_i^2 / S) - z) / (2(1-z))`` with ``z`` solved so that sum(p_i) = 1.
+
+    A market that does not overround (S <= 1: incomplete or arbitrage) cannot be solved and is only normalised."""
+    q = {s: 1.0 / p for s, p in prices.items() if p and p > 1.0}
+    if not q:
+        return {}
+    total = sum(q.values())
+    if total <= 1.0 or len(q) < 2:
+        return {s: v / total for s, v in q.items()}
+
+    def probs(z: float) -> Dict[str, float]:
+        return {s: (math.sqrt(z * z + 4.0 * (1.0 - z) * v * v / total) - z) / (2.0 * (1.0 - z)) for s, v in q.items()}
+
+    lo, hi = 0.0, 0.999
+    for _ in range(iters):
+        mid = (lo + hi) / 2
+        if sum(probs(mid).values()) > 1.0:      # still over 100%: more insider share needed
+            lo = mid
+        else:
+            hi = mid
+    p = probs((lo + hi) / 2)
+    norm = sum(p.values())
+    return {s: v / norm for s, v in p.items()}
+
+
 def single_side_prob(price: float, ways: int = 2) -> float:
     """Best-effort fair probability when only one side of a market is known."""
     margin = TYPICAL_MARGIN.get(ways, 0.08)

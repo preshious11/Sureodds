@@ -222,10 +222,14 @@ class Config:
 
     # Picks - the daily post is ONE ticket, so combined odds (not pick counts)
     # size the lists; daily_target is only a safety cap on the number of picks.
-    daily_target: int = field(default_factory=lambda: _int("DAILY_PICKS_TARGET", 20))
+    #: SAFETY cap on the number of picks (Top + Daily). The Daily is sized by its combined odds, never by this.
+    daily_target: int = field(default_factory=lambda: _int("DAILY_PICKS_TARGET", 12))
     top_odds_target: float = field(default_factory=lambda: _float("TOP_COMBINED_ODDS", 2.00))
+    #: Daily ticket: ``DAILY_COMBINED_MIN_ODDS`` is the odds the builder AIMS for (it stops adding legs once it is
+    #: reached) and ``DAILY_COMBINED_MAX_ODDS`` is a hard ceiling it never exceeds. Neither is ever bought with a
+    #: weaker pick: a slate that only holds 6.4 of qualifying odds posts 6.4.
     daily_odds_min: float = field(default_factory=lambda: _float("DAILY_COMBINED_MIN_ODDS", 10.0))
-    daily_odds_max: float = field(default_factory=lambda: _float("DAILY_COMBINED_MAX_ODDS", 20.0))
+    daily_odds_max: float = field(default_factory=lambda: _float("DAILY_COMBINED_MAX_ODDS", 12.0))
     pick_window_hours: int = field(default_factory=lambda: _int("PICK_WINDOW_HOURS", 24))
     #: The day window ends at local midnight + this many hours, so late-evening
     #: kickoffs (e.g. 23:30 Lagos) stay in scope; dedupe against the previous
@@ -243,7 +247,8 @@ class Config:
     #: lower the per-leg probability floor by TOP_RELAX_PROB inside that band. Never fewer than 2 or more than 3 legs.
     top_relaxed_fallback: bool = field(default_factory=lambda: _bool("TOP_RELAXED_FALLBACK", True))
     top_relax_band: float = field(default_factory=lambda: _float("TOP_RELAX_BAND", 0.25))
-    top_relax_prob: float = field(default_factory=lambda: _float("TOP_RELAX_PROB", 0.04))
+    #: 0.0 = the Top never lowers its per-leg probability floor just to reach its odds target (only the band widens)
+    top_relax_prob: float = field(default_factory=lambda: _float("TOP_RELAX_PROB", 0.0))
     top_legs_min: int = field(default_factory=lambda: _int("TOP_LEGS_MIN", 2))
     top_legs_max: int = field(default_factory=lambda: _int("TOP_LEGS_MAX", 3))
     top_odds_max: float = field(default_factory=lambda: _float("TOP_ODDS_MAX", 2.50))
@@ -254,7 +259,12 @@ class Config:
     #: entirely: their p_model is de-vigged market probability, so their EV
     #: is negative by construction and carries no information.
     daily_max_neg_ev: float = field(default_factory=lambda: _float("DAILY_MAX_NEG_EV", -0.05))
-    daily_min_prob: float = field(default_factory=lambda: _float("DAILY_MIN_PROB", 0.30))
+    #: THE Daily probability floor (one gate, no second "preferred" pass behind it): a leg whose calibrated
+    #: probability is below this is never a Daily candidate, whatever the odds it would add to the ticket.
+    daily_min_prob: float = field(default_factory=lambda: _float("DAILY_MIN_PROB", 0.55))
+    #: floor on the LOWER confidence bound of a Daily leg (probability minus its uncertainty, see
+    #: selection/evidence.py): a leg that is only above 50% if the market is exactly right is not a strong pick
+    daily_min_lcb: float = field(default_factory=lambda: _float("DAILY_MIN_LCB", 0.50))
     top_leg_odds_min: float = field(default_factory=lambda: _float("TOP_LEG_ODDS_MIN", 1.05))
     top_min_prob: float = field(default_factory=lambda: _float("TOP_MIN_PROB", 0.62))
     top_max_neg_ev: float = field(default_factory=lambda: _float("TOP_MAX_NEG_EV", -0.05))
@@ -262,22 +272,60 @@ class Config:
     #: selection may enter the Top ticket (0.50 = the historical bar). Lowering
     #: it admits model-vs-market disagreement picks; the default is unchanged.
     top_min_agreement: float = field(default_factory=lambda: _float("TOP_MIN_AGREEMENT", 0.50))
-    top_min_books: int = field(default_factory=lambda: _int("TOP_MIN_BOOKS", 2))
+    #: DISTINCT bookmakers that must quote a Top leg. Measured on the 19 Sep capture: 65% of SharpAPI football main
+    #: lines and 50% of SGO's had a single book, while the Odds API EU feed and SGO consensus carry 6+, so 3 keeps
+    #: the Top on well-covered lines without emptying the slate.
+    top_min_books: int = field(default_factory=lambda: _int("TOP_MIN_BOOKS", 3))
+    #: Daily coverage by market quality (main / secondary / restricted, see selection/evidence.py). A single-book
+    #: line is never strong confirmation; thinner market classes need more independent books.
+    daily_min_books: int = field(default_factory=lambda: _int("DAILY_MIN_BOOKS", 2))
+    daily_secondary_min_books: int = field(default_factory=lambda: _int("DAILY_SECONDARY_MIN_BOOKS", 3))
+    daily_restricted_min_books: int = field(default_factory=lambda: _int("DAILY_RESTRICTED_MIN_BOOKS", 4))
+    #: books quoting the same line must agree within this many probability points (max - min implied), else the
+    #: line is treated as stale / an outlier and rejected
+    max_book_dispersion: float = field(default_factory=lambda: _float("MAX_BOOK_DISPERSION", 0.08))
+    #: Bookmakers treated as the SHARP reference (their de-vigged price is the fair probability; everyone else's
+    #: price is only the AVAILABLE price). Matched on the normalised bookmaker key a provider reports - nothing is
+    #: assumed to be present: a candidate without any of these simply has no reference (and no edge).
+    sharp_books: List[str] = field(default_factory=lambda: _list(
+        "SHARP_BOOKMAKERS", "pinnacle,betfair_ex_eu,betfair_ex_uk,matchbook"))
+    #: With a sharp reference, the soft price may be at most this far below fair value (EV vs the de-vigged sharp
+    #: probability, e.g. -0.01 = 1% negative) before the leg is dropped as not-value. Not applied without a reference.
+    min_edge_vs_sharp: float = field(default_factory=lambda: _float("MIN_EDGE_VS_SHARP", -0.01))
+    #: Without a sharp reference the model may not claim to beat the market by more than this (p_model - p_market):
+    #: a bigger claim with nothing independent behind it is noise, not an edge.
+    max_unsupported_edge: float = field(default_factory=lambda: _float("MAX_UNSUPPORTED_EDGE", 0.08))
+    #: Ranking (never displayed): score = p_model - RANK_Z * se + EDGE_RANK_WEIGHT * clamp(edge vs sharp). ``se`` is
+    #: the uncertainty of the probability estimate (selection/evidence.py); ranking on the lower bound is the
+    #: standard guard against the winner's curse when the best of ~1,000 noisy lines is picked.
+    rank_z: float = field(default_factory=lambda: _float("RANK_Z", 1.0))
+    edge_rank_weight: float = field(default_factory=lambda: _float("EDGE_RANK_WEIGHT", 1.0))
+    #: Prior noise (probability points) of a de-vigged market probability by market quality. Judgement values, NOT
+    #: fitted: refit them from ``accuracy`` reports (hit rate vs predicted probability per quality tier) once
+    #: enough picks have settled.
+    se_main: float = field(default_factory=lambda: _float("SE_MAIN", 0.015))
+    se_secondary: float = field(default_factory=lambda: _float("SE_SECONDARY", 0.030))
+    se_restricted: float = field(default_factory=lambda: _float("SE_RESTRICTED", 0.050))
+    se_single_book: float = field(default_factory=lambda: _float("SE_SINGLE_BOOK", 0.060))
+    se_no_sharp: float = field(default_factory=lambda: _float("SE_NO_SHARP", 0.020))
+    #: Elo only counts as an independent signal once BOTH teams have this many rated games
+    elo_min_games: int = field(default_factory=lambda: _int("ELO_MIN_GAMES", 10))
     #: One selection per real fixture across Top + Daily: two legs on one match are
     #: correlated, so the slate never carries both.
     max_picks_per_event: int = field(default_factory=lambda: _int("MAX_PICKS_PER_EVENT", 1))
     max_player_props: int = field(default_factory=lambda: _int("MAX_PLAYER_PROPS", 0))
     #: Daily-list diversity quotas, so one market (e.g. corners totals), one
     #: sport or one league can never take over the single daily ticket. Shares
-    #: are of daily_target. They are relaxed only when the qualifying pool is
-    #: genuinely too small to reach DAILY_COMBINED_MIN_ODDS, and that relaxation
-    #: is recorded in the selection diagnostics.
+    #: are of daily_target. The market / sport / league shares are relaxed only when the qualifying pool cannot
+    #: otherwise reach DAILY_COMBINED_MIN_ODDS (and that is recorded in the selection diagnostics); the stat and
+    #: period shares never are. No QUALITY gate (probability floor, book coverage, edge) is ever relaxed.
     daily_max_market_share: float = field(default_factory=lambda: _float("DAILY_MAX_MARKET_SHARE", 0.25))
     #: Cross-market cap on one stat ("corners" can appear as totals AND 1X2
     #: result3 lines; the (market, stat) cap above sees them as two markets).
     daily_max_stat_share: float = field(default_factory=lambda: _float("DAILY_MAX_STAT_SHARE", 0.40))
     #: order the Daily builder is offered candidates in: ``family_z`` ranks each market family against its
     #: own peers (a straight win competes with wins, not with +1.5 lines); ``raw`` = ``_daily_score`` alone
+    #: (market-quality tier still comes first: a restricted market is never offered ahead of a main one)
     daily_ranking: str = field(default_factory=lambda: _ranking(_env("DAILY_RANKING", "family_z")))
     #: what the Daily may do on a match that is already in the Top ticket: ``different_outcome`` = allowed
     #: only with a tip that is neither the same nor nested in a Top leg; ``forbid`` = the match is off-limits
@@ -332,6 +380,9 @@ class Config:
             ("TOP_LEG_ODDS_MIN >= 1.0 (sanity floor)", self.top_leg_odds_min >= 1.0),
             ("TOP_MIN_PROB in [0,1]", 0.0 <= self.top_min_prob <= 1.0),
             ("DAILY_MIN_PROB in [0,1]", 0.0 <= self.daily_min_prob <= 1.0),
+            ("DAILY_MIN_PROB >= 0.5 (a Daily leg is never worse than a coin flip)", self.daily_min_prob >= 0.5),
+            ("DAILY_MIN_BOOKS <= DAILY_SECONDARY_MIN_BOOKS <= DAILY_RESTRICTED_MIN_BOOKS",
+             self.daily_min_books <= self.daily_secondary_min_books <= self.daily_restricted_min_books),
             ("DAILY_MAX_NEG_EV in [-1,0.5]", -1.0 <= self.daily_max_neg_ev <= 0.5),
             ("TOP_MAX_NEG_EV in [-1,0.5]", -1.0 <= self.top_max_neg_ev <= 0.5),
             ("TOP_MIN_AGREEMENT in [0,1]", 0.0 <= self.top_min_agreement <= 1.0),

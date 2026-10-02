@@ -31,6 +31,10 @@ def test_replay_reproduces_the_golden_render_byte_for_byte():
 def test_replay_is_offline_and_cross_tier_counters_are_zero():
     slate = replay.run(send_delay=0.0)["slate"]
     diag = slate["diagnostics"]
-    assert not any(k.startswith("CROSS_TIER") for k in diag["selection_rejections"])
+    # The selection layer refuses Daily legs that duplicate or nest inside a Top leg (CROSS_TIER_DUPLICATE / _NESTED are
+    # those refusals and are expected). What must stay zero is the SAFETY NET: a Daily leg the selection layer let
+    # through and the post-hoc invariant had to remove.
+    assert "CROSS_TIER_DUPLICATE_REMOVED" not in diag["selection_rejections"]
+    assert not diag.get("cross_tier_removed")
     assert diag["merged_events"] >= 15
     assert slate["delivery"]["second_pass"] == 0                # deliveries are once per subscriber per day

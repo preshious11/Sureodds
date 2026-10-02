@@ -1,7 +1,7 @@
 {
  "callback:stats:0": [
   [
-   "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 12 picks\n✅ 5  ❌ 2  ➖ 0\n7 of 12 settled · final card after the last result\n🏆 Best so far: CF Montréal or Columbus Crew · CF Montréal vs Columbus Crew · @1.33\n\n🏅 By sport\n⚽ Football 5/6  ·  ⚾ Baseball —  ·  🎾 Tennis 0/1\n\n📈 Last 4 days\n✅ 25  ❌ 13  ➖ 5  ·  🎯 66%  ·  🔥 W1\nFri ✅❌✅✅✅❌✅  Thu ❌✅✅✅❌✅✅✅✅❌➖❌  Wed ✅➖➖✅✅❌✅✅❌✅❌✅  Tue ➖❌❌❌➖✅❌✅✅✅✅✅\n\n🎟 Top ticket hit 1 of 4 settled days",
+   "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 10 picks\n✅ 3  ❌ 2  ➖ 0\n5 of 10 settled · final card after the last result\n🏆 Best so far: BTTS Yes · New England Revolution vs Orlando City SC · @1.40\n\n🏅 By sport\n⚽ Football 2/4  ·  ⚾ Baseball —  ·  🎾 Tennis 1/1\n\n📈 Last 4 days\n✅ 21  ❌ 11  ➖ 3  ·  🎯 66%  ·  🔥 W3\nFri ✅❌❌✅✅  Thu ✅❌✅✅✅✅❌➖✅❌  Wed ➖✅✅✅❌✅✅❌❌✅  Tue ❌➖❌✅✅❌✅✅✅✅\n\n🎟 Top ticket hit 1 of 3 settled days",
    "{\"inline_keyboard\": [[{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Top Picks\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
   ],
   [
@@ -11,8 +11,8 @@
  ],
  "callback:yesterday:0": [
   [
-   "🗓 YESTERDAY · Fri 18 Sep\n12 picks · ✅ 5 ❌ 2 ➖ 0\n\n🔥 Top\n✅ 🎯 CF Montréal or Columbus Crew · CF Montréal vs Columbus Crew · @1.33\n❌ 🎯 BTTS Yes · St.Louis City vs Toronto FC · @1.51\n\n📋 Daily\n   🎯 Detroit Tigers +1.5 · Chicago White Sox vs Detroit Tigers · @1.51\n✅ 🎯 Stade Rennes +1.5 · Lyon vs Stade Rennes · @1.20\n✅ 🎯 ESTAC Troyes +1.5 · Angers vs ESTAC Troyes · @1.20\n\nPage 1 of 3",
-   "{\"inline_keyboard\": [[{\"callback_data\": \"noop\", \"text\": \"1/3\"}, {\"callback_data\": \"pg|yesterday|1|20260918\", \"text\": \"\\u25b6\\ufe0f\"}], [{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Top Picks\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
+   "🗓 YESTERDAY · Fri 18 Sep\n10 picks · ✅ 3 ❌ 2 ➖ 0\n\n🔥 Top\n   🎯 Philadelphia Phillies +1.5 · New York Mets vs Philadelphia Phillies · @1.49\n✅ 🎯 New England Revolution (DNB) · New England Revolution vs Orlando City SC · @1.36\n\n📋 Daily\n   🎯 Detroit Tigers +1.5 · Chicago White Sox vs Detroit Tigers · @1.51\n❌ 🎯 Lazio or Draw · Venezia vs Lazio · @1.26\n   🎯 Lyon or Stade Rennes · Lyon vs Stade Rennes · @1.28\n\nPage 1 of 2",
+   "{\"inline_keyboard\": [[{\"callback_data\": \"noop\", \"text\": \"1/2\"}, {\"callback_data\": \"pg|yesterday|1|20260918\", \"text\": \"\\u25b6\\ufe0f\"}], [{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Top Picks\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
   ],
   [
    "Yesterday ↓",
@@ -21,65 +21,65 @@
  ],
  "callback:yesterday:1": [
   [
-   "🗓 YESTERDAY · Fri 18 Sep\n12 picks · ✅ 5 ❌ 2 ➖ 0\n\n📋 Daily\n✅ 🎯 Barcelona to Win · Sevilla vs Barcelona · @1.25\n❌ 🎯 Under 2.5 Total Sets · Iva Jovic vs Peyton Stearns · @1.36\n   🎯 Over 2.5 Total Goals · CF Montréal vs Columbus Crew · @1.57\n   🎯 New York Yankees to Win (1st Half) · Arizona Diamondbacks vs New York Yankees · @1.61\n✅ 🎯 BTTS No (1st Half) · Houston Dynamo vs FC Cincinnati · @1.27\n\nPage 2 of 3",
-   "{\"inline_keyboard\": [[{\"callback_data\": \"pg|yesterday|0|20260918\", \"text\": \"\\u25c0\\ufe0f\"}, {\"callback_data\": \"noop\", \"text\": \"2/3\"}, {\"callback_data\": \"pg|yesterday|2|20260918\", \"text\": \"\\u25b6\\ufe0f\"}], [{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Top Picks\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
+   "🗓 YESTERDAY · Fri 18 Sep\n10 picks · ✅ 3 ❌ 2 ➖ 0\n\n📋 Daily\n❌ 🎯 Barcelona to Win · Sevilla vs Barcelona · @1.25\n✅ 🎯 Iva Jovic to Win · Iva Jovic vs Peyton Stearns · @1.29\n✅ 🎯 BTTS Yes · New England Revolution vs Orlando City SC · @1.40\n   🎯 Austin FC Under 1.5 Goals · FC Dallas vs Austin FC · @1.41\n   🎯 Los Angeles Dodgers to Win · Los Angeles Dodgers vs San Francisco Giants · @1.24\n\nPage 2 of 2",
+   "{\"inline_keyboard\": [[{\"callback_data\": \"pg|yesterday|0|20260918\", \"text\": \"\\u25c0\\ufe0f\"}, {\"callback_data\": \"noop\", \"text\": \"2/2\"}], [{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Top Picks\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
   ],
   [
    "Page 2",
    ""
   ]
  ],
- "card": "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.01 · 2 picks · 🕘 times in WAT\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 CF Montréal or Columbus Crew\n💰 1.33  ·  📊 73%  ·  🕘 12:30 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 BTTS Yes\n💰 1.51  ·  📊 64%  ·  🕘 1:30 AM\n\n📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 18.44 · 10 picks · 🕘 times in WAT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Stade Rennes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 7:45 PM\n\n⚽ France • Ligue 1 · Angers vs ESTAC Troyes\n🎯 ESTAC Troyes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 7:45 PM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 8:00 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Under 2.5 Total Sets\n💰 1.36  ·  📊 68%  ·  🕘 11:00 PM\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 Over 2.5 Total Goals\n💰 1.57  ·  📊 59%  ·  🕘 12:30 AM\n\n⚾ MLB · Arizona Diamondbacks vs New York Yankees\n🎯 New York Yankees to Win (1st Half)\n💰 1.61  ·  📊 59%  ·  🕘 1:10 AM\n\n⚽ MLS · Houston Dynamo vs FC Cincinnati\n🎯 BTTS No (1st Half)\n💰 1.27  ·  📊 75%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Dodgers vs San Francisco Giants\n🎯 Los Angeles Dodgers to Win (1st Half)\n💰 1.25  ·  📊 76%  ·  🕘 2:10 AM\n\n⚽ MLS · Colorado Rapids vs Seattle Sounders FC\n🎯 BTTS No (1st Half)\n💰 1.24  ·  📊 76%  ·  🕘 2:30 AM",
+ "card": "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.04 · 2 picks · 🕘 times in WAT\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 9:10 PM\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 New England Revolution (DNB)\n💰 1.36  ·  📊 68%  ·  🕘 12:30 AM\n\n📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 9.67 · 8 picks · 🕘 times in WAT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚽ Italy • Serie A · Venezia vs Lazio\n🎯 Lazio or Draw\n💰 1.26  ·  📊 74%  ·  🕘 7:45 PM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Lyon or Stade Rennes\n💰 1.28  ·  📊 74%  ·  🕘 7:45 PM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 8:00 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 11:00 PM\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 BTTS Yes\n💰 1.40  ·  📊 69%  ·  🕘 12:30 AM\n\n⚽ MLS · FC Dallas vs Austin FC\n🎯 Austin FC Under 1.5 Goals\n💰 1.41  ·  📊 66%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Dodgers vs San Francisco Giants\n🎯 Los Angeles Dodgers to Win\n💰 1.24  ·  📊 78%  ·  🕘 2:10 AM",
  "delivery": {
   "cards_by_tz": {
    "Africa/Lagos": [
-    "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.01 · 2 picks · 🕘 times in WAT\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 CF Montréal or Columbus Crew\n💰 1.33  ·  📊 73%  ·  🕘 12:30 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 BTTS Yes\n💰 1.51  ·  📊 64%  ·  🕘 1:30 AM",
-    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 18.44 · 10 picks · 🕘 times in WAT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Stade Rennes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 7:45 PM\n\n⚽ France • Ligue 1 · Angers vs ESTAC Troyes\n🎯 ESTAC Troyes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 7:45 PM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 8:00 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Under 2.5 Total Sets\n💰 1.36  ·  📊 68%  ·  🕘 11:00 PM\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 Over 2.5 Total Goals\n💰 1.57  ·  📊 59%  ·  🕘 12:30 AM\n\n⚾ MLB · Arizona Diamondbacks vs New York Yankees\n🎯 New York Yankees to Win (1st Half)\n💰 1.61  ·  📊 59%  ·  🕘 1:10 AM\n\n⚽ MLS · Houston Dynamo vs FC Cincinnati\n🎯 BTTS No (1st Half)\n💰 1.27  ·  📊 75%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Dodgers vs San Francisco Giants\n🎯 Los Angeles Dodgers to Win (1st Half)\n💰 1.25  ·  📊 76%  ·  🕘 2:10 AM\n\n⚽ MLS · Colorado Rapids vs Seattle Sounders FC\n🎯 BTTS No (1st Half)\n💰 1.24  ·  📊 76%  ·  🕘 2:30 AM"
+    "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.04 · 2 picks · 🕘 times in WAT\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 9:10 PM\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 New England Revolution (DNB)\n💰 1.36  ·  📊 68%  ·  🕘 12:30 AM",
+    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 9.67 · 8 picks · 🕘 times in WAT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚽ Italy • Serie A · Venezia vs Lazio\n🎯 Lazio or Draw\n💰 1.26  ·  📊 74%  ·  🕘 7:45 PM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Lyon or Stade Rennes\n💰 1.28  ·  📊 74%  ·  🕘 7:45 PM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 8:00 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 11:00 PM\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 BTTS Yes\n💰 1.40  ·  📊 69%  ·  🕘 12:30 AM\n\n⚽ MLS · FC Dallas vs Austin FC\n🎯 Austin FC Under 1.5 Goals\n💰 1.41  ·  📊 66%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Dodgers vs San Francisco Giants\n🎯 Los Angeles Dodgers to Win\n💰 1.24  ·  📊 78%  ·  🕘 2:10 AM"
    ],
    "America/New_York": [
-    "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.01 · 2 picks · 🕘 times in EDT\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 CF Montréal or Columbus Crew\n💰 1.33  ·  📊 73%  ·  🕘 7:30 PM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 BTTS Yes\n💰 1.51  ·  📊 64%  ·  🕘 8:30 PM",
-    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 18.44 · 10 picks · 🕘 times in EDT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 2:10 PM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Stade Rennes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 2:45 PM\n\n⚽ France • Ligue 1 · Angers vs ESTAC Troyes\n🎯 ESTAC Troyes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 2:45 PM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 3:00 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Under 2.5 Total Sets\n💰 1.36  ·  📊 68%  ·  🕘 6:00 PM\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 Over 2.5 Total Goals\n💰 1.57  ·  📊 59%  ·  🕘 7:30 PM\n\n⚾ MLB · Arizona Diamondbacks vs New York Yankees\n🎯 New York Yankees to Win (1st Half)\n💰 1.61  ·  📊 59%  ·  🕘 8:10 PM\n\n⚽ MLS · Houston Dynamo vs FC Cincinnati\n🎯 BTTS No (1st Half)\n💰 1.27  ·  📊 75%  ·  🕘 8:30 PM\n\n⚾ MLB · Los Angeles Dodgers vs San Francisco Giants\n🎯 Los Angeles Dodgers to Win (1st Half)\n💰 1.25  ·  📊 76%  ·  🕘 9:10 PM\n\n⚽ MLS · Colorado Rapids vs Seattle Sounders FC\n🎯 BTTS No (1st Half)\n💰 1.24  ·  📊 76%  ·  🕘 9:30 PM"
+    "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.04 · 2 picks · 🕘 times in EDT\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 4:10 PM\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 New England Revolution (DNB)\n💰 1.36  ·  📊 68%  ·  🕘 7:30 PM",
+    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 9.67 · 8 picks · 🕘 times in EDT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 2:10 PM\n\n⚽ Italy • Serie A · Venezia vs Lazio\n🎯 Lazio or Draw\n💰 1.26  ·  📊 74%  ·  🕘 2:45 PM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Lyon or Stade Rennes\n💰 1.28  ·  📊 74%  ·  🕘 2:45 PM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 3:00 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 6:00 PM\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 BTTS Yes\n💰 1.40  ·  📊 69%  ·  🕘 7:30 PM\n\n⚽ MLS · FC Dallas vs Austin FC\n🎯 Austin FC Under 1.5 Goals\n💰 1.41  ·  📊 66%  ·  🕘 8:30 PM\n\n⚾ MLB · Los Angeles Dodgers vs San Francisco Giants\n🎯 Los Angeles Dodgers to Win\n💰 1.24  ·  📊 78%  ·  🕘 9:10 PM"
    ],
    "Asia/Tokyo": [
-    "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.01 · 2 picks · 🕘 times in JST\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 CF Montréal or Columbus Crew\n💰 1.33  ·  📊 73%  ·  🕘 8:30 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 BTTS Yes\n💰 1.51  ·  📊 64%  ·  🕘 9:30 AM",
-    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 18.44 · 10 picks · 🕘 times in JST\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 3:10 AM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Stade Rennes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 3:45 AM\n\n⚽ France • Ligue 1 · Angers vs ESTAC Troyes\n🎯 ESTAC Troyes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 3:45 AM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 4:00 AM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Under 2.5 Total Sets\n💰 1.36  ·  📊 68%  ·  🕘 7:00 AM\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 Over 2.5 Total Goals\n💰 1.57  ·  📊 59%  ·  🕘 8:30 AM\n\n⚾ MLB · Arizona Diamondbacks vs New York Yankees\n🎯 New York Yankees to Win (1st Half)\n💰 1.61  ·  📊 59%  ·  🕘 9:10 AM\n\n⚽ MLS · Houston Dynamo vs FC Cincinnati\n🎯 BTTS No (1st Half)\n💰 1.27  ·  📊 75%  ·  🕘 9:30 AM\n\n⚾ MLB · Los Angeles Dodgers vs San Francisco Giants\n🎯 Los Angeles Dodgers to Win (1st Half)\n💰 1.25  ·  📊 76%  ·  🕘 10:10 AM\n\n⚽ MLS · Colorado Rapids vs Seattle Sounders FC\n🎯 BTTS No (1st Half)\n💰 1.24  ·  📊 76%  ·  🕘 10:30 AM"
+    "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.04 · 2 picks · 🕘 times in JST\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 5:10 AM\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 New England Revolution (DNB)\n💰 1.36  ·  📊 68%  ·  🕘 8:30 AM",
+    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 9.67 · 8 picks · 🕘 times in JST\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 3:10 AM\n\n⚽ Italy • Serie A · Venezia vs Lazio\n🎯 Lazio or Draw\n💰 1.26  ·  📊 74%  ·  🕘 3:45 AM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Lyon or Stade Rennes\n💰 1.28  ·  📊 74%  ·  🕘 3:45 AM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 4:00 AM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 7:00 AM\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 BTTS Yes\n💰 1.40  ·  📊 69%  ·  🕘 8:30 AM\n\n⚽ MLS · FC Dallas vs Austin FC\n🎯 Austin FC Under 1.5 Goals\n💰 1.41  ·  📊 66%  ·  🕘 9:30 AM\n\n⚾ MLB · Los Angeles Dodgers vs San Francisco Giants\n🎯 Los Angeles Dodgers to Win\n💰 1.24  ·  📊 78%  ·  🕘 10:10 AM"
    ],
    "Europe/London": [
-    "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.01 · 2 picks · 🕘 times in BST\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 CF Montréal or Columbus Crew\n💰 1.33  ·  📊 73%  ·  🕘 12:30 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 BTTS Yes\n💰 1.51  ·  📊 64%  ·  🕘 1:30 AM",
-    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 18.44 · 10 picks · 🕘 times in BST\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Stade Rennes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 7:45 PM\n\n⚽ France • Ligue 1 · Angers vs ESTAC Troyes\n🎯 ESTAC Troyes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 7:45 PM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 8:00 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Under 2.5 Total Sets\n💰 1.36  ·  📊 68%  ·  🕘 11:00 PM\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 Over 2.5 Total Goals\n💰 1.57  ·  📊 59%  ·  🕘 12:30 AM\n\n⚾ MLB · Arizona Diamondbacks vs New York Yankees\n🎯 New York Yankees to Win (1st Half)\n💰 1.61  ·  📊 59%  ·  🕘 1:10 AM\n\n⚽ MLS · Houston Dynamo vs FC Cincinnati\n🎯 BTTS No (1st Half)\n💰 1.27  ·  📊 75%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Dodgers vs San Francisco Giants\n🎯 Los Angeles Dodgers to Win (1st Half)\n💰 1.25  ·  📊 76%  ·  🕘 2:10 AM\n\n⚽ MLS · Colorado Rapids vs Seattle Sounders FC\n🎯 BTTS No (1st Half)\n💰 1.24  ·  📊 76%  ·  🕘 2:30 AM"
+    "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.04 · 2 picks · 🕘 times in BST\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 9:10 PM\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 New England Revolution (DNB)\n💰 1.36  ·  📊 68%  ·  🕘 12:30 AM",
+    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 9.67 · 8 picks · 🕘 times in BST\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚽ Italy • Serie A · Venezia vs Lazio\n🎯 Lazio or Draw\n💰 1.26  ·  📊 74%  ·  🕘 7:45 PM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Lyon or Stade Rennes\n💰 1.28  ·  📊 74%  ·  🕘 7:45 PM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 8:00 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 11:00 PM\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 BTTS Yes\n💰 1.40  ·  📊 69%  ·  🕘 12:30 AM\n\n⚽ MLS · FC Dallas vs Austin FC\n🎯 Austin FC Under 1.5 Goals\n💰 1.41  ·  📊 66%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Dodgers vs San Francisco Giants\n🎯 Los Angeles Dodgers to Win\n💰 1.24  ·  📊 78%  ·  🕘 2:10 AM"
    ]
   },
   "message_lengths": {
    "Africa/Lagos": [
     [
-     252
+     294
     ],
     [
-     1076
+     832
     ]
    ],
    "America/New_York": [
     [
-     251
+     293
     ],
     [
-     1074
+     830
     ]
    ],
    "Asia/Tokyo": [
     [
-     251
+     293
     ],
     [
-     1076
+     831
     ]
    ],
    "Europe/London": [
     [
-     252
+     294
     ],
     [
-     1076
+     832
     ]
    ]
   }
@@ -94,7 +94,7 @@
  "pages": {
   "daily:0": [
    [
-    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 18.44 · 10 picks · 🕘 times in WAT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Stade Rennes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 7:45 PM\n\n⚽ France • Ligue 1 · Angers vs ESTAC Troyes\n🎯 ESTAC Troyes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 7:45 PM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 8:00 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Under 2.5 Total Sets\n💰 1.36  ·  📊 68%  ·  🕘 11:00 PM\n\nPage 1 of 2",
+    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 9.67 · 8 picks · 🕘 times in WAT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚽ Italy • Serie A · Venezia vs Lazio\n🎯 Lazio or Draw\n💰 1.26  ·  📊 74%  ·  🕘 7:45 PM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Lyon or Stade Rennes\n💰 1.28  ·  📊 74%  ·  🕘 7:45 PM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 8:00 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 11:00 PM\n\nPage 1 of 2",
     "{\"inline_keyboard\": [[{\"callback_data\": \"noop\", \"text\": \"1/2\"}, {\"callback_data\": \"pg|daily|1|20260919\", \"text\": \"\\u25b6\\ufe0f\"}], [{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Top Picks\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
    ],
    [
@@ -104,7 +104,7 @@
   ],
   "daily:1": [
    [
-    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 18.44 · 10 picks · 🕘 times in WAT\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 Over 2.5 Total Goals\n💰 1.57  ·  📊 59%  ·  🕘 12:30 AM\n\n⚾ MLB · Arizona Diamondbacks vs New York Yankees\n🎯 New York Yankees to Win (1st Half)\n💰 1.61  ·  📊 59%  ·  🕘 1:10 AM\n\n⚽ MLS · Houston Dynamo vs FC Cincinnati\n🎯 BTTS No (1st Half)\n💰 1.27  ·  📊 75%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Dodgers vs San Francisco Giants\n🎯 Los Angeles Dodgers to Win (1st Half)\n💰 1.25  ·  📊 76%  ·  🕘 2:10 AM\n\n⚽ MLS · Colorado Rapids vs Seattle Sounders FC\n🎯 BTTS No (1st Half)\n💰 1.24  ·  📊 76%  ·  🕘 2:30 AM\n\nPage 2 of 2",
+    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 9.67 · 8 picks · 🕘 times in WAT\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 BTTS Yes\n💰 1.40  ·  📊 69%  ·  🕘 12:30 AM\n\n⚽ MLS · FC Dallas vs Austin FC\n🎯 Austin FC Under 1.5 Goals\n💰 1.41  ·  📊 66%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Dodgers vs San Francisco Giants\n🎯 Los Angeles Dodgers to Win\n💰 1.24  ·  📊 78%  ·  🕘 2:10 AM\n\nPage 2 of 2",
     "{\"inline_keyboard\": [[{\"callback_data\": \"pg|daily|0|20260919\", \"text\": \"\\u25c0\\ufe0f\"}, {\"callback_data\": \"noop\", \"text\": \"2/2\"}], [{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Top Picks\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
    ],
    [
@@ -114,7 +114,7 @@
   ],
   "top:0": [
    [
-    "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.01 · 2 picks · 🕘 times in WAT\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 CF Montréal or Columbus Crew\n💰 1.33  ·  📊 73%  ·  🕘 12:30 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 BTTS Yes\n💰 1.51  ·  📊 64%  ·  🕘 1:30 AM",
+    "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.04 · 2 picks · 🕘 times in WAT\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 9:10 PM\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 New England Revolution (DNB)\n💰 1.36  ·  📊 68%  ·  🕘 12:30 AM",
     "{\"inline_keyboard\": [[{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Top Picks\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
    ],
    [
@@ -124,7 +124,7 @@
   ],
   "top:1": [
    [
-    "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.01 · 2 picks · 🕘 times in WAT\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 CF Montréal or Columbus Crew\n💰 1.33  ·  📊 73%  ·  🕘 12:30 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 BTTS Yes\n💰 1.51  ·  📊 64%  ·  🕘 1:30 AM",
+    "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.04 · 2 picks · 🕘 times in WAT\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 9:10 PM\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 New England Revolution (DNB)\n💰 1.36  ·  📊 68%  ·  🕘 12:30 AM",
     "{\"inline_keyboard\": [[{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Top Picks\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
    ],
    [
@@ -133,33 +133,31 @@
    ]
   ]
  },
- "recap_final": "📊 RESULTS · Fri 18 Sep\n\n🗓 Yesterday · Fri 18 Sep · 12 picks\n✅ 7  ❌ 4  ➖ 1\n🎯 64%  ·  💹 ROI -17%\n🏆 Best: New York Yankees to Win (1st Half) · Arizona Diamondbacks vs New York Yankees · @1.61\n\n🏅 By sport\n⚽ Football 5/8  ·  ⚾ Baseball 2/3  ·  🎾 Tennis 0/1\n\n📈 Last 4 days\n✅ 27  ❌ 15  ➖ 6  ·  🎯 64%  ·  🔥 W2\nFri ✅❌❌✅✅✅❌❌✅✅✅➖  Thu ❌✅✅✅❌✅✅✅✅❌➖❌  Wed ✅➖➖✅✅❌✅✅❌✅❌✅  Tue ➖❌❌❌➖✅❌✅✅✅✅✅\n\n🎟 Top ticket hit 1 of 4 settled days",
- "recap_partial": "📊 RESULTS · Fri 18 Sep\n\n🗓 Yesterday · Fri 18 Sep · 12 picks\n✅ 5  ❌ 2  ➖ 0\n7 of 12 settled · final card after the last result\n🏆 Best so far: CF Montréal or Columbus Crew · CF Montréal vs Columbus Crew · @1.33\n\n🏅 By sport\n⚽ Football 5/6  ·  ⚾ Baseball —  ·  🎾 Tennis 0/1\n\n📈 Last 4 days\n✅ 25  ❌ 13  ➖ 5  ·  🎯 66%  ·  🔥 W1\nFri ✅❌✅✅✅❌✅  Thu ❌✅✅✅❌✅✅✅✅❌➖❌  Wed ✅➖➖✅✅❌✅✅❌✅❌✅  Tue ➖❌❌❌➖✅❌✅✅✅✅✅\n\n🎟 Top ticket hit 1 of 4 settled days",
- "stats_fewer_than_7_days": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 12 picks\n✅ 7  ❌ 4  ➖ 1\n🎯 64%  ·  💹 ROI -17%\n🏆 Best: New York Yankees to Win (1st Half) · Arizona Diamondbacks vs New York Yankees · @1.61\n\n🏅 By sport\n⚽ Football 5/8  ·  ⚾ Baseball 2/3  ·  🎾 Tennis 0/1\n\n📈 Last 2 days\n✅ 14  ❌ 8  ➖ 2  ·  🎯 64%  ·  🔥 W2\nFri ✅❌❌✅✅✅❌❌✅✅✅➖  Thu ❌✅✅✅❌✅✅✅✅❌➖❌\n\n🎟 Top ticket hit 0 of 2 settled days",
- "stats_final": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 12 picks\n✅ 7  ❌ 4  ➖ 1\n🎯 64%  ·  💹 ROI -17%\n🏆 Best: New York Yankees to Win (1st Half) · Arizona Diamondbacks vs New York Yankees · @1.61\n\n🏅 By sport\n⚽ Football 5/8  ·  ⚾ Baseball 2/3  ·  🎾 Tennis 0/1\n\n📈 Last 4 days\n✅ 27  ❌ 15  ➖ 6  ·  🎯 64%  ·  🔥 W2\nFri ✅❌❌✅✅✅❌❌✅✅✅➖  Thu ❌✅✅✅❌✅✅✅✅❌➖❌  Wed ✅➖➖✅✅❌✅✅❌✅❌✅  Tue ➖❌❌❌➖✅❌✅✅✅✅✅\n\n🎟 Top ticket hit 1 of 4 settled days",
- "stats_no_picks_yesterday": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep — no picks were issued.\n\n📈 Last 3 days\n✅ 14  ❌ 7  ➖ 3  ·  🎯 67%  ·  L2\nThu ❌✅✅✅❌✅✅✅✅❌➖❌  Wed ✅➖➖✅✅❌✅✅❌✅❌✅\n\n🎟 Top ticket hit 1 of 2 settled days",
+ "recap_final": "📊 RESULTS · Fri 18 Sep\n\n🗓 Yesterday · Fri 18 Sep · 10 picks\n✅ 6  ❌ 3  ➖ 1\n🎯 67%  ·  💹 ROI -8%\n🏆 Best: Detroit Tigers +1.5 · Chicago White Sox vs Detroit Tigers · @1.51\n\n🏅 By sport\n⚽ Football 4/6  ·  ⚾ Baseball 1/3  ·  🎾 Tennis 1/1\n\n📈 Last 4 days\n✅ 24  ❌ 12  ➖ 4  ·  🎯 67%  ·  🔥 W4\nFri ❌✅✅❌✅❌✅✅✅➖  Thu ✅❌✅✅✅✅❌➖✅❌  Wed ➖✅✅✅❌✅✅❌❌✅  Tue ❌➖❌✅✅❌✅✅✅✅\n\n🎟 Top ticket hit 1 of 4 settled days",
+ "recap_partial": "📊 RESULTS · Fri 18 Sep\n\n🗓 Yesterday · Fri 18 Sep · 10 picks\n✅ 3  ❌ 2  ➖ 0\n5 of 10 settled · final card after the last result\n🏆 Best so far: BTTS Yes · New England Revolution vs Orlando City SC · @1.40\n\n🏅 By sport\n⚽ Football 2/4  ·  ⚾ Baseball —  ·  🎾 Tennis 1/1\n\n📈 Last 4 days\n✅ 21  ❌ 11  ➖ 3  ·  🎯 66%  ·  🔥 W3\nFri ✅❌❌✅✅  Thu ✅❌✅✅✅✅❌➖✅❌  Wed ➖✅✅✅❌✅✅❌❌✅  Tue ❌➖❌✅✅❌✅✅✅✅\n\n🎟 Top ticket hit 1 of 3 settled days",
+ "stats_fewer_than_7_days": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 10 picks\n✅ 6  ❌ 3  ➖ 1\n🎯 67%  ·  💹 ROI -8%\n🏆 Best: Detroit Tigers +1.5 · Chicago White Sox vs Detroit Tigers · @1.51\n\n🏅 By sport\n⚽ Football 4/6  ·  ⚾ Baseball 1/3  ·  🎾 Tennis 1/1\n\n📈 Last 2 days\n✅ 12  ❌ 6  ➖ 2  ·  🎯 67%  ·  🔥 W4\nFri ❌✅✅❌✅❌✅✅✅➖  Thu ✅❌✅✅✅✅❌➖✅❌\n\n🎟 Top ticket hit 0 of 2 settled days",
+ "stats_final": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 10 picks\n✅ 6  ❌ 3  ➖ 1\n🎯 67%  ·  💹 ROI -8%\n🏆 Best: Detroit Tigers +1.5 · Chicago White Sox vs Detroit Tigers · @1.51\n\n🏅 By sport\n⚽ Football 4/6  ·  ⚾ Baseball 1/3  ·  🎾 Tennis 1/1\n\n📈 Last 4 days\n✅ 24  ❌ 12  ➖ 4  ·  🎯 67%  ·  🔥 W4\nFri ❌✅✅❌✅❌✅✅✅➖  Thu ✅❌✅✅✅✅❌➖✅❌  Wed ➖✅✅✅❌✅✅❌❌✅  Tue ❌➖❌✅✅❌✅✅✅✅\n\n🎟 Top ticket hit 1 of 4 settled days",
+ "stats_no_picks_yesterday": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep — no picks were issued.\n\n📈 Last 3 days\n✅ 12  ❌ 6  ➖ 2  ·  🎯 67%  ·  L1\nThu ✅❌✅✅✅✅❌➖✅❌  Wed ➖✅✅✅❌✅✅❌❌✅\n\n🎟 Top ticket hit 1 of 2 settled days",
  "stats_no_results_yet": "📊 No results yet — the first recap arrives the morning after the first slate.",
- "stats_nothing_settled_yesterday": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 12 picks — results come in after the last match ends.\n\n📈 Last 3 days\n✅ 7  ❌ 3  ➖ 2  ·  🎯 70%  ·  🔥 W1\nWed ✅➖➖✅✅❌✅✅❌✅❌✅\n\n🎟 Top ticket hit 1 of 1 settled day",
- "stats_partial": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 12 picks\n✅ 5  ❌ 2  ➖ 0\n7 of 12 settled · final card after the last result\n🏆 Best so far: CF Montréal or Columbus Crew · CF Montréal vs Columbus Crew · @1.33\n\n🏅 By sport\n⚽ Football 5/6  ·  ⚾ Baseball —  ·  🎾 Tennis 0/1\n\n📈 Last 4 days\n✅ 25  ❌ 13  ➖ 5  ·  🎯 66%  ·  🔥 W1\nFri ✅❌✅✅✅❌✅  Thu ❌✅✅✅❌✅✅✅✅❌➖❌  Wed ✅➖➖✅✅❌✅✅❌✅❌✅  Tue ➖❌❌❌➖✅❌✅✅✅✅✅\n\n🎟 Top ticket hit 1 of 4 settled days",
+ "stats_nothing_settled_yesterday": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 10 picks — results come in after the last match ends.\n\n📈 Last 3 days\n✅ 6  ❌ 3  ➖ 1  ·  🎯 67%  ·  🔥 W1\nWed ➖✅✅✅❌✅✅❌❌✅\n\n🎟 Top ticket hit 1 of 1 settled day",
+ "stats_partial": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 10 picks\n✅ 3  ❌ 2  ➖ 0\n5 of 10 settled · final card after the last result\n🏆 Best so far: BTTS Yes · New England Revolution vs Orlando City SC · @1.40\n\n🏅 By sport\n⚽ Football 2/4  ·  ⚾ Baseball —  ·  🎾 Tennis 1/1\n\n📈 Last 4 days\n✅ 21  ❌ 11  ➖ 3  ·  🎯 66%  ·  🔥 W3\nFri ✅❌❌✅✅  Thu ✅❌✅✅✅✅❌➖✅❌  Wed ➖✅✅✅❌✅✅❌❌✅  Tue ❌➖❌✅✅❌✅✅✅✅\n\n🎟 Top ticket hit 1 of 3 settled days",
  "views": {
   "/daily": [
-   "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 18.44 · 10 picks · 🕘 times in WAT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Stade Rennes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 7:45 PM\n\n⚽ France • Ligue 1 · Angers vs ESTAC Troyes\n🎯 ESTAC Troyes +1.5\n💰 1.20  ·  📊 79%  ·  🕘 7:45 PM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 8:00 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Under 2.5 Total Sets\n💰 1.36  ·  📊 68%  ·  🕘 11:00 PM\n\nPage 1 of 2",
+   "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 9.67 · 8 picks · 🕘 times in WAT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚽ Italy • Serie A · Venezia vs Lazio\n🎯 Lazio or Draw\n💰 1.26  ·  📊 74%  ·  🕘 7:45 PM\n\n⚽ France • Ligue 1 · Lyon vs Stade Rennes\n🎯 Lyon or Stade Rennes\n💰 1.28  ·  📊 74%  ·  🕘 7:45 PM\n\n⚽ Spain • La Liga · Sevilla vs Barcelona\n🎯 Barcelona to Win\n💰 1.25  ·  📊 76%  ·  🕘 8:00 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 11:00 PM\n\nPage 1 of 2",
    "{\"inline_keyboard\": [[{\"callback_data\": \"noop\", \"text\": \"1/2\"}, {\"callback_data\": \"pg|daily|1|20260919\", \"text\": \"\\u25b6\\ufe0f\"}], [{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Top Picks\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
   ],
   "/top": [
-   "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.01 · 2 picks · 🕘 times in WAT\n\n⚽ MLS · CF Montréal vs Columbus Crew\n🎯 CF Montréal or Columbus Crew\n💰 1.33  ·  📊 73%  ·  🕘 12:30 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 BTTS Yes\n💰 1.51  ·  📊 64%  ·  🕘 1:30 AM",
+   "🔥 TOP PICKS · Sat 19 Sep\n🎟 Combined odds 2.04 · 2 picks · 🕘 times in WAT\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 9:10 PM\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 New England Revolution (DNB)\n💰 1.36  ·  📊 68%  ·  🕘 12:30 AM",
    "{\"inline_keyboard\": [[{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Top Picks\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
   ]
  },
  "yesterday_final": [
-  "🗓 YESTERDAY · Fri 18 Sep\n12 picks · ✅ 7 ❌ 4 ➖ 1\n\n🔥 Top\n✅ 🎯 CF Montréal or Columbus Crew · CF Montréal vs Columbus Crew · @1.33\n❌ 🎯 BTTS Yes · St.Louis City vs Toronto FC · @1.51\n\n📋 Daily\n❌ 🎯 Detroit Tigers +1.5 · Chicago White Sox vs Detroit Tigers · @1.51\n✅ 🎯 Stade Rennes +1.5 · Lyon vs Stade Rennes · @1.20\n✅ 🎯 ESTAC Troyes +1.5 · Angers vs ESTAC Troyes · @1.20\n\nPage 1 of 3",
-  "🗓 YESTERDAY · Fri 18 Sep\n12 picks · ✅ 7 ❌ 4 ➖ 1\n\n📋 Daily\n✅ 🎯 Barcelona to Win · Sevilla vs Barcelona · @1.25\n❌ 🎯 Under 2.5 Total Sets · Iva Jovic vs Peyton Stearns · @1.36\n❌ 🎯 Over 2.5 Total Goals · CF Montréal vs Columbus Crew · @1.57\n✅ 🎯 New York Yankees to Win (1st Half) · Arizona Diamondbacks vs New York Yankees · @1.61\n✅ 🎯 BTTS No (1st Half) · Houston Dynamo vs FC Cincinnati · @1.27\n\nPage 2 of 3",
-  "🗓 YESTERDAY · Fri 18 Sep\n12 picks · ✅ 7 ❌ 4 ➖ 1\n\n📋 Daily\n✅ 🎯 Los Angeles Dodgers to Win (1st Half) · Los Angeles Dodgers vs San Francisco Giants · @1.25\n➖ 🎯 BTTS No (1st Half) · Colorado Rapids vs Seattle Sounders FC · @1.24\n\nPage 3 of 3"
+  "🗓 YESTERDAY · Fri 18 Sep\n10 picks · ✅ 6 ❌ 3 ➖ 1\n\n🔥 Top\n❌ 🎯 Philadelphia Phillies +1.5 · New York Mets vs Philadelphia Phillies · @1.49\n✅ 🎯 New England Revolution (DNB) · New England Revolution vs Orlando City SC · @1.36\n\n📋 Daily\n✅ 🎯 Detroit Tigers +1.5 · Chicago White Sox vs Detroit Tigers · @1.51\n❌ 🎯 Lazio or Draw · Venezia vs Lazio · @1.26\n✅ 🎯 Lyon or Stade Rennes · Lyon vs Stade Rennes · @1.28\n\nPage 1 of 2",
+  "🗓 YESTERDAY · Fri 18 Sep\n10 picks · ✅ 6 ❌ 3 ➖ 1\n\n📋 Daily\n❌ 🎯 Barcelona to Win · Sevilla vs Barcelona · @1.25\n✅ 🎯 Iva Jovic to Win · Iva Jovic vs Peyton Stearns · @1.29\n✅ 🎯 BTTS Yes · New England Revolution vs Orlando City SC · @1.40\n✅ 🎯 Austin FC Under 1.5 Goals · FC Dallas vs Austin FC · @1.41\n➖ 🎯 Los Angeles Dodgers to Win · Los Angeles Dodgers vs San Francisco Giants · @1.24\n\nPage 2 of 2"
  ],
  "yesterday_no_picks": "🗓 YESTERDAY · Fri 18 Sep\nNo picks were issued.",
  "yesterday_partial": [
-  "🗓 YESTERDAY · Fri 18 Sep\n12 picks · ✅ 5 ❌ 2 ➖ 0\n\n🔥 Top\n✅ 🎯 CF Montréal or Columbus Crew · CF Montréal vs Columbus Crew · @1.33\n❌ 🎯 BTTS Yes · St.Louis City vs Toronto FC · @1.51\n\n📋 Daily\n   🎯 Detroit Tigers +1.5 · Chicago White Sox vs Detroit Tigers · @1.51\n✅ 🎯 Stade Rennes +1.5 · Lyon vs Stade Rennes · @1.20\n✅ 🎯 ESTAC Troyes +1.5 · Angers vs ESTAC Troyes · @1.20\n\nPage 1 of 3",
-  "🗓 YESTERDAY · Fri 18 Sep\n12 picks · ✅ 5 ❌ 2 ➖ 0\n\n📋 Daily\n✅ 🎯 Barcelona to Win · Sevilla vs Barcelona · @1.25\n❌ 🎯 Under 2.5 Total Sets · Iva Jovic vs Peyton Stearns · @1.36\n   🎯 Over 2.5 Total Goals · CF Montréal vs Columbus Crew · @1.57\n   🎯 New York Yankees to Win (1st Half) · Arizona Diamondbacks vs New York Yankees · @1.61\n✅ 🎯 BTTS No (1st Half) · Houston Dynamo vs FC Cincinnati · @1.27\n\nPage 2 of 3",
-  "🗓 YESTERDAY · Fri 18 Sep\n12 picks · ✅ 5 ❌ 2 ➖ 0\n\n📋 Daily\n   🎯 Los Angeles Dodgers to Win (1st Half) · Los Angeles Dodgers vs San Francisco Giants · @1.25\n   🎯 BTTS No (1st Half) · Colorado Rapids vs Seattle Sounders FC · @1.24\n\nPage 3 of 3"
+  "🗓 YESTERDAY · Fri 18 Sep\n10 picks · ✅ 3 ❌ 2 ➖ 0\n\n🔥 Top\n   🎯 Philadelphia Phillies +1.5 · New York Mets vs Philadelphia Phillies · @1.49\n✅ 🎯 New England Revolution (DNB) · New England Revolution vs Orlando City SC · @1.36\n\n📋 Daily\n   🎯 Detroit Tigers +1.5 · Chicago White Sox vs Detroit Tigers · @1.51\n❌ 🎯 Lazio or Draw · Venezia vs Lazio · @1.26\n   🎯 Lyon or Stade Rennes · Lyon vs Stade Rennes · @1.28\n\nPage 1 of 2",
+  "🗓 YESTERDAY · Fri 18 Sep\n10 picks · ✅ 3 ❌ 2 ➖ 0\n\n📋 Daily\n❌ 🎯 Barcelona to Win · Sevilla vs Barcelona · @1.25\n✅ 🎯 Iva Jovic to Win · Iva Jovic vs Peyton Stearns · @1.29\n✅ 🎯 BTTS Yes · New England Revolution vs Orlando City SC · @1.40\n   🎯 Austin FC Under 1.5 Goals · FC Dallas vs Austin FC · @1.41\n   🎯 Los Angeles Dodgers to Win · Los Angeles Dodgers vs San Francisco Giants · @1.24\n\nPage 2 of 2"
  ]
 }

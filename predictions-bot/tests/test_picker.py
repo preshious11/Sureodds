@@ -25,8 +25,10 @@ def ev(i, home=None, away=None, sport="football", start=None, league=None):
 
 
 def sc(event, market, selection, p_model, price, *, line=None, sources=2,
-       ev_val=0.06, agreement=1.0, liquidity=1.0):
-    ml = MarketLine(market, selection, price, line=line, n_books=sources)
+       ev_val=0.06, agreement=1.0, liquidity=1.0, books=5):
+    """``sources`` = estimates in the model blend; ``books`` = distinct bookmakers quoting the line (default: a
+    well-covered line, so coverage is only a factor in the tests written to exercise it)."""
+    ml = MarketLine(market, selection, price, line=line, n_books=max(sources, books))
     return Scored(event=event, line=ml, p_market=p_model - 0.02, p_model=p_model,
                   sources={f"s{n}": p_model for n in range(sources)},
                   agreement=agreement, ev=ev_val, edge=0.03,
@@ -194,12 +196,14 @@ def test_two_legs_already_at_target_beat_adding_a_third():
 
 def test_daily_list_is_sized_by_the_combined_odds_window():
     now = dt()
-    pool = [sc(ev(i), "result3", "home", 0.62, 1.45) for i in range(30)]
+    # alternating home / away so the per-outcome family cap is not what ends the ticket
+    pool = [sc(_fx(i), "result3", "home" if i % 2 == 0 else "away", 0.62, 1.35) for i in range(30)]
     ps = select(pool, cfg(), now)
     c = cfg()
     ticket = math.prod(s.price for s in ps.daily)
 
-    assert c.daily_odds_min <= ticket <= c.daily_odds_max   # 10 .. 20 on the Daily's own legs
+    assert c.daily_odds_min <= ticket <= c.daily_odds_max   # 10 .. 12 on the Daily's own legs
+    assert len(ps.daily) == 8                               # 1.35**8 = 11.03: it stops the moment 10 is passed
     assert len(ps.all()) < 30                               # stops long before the pool runs out
 
 
@@ -248,13 +252,13 @@ _MIXED = [("result3", "home", "points", None), ("total", "over", "corners", 8.0)
 
 def _mixed(i, sport="football", league=None):
     market, sel, stat, line = _MIXED[i % len(_MIXED)]
-    # p_model 0.55 is below top_min_prob (0.62) but above daily_min_prob (0.30):
-    # these candidates compete for Daily only, so the daily diversity quotas
-    # are exercised in isolation. 1.30 keeps the odds window happy.
+    # p_model 0.60 is below top_min_prob (0.62) but above daily_min_prob (0.55) and, even for a restricted
+    # market (uncertainty ~0.054), keeps the lower confidence bound above DAILY_MIN_LCB: these candidates
+    # compete for Daily only, so the daily diversity quotas are exercised in isolation.
     # Distinct club names: fixtures are matched fuzzily (one pick per real fixture),
     # and "Home10"/"Home11"-style names would count as the same match.
     home, away = _names(random.Random(i))
-    s = sc(ev(i, sport=sport, league=league, home=f"{home}{i}", away=f"{away}{i}"), market, sel, 0.55, 1.30, line=line)
+    s = sc(ev(i, sport=sport, league=league, home=f"{home}{i}", away=f"{away}{i}"), market, sel, 0.60, 1.30, line=line)
     s.line.stat = stat
     return s
 
@@ -385,7 +389,8 @@ def test_corners_across_several_markets_cannot_take_the_list():
     corners = sum(1 for s in ps.daily if s.line.stat == "corners")
     assert len(ps.daily) >= 4
     assert corners <= max(1, math.ceil(c.daily_max_stat_share * len(ps.daily)))
-    assert corners / len(ps.daily) <= c.daily_max_stat_share + 1e-9
+    # (the cap rounds UP - ceil(0.40 x 8) = 4 of 8 - so a bare ratio check would be stricter than the cap itself)
+    assert corners < len(ps.daily)
 
 
 # ------------------------------------------------------------ EV gate branches
@@ -406,9 +411,9 @@ def test_market_derived_score_model_does_not_trigger_the_disagreement_floor():
     just the bookmaker margin and it must skip the EV gate (this is what kept
     every basketball candidate out of the slate)."""
     now = dt()
-    s = sc(ev(1, sport="basketball"), "result3", "home", 0.50, 1.87, sources=1,
+    s = sc(ev(1, sport="basketball"), "result3", "home", 0.60, 1.60, sources=1,
            ev_val=-0.065, agreement=0.5)
-    s.sources = {"market": 0.50, "score_model": 0.50}
+    s.sources = {"market": 0.60, "score_model": 0.60}
     ps = select([s], cfg(), now)
     assert ps.daily
 

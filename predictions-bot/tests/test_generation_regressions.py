@@ -94,9 +94,11 @@ def test_football_above50_precedes_many_lower_probability_baseball():
     assert {s.event.sport for s in result.all()} == {'football'}
 
 
-def test_below50_only_used_when_no_eligible_preferred_candidates():
+def test_a_leg_below_the_daily_floor_is_never_used_even_when_nothing_else_qualifies():
+    """There is no second, laxer pass: a 49% leg is not admitted because the slate would otherwise be empty."""
     pool = [sc(ev(1), 'result3', 'home', .49, 2.5)]
-    assert select(pool, Config(), dt()).daily
+    assert Config().daily_min_prob >= 0.5
+    assert select(pool, Config(), dt()).daily == []
 
 
 def test_generation_uses_lagos_day_including_utc_previous_date(db, monkeypatch):

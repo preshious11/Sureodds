@@ -4,18 +4,21 @@ Sizing: the daily post is ONE ticket, so combined odds - not pick counts -
 decide how long the lists are.
 
 Rules (from the brief):
-  * top picks are the most solid selections: high probability *and* positive
-    expected value with at least two agreeing sources, added best-first until
-    the ticket is worth TOP_COMBINED_ODDS (~2.00)
-  * daily picks are sized on their OWN: the Daily ticket alone is worth
-    DAILY_COMBINED_MIN_ODDS..DAILY_COMBINED_MAX_ODDS (10-20) - the Top legs are
-    consulted for duplicates but never counted in the Daily's odds - and only with
-    selections that clear the quality bar - if only 11 qualify, 11 are posted
-    (never padded up to DAILY_PICKS_TARGET)
+  * top picks are the most solid selections: main markets only, high probability,
+    well covered by books (and not worse value than a sharp reference where one
+    exists), searched for the best 2-3 leg ticket worth ~TOP_COMBINED_ODDS (2.00)
+  * daily picks are sized on their OWN: the Daily ticket alone aims for
+    DAILY_COMBINED_MIN_ODDS (10) and never exceeds DAILY_COMBINED_MAX_ODDS (12). The builder takes the
+    best-evidenced legs first, STOPS as soon as the aim is reached, and never pads: if the qualifying
+    legs only make 6.4, 6.4 is posted. The Top legs are consulted for duplicates but never counted
+  * candidates are ranked on evidence (selection/evidence.py): the lower confidence bound of the
+    probability plus the edge over a sharp reference - never on raw probability alone - and the
+    restricted market class (first half, corners, far alternates, exotics) is only offered after the rest
   * an outcome that is a top pick is never repeated in the daily list; the same
     match may appear with a *different* outcome, but never a contradictory one
   * the bot must not lean on one outcome type: caps on home/away/over/under
-    shares, favourites, one market type, player props, exotics
+    shares, one market type, player props, exotics (no favourites cap: with a 10-12 odds target
+    the highest-probability legs ARE the short-priced ones, and capping them would trade hit rate for variety)
 """
 from __future__ import annotations
 
@@ -32,6 +35,7 @@ from predbot.config import Config
 from predbot.markets.catalog import contradicts, is_equivalent, selection_family, spec
 from predbot.markets.settlement import unsettleable_reason
 from predbot.selection import cross_tier
+from predbot.selection import evidence as evmod
 from predbot.selection.families import family_counts, order_by_family_z
 from predbot.model.ensemble import Scored
 from predbot.util.fixtures import competition_id, fixture_key, fixture_orientation
@@ -61,37 +65,36 @@ def _settleable(s: Scored) -> bool:
     return ml.market == "prop" and "sportsgameodds" in s.event.sources and bool(ml.provider_odd_id)
 
 
-#: Signals that are genuinely INDEPENDENT of the market. score_model is fitted
+#: Signals that are genuinely INDEPENDENT of the soft market. score_model is fitted
 #: to the market's own main lines (Poisson/Gaussian derived from devigged
 #: prices), so its "EV" is just the bookmaker margin - treating it as an
 #: independent signal rejected every basketball candidate at once. Only these
-#: two can say the market is wrong.
-INDEPENDENT_SIGNALS = {"elo"}
+#: can say the market is wrong: a sharp book's de-vigged price, and Elo (once it has data).
+INDEPENDENT_SIGNALS = {"elo", "sharp"}
 
 
 def has_independent_signal(s: "Scored") -> bool:
     return bool(INDEPENDENT_SIGNALS & set(s.sources))
 
 
-def _ev_tiebreak(ev: float) -> float:
-    """EV clamped to [-0.05, +0.10] and shifted to [0, 0.15] - only ever a small
-    tiebreaker, since this is a confidence product, not an edge product.
-    _daily_score divides by 0.15 to normalise it to [0, 1]; _top_score uses it
-    raw, so its contribution there is at most 0.02 * 0.15 = 0.003."""
-    return min(max(ev, -0.05), 0.10) + 0.05
+def _conf(s: Scored) -> float:
+    """The ranking value of a candidate: its evidence-adjusted ``rank_score`` once ``select`` has assessed it
+    (lower confidence bound + sharp edge, selection/evidence.py), else - a bare Scored never assessed - its
+    probability. A ranking score, NOT a probability: it is never shown or stored as ``prob``."""
+    return s.rank_score if s.p_lcb is not None else s.p_model
 
 
 def _top_score(s: Scored) -> float:
-    """Confidence-first: p_model dominates; EV is only a tiebreaker."""
-    return 0.80 * s.p_model + 0.20 * s.agreement + 0.02 * _ev_tiebreak(s.ev)
+    return _conf(s)
 
 
 def _daily_score(s: Scored) -> float:
-    base = 0.60 * s.p_model + 0.25 * s.agreement + 0.10 * s.liquidity
-    base += 0.05 * (_ev_tiebreak(s.ev) / 0.15)
-    if s.line.market == "prop":
-        base -= 0.05
-    return base
+    return _conf(s)
+
+
+def _conf_q(s: Scored) -> float:
+    """``_conf`` kept strictly inside (0, 1) so it can be multiplied along a ticket."""
+    return min(0.999, max(0.01, _conf(s)))
 
 
 def _cap(frac: float, target: int) -> int:
@@ -203,7 +206,8 @@ def choose_top(pool: List[Scored], cfg: Config, target: Optional[float] = None, 
                min_legs: Optional[int] = None, max_legs: Optional[int] = None):
     """Exact, band-aware search for the Top accumulator: the 2..3-leg combination
     of DIFFERENT fixtures whose combined odds sit in [TOP_COMBINED_ODDS,
-    TOP_ODDS_MAX] with the highest joint confidence (product of p_model), ties
+    TOP_ODDS_MAX] with the highest joint confidence (product of each leg's
+    evidence-adjusted confidence ``_conf``, which is p_model for an unassessed leg), ties
     broken by closeness to the target, outcome-family variety, then fewer legs.
 
     No shortlist: a pre-trim by score/price silently discarded every leg priced
@@ -224,17 +228,17 @@ def choose_top(pool: List[Scored], cfg: Config, target: Optional[float] = None, 
     max_size = max(min_size, cfg.top_legs_max if max_legs is None else max_legs)
 
     # Identical fixture + price collapses to the most confident leg.
-    ranked = sorted(pool, key=lambda s: (-s.p_model, -_top_score(s), s.event.dedupe_key(), repr(s.line.key())))
+    ranked = sorted(pool, key=lambda s: (-_conf_q(s), -s.p_model, s.event.dedupe_key(), repr(s.line.key())))
     unique = {}
     for s in ranked:
         unique.setdefault((s.event.dedupe_key(), round(s.price, 4)), s)
     options = sorted(unique.values(),
-                     key=lambda s: (s.price, -s.p_model, s.event.dedupe_key(), repr(s.line.key())))
+                     key=lambda s: (s.price, -_conf_q(s), s.event.dedupe_key(), repr(s.line.key())))
     n = len(options)
     if n < min_size:
         return [], 0
     prices = [s.price for s in options]
-    qs = [s.p_model for s in options]
+    qs = [_conf_q(s) for s in options]
     families = [selection_family(s.line) for s in options]
     pmax, qmax = prices[-1], max(qs)
 
@@ -392,8 +396,27 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         base.append(s)
     ps.eligible = len(base)
     marks.append((time.perf_counter(), time.process_time()))
+    # Evidence assessment, once per candidate: market-quality tier, uncertainty, lower confidence bound, sharp edge.
+    # The ranking score (``rank_score``) is derived from it and is kept apart from ``p_model``.
+    tables: Dict[int, dict] = {}
+    assessed: Dict[int, evmod.Evidence] = {}
     for s in base:
-        s.rank_score = _daily_score(s)
+        e = assessed[id(s)] = evmod.assess(s, cfg, tables)
+        s.quality, s.se, s.p_lcb, s.rank_score = e.quality, e.se, e.p_lcb, e.rank
+        s.notes["evidence"] = e.as_notes()
+    ps.diagnostics["base_by_quality"] = dict(Counter(assessed[id(s)].quality for s in base))
+    ps.diagnostics["base_with_sharp_reference"] = sum(1 for s in base if assessed[id(s)].has_sharp)
+
+    def _shared_reject(s: Scored) -> Optional[Tuple[str, str]]:
+        """Evidence gates both tiers share. A sharp reference is only ever used when it exists."""
+        e = assessed[id(s)]
+        if e.dispersion is not None and e.dispersion > cfg.max_book_dispersion:
+            return "OUTLIER_BOOKS", f"books disagree by {e.dispersion:.3f} > MAX_BOOK_DISPERSION"
+        if e.has_sharp and s.edge_ev < cfg.min_edge_vs_sharp:
+            return "NEGATIVE_EDGE_VS_SHARP", f"price is {s.edge_ev:+.3f} EV vs the sharp fair probability"
+        if not s.independent and s.edge > cfg.max_unsupported_edge:
+            return "UNSUPPORTED_EDGE", f"model claims {s.edge:+.3f} over the market with no independent signal"
+        return None
 
     # ------------------------------------------------------------ top picks
     # Sized by odds: take the best candidates until the ticket is worth ~2.00.
@@ -402,8 +425,19 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     relax_floor = cfg.top_min_prob - getattr(cfg, "top_relax_prob", 0.0)
     top_rejected: Counter = Counter()
 
+    def _top_evidence_reject(s: Scored) -> Optional[Tuple[str, str]]:
+        e = assessed[id(s)]
+        if e.quality != evmod.MAIN:
+            return "MARKET_QUALITY", f"top: {e.quality} market (Top is main markets only)"
+        if e.books < cfg.top_min_books:
+            return "INSUFFICIENT_BOOKS", f"top: books {e.books} < TOP_MIN_BOOKS ({cfg.top_min_books})"
+        got = _shared_reject(s)
+        return (got[0], f"top: {got[1]}") if got else None
+
     def _passes_rest(s: Scored) -> bool:
         if has_independent_signal(s) and s.ev < cfg.top_max_neg_ev:
+            return False
+        if _top_evidence_reject(s):
             return False
         return s.agreement >= cfg.top_min_agreement and len(s.sources) >= 2
 
@@ -435,12 +469,15 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             _note(s, f"top: agreement < TOP_MIN_AGREEMENT ({cfg.top_min_agreement})")
             continue
         if not (len(s.sources) >= 2):
+            # coherence check only: the score model fitted to this match's own lines must exist (it is NOT an
+            # independent confirmation - real support is the book / sharp evidence below)
             top_rejected["INSUFFICIENT_SOURCES"] += 1
             _note(s, "top: INSUFFICIENT_SOURCES (<2)")
             continue
-        if s.line.n_books < cfg.top_min_books:
-            top_rejected["INSUFFICIENT_BOOKS"] += 1
-            _note(s, f"top: n_books < TOP_MIN_BOOKS ({cfg.top_min_books})")
+        rejected = _top_evidence_reject(s)
+        if rejected:
+            top_rejected[rejected[0]] += 1
+            _note(s, rejected[1])
             continue
         top_pool.append(s)
     # Odds API is tried first for the Top ticket: only fall back to the full
@@ -526,7 +563,22 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             continue
         if not (s.p_model >= cfg.daily_min_prob):
             daily_rejected["BELOW_THRESHOLD"] += 1
-            _note(s, f"daily: p_model < DAILY_MIN_PROB ({s.p_model:.3f})")
+            _note(s, f"daily: p_model < DAILY_MIN_PROB ({s.p_model:.3f} < {cfg.daily_min_prob})")
+            continue
+        ev_s = assessed[id(s)]
+        need = evmod.min_books(ev_s.quality, cfg)
+        if ev_s.books < need:
+            daily_rejected["INSUFFICIENT_BOOKS"] += 1
+            _note(s, f"daily: {ev_s.quality} market backed by {ev_s.books} book(s), needs {need}")
+            continue
+        shared = _shared_reject(s)
+        if shared:
+            daily_rejected[shared[0]] += 1
+            _note(s, f"daily: {shared[1]}")
+            continue
+        if ev_s.p_lcb < cfg.daily_min_lcb:
+            daily_rejected["LOW_CONFIDENCE_BOUND"] += 1
+            _note(s, f"daily: lower confidence bound {ev_s.p_lcb:.3f} < DAILY_MIN_LCB ({cfg.daily_min_lcb})")
             continue
         if has_independent_signal(s) and s.ev < cfg.daily_max_neg_ev:
             # Confidence product: market-only candidates (EV negative by
@@ -541,21 +593,17 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             _note(s, f"daily: agreement < 0.30 ({s.agreement:.2f})")
             continue
         daily_pool.append(s)
-    preferred = [s for s in daily_pool if s.p_model >= cfg.daily_min_prob]
-    if preferred:
-        preferred_ids = {id(s) for s in preferred}
-        for s in daily_pool:
-            if id(s) not in preferred_ids:
-                _note(s, "daily: preferred p_model>=0.5 filter")
-        daily_pool = preferred
     ps.diagnostics["daily_eligible_by_sport"] = dict(Counter(s.event.sport for s in daily_pool))
     ps.diagnostics["daily_pool_rejections"] = dict(daily_rejected)
-    # Order only: every gate above and every cap below is untouched. ``raw`` keeps _daily_score alone.
+    # Order only: every gate above and every cap below is untouched. ``raw`` ranks on rank_score alone;
+    # family_z ranks each market family against its own peers. Either way the RESTRICTED market class comes LAST
+    # (stable sort): a first-half / corners / far-alternate line is only offered once nothing better is left.
     if getattr(cfg, "daily_ranking", "family_z") == "raw":
         daily_pool.sort(key=lambda s: s.rank_score, reverse=True)
         ps.diagnostics["daily_family_pool"] = family_counts(daily_pool)
     else:
         daily_pool, ps.diagnostics["daily_family_pool"] = order_by_family_z(daily_pool, lambda s: s.rank_score)
+    daily_pool.sort(key=lambda s: evmod.OFFER_ORDER[assessed[id(s)].quality])
     ps.diagnostics["daily_ranking"] = getattr(cfg, "daily_ranking", "family_z")
 
     # One real fixture = one event position, however many providers/legs describe
@@ -604,9 +652,9 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     period_count: Dict[str, int] = {}
     sport_count: Dict[str, int] = {}
     league_count: Dict[str, int] = {}
-    favs = props = exotics = 0
+    props = exotics = 0
     sports_available = {s.event.sport for s in daily_pool}
-    caps = {"family": _cap(0.45, cap), "favs": _cap(0.50, cap), "exotic": _cap(0.25, cap),
+    caps = {"family": _cap(0.45, cap), "exotic": _cap(0.25, cap),
             "league": cfg.daily_max_per_league}
     # The list is sized by combined odds, not by a count, so a 25% market
     # share has to be measured against the list as it is actually being
@@ -636,13 +684,13 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
                 return True
         return False
 
-    def try_add(s: Scored, relaxed: bool) -> bool:
-        """The strict pass enforces every quota. The relaxed pass - run only
-        when the strict ticket is short of DAILY_COMBINED_MIN_ODDS - waives
-        the market/sport/league shares (never the per-event, conflict,
-        family, favourite, prop or exotic limits) and records which quota
-        each admitted pick would otherwise have broken."""
-        nonlocal favs, props, exotics
+    def try_add(s: Scored, relaxed: bool = False) -> bool:
+        """The strict pass enforces every quota. The relaxed pass - run only when the strict ticket is short of
+        DAILY_COMBINED_MIN_ODDS - waives the market / sport / league DIVERSITY shares (never the per-event,
+        conflict, family, stat, period, prop or exotic limits) and records which quota each admitted pick would
+        otherwise have broken. It only ever sees candidates that already passed every QUALITY gate (probability
+        floor, book coverage, dispersion, sharp edge, lower bound): diversity is a preference, quality is not."""
+        nonlocal props, exotics
         ek = event_pos(s.event)
         fam = selection_family(s.line)
         mk = s.line.market
@@ -656,9 +704,6 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             return False
         if family_count.get(fam, 0) >= caps["family"] and fam != "other":
             _note(s, f"cap: outcome family '{fam}' ({caps['family']})")
-            return False
-        if s.price < 1.50 and favs >= caps["favs"]:
-            _note(s, f"cap: favourites ({caps['favs']})")
             return False
         if mk == "prop" and props >= cfg.max_player_props:
             _note(s, "cap: player props")
@@ -681,10 +726,12 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
                 "sport": share_exceeded(sport_count.get(s.event.sport, 0), sport_share),
                 "league": bool(s.event.league) and league_count.get(s.event.league, 0) >= caps["league"]}
         if any(over.values()):
-            if not relaxed:
-                for name, hit in over.items():
-                    if hit:
-                        _note(s, f"cap: share '{name}' ({name} share exceeded)")
+            # the relaxed pass waives only the pure-variety shares; the stat and period shares keep corners / cards /
+            # first-half legs from taking the ticket (thin markets: that is a quality limit, not a preference)
+            blocked = [name for name, hit in over.items() if hit and (not relaxed or name in ("stat", "period"))]
+            if blocked:
+                for name in blocked:
+                    _note(s, f"cap: share '{name}' ({name} share exceeded)")
                 return False
             for name, hit in over.items():
                 if hit:
@@ -703,7 +750,6 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             period_count[s.line.period] = period_count.get(s.line.period, 0) + 1
         sport_count[s.event.sport] = sport_count.get(s.event.sport, 0) + 1
         league_count[s.event.league] = league_count.get(s.event.league, 0) + 1
-        favs += 1 if s.price < 1.50 else 0
         props += 1 if mk == "prop" else 0
         exotics += 1 if grp == "exotic" else 0
         return True
@@ -719,37 +765,48 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
             return False
         return ticket * price <= cfg.daily_odds_max
 
-    for i, s in enumerate(daily_pool):
-        if not under_cap():
-            for rest in daily_pool[i:]:
-                _note(rest, "loop: DAILY_PICKS_TARGET reached (never attempted)")
-            break
-        if not fits(s.price):
-            _note(s, f"loop: ticket x {s.price:.2f} would exceed DAILY_COMBINED_MAX_ODDS")
-            continue
-        if try_add(s, relaxed=False):
-            ticket *= s.price
+    # Best-evidenced first. Stop the moment the ticket is worth DAILY_COMBINED_MIN_ODDS (fewest legs that do the
+    # job); skip a leg that would push it past DAILY_COMBINED_MAX_ODDS and try the next. Never reach for odds.
+    def sweep(relaxed: bool) -> None:
+        """Offer the ordered pool repeatedly until a whole sweep adds nothing: a leg a share quota turned away
+        early is reconsidered once the ticket has grown (market shares are measured on the ticket as built)."""
+        nonlocal ticket
+        added = True
+        while added:
+            added = False
+            for s in daily_pool:
+                if id(s) in chosen_ids:
+                    continue
+                if ticket >= cfg.daily_odds_min or not under_cap():
+                    return
+                if not fits(s.price):
+                    _note(s, f"loop{'(relaxed)' if relaxed else ''}: ticket x {s.price:.2f} would exceed "
+                             "DAILY_COMBINED_MAX_ODDS")
+                    continue
+                if try_add(s, relaxed):
+                    ticket *= s.price
+                    added = True
+
+    sweep(False)
     strict_ticket, strict_picks = ticket, len(chosen)
-    if ticket < cfg.daily_odds_min:
-        for s in daily_pool:
-            if not under_cap():
-                break
-            if id(s) in chosen_ids:
-                _note(s, "loop: already chosen")
-                continue
-            if not fits(s.price):
-                _note(s, f"loop(relaxed): ticket x {s.price:.2f} would exceed DAILY_COMBINED_MAX_ODDS")
-                continue
-            if try_add(s, relaxed=True):
-                ticket *= s.price
+    if ticket < cfg.daily_odds_min and under_cap():
+        sweep(True)
         if relaxed_hits:
             ps.diagnostics["daily_caps_relaxed"] = {
-                "reason": "strict pass could not reach DAILY_COMBINED_MIN_ODDS",
+                "reason": "strict pass could not reach DAILY_COMBINED_MIN_ODDS with qualifying legs",
                 "strict_ticket": round(strict_ticket, 2), "strict_picks": strict_picks,
                 "daily_pool": len(daily_pool), "exceeded": dict(relaxed_hits)}
             log.warning("picker: diversity quotas relaxed %s - strict ticket %.2f from %d picks was "
-                        "below the %.2f floor with a qualifying pool of %d",
+                        "below the %.2f target with a qualifying pool of %d (no quality gate was relaxed)",
                         dict(relaxed_hits), strict_ticket, strict_picks, cfg.daily_odds_min, len(daily_pool))
+    stopped = ("target odds reached" if ticket >= cfg.daily_odds_min
+               else "pick cap" if not under_cap() else "pool exhausted")
+    if trace is not None and stopped != "pool exhausted":
+        for s in daily_pool:
+            if id(s) not in chosen_ids and id(s) not in trace:
+                _note(s, f"loop: {stopped} (never attempted)")
+    ps.diagnostics["daily_stopped"] = stopped
+    ps.diagnostics["daily_target_reached"] = bool(chosen) and ticket >= cfg.daily_odds_min
 
     for s in chosen:
         s.tier = "daily"

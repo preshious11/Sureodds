@@ -87,19 +87,20 @@ def _match(i):
 
 
 def _synthetic_pool():
-    """12 safe alternate handicaps, 4 straight wins and 4 main-line totals - on DIFFERENT matches, all
-    passing every gate. Wins/totals are less 'confident' than +1.5 lines, as in real data."""
+    """8 safe alternate handicaps, 6 straight wins and 6 main-line totals - on DIFFERENT matches, all
+    passing every gate (DAILY_MIN_PROB 0.55, book coverage, lower bound). Wins/totals are less 'confident' than
+    +1.5 lines, as in real data."""
     out = []
-    for i in range(12):
+    for i in range(8):
         e = _match(i)
         e.markets = (_pair(-0.5, 0.52, "handicap", first="home", second="away")
                      + _pair(-1.5, 0.30, "handicap", first="home", second="away"))
         out.append(sc(e, "handicap", "away", 0.80 + 0.005 * i, 1.25, line=1.5))            # away +1.5: alt
-    for j in range(4):
-        out.append(sc(_match(12 + j), "result3", "home", 0.58 + 0.02 * j, 1.60))
-        e = _match(16 + j)
+    for j in range(6):
+        out.append(sc(_match(8 + j), "result3", "home", 0.57 + 0.015 * j, 1.60))
+        e = _match(14 + j)
         e.markets = _pair(2.5, 0.53) + _pair(1.5, 0.80)
-        out.append(sc(e, "total", "over", 0.52 + 0.02 * j, 1.85, line=2.5))
+        out.append(sc(e, "total", "over", 0.56 + 0.01 * j, 1.85, line=2.5))
     return out
 
 
@@ -118,16 +119,17 @@ def test_raw_ranking_offers_every_safe_handicap_before_any_win():
     fam = _families(ps)
     tables = {}
     order = [daily_family(s, tables) for s in ps.daily]
-    assert fam["handicap_alt"] >= 8                                                         # every safe handicap is offered ...
+    assert fam["handicap_alt"] >= 6                                                         # the safe handicaps (up to the 45% outcome-family cap) are offered ...
     assert "win" not in order[:fam["handicap_alt"]] and order[:fam["handicap_alt"]].count("handicap_alt") == fam["handicap_alt"]   # ... before any win
-    # (the Daily now grows until ITS OWN odds reach 10, so after the handicaps run out a win can still follow)
+    # (the Daily grows until ITS OWN odds reach 10 and then stops, so after the handicaps run into the family cap a
+    # win / total can still follow)
 
 
 def test_family_ranking_lets_wins_and_main_line_totals_compete():
     ps = select(_synthetic_pool(), _cfg("family_z"), dt())
     fam = _families(ps)
     assert fam["win"] >= 1 and fam["total_main"] >= 1
-    assert ps.diagnostics["daily_family_pool"] == {"handicap_alt": 11, "win": 3, "total_main": 4}     # Top took one handicap and one win
+    assert ps.diagnostics["daily_family_pool"] == {"handicap_alt": 8, "win": 4, "total_main": 6}     # the Top took two wins
     assert ps.diagnostics["daily_family_picks"] == dict(fam)
 
 

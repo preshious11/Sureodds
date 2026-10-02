@@ -230,3 +230,198 @@ def compute(db: Database, today_local: datetime) -> Dict:
 
 def rows_for_recap(db: Database, date_str: str) -> List[Dict]:
     return [dict(r) for r in db.picks_for_date(date_str)]
+
+
+# ------------------------------------------------------------------ prediction accuracy
+# Individual-selection accuracy is NOT ticket win rate: a 10-leg Daily that loses because ONE leg failed is a 90% leg
+# hit rate, not a failed model. These numbers keep the two apart, and compare the model against the market's own
+# probability so "is the model adding anything?" has an answer.
+SETTLED = ("won", "lost", "half_won", "half_lost")
+#: the outcome a half result counts as for SCORING (hit rate counts a half as the side it landed on)
+_Y = {"won": 1.0, "half_won": 0.75, "half_lost": 0.25, "lost": 0.0}
+#: Brier / calibration claims need this many decided legs; below it they are reported as None, never as a number
+MIN_BRIER_SAMPLES = 30
+CONFIDENCE_BUCKETS = ((0.0, 0.55), (0.55, 0.65), (0.65, 0.75), (0.75, 0.85), (0.85, 1.01))
+BOOK_BUCKETS = ((1, 1), (2, 2), (3, 4), (5, 99))
+
+
+def clv(price_taken: float, closing_price: float) -> Optional[float]:
+    """Closing line value: ``price_taken / closing_price - 1`` (positive = the price beat the closing line).
+    ``None`` without both prices. Filled into ``picks.clv`` once a closing price is captured."""
+    try:
+        taken, close = float(price_taken), float(closing_price)
+    except (TypeError, ValueError):
+        return None
+    return taken / close - 1.0 if taken > 1.0 and close > 1.0 else None
+
+
+def _num(row, key):
+    try:
+        v = row[key]
+    except (KeyError, IndexError):
+        return None
+    return float(v) if v is not None else None
+
+
+def _leg_block(rows: List) -> Dict:
+    """Counts and calibration of individual legs. ``hit_rate`` is won / (won + lost) in percent with a half result
+    counted as the side it landed on (as everywhere else in the bot); pushes and voids are in neither."""
+    cnt = {k: 0 for k in ("won", "lost", "half_won", "half_lost", "push", "void")}
+    probs: List[float] = []
+    pm: List[float] = []
+    ys: List[float] = []
+    raws: List[float] = []
+    edges: List[float] = []
+    books: List[float] = []
+    for r in rows:
+        st = str(r["status"])
+        if st in cnt:
+            cnt[st] += 1
+        if st not in SETTLED:
+            continue
+        p = _num(r, "prob")
+        if p is not None:
+            probs.append(p)
+            ys.append(_Y[st])
+            market = _num(r, "p_market")
+            raw = _num(r, "prob_raw")
+            pm.append(market if market is not None else p)
+            raws.append(raw if raw is not None else p)
+        if _num(r, "edge_ev") is not None:
+            edges.append(_num(r, "edge_ev"))
+        if _num(r, "books") is not None:
+            books.append(_num(r, "books"))
+    won, lost = cnt["won"] + cnt["half_won"], cnt["lost"] + cnt["half_lost"]
+    decided = won + lost
+    enough = len(probs) >= MIN_BRIER_SAMPLES
+
+    def brier(ps):
+        return sum((p - y) ** 2 for p, y in zip(ps, ys)) / len(ys)
+
+    return {**cnt, "settled": decided + cnt["push"], "decided": decided, "wins": won, "losses": lost,
+            "hit_rate": (100.0 * won / decided) if decided else None,
+            "avg_predicted_prob": (100.0 * sum(probs) / len(probs)) if probs else None,
+            "brier": brier(probs) if enough else None,
+            "brier_raw": brier(raws) if enough else None,
+            "brier_market": brier(pm) if enough else None,          # the baseline: does the model beat the market's own p?
+            "avg_edge_ev": (sum(edges) / len(edges)) if edges else None, "with_sharp_edge": len(edges),
+            "avg_books": (sum(books) / len(books)) if books else None}
+
+
+def _grouped(rows: List, key) -> List[Dict]:
+    groups: Dict[str, List] = {}
+    for r in rows:
+        groups.setdefault(key(r), []).append(r)
+    out = [{"key": k, **_leg_block(v)} for k, v in groups.items()]
+    return sorted([b for b in out if b["decided"]], key=lambda b: (-b["decided"], str(b["key"])))
+
+
+def ticket_results(rows: List, tier: str) -> Dict:
+    """Per day, did ``tier``'s ticket land? Only days whose legs are ALL settled count; a ticket hits when no leg lost
+    and at least one won. ``one_leg_short`` counts days lost by exactly ONE leg - the accumulator effect, not a bad
+    model; ``avg_legs`` / ``avg_legs_won`` show the per-leg picture behind the ticket result."""
+    by_day: Dict[str, List] = {}
+    for r in rows:
+        if r["tier"] == tier:
+            by_day.setdefault(str(r["pick_date"]), []).append(r)
+    days = hit = one_short = 0
+    legs = won_legs = 0
+    for day_rows in by_day.values():
+        kinds = [outcome(r) for r in day_rows]
+        if None in kinds:
+            continue
+        days += 1
+        lost = kinds.count("lost")
+        hit += lost == 0 and "won" in kinds
+        one_short += lost == 1
+        legs += len(kinds)
+        won_legs += kinds.count("won")
+    return {"days": days, "hit": hit, "hit_rate": (100.0 * hit / days) if days else None, "one_leg_short": one_short,
+            "avg_legs": (legs / days) if days else None, "avg_legs_won": (won_legs / days) if days else None}
+
+
+def _confidence_bucket(p: float) -> str:
+    return next((f"{int(lo * 100)}-{min(int(hi * 100), 100)}%" for lo, hi in CONFIDENCE_BUCKETS if lo <= p < hi), "?")
+
+
+def _book_bucket(n: float) -> str:
+    return next((f"{lo}" if lo == hi else f"{lo}+" if hi == 99 else f"{lo}-{hi}"
+                 for lo, hi in BOOK_BUCKETS if lo <= n <= hi), "?")
+
+
+def accuracy(rows: List) -> Dict:
+    """Prediction-accuracy report over picks rows (any status; unsettled ones are ignored where they cannot count)."""
+    settled = [r for r in rows if str(r["status"]) in SETTLED + ("push", "void")]
+    clvs = [v for v in (_num(r, "clv") for r in settled) if v is not None]
+    with_prob = [r for r in settled if _num(r, "prob") is not None]
+    with_books = [r for r in settled if _num(r, "books") is not None]
+
+    def quality(r):
+        try:
+            return str(r["quality"] or "unrecorded")
+        except (KeyError, IndexError):
+            return "unrecorded"
+
+    return {
+        "legs": _leg_block(settled),
+        "by_tier": {t: _leg_block([r for r in settled if r["tier"] == t]) for t in ("top", "daily")},
+        "tickets": {t: ticket_results(rows, t) for t in ("top", "daily")},
+        "by_sport": _grouped(settled, lambda r: str(r["sport"])),
+        "by_market": _grouped(settled, lambda r: f"{r['market']}/{r['stat']}"),
+        "by_quality": _grouped(settled, quality),
+        "by_confidence": sorted(_grouped(with_prob, lambda r: _confidence_bucket(_num(r, "prob"))), key=lambda b: b["key"]),
+        "by_books": _grouped(with_books, lambda r: _book_bucket(_num(r, "books"))),
+        "clv": {"n": len(clvs), "mean": (sum(clvs) / len(clvs)) if clvs else None},
+    }
+
+
+def accuracy_report(db: Database) -> Dict:
+    return accuracy([dict(r) for r in db.query("SELECT * FROM picks WHERE status NOT IN ('pending')")])
+
+
+def accuracy_summary(rep: Dict) -> Dict:
+    """The few numbers worth a log line."""
+    legs = rep["legs"]
+
+    def r(v, n):
+        return None if v is None else round(v, n)
+
+    return {"decided": legs["decided"], "hit_rate": r(legs["hit_rate"], 1), "avg_predicted": r(legs["avg_predicted_prob"], 1),
+            "brier": r(legs["brier"], 4), "brier_market": r(legs["brier_market"], 4),
+            "top_tickets": rep["tickets"]["top"], "daily_tickets": rep["tickets"]["daily"]}
+
+
+def _pct(v) -> str:
+    return "n/a" if v is None else f"{v:.1f}%"
+
+
+def accuracy_text(rep: Dict) -> str:
+    """Plain-text report for ``cli.py accuracy``."""
+    legs = rep["legs"]
+    lines = ["PREDICTION ACCURACY (individual selections, flat stakes; ticket results are separate)",
+             f"  settled legs: {legs['decided']} decided ({legs['wins']} won / {legs['losses']} lost), "
+             f"{legs['push']} push, {legs['void']} void",
+             f"  per-leg hit rate: {_pct(legs['hit_rate'])}   average predicted probability: {_pct(legs['avg_predicted_prob'])}"]
+    if legs["brier"] is None:
+        lines.append(f"  Brier: not reported until {MIN_BRIER_SAMPLES} legs have settled")
+    else:
+        lines.append(f"  Brier: model {legs['brier']:.4f}  raw {legs['brier_raw']:.4f}  market {legs['brier_market']:.4f} "
+                     f"(lower is better; the model only adds value if it is below the market)")
+    if legs["avg_edge_ev"] is not None:
+        lines.append(f"  edge vs sharp at selection: {legs['avg_edge_ev']:+.3f} EV over {legs['with_sharp_edge']} legs")
+    for tier in ("top", "daily"):
+        t, b = rep["tickets"][tier], rep["by_tier"][tier]
+        lines.append(f"  {tier}: legs {b['wins']}/{b['decided']} ({_pct(b['hit_rate'])}) | tickets {t['hit']}/{t['days']} "
+                     f"({_pct(t['hit_rate'])}), {t['one_leg_short']} lost by exactly one leg")
+    for title, key in (("by sport", "by_sport"), ("by market", "by_market"), ("by quality", "by_quality"),
+                       ("by confidence", "by_confidence"), ("by books", "by_books")):
+        if rep[key]:
+            lines.append(f"  {title}:")
+            for b in rep[key]:
+                lines.append(f"    {b['key']:<22} {b['wins']}/{b['decided']}  hit {_pct(b['hit_rate'])}  "
+                             f"predicted {_pct(b['avg_predicted_prob'])}")
+    if rep["clv"]["n"]:
+        lines.append(f"  closing line value: {rep['clv']['mean']:+.3f} over {rep['clv']['n']} legs")
+    else:
+        lines.append("  closing line value: no closing prices captured yet (picks.closing_price / picks.clv are ready)")
+    return "\n".join(lines)

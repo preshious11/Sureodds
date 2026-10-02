@@ -28,6 +28,12 @@ from typing import Dict, List, Optional, Tuple
 _SIDE_SWAP = {"home": "away", "away": "home", "home_draw": "away_draw", "away_draw": "home_draw"}
 
 
+def norm_book(name: str) -> str:
+    """One spelling per bookmaker across providers: ``"Betfair Exchange"`` / ``"betfair_exchange"`` agree."""
+    import re
+    return re.sub(r"[^a-z0-9]+", "_", str(name or "").strip().lower()).strip("_")
+
+
 @dataclass
 class MarketLine:
     market: str
@@ -46,6 +52,28 @@ class MarketLine:
     market_name: str = ""                # human readable market name
     is_player_prop: bool = False
     book_prices: List[float] = field(default_factory=list)  # all book prices seen
+    #: bookmaker key (see ``norm_book``) -> that book's price. ``book_prices`` loses WHO quoted; this keeps it, so a
+    #: sharp book can be told apart from a soft one and the same book seen through two providers counts once.
+    #: Empty for lines parsed before this field existed (cached rows): consumers then fall back to ``n_books``.
+    book_quotes: Dict[str, float] = field(default_factory=dict)
+    providers: List[str] = field(default_factory=list)      # providers whose feed carried this line
+
+    def distinct_books(self) -> int:
+        """How many DIFFERENT bookmakers quote this line: ``book_quotes`` when the provider supplied them,
+        else the legacy ``n_books`` count."""
+        return len(self.book_quotes) if self.book_quotes else max(1, int(self.n_books or 1))
+
+    def provider_count(self) -> int:
+        return max(1, len(self.providers))
+
+    def price_dispersion(self) -> Optional[float]:
+        """Spread (max - min) of the books' IMPLIED probabilities, in probability points; ``None`` with fewer
+        than two prices. A wide spread means the books disagree (a stale or outlier quote)."""
+        prices = [p for p in (list(self.book_quotes.values()) or self.book_prices or []) if p and p > 1.0]
+        if len(prices) < 2:
+            return None
+        implied = [1.0 / p for p in prices]
+        return max(implied) - min(implied)
 
     def key(self) -> Tuple:
         return (self.market, self.period, self.stat, self.entity,
@@ -103,6 +131,9 @@ def consolidate_lines(markets: List["MarketLine"]) -> List["MarketLine"]:
         if len(group) > 1:
             primary.book_prices = [p for m in group for p in (m.book_prices or [m.price])]
             primary.n_books = len(primary.book_prices)
+            for m in group:
+                for book, price in m.book_quotes.items():
+                    primary.book_quotes.setdefault(book, price)
         out.append(primary)
     return out
 

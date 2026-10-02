@@ -102,21 +102,32 @@ score across signals, and an expected value / edge.
 
 The **picker** then applies your rules:
 
-- **Top picks** need high model probability *and* positive EV *and* at least two
-  agreeing sources; they are added best-first until the ticket is worth
-  `TOP_COMBINED_ODDS` (~2.00), preferring different outcome types.
-- **Daily picks** are sized on their own: the Daily ticket alone is worth
-  `DAILY_COMBINED_MIN_ODDS`–`DAILY_COMBINED_MAX_ODDS` (10–20); the Top legs are
-  checked for duplicates but not counted in its odds. A pick is only
-  added when it clears the quality bar, so **it never pads**: if only 11
-  qualify, 11 are posted. `DAILY_PICKS_TARGET` is just a safety cap on the
-  number of picks in the one list.
+- **Top picks** are main markets only (result, DNB, double chance, the main total / handicap), with high model
+  probability, at least `TOP_MIN_BOOKS` (3) *distinct* bookmakers, and — where a sharp book priced the line — a price
+  no worse than `MIN_EDGE_VS_SHARP` against the sharp fair probability. The 2–3 leg combination with the best
+  evidence-adjusted joint confidence inside `TOP_COMBINED_ODDS` (~2.00) – `TOP_ODDS_MAX` is chosen.
+- **Daily picks** are sized on their own: the Daily ticket alone aims for `DAILY_COMBINED_MIN_ODDS` (10) and never
+  exceeds `DAILY_COMBINED_MAX_ODDS` (12). The builder takes the best-evidenced legs first and **stops as soon as 10
+  is reached**; it never pads: if the qualifying legs only make 6.4, 6.4 is posted. A leg needs
+  `DAILY_MIN_PROB` (0.55, the single probability floor), `DAILY_MIN_BOOKS` distinct books (2 for main markets, 3 for
+  secondary, 4 for restricted ones), books that agree (`MAX_BOOK_DISPERSION`), a lower confidence bound above
+  `DAILY_MIN_LCB`, and no clearly negative edge against a sharp reference. `DAILY_PICKS_TARGET` is just a safety cap.
+- **Evidence-based ranking** (`predbot/selection/evidence.py`): candidates are ranked by the *lower confidence bound*
+  of their probability (probability minus its uncertainty: market-class prior, book disagreement, single-book,
+  no-sharp-reference) plus the edge over a sharp reference when one exists — never by raw probability. Market
+  quality is graded main / secondary / restricted (first half, corners, far alternate lines, exotics); the restricted
+  class is only offered after the rest. The ranking score is **not** a probability and is never shown as one.
+- **Sharp reference** (`SHARP_BOOKMAKERS`, default Pinnacle / Betfair Exchange / Matchbook): when one of these quotes
+  every side of a market, its Shin-de-vigged price is the fair probability and the *other* books' median is the price
+  actually available; edge = fair probability × available price − 1. Nothing is assumed present: with no sharp
+  quote there is no reference, no edge, and a larger uncertainty. `python cli.py accuracy` reports per-leg hit rate,
+  Brier vs the market, and results by sport / market / confidence / book count, separately from ticket results.
 - **No overlap:** a top-pick outcome is never repeated in the daily list, and no
   contradictory/equivalent line on the same match is added. The same match *may*
   appear again with a genuinely different outcome.
 - **No single-outcome bias:** caps on the share of home/away/over/under picks,
-  on any one market type, on short-priced favourites, on exotics, and on player
-  props, plus a soft per-sport cap when multiple sports are available.
+  on any one market type, on exotics, and on player props, plus a soft per-sport
+  cap when multiple sports are available.
 - **Family-fair Daily ranking** (`DAILY_RANKING=family_z`, the default): the Daily score is
   0.60 × probability, so on any match the safest line (+1.5, Over 1.5, double chance) used to
   beat the straight win or the real Over 2.5, and "one pick per match" kept the safe line. The
@@ -133,8 +144,9 @@ The **picker** then applies your rules:
   keeps a Top match off-limits to the Daily. The `picks` table has a unique index on (date, fixture key, selection)
   as a last line of defence.
 - **Top ticket never empty**: when the strict search (2-3 legs, odds 2.00-2.50, every leg at `TOP_MIN_PROB`) finds
-  nothing, `TOP_RELAXED_FALLBACK=1` widens the band by `TOP_RELAX_BAND`, then lowers the probability floor by
-  `TOP_RELAX_PROB`; never one leg, never more than three. `/lastrun` shows "Top fallback".
+  nothing, `TOP_RELAXED_FALLBACK=1` widens the band by `TOP_RELAX_BAND`; `TOP_RELAX_PROB` (default 0 — the Top is
+  not weakened to reach its target) can lower the per-leg probability floor; never one leg, never more than three.
+  `/lastrun` shows "Top fallback".
 
 ---
 

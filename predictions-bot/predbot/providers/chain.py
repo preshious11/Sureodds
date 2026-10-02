@@ -199,6 +199,9 @@ def merge_events(pool: List[Event], new: List[Event], price_mode: str = "median"
     carries, for each side, the fuller of the two providers' team names."""
     out = list(pool)
     for ev in new:
+        for ml in ev.markets:
+            if not ml.providers:                 # who carried this line (a cached row may predate the tag)
+                ml.providers = [ev.provider]
         match, orientation = None, None
         for ex in out:
             if ex.sport != ev.sport:
@@ -251,6 +254,9 @@ def _merge_markets(dst: Event, src: Event, price_mode: str = "median", swapped: 
             best_new = max(ml.book_prices or [ml.price])
             m.book_prices.extend(ml.book_prices or [ml.price])
             m.n_books = len(m.book_prices)
+            for book, quoted in ml.book_quotes.items():
+                m.book_quotes.setdefault(book, quoted)
+            m.providers = sorted(set(m.providers) | set(ml.providers))
             if ml.fair_price and not m.fair_price:
                 m.fair_price = ml.fair_price
             if best_new > best_before:

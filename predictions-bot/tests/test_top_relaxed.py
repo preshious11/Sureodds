@@ -44,7 +44,8 @@ def test_the_band_is_widened_when_the_best_combination_is_2_62():
 def test_the_probability_floor_is_lowered_when_every_leg_is_0_59_to_0_61():
     pool = [sc(ev(i), "result3", "home", p, 1.45, sources=3) for i, p in enumerate((0.59, 0.60, 0.61, 0.60))]
     assert select(pool, _cfg(top_relaxed_fallback=False), dt()).top == []
-    ps = select(pool, _cfg(), dt())
+    assert select(pool, _cfg(), dt()).top == []         # the shipped default does NOT lower the per-leg floor
+    ps = select(pool, _cfg(top_relax_prob=0.04), dt())  # ... it only does when asked to
     assert 2 <= len(ps.top) <= 3 and ps.diagnostics["top_relaxed"] == "prob"
     assert all(s.p_model >= 0.62 - 0.04 - 1e-9 for s in ps.top)
 
@@ -56,7 +57,7 @@ def test_a_pool_with_one_eligible_leg_gets_no_ticket():
 
 def test_legs_below_the_relaxed_floor_never_join():
     pool = [sc(ev(i), "result3", "home", 0.55, 1.45, sources=3) for i in range(4)]         # 0.55 < 0.58
-    ps = select(pool, _cfg(), dt())
+    ps = select(pool, _cfg(top_relax_prob=0.04), dt())
     assert ps.top == [] and ps.diagnostics["top_relaxed"] is None
 
 
@@ -84,7 +85,8 @@ def test_the_band_and_probability_amounts_are_configurable(monkeypatch):
     assert (c.top_relaxed_fallback, c.top_relax_band, c.top_relax_prob) == (False, 0.05, 0.01)
     monkeypatch.delenv("TOP_RELAX_BAND"), monkeypatch.delenv("TOP_RELAX_PROB"), monkeypatch.delenv("TOP_RELAXED_FALLBACK")
     c = Config()
-    assert (c.top_relaxed_fallback, c.top_relax_band, c.top_relax_prob) == (True, 0.25, 0.04)
+    # the Top is never weakened to reach its odds target: the band may widen, the per-leg probability floor does not drop
+    assert (c.top_relaxed_fallback, c.top_relax_band, c.top_relax_prob) == (True, 0.25, 0.0)
 
 
 def test_lastrun_shows_the_fallback():

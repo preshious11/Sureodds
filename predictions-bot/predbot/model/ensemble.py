@@ -9,6 +9,14 @@ For each event we build:
 
 Sources are blended in logit space, shrunk toward the market (we are humble by
 default), then passed through the learned calibration.
+
+Which signals are INDEPENDENT of the soft market consensus (and so can say it is wrong)?
+  * ``sharp``  - a sharp book's de-vigged price (Shin), when a configured sharp bookmaker quotes the whole market.
+                 It is a different, better-informed price - not an average of "all books".
+  * ``elo``    - ratings learned from settled results, once both teams have ``elo_min_games``.
+NOT independent: ``market`` (the soft consensus itself) and ``score_model`` (a Poisson / Gaussian grid FITTED to
+the market's own main lines - it only makes one match's lines coherent with each other). The score model still
+shapes ``p_model`` (smoothing), but it is never evidence and never counts as a confirmation.
 """
 from __future__ import annotations
 
@@ -19,7 +27,7 @@ from typing import Dict, List, Optional, Tuple
 
 from predbot.markets.catalog import selection_label, spec
 from predbot.model.calibration import Calibrator
-from predbot.model.devig import blend_logit, devig, single_side_prob
+from predbot.model.devig import blend_logit, devig, shin_devig, single_side_prob
 from predbot.model.elo import Elo
 from predbot.model.margin import MarginModel
 from predbot.model.poisson import lambdas_from_market, price_line
@@ -65,6 +73,17 @@ class Scored:
     tier: str = ""
     notes: Dict = field(default_factory=dict)
     p_raw: Optional[float] = None     # blended probability BEFORE calibration (stored as prob_raw)
+    #: Sharp/reference fair probability (Shin de-vig of a sharp book's complete market), ``None`` when no configured
+    #: sharp book quotes this line. NEVER invented: absent means "no reference", not "reference = market".
+    p_fair: Optional[float] = None
+    fair_books: List[str] = field(default_factory=list)
+    #: EV of the AVAILABLE (soft) price against ``p_fair``; ``None`` without a reference. ``ev`` stays p_model-based.
+    edge_ev: Optional[float] = None
+    #: which of the signals that can contradict the soft market actually fed this estimate: subset of {sharp, elo}
+    independent: List[str] = field(default_factory=list)
+    quality: str = ""                 # main | secondary | restricted - filled by selection.evidence
+    se: float = 0.0                   # uncertainty of p_model (probability points) - selection.evidence
+    p_lcb: Optional[float] = None     # p_model - z*se: the ranking input (NOT a probability to show)
 
     @property
     def price(self) -> float:
@@ -72,7 +91,12 @@ class Scored:
 
 
 class EventModel:
-    def __init__(self, event: Event, elo: Elo, calibrator: Calibrator, shrink: float = 0.8):
+    def __init__(self, event: Event, elo: Elo, calibrator: Calibrator, shrink: float = 0.8,
+                 sharp_books=None, elo_min_games: int = 10):
+        self.sharp_books = [b for b in (sharp_books or []) if b]
+        self.elo_min_games = elo_min_games
+        self.p_fair: Dict[Tuple, float] = {}
+        self.fair_books: Dict[Tuple, List[str]] = {}
         self.ev = event
         self.elo = elo
         self.cal = calibrator
@@ -96,9 +120,48 @@ class EventModel:
             self._market_index.setdefault(key, []).append(ml)
 
     def _build(self) -> None:
+        self._soft_prices()
         self._market_probs()
         self._score_model()
         self.elo_probs, self.elo_games = self.elo.probs(self.sport, self.ev.home, self.ev.away)
+
+    def _soft_quotes(self, ml: MarketLine) -> List[float]:
+        """Prices from the NON-sharp books: what a punter can actually be offered."""
+        return [p for b, p in ml.book_quotes.items() if b not in self.sharp_books and p and p > 1.0]
+
+    def _soft_prices(self) -> None:
+        """A sharp book's price is a reference, not an offer: where it contributed to a line's price, the available
+        price is re-derived from the soft books alone (median, as PRICE_MODE=median does everywhere else)."""
+        if not self.sharp_books:
+            return
+        for ml in self.ev.markets:
+            soft = self._soft_quotes(ml)
+            if soft and len(soft) < len(ml.book_quotes):
+                ml.price = round(float(statistics.median(soft)), 4)
+                ml.bookmaker = "median" if len(soft) > 1 else ml.bookmaker
+
+    def _sharp_fair(self, by_selection: Dict[str, MarketLine]) -> Optional[Tuple[Dict[str, float], List[str]]]:
+        """Shin-de-vigged fair probabilities from the sharp book(s) that quote EVERY selection of the market, averaged
+        over those books; ``None`` when no sharp book covers the whole market (a partial market cannot be de-vigged)."""
+        if not self.sharp_books or not by_selection:
+            return None
+        per_book, used = [], []
+        for book in self.sharp_books:
+            prices = {sel: ml.book_quotes.get(book) for sel, ml in by_selection.items()}
+            if all(p and p > 1.0 for p in prices.values()):
+                per_book.append(shin_devig(prices))
+                used.append(book)
+        if not per_book:
+            return None
+        return {sel: sum(pb[sel] for pb in per_book) / len(per_book) for sel in by_selection}, used
+
+    def _record_fair(self, by_selection: Dict[str, MarketLine]) -> None:
+        got = self._sharp_fair(by_selection)
+        if got:
+            probs, used = got
+            for sel, ml in by_selection.items():
+                self.p_fair[ml.key()] = probs[sel]
+                self.fair_books[ml.key()] = used
 
     @staticmethod
     def _mean_price(ml: MarketLine) -> float:
@@ -140,6 +203,7 @@ class EventModel:
                     if "away" in probs:
                         self.p_market[mirror.key()] = probs["away"]
                         self.market_complete[mirror.key()] = True
+                    self._record_fair({"home": h, "away": mirror})
             else:
                 complete = False
                 if ways == 3 and market == "result3":
@@ -157,6 +221,8 @@ class EventModel:
                             if ml.selection in probs:
                                 self.p_market[ml.key()] = probs[ml.selection]
                                 self.market_complete[ml.key()] = True
+                    if len({ml.selection for ml in lines}) == len(lines):
+                        self._record_fair({ml.selection: ml for ml in lines})
             for ml in lines:
                 if ml.key() in self.p_market:
                     continue
@@ -239,8 +305,14 @@ class EventModel:
         p_mkt = self.p_market.get(ml.key())
         if p_mkt is None:
             return None
+        p_fair = self.p_fair.get(ml.key())
+        # The soft consensus is only a source while there is no sharp reference: with one, the reference IS the
+        # market estimate and the soft books are just where the price is available (not averaged in as equals).
+        p_base = p_fair if p_fair is not None else p_mkt
         sources: Dict[str, float] = {"market": p_mkt}
-        weights: Dict[str, float] = {"market": 1.0}
+        weights: Dict[str, float] = {"market": 0.0 if p_fair is not None else 1.0}
+        if p_fair is not None:
+            sources["sharp"], weights["sharp"] = p_fair, 1.0
 
         # score model
         p_sm = None
@@ -253,34 +325,44 @@ class EventModel:
             weights["score_model"] = SCORE_MODEL_WEIGHT.get(self.sport, 0.4)
 
         # elo
-        if self.elo_probs:
+        if self.elo_probs and self.elo_games >= self.elo_min_games:
             p_elo = self._result_prob_from(self.elo_probs, ml)
             if p_elo is not None:
                 sources["elo"] = p_elo
                 weights["elo"] = 0.30 * min(1.0, self.elo_games / 15.0)
 
-        blended = blend_logit(sources, weights) or p_mkt
+        blended = blend_logit(sources, weights) or p_base
         # self.shrink is how much we shrink the model blend TOWARD the market
         # (MODEL_SHRINK_TO_MARKET): shrink=1.0 -> pure market, shrink=0.0 -> pure model.
-        p_final = p_mkt + (1.0 - self.shrink) * (blended - p_mkt)
+        p_final = p_base + (1.0 - self.shrink) * (blended - p_base)
+        contributing = [k for k, w in weights.items() if w > 0]
         # market-only lines (no model view) are shaded to the market entirely
-        if len(sources) == 1:
-            p_final = p_mkt
+        if len(contributing) == 1:
+            p_final = p_base
         p_raw = max(0.02, min(0.98, p_final))
         p_final = self.cal.apply(p_final)
         p_final = max(0.02, min(0.98, p_final))
 
-        vals = list(sources.values())
+        # COHERENCE of the contributing estimates (market vs the score model fitted to it, Elo, sharp). This is not
+        # independent confirmation - the score model is derived from the market - so evidence is judged elsewhere
+        # (book coverage / dispersion / sharp edge in selection.evidence).
+        vals = [sources[k] for k in contributing]
         agreement = 1.0 - min(1.0, statistics.pstdev(vals) / 0.10) if len(vals) >= 2 else 0.35
         if not self.market_complete.get(ml.key(), False):
             agreement *= 0.7
         ev = p_final * ml.price - 1.0
         edge = p_final - p_mkt
-        liquidity = min(1.0, ml.n_books / 3.0)
+        edge_ev = None
+        if p_fair is not None:
+            soft = self._soft_quotes(ml)
+            if soft:
+                edge_ev = p_fair * float(statistics.median(soft)) - 1.0
+        liquidity = min(1.0, ml.distinct_books() / 3.0)
         label = selection_label(ml, self.ev.home, self.ev.away, self.sport)
         return Scored(event=self.ev, line=ml, p_market=p_mkt, p_model=p_final, p_raw=p_raw, sources=sources,
                       agreement=agreement, ev=ev, edge=edge, label=label, liquidity=liquidity,
-                      notes=dict(self.notes))
+                      notes=dict(self.notes), p_fair=p_fair, fair_books=list(self.fair_books.get(ml.key(), [])),
+                      edge_ev=edge_ev, independent=[k for k in ("sharp", "elo") if k in contributing])
 
     def score_all(self) -> List[Scored]:
         out = []

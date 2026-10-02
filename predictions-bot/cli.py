@@ -1,4 +1,4 @@
-"""Manual controls:  python cli.py picks [--dry-run] [--force] | settle | recap [--dry-run] | stats | stats-card | test-post | budget"""
+"""Manual controls:  python cli.py picks [--dry-run] [--force] | settle | recap [--dry-run] | stats | accuracy | stats-card | test-post | budget"""
 from __future__ import annotations
 
 import sys
@@ -39,6 +39,8 @@ def main(argv):
         recap.run(db, cfg, tg, force=True, dry_run="--dry-run" in flags)
     elif cmd == "stats":
         print(stats_message(stats_mod.compute(db, to_local(utcnow(), cfg.timezone))).replace("<b>", "").replace("</b>", ""))
+    elif cmd == "accuracy":
+        print(stats_mod.accuracy_text(stats_mod.accuracy_report(db)))
     elif cmd == "stats-card":
         # Exactly what the 📊 Stats button renders: SUREODDS — YESTERDAY card
         text, _ = pagination.render_stats(DailySnapshot(date=""), db=db, tz=cfg.timezone)

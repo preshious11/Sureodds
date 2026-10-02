@@ -11,7 +11,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
-from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult
+from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, norm_book
 from predbot.providers.budget import Budget
 from predbot.util.http import Http, ProviderError, RateLimiter
 from predbot.util.names import same_team
@@ -338,8 +338,12 @@ class SportsGameOddsProvider(BaseProvider):
         bet, side = o.get("betTypeID"), o.get("sideID")
         price = american_to_decimal(o.get("bookOdds"))
         by_book = o.get("byBookmaker") or {}
-        book_prices = [american_to_decimal(b.get("odds")) for b in by_book.values() if b.get("available")]
-        book_prices = [p for p in book_prices if p]
+        book_quotes = {}
+        for book, b in by_book.items():
+            quoted = american_to_decimal(b.get("odds")) if isinstance(b, dict) and b.get("available") else None
+            if quoted:
+                book_quotes[norm_book(book)] = quoted
+        book_prices = list(book_quotes.values())
         if not price and book_prices:
             price = max(book_prices)
         if not price:
@@ -418,7 +422,7 @@ class SportsGameOddsProvider(BaseProvider):
                         entity=entity if market != "btts" else "all", line=line, fair_price=fair,
                         bookmaker="consensus", n_books=n_books, provider_odd_id=odd_id,
                         label=market_name, market_name=market_name, is_player_prop=is_player,
-                        book_prices=book_prices)
+                        book_prices=book_prices, book_quotes=book_quotes)
         if market == "prop" and not o.get("scoringSupported", False):
             self.parse_counts["PROP_UNSETTLEABLE"] += 1
             return None   # cannot be settled -> never a candidate

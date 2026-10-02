@@ -174,6 +174,13 @@ class Database:
         if pick_cols and "prob_raw" not in pick_cols:   # pre-calibration probability
             self.conn.execute("ALTER TABLE picks ADD COLUMN prob_raw REAL")
             self.conn.commit()
+        #: evidence recorded WITH each pick, so accuracy can later be sliced by it (edge at selection time, book
+        #: coverage, market quality, the ranking score) and closing line value filled in once a closing price exists
+        for col, kind in (("p_fair", "REAL"), ("edge_ev", "REAL"), ("rank_score", "REAL"), ("books", "INTEGER"),
+                          ("quality", "TEXT"), ("closing_price", "REAL"), ("clv", "REAL")):
+            if pick_cols and col not in pick_cols:
+                self.conn.execute(f"ALTER TABLE picks ADD COLUMN {col} {kind}")
+                self.conn.commit()
         if pick_cols:
             self._migrate_fixture_key("fixture_key" in pick_cols)
         self._migrate_split_picks_kind()

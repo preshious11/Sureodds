@@ -33,7 +33,8 @@ def score_events(events: List[Event], db: Database, cfg: Config) -> List[Scored]
     scored: List[Scored] = []
     for ev in events:
         try:
-            model = EventModel(ev, elo, cal, shrink=cfg.model_shrink)
+            model = EventModel(ev, elo, cal, shrink=cfg.model_shrink, sharp_books=getattr(cfg, "sharp_books", None),
+                               elo_min_games=getattr(cfg, "elo_min_games", 10))
             scored.extend(model.score_all())
         except Exception as e:  # noqa: BLE001
             log.exception("model failed for %s: %s", ev.name, e)
@@ -201,6 +202,10 @@ def store_picks(ps: PickSet, db: Database, pick_date: str, replace_pending: bool
                 "start_utc": iso(e.start), "market": ml.market, "period": ml.period, "stat": ml.stat,
                 "entity": ml.entity, "line": ml.line, "selection": ml.selection, "label": s.label,
                 "price": ml.price, "prob": s.p_model, "prob_raw": s.p_raw, "ev": s.ev, "p_market": s.p_market,
+                # evidence at selection time. ``prob`` is the calibrated probability; ``rank_score`` is the (separate)
+                # ranking value and is never a probability. p_fair / edge_ev stay NULL without a sharp reference.
+                "p_fair": s.p_fair, "edge_ev": s.edge_ev, "rank_score": s.rank_score if s.p_lcb is not None else None,
+                "books": ml.distinct_books(), "quality": s.quality or None,
                 "sources": {**{k: round(v, 4) for k, v in s.sources.items()},
                             "_alt_ids": e.extra.get("alt_ids", {}), "_providers": e.sources,
                             "_sport_key": e.extra.get("sport_key", ""), "_league_id": e.league_id,

@@ -1,5 +1,6 @@
-"""The Daily reaches DAILY_COMBINED_MIN..MAX_ODDS on its OWN legs - the Top's odds are no longer part of its product.
-(It used to start from the Top's odds, so with a Top of ~2.0 the Daily alone stopped at ~9 and could read 8.93.)"""
+"""The Daily aims for DAILY_COMBINED_MIN_ODDS (10) on its OWN legs, never exceeds DAILY_COMBINED_MAX_ODDS (12), stops as
+soon as the aim is reached, and is never padded with weak legs when it cannot get there. The Top's odds are not part
+of its product."""
 from __future__ import annotations
 
 import math
@@ -9,13 +10,20 @@ import pytest
 from predbot.config import Config
 from predbot.selection.picker import select
 from tests.conftest import dt
-from tests.test_picker import ev, sc
+from tests.test_picker import _fx, ev, sc
 
-PRICE = 1.45
+PRICE = 1.35          # 1.35**8 = 11.03: eight legs land inside 10..12, seven (8.17) fall short, nine (14.9) overshoot
 
 
 def pool(n=40, prob=0.70, price=PRICE, **kw):
-    return [sc(ev(i, **kw), "result3", "home", prob, price) for i in range(n)]
+    """Different matches (distinct names), alternating home / away so the outcome-family cap is not what ends the ticket."""
+    out = []
+    for i in range(n):
+        e = _fx(i)
+        for key, value in kw.items():
+            setattr(e, key, value)
+        out.append(sc(e, "result3", "home" if i % 2 == 0 else "away", prob, price))
+    return out
 
 
 def own(ps):
@@ -26,18 +34,24 @@ def test_the_daily_alone_reaches_the_band_with_a_top_of_about_two():
     ps = select(pool(), Config(), dt())
     top_odds = math.prod(s.price for s in ps.top)
     assert 2.0 <= top_odds <= 2.5
-    assert 10.0 <= own(ps) <= 20.0                               # the Daily on its own
-    assert len(ps.daily) >= 7                                    # 1.45**7 = 13.5; six legs (9.3) is no longer where it stops
-    # the old rule counted the Top: it would have stopped once Top x Daily broke 20, i.e. at ~9.5 on its own
-    assert top_odds * own(ps) > 20.0
-    # and it stops before it exceeds 20 on its own
-    assert own(ps) * PRICE > 20.0
+    assert 10.0 <= own(ps) <= 12.0                               # the Daily on its own
+    assert len(ps.daily) == 8                                    # the fewest legs that reach 10 (seven make 8.17)
+    assert ps.diagnostics["daily_target_reached"] and ps.diagnostics["daily_stopped"] == "target odds reached"
+    # it stops the moment the target is reached: one more leg would only add risk (and break the 12 ceiling)
+    assert own(ps) * PRICE > 12.0
 
 
-def test_six_legs_worth_8_9_are_no_longer_enough():
-    """1.45**6 = 9.29 < 10: under the old rule Top 2.1 x 9.29 = 19.5 was 'in the band' and the Daily stopped here."""
-    ps = select(pool(), Config(), dt())
-    assert len(ps.daily) > 6 and own(ps) > 9.29
+def test_seven_legs_worth_8_2_are_not_enough_but_nothing_weak_is_added_to_get_there():
+    """Short of 10 with everything that qualifies: the ticket is posted short (1.35**7 = 8.17), never padded."""
+    ps = select(pool(n=10), Config(), dt())          # 3 legs go to the Top, 7 remain
+    assert len(ps.daily) == 7 and own(ps) == pytest.approx(PRICE ** 7, abs=0.01)
+    assert not ps.diagnostics["daily_target_reached"] and ps.diagnostics["daily_stopped"] == "pool exhausted"
+
+
+def test_the_daily_never_exceeds_the_ceiling_even_when_the_next_leg_would_land_just_past_it():
+    for price in (1.30, 1.35, 1.40, 1.45, 1.50, 1.60):
+        ps = select(pool(price=price), Config(), dt())
+        assert own(ps) <= 12.0 + 1e-9, price
 
 
 def test_the_top_ticket_is_identical_whatever_the_daily_band():
@@ -54,13 +68,13 @@ def test_the_top_legs_are_still_consulted_for_duplicates_but_not_counted():
     assert own(ps) == pytest.approx(ps.diagnostics["daily_own_odds"], abs=0.01)
 
 
-def test_the_relaxed_pass_waives_caps_never_the_band():
+def test_the_relaxed_pass_waives_diversity_shares_never_the_band_or_a_quality_gate():
     # every event in ONE league: the per-league cap (3) stops the strict pass far short of 10
     ps = select(pool(league="One League"), Config(), dt())
-    assert "daily_caps_relaxed" in ps.diagnostics                 # the caps were waived ...
-    assert 10.0 <= own(ps) <= 20.0                                # ... the band never
-    tight = select(pool(league="One League"), Config(daily_odds_min=10.0, daily_odds_max=12.0), dt())
-    assert own(tight) <= 12.0
+    assert "daily_caps_relaxed" in ps.diagnostics                 # the league share was waived ...
+    assert 10.0 <= own(ps) <= 12.0                                # ... the band never
+    assert all(s.p_model >= Config().daily_min_prob and s.line.distinct_books() >= Config().daily_min_books
+               for s in ps.daily)                                 # ... and no quality gate
 
 
 def test_the_pick_cap_still_bounds_the_legs():
