@@ -160,6 +160,17 @@ def run(profile: bool = False, subscribers: int = 300, send_delay: float = 0.03,
         with replay_env(now_iso) as now:
             cfg = Config()
             db = src
+            # This frozen recording predates collection signatures. Stamp only
+            # the temporary copy so replay continues testing its recorded odds,
+            # without attempting to fetch today's expanded league configuration.
+            # Signature invalidation itself is covered by provider-cache tests.
+            from predbot.cache.providers import collection_signature
+            for row in db.query('SELECT cache_key, metadata_json FROM provider_cache'):
+                metadata = json.loads(row['metadata_json'])
+                name = row['cache_key'].rsplit(':', 1)[-1]
+                metadata['collection_signature'] = collection_signature(name, cfg)
+                db.execute('UPDATE provider_cache SET metadata_json=? WHERE cache_key=?',
+                           (json.dumps(metadata, sort_keys=True), row['cache_key']))
             providers = build_providers(cfg, db)
             chain = ProviderChain(providers, cfg.provider_order)
             service = UnifiedFetcher(chain, db, cfg)

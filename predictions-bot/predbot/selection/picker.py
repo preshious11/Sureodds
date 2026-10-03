@@ -6,7 +6,7 @@ decide how long the lists are.
 Rules (from the brief):
   * top picks are the most solid selections: main markets only, high probability,
     well covered by books (and not worse value than a sharp reference where one
-    exists), searched for the best 2-3 leg ticket worth ~TOP_COMBINED_ODDS (2.00)
+    exists), searched for the best 1-3 leg ticket worth ~TOP_COMBINED_ODDS (2.00)
   * daily picks are sized on their OWN: the Daily ticket alone aims for
     DAILY_COMBINED_MIN_ODDS (10) and never exceeds DAILY_COMBINED_MAX_ODDS (12). The builder takes the
     best-evidenced legs first, STOPS as soon as the aim is reached, and never pads: if the qualifying
@@ -204,7 +204,7 @@ def _cross_tier_verdict(s: Scored, top: List[Scored], mode: str, pre: Optional[D
 
 def choose_top(pool: List[Scored], cfg: Config, target: Optional[float] = None, ceiling: Optional[float] = None,
                min_legs: Optional[int] = None, max_legs: Optional[int] = None):
-    """Exact, band-aware search for the Top accumulator: the 2..3-leg combination
+    """Exact, band-aware search for the Top accumulator: the 1..3-leg combination
     of DIFFERENT fixtures whose combined odds sit in [TOP_COMBINED_ODDS,
     TOP_ODDS_MAX] with the highest joint confidence (product of each leg's
     evidence-adjusted confidence ``_conf``, which is p_model for an unassessed leg), ties
@@ -308,7 +308,9 @@ def choose_top(pool: List[Scored], cfg: Config, target: Optional[float] = None, 
                     chosen.pop()
                     raise _SearchBudgetSpent
                 total = price * prices[j]
-                if target <= total <= ceiling:
+                # Bisect already allows floating-point error; the final check
+                # must use the same tolerance (1.27 * (2/1.27) is 1.9999999999999998).
+                if target - EPS <= total <= ceiling + EPS:
                     key = (-(conf * qs[j]), abs(total - target),
                            -len({families[i] for i in chosen}), size)
                     if best_key is None or key < best_key:
@@ -330,14 +332,19 @@ def choose_top(pool: List[Scored], cfg: Config, target: Optional[float] = None, 
 
 def select(scored: List[Scored], cfg: Config, now: datetime,
            top_priority_source: Optional[str] = None, trace: Optional[Dict] = None,
-           results_gate=None, _exclude_daily: Optional[set] = None, _depth: int = 0) -> PickSet:
+           results_gate=None, _exclude_daily: Optional[set] = None, _depth: int = 0,
+           top_trace: Optional[Dict] = None) -> PickSet:
     """``trace`` (optional, diagnostics only) collects the first rule that
     blocked each candidate: id(Scored) -> reason string."""
+    base_reasons: Dict[int, str] = {}
+
     def _note(s: Scored, rule: str) -> None:
         """Record the FIRST rule that stopped a candidate. daily:/cap:/loop:
         reasons override earlier base:/top: ones: a candidate can fail the Top
         bar and still be a Daily candidate, so the later rule is the one that
         actually decided its fate."""
+        if rule.startswith("base:"):
+            base_reasons[id(s)] = rule.split()[1]
         if trace is None:
             return
         if rule.startswith(("daily:", "cap:", "loop")):
@@ -407,16 +414,21 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
     ps.diagnostics["base_by_quality"] = dict(Counter(assessed[id(s)].quality for s in base))
     ps.diagnostics["base_with_sharp_reference"] = sum(1 for s in base if assessed[id(s)].has_sharp)
 
-    def _shared_reject(s: Scored) -> Optional[Tuple[str, str]]:
+    def _shared_rejections(s: Scored) -> List[Tuple[str, str]]:
         """Evidence gates both tiers share. A sharp reference is only ever used when it exists."""
         e = assessed[id(s)]
+        reasons = []
         if e.dispersion is not None and e.dispersion > cfg.max_book_dispersion:
-            return "OUTLIER_BOOKS", f"books disagree by {e.dispersion:.3f} > MAX_BOOK_DISPERSION"
+            reasons.append(("OUTLIER_BOOKS", f"books disagree by {e.dispersion:.3f} > MAX_BOOK_DISPERSION"))
         if e.has_sharp and s.edge_ev < cfg.min_edge_vs_sharp:
-            return "NEGATIVE_EDGE_VS_SHARP", f"price is {s.edge_ev:+.3f} EV vs the sharp fair probability"
+            reasons.append(("NEGATIVE_EDGE_VS_SHARP", f"price is {s.edge_ev:+.3f} EV vs the sharp fair probability"))
         if not s.independent and s.edge > cfg.max_unsupported_edge:
-            return "UNSUPPORTED_EDGE", f"model claims {s.edge:+.3f} over the market with no independent signal"
-        return None
+            reasons.append(("UNSUPPORTED_EDGE", f"model claims {s.edge:+.3f} over the market with no independent signal"))
+        return reasons
+
+    def _shared_reject(s: Scored) -> Optional[Tuple[str, str]]:
+        reasons = _shared_rejections(s)
+        return reasons[0] if reasons else None
 
     # ------------------------------------------------------------ top picks
     # Sized by odds: take the best candidates until the ticket is worth ~2.00.
@@ -440,6 +452,32 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         if _top_evidence_reject(s):
             return False
         return s.agreement >= cfg.top_min_agreement and len(s.sources) >= 2
+
+    # Independent Top audit: the general trace is overwritten by Daily decisions.
+    # Keep every failed gate, including failures hidden behind the first one.
+    def top_reasons(s: Scored) -> List[str]:
+        e = assessed[id(s)]
+        reasons = []
+        if e.quality != evmod.MAIN:
+            reasons.append("MARKET_QUALITY")
+        if s.price < cfg.top_leg_odds_min:
+            reasons.append("LEG_ODDS_MIN")
+        if not s.p_model >= cfg.top_min_prob:
+            reasons.append("PROBABILITY_FLOOR")
+        if e.books < cfg.top_min_books:
+            reasons.append("INSUFFICIENT_BOOKS")
+        if not s.agreement >= cfg.top_min_agreement:
+            reasons.append("MODEL_AGREEMENT")
+        if len(s.sources) < 2:
+            reasons.append("INSUFFICIENT_MODEL_SIGNALS")
+        if has_independent_signal(s) and s.ev < cfg.top_max_neg_ev:
+            reasons.append("MODEL_MARKET_DISAGREEMENT")
+        reasons.extend(name for name, _ in _shared_rejections(s))
+        return reasons
+
+    audit = {id(s): top_reasons(s) for s in base}
+    if top_trace is not None:
+        top_trace.update({id(s): audit.get(id(s), [base_reasons.get(id(s), "BASE_REJECTED")]) for s in scored})
 
     for s in base:
         if s.line.market == "prop":
@@ -488,19 +526,19 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
         if top_priority_source:
             priority_pool = [s for s in pool if top_priority_source in s.event.sources]
             found, n = choose_top(priority_pool, cfg, target, ceiling, **legs)
-            if found and math.prod(s.price for s in found) >= goal:
+            if found and math.prod(s.price for s in found) >= goal - 1e-9:
                 return found, n, True
             return (*choose_top(pool, cfg, target, ceiling, **legs), False)
         return (*choose_top(pool, cfg, target, ceiling, **legs), False)
 
     top, checked, used_priority_pool = find_top(top_pool)
     top_relaxed: Optional[str] = None
-    if not top and getattr(cfg, "top_relaxed_fallback", False):
+    if not top and cfg.top_legs_max >= 2 and getattr(cfg, "top_relaxed_fallback", False):
         # Only when the strict search found nothing: widen the band, then lower the probability floor. Every other
-        # Top gate (>= 2 sources, agreement, disagreement floor) is unchanged; never a single leg, never over 3.
+        # Top gate (>= 2 sources, agreement, disagreement floor) is unchanged; never over 3.
         band = cfg.top_relax_band
         wide = dict(target=cfg.top_odds_target - band, ceiling=cfg.top_odds_max + band,
-                    min_legs=max(2, cfg.top_legs_min), max_legs=min(3, max(2, cfg.top_legs_max)))
+                    min_legs=max(2, cfg.top_legs_min), max_legs=cfg.top_legs_max)
         top, checked2, used_priority_pool = find_top(top_pool, **wide)
         checked += checked2
         if top:
@@ -531,6 +569,38 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
                       "combinations_checked": checked, "top_odds": top_odds if top else None,
                       "top_priority_source": top_priority_source,
                       "top_priority_used": used_priority_pool, "top_relaxed": top_relaxed}
+
+    funnel = {"raw_candidates": len(scored), "base_valid": len(base)}
+    survivors = list(base)
+    stages = [
+        ("main_market", {"MARKET_QUALITY"}),
+        ("probability_qualified", {"LEG_ODDS_MIN", "PROBABILITY_FLOOR"}),
+        ("book_qualified", {"INSUFFICIENT_BOOKS"}),
+        ("evidence_qualified", {"MODEL_AGREEMENT", "INSUFFICIENT_MODEL_SIGNALS",
+                                "MODEL_MARKET_DISAGREEMENT", "OUTLIER_BOOKS", "UNSUPPORTED_EDGE"}),
+        ("edge_qualified", {"NEGATIVE_EDGE_VS_SHARP"}),
+    ]
+    for name, rules in stages:
+        survivors = [s for s in survivors if not rules.intersection(audit[id(s)])]
+        funnel[name] = len(survivors)
+    funnel["deduped_candidates"] = len({(s.event.dedupe_key(), round(s.price, 4)) for s in top_pool})
+    funnel["eligible_fixtures"] = len({s.event.dedupe_key() for s in top_pool})
+    funnel["final_candidates"] = len(top_pool)
+    funnel["ticket_selections"] = len(top)
+    ps.diagnostics["top_funnel"] = funnel
+    ps.diagnostics["top_rejection_reasons"] = dict(Counter(
+        [base_reasons[id(s)] for s in scored if id(s) in base_reasons] +
+        [audit[id(s)][0] for s in base if audit[id(s)]]))
+    ps.diagnostics["top_all_gate_failures"] = dict(Counter(r for rs in audit.values() for r in rs))
+    quality_without_books = [s for s in base if not set(audit[id(s)]) - {"INSUFFICIENT_BOOKS"}]
+    ps.diagnostics["top_quality_book_coverage"] = dict(Counter(
+        str(assessed[id(s)].books) if assessed[id(s)].books < 4 else "4+" for s in quality_without_books))
+    ps.diagnostics["base_by_quality"] = dict(Counter(assessed[id(s)].quality for s in base))
+    ps.diagnostics["base_with_sharp_reference"] = sum(assessed[id(s)].has_sharp for s in base)
+    from predbot.selection.top_diagnostics import effective_config
+    ps.diagnostics["top_config"] = effective_config(cfg)
+    ps.diagnostics["top_ticket_status"] = ("SELECTED" if top else "NO_QUALITY_CANDIDATES" if not top_pool
+                                             else "NO_ACCEPTABLE_COMBINATION")
 
     marks.append((time.perf_counter(), time.process_time()))
     # ---------------------------------------------------------- daily picks
@@ -828,7 +898,8 @@ def select(scored: List[Scored], cfg: Config, now: datetime,
                         d.event.away, t.label, t.event.provider, t.event.home, t.event.away)
         removed = (_exclude_daily or set()) | {id(d) for d, _, _ in bad}
         again = select(scored, cfg, now, top_priority_source=top_priority_source, trace=trace,
-                       results_gate=results_gate, _exclude_daily=removed, _depth=_depth + 1)
+                       results_gate=results_gate, _exclude_daily=removed, _depth=_depth + 1,
+                       top_trace=top_trace)
         again.diagnostics["cross_tier_removed"] = len(removed)
         return again
     ps.diagnostics["selection_rejections"] = dict(rejection_counts)

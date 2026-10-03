@@ -58,19 +58,17 @@ def test_top_search_finds_better_pair_than_greedy_single():
     pool = [sc(ev(1), 'result3', 'home', .80, 2.26),
             sc(ev(2), 'result3', 'home', .75, 1.38),
             sc(ev(3), 'result3', 'home', .73, 1.50)]
-    result = select(pool, Config(), dt())
+    result = select(pool, Config(top_legs_min=2), dt())
     assert sorted(s.price for s in result.top) == [1.38, 1.5]
     assert prod(s.price for s in result.top) == pytest.approx(2.07)
     assert result.diagnostics['combinations_checked'] >= 1     # complete in-band tickets evaluated
 
 
 def test_top_search_bounds_count_and_unique_matches():
-    # Top Picks is a 2-3 leg accumulator (TOP_LEGS_MIN/MAX): a single leg is
-    # never selected, and sizes above 3 (when configured) search a trimmed
-    # pool to keep the combinatorial search bounded.
+    # Stale maximums above 3 are bounded to the supported Top size.
     pool = [sc(ev(i // 2), 'result3', 'home', .75, 1.25 + i / 1000) for i in range(120)]
     result = select(pool, Config(top_leg_odds_min=1.0, top_legs_max=5), dt())
-    assert 2 <= len(result.top) <= 5
+    assert 1 <= len(result.top) <= 3
     assert len({s.event.dedupe_key() for s in result.top}) == len(result.top)
     assert result.diagnostics['combinations_checked'] <= 60000
 

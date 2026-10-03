@@ -91,7 +91,7 @@ def classify(s, tables: Optional[Dict[int, dict]] = None) -> str:
         return MAIN
     if ml.market == "btts":
         return SECONDARY
-    if ml.entity in ("home", "away"):
+    if ml.market == "total" and ml.entity in ("home", "away"):
         return SECONDARY                                      # team totals
     if ml.line is None:
         return RESTRICTED
@@ -99,7 +99,8 @@ def classify(s, tables: Optional[Dict[int, dict]] = None) -> str:
     table = tables.get(id(s.event))
     if table is None:
         table = tables[id(s.event)] = main_line_table(s.event)
-    main = table.get((ml.market, ml.period, ml.stat, ml.entity))
+    entity = "all" if ml.market == "handicap" and ml.entity in ("home", "away") else ml.entity
+    main = table.get((ml.market, ml.period, ml.stat, entity))
     if main is None:
         return MAIN
     line = ml.line if (ml.market == "total" or ml.selection == "home") else -ml.line

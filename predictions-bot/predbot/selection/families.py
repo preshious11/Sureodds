@@ -44,7 +44,8 @@ def main_line_table(event) -> Dict[Tuple[str, str, str, str], float]:
             groups[("total", m.period, m.stat, m.entity)][m.line][m.selection] = m.price
         elif m.market == "handicap" and m.selection in ("home", "away"):
             home_line = m.line if m.selection == "home" else -m.line
-            groups[("handicap", m.period, m.stat, m.entity)][home_line][m.selection] = m.price
+            entity = "all" if m.entity in ("home", "away") else m.entity
+            groups[("handicap", m.period, m.stat, entity)][home_line][m.selection] = m.price
     table: Dict[tuple, float] = {}
     for key, lines in groups.items():
         first, second = ("over", "under") if key[0] == "total" else ("home", "away")
@@ -81,7 +82,8 @@ def daily_family(s, tables: Dict[int, dict]) -> str:
         table = tables.get(id(s.event))
         if table is None:
             table = tables[id(s.event)] = main_line_table(s.event)
-        key = (ml.market, ml.period, ml.stat, ml.entity)
+        entity = "all" if ml.market == "handicap" and ml.entity in ("home", "away") else ml.entity
+        key = (ml.market, ml.period, ml.stat, entity)
         line = ml.line if (ml.market == "total" or ml.selection == "home") else -ml.line
         main = table.get(key)
         return f"{ml.market}_{'main' if main is None or line == main else 'alt'}"

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import os
 from datetime import datetime, timedelta
 from collections import Counter
 from types import SimpleNamespace
@@ -155,6 +156,8 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
                            "merged_pairs_by_league": dict(Counter(p["league"] for p in merged_pairs)),
                            "merged_pairs": merged_pairs})
     ps.diagnostics.update({"providers": providers, "api_usage": api_usage,
+                           "top_diagnostic_version": 1,
+                           "runtime_revision": os.environ.get("RAILWAY_GIT_COMMIT_SHA") or os.environ.get("SOURCE_VERSION") or "unknown",
                            "top_priority_provider_report": top_priority_report,
                            "events_by_sport": dict(Counter(e.sport for e in events)),
                            "markets_by_sport": dict(Counter(e.sport for e in events for m in e.markets)),

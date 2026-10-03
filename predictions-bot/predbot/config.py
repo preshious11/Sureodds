@@ -41,6 +41,7 @@ _STALE_PINS: Dict[str, Tuple[str, ...]] = {
     "DAILY_PICKS_TARGET": ("20",),
     "DAILY_MIN_PROB": ("0.30", "0.3"),
     "TOP_RELAX_PROB": ("0.04",),
+    "TOP_LEGS_MIN": ("2",),
 }
 _STALE_WARNED: set = set()
 
@@ -284,7 +285,7 @@ class Config:
     min_lead_minutes: int = field(default_factory=lambda: _int("MIN_LEAD_MINUTES", 30))
     daily_min_odds: float = field(default_factory=lambda: _float("DAILY_MIN_ODDS", 1.20))
     daily_max_odds: float = field(default_factory=lambda: _float("DAILY_MAX_ODDS", 5.00))
-    #: Top Picks is an accumulator: the search tries every 2..3-leg combination
+    #: Top Picks allows 1..3 legs: the search tries every combination
     #: of different fixtures and keeps the one with the highest product of
     #: p_model inside top_odds_target..top_odds_max. top_odds_max is a HARD
     #: reject on the combined ticket. Per-leg odds do not matter for this
@@ -295,8 +296,9 @@ class Config:
     top_relax_band: float = field(default_factory=lambda: _float("TOP_RELAX_BAND", 0.25))
     #: 0.0 = the Top never lowers its per-leg probability floor just to reach its odds target (only the band widens)
     top_relax_prob: float = field(default_factory=lambda: _float("TOP_RELAX_PROB", 0.0))
-    top_legs_min: int = field(default_factory=lambda: _int("TOP_LEGS_MIN", 2))
-    top_legs_max: int = field(default_factory=lambda: _int("TOP_LEGS_MAX", 3))
+    top_legs_min: int = field(default_factory=lambda: _int("TOP_LEGS_MIN", 1))
+    # TOP_LEGS_MAX is canonical; honour the operator's TOP_MAX_PICKS alias.
+    top_legs_max: int = field(default_factory=lambda: _int("TOP_LEGS_MAX", _int("TOP_MAX_PICKS", 3)))
     top_odds_max: float = field(default_factory=lambda: _float("TOP_ODDS_MAX", 2.50))
     #: EV is no longer an edge requirement - this is a confidence product. A
     #: candidate with an independent signal (elo) is rejected only when
@@ -416,6 +418,13 @@ class Config:
         pipeline with nothing pointing back at the config."""
         if self.live_poll_minutes < 1:
             raise ValueError("LIVE_POLL_MINUTES must be >= 1")
+        if not 1 <= self.top_legs_max <= 3:
+            log.warning("Config: TOP_LEGS_MAX=%s outside the supported 1-3 range; using 3", self.top_legs_max)
+            self.top_legs_max = 3
+        if not 1 <= self.top_legs_min <= self.top_legs_max:
+            log.warning("Config: TOP_LEGS_MIN=%s cannot fit the 1-%s range; using 1",
+                        self.top_legs_min, self.top_legs_max)
+            self.top_legs_min = 1
         if self.price_mode not in ("median", "best"):
             log.warning("Config: PRICE_MODE=%r is not median|best - using median", self.price_mode)
             self.price_mode = "median"

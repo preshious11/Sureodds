@@ -198,39 +198,6 @@
    "tier": "daily"
   },
   {
-   "away": "Detroit Tigers",
-   "bookmaker": "median",
-   "country": "",
-   "entity": "all",
-   "ev": -0.03332785519809767,
-   "home": "Chicago White Sox",
-   "kickoff_utc": "2026-09-19T18:10:00Z",
-   "label": "Detroit Tigers +1.5",
-   "league": "MLB",
-   "line": 1.5,
-   "market": "handicap",
-   "n_books": 9,
-   "p_market": 0.6399945665675363,
-   "period": "full",
-   "pick_date": "2026-09-19",
-   "pick_id": null,
-   "price": 1.5076,
-   "prob": 0.6411993531453318,
-   "provider": "sharpapi",
-   "provider_event_id": "mlb_tigers_whitesox_2026-09-19_b2",
-   "provider_odd_id": "points-away-game-sp-away",
-   "rank": 7,
-   "selection": "away",
-   "sources": [
-    "market",
-    "score_model"
-   ],
-   "sport": "baseball",
-   "stat": "points",
-   "status": "pending",
-   "tier": "daily"
-  },
-  {
    "away": "Stade Rennes",
    "bookmaker": "median",
    "country": "",
@@ -252,13 +219,46 @@
    "provider": "sharpapi",
    "provider_event_id": "france_-_ligue_1_olympiquelyon_staderennais_2026-09-19_b3",
    "provider_odd_id": "87788325398153",
-   "rank": 8,
+   "rank": 7,
    "selection": "home_away",
    "sources": [
     "market",
     "score_model"
    ],
    "sport": "football",
+   "stat": "points",
+   "status": "pending",
+   "tier": "daily"
+  },
+  {
+   "away": "Detroit Tigers",
+   "bookmaker": "median",
+   "country": "",
+   "entity": "all",
+   "ev": -0.03332785519809767,
+   "home": "Chicago White Sox",
+   "kickoff_utc": "2026-09-19T18:10:00Z",
+   "label": "Detroit Tigers +1.5",
+   "league": "MLB",
+   "line": 1.5,
+   "market": "handicap",
+   "n_books": 9,
+   "p_market": 0.6399945665675363,
+   "period": "full",
+   "pick_date": "2026-09-19",
+   "pick_id": null,
+   "price": 1.5076,
+   "prob": 0.6411993531453318,
+   "provider": "sharpapi",
+   "provider_event_id": "mlb_tigers_whitesox_2026-09-19_b2",
+   "provider_odd_id": "points-away-game-sp-away",
+   "rank": 8,
+   "selection": "away",
+   "sources": [
+    "market",
+    "score_model"
+   ],
+   "sport": "baseball",
    "stat": "points",
    "status": "pending",
    "tier": "daily"
@@ -288,11 +288,17 @@
     "limit": null
    }
   },
+  "base_by_quality": {
+   "main": 410,
+   "restricted": 951,
+   "secondary": 200
+  },
   "base_by_sport": {
    "baseball": 436,
    "football": 1104,
    "tennis": 21
   },
+  "base_with_sharp_reference": 0,
   "combinations_checked": 2,
   "complete": false,
   "cross_tier_mode": "different_outcome",
@@ -317,7 +323,7 @@
    "total/points": 1
   },
   "daily_eligible_by_sport": {
-   "baseball": 28,
+   "baseball": 27,
    "football": 45,
    "tennis": 1
   },
@@ -330,7 +336,7 @@
   },
   "daily_family_pool": {
    "btts": 12,
-   "handicap_main": 8,
+   "handicap_main": 7,
    "period": 8,
    "safety": 15,
    "team_total": 14,
@@ -344,7 +350,7 @@
   "daily_pool_rejections": {
    "BELOW_THRESHOLD": 1159,
    "CROSS_TIER_NESTED": 2,
-   "INSUFFICIENT_BOOKS": 313,
+   "INSUFFICIENT_BOOKS": 314,
    "OUTLIER_BOOKS": 11
   },
   "daily_ranking": "family_z",
@@ -485,6 +491,8 @@
   "no_results_path_by_league": {},
   "providers": {
    "sharpapi": {
+    "cache": "reused",
+    "collection_signature": "d9d4d37f0dae5c1716f5c85c04701f81f0d9138df0f26e860063dd384eacd203",
     "events": {
      "baseball": 15,
      "football": 10,
@@ -747,6 +755,7 @@
     },
     "outcome": "success",
     "quota": null,
+    "refresh_reason": null,
     "rejections": {
      "DOUBLES_UNSUPPORTED": 3
     },
@@ -785,6 +794,8 @@
     "status": "complete"
    },
    "sportsgameodds": {
+    "cache": "reused",
+    "collection_signature": "ad6d3322bc4bccc03ffb3f827d6b6a8617c7f9b1cc6bb99b1f641a52bb675082",
     "events": {
      "american_football": 10,
      "baseball": 15,
@@ -833,6 +844,7 @@
     "normalization": {},
     "outcome": "failed",
     "quota": null,
+    "refresh_reason": null,
     "rejections": {
      "NO_BOOK_ODDS": 12348,
      "PLAYER_PROP_LIMIT": 2231,
@@ -869,6 +881,7 @@
    }
   },
   "retry_until": "09:30",
+  "runtime_revision": "unknown",
   "scored_by_sport": {
    "baseball": 593,
    "football": 1520,
@@ -880,9 +893,136 @@
    "INVALID_PRICE": 18,
    "PERIOD_UNSETTLEABLE": 4
   },
+  "top_all_gate_failures": {
+   "INSUFFICIENT_BOOKS": 1018,
+   "INSUFFICIENT_MODEL_SIGNALS": 391,
+   "MARKET_QUALITY": 1151,
+   "MODEL_AGREEMENT": 615,
+   "OUTLIER_BOOKS": 106,
+   "PROBABILITY_FLOOR": 1374
+  },
+  "top_config": {
+   "allowed_sports": [
+    "football",
+    "basketball",
+    "american_football",
+    "baseball",
+    "tennis"
+   ],
+   "day_window_end_offset_hours": 3,
+   "disabled_markets": [
+    "odd_even",
+    "prop",
+    "winning_margin",
+    "ht_ft"
+   ],
+   "diversity": "tie-break only",
+   "edge_price": "best",
+   "environment_values": {},
+   "fallback_odds_range": [
+    1.75,
+    2.75
+   ],
+   "international_football": true,
+   "market_quality": "main",
+   "max_book_dispersion": 0.08,
+   "max_unsupported_edge": 0.08,
+   "min_edge_vs_sharp": -0.04,
+   "min_lead_minutes": 30,
+   "model_signal_minimum": 2,
+   "odds_api_league_allowlist": [
+    "soccer_epl",
+    "soccer_spain_la_liga",
+    "soccer_italy_serie_a",
+    "soccer_germany_bundesliga",
+    "soccer_france_ligue_one",
+    "soccer_uefa_champs_league",
+    "soccer_uefa_europa_league",
+    "soccer_uefa_nations_league",
+    "soccer_efl_champ",
+    "soccer_netherlands_eredivisie",
+    "soccer_portugal_primeira_liga",
+    "soccer_turkey_super_league"
+   ],
+   "per_fixture": 1,
+   "pick_window_hours": 24,
+   "provider_minimum": null,
+   "rank_z": 1.0,
+   "se_main": 0.015,
+   "se_no_sharp": 0.02,
+   "sgo_leagues": [
+    "NBA",
+    "NFL",
+    "MLB",
+    "MLS",
+    "NCAAF",
+    "NCAAB",
+    "UEFA_CHAMPIONS_LEAGUE"
+   ],
+   "sharp_required": false,
+   "sharpapi_leagues": [
+    "england_-_premier_league",
+    "spain_-_la_liga",
+    "italy_-_serie_a",
+    "germany_-_bundesliga",
+    "france_-_ligue_1",
+    "england_-_championship",
+    "netherlands_-_eredivisie",
+    "portugal_-_primeira_liga",
+    "turkey_-_super_lig",
+    "uefa_-_champions_league",
+    "uefa_-_europa_league",
+    "uefa_-_europa_conference_league",
+    "uefa_-_nations_league",
+    "concacaf_-_nations_league",
+    "world_-_international_friendlies",
+    "nigeria_-_premier_league",
+    "atp",
+    "wta",
+    "nba",
+    "nfl",
+    "mlb",
+    "euroleague"
+   ],
+   "strict_odds_range": [
+    2.0,
+    2.5
+   ],
+   "top_lcb_floor": null,
+   "top_leg_odds_min": 1.05,
+   "top_legs_max": 3,
+   "top_legs_min": 1,
+   "top_max_neg_ev": -0.05,
+   "top_max_picks": 3,
+   "top_min_agreement": 0.5,
+   "top_min_books": 3,
+   "top_min_prob": 0.62,
+   "top_odds_max": 2.5,
+   "top_odds_target": 2.0,
+   "top_provider_priority": [
+    "oddsapi"
+   ],
+   "top_relax_band": 0.25,
+   "top_relax_prob": 0.0,
+   "top_relaxed_fallback": true
+  },
+  "top_diagnostic_version": 1,
   "top_eligible_by_sport": {
    "baseball": 6,
    "football": 4
+  },
+  "top_funnel": {
+   "base_valid": 1561,
+   "book_qualified": 16,
+   "deduped_candidates": 10,
+   "edge_qualified": 10,
+   "eligible_fixtures": 10,
+   "evidence_qualified": 10,
+   "final_candidates": 10,
+   "main_market": 410,
+   "probability_qualified": 73,
+   "raw_candidates": 2139,
+   "ticket_selections": 2
   },
   "top_odds": 2.0352762,
   "top_pool_rejections": {
@@ -893,11 +1033,27 @@
   "top_priority_provider_report": {},
   "top_priority_source": null,
   "top_priority_used": false,
+  "top_quality_book_coverage": {
+   "1": 37,
+   "2": 9,
+   "3": 4,
+   "4+": 6
+  },
+  "top_rejection_reasons": {
+   "DISABLED_MARKET": 556,
+   "INSUFFICIENT_BOOKS": 57,
+   "INVALID_PRICE": 18,
+   "MARKET_QUALITY": 1151,
+   "MODEL_AGREEMENT": 6,
+   "PERIOD_UNSETTLEABLE": 4,
+   "PROBABILITY_FLOOR": 337
+  },
   "top_relaxed": null,
   "top_selected_by_sport": {
    "baseball": 1,
    "football": 1
   },
+  "top_ticket_status": "SELECTED",
   "unique_candidates_by_sport": {
    "baseball": 436,
    "football": 1104,
@@ -1203,43 +1359,6 @@
    "tier": "daily"
   },
   {
-   "away": "Detroit Tigers",
-   "books": 9,
-   "closing_price": null,
-   "clv": null,
-   "edge_ev": null,
-   "entity": "all",
-   "ev": -0.03332785519809767,
-   "fixture_key": "baseball|mlb|tigers|white sox|2026091918",
-   "home": "Chicago White Sox",
-   "label": "Detroit Tigers +1.5",
-   "league": "MLB",
-   "line": 1.5,
-   "market": "handicap",
-   "p_fair": null,
-   "p_market": 0.6399945665675363,
-   "period": "full",
-   "pick_date": "2026-09-19",
-   "price": 1.5076,
-   "prob": 0.6411993531453318,
-   "prob_raw": 0.6411993531453318,
-   "provider": "sharpapi",
-   "provider_event_id": "mlb_tigers_whitesox_2026-09-19_b2",
-   "provider_odd_id": "points-away-game-sp-away",
-   "quality": "main",
-   "rank": 7,
-   "rank_score": 0.6161270429549756,
-   "result_json": null,
-   "selection": "away",
-   "settled_at": null,
-   "sources": "{\"market\": 0.64, \"score_model\": 0.663, \"_alt_ids\": {\"sportsgameodds\": \"paB8rF92CSd8CmMvmX2B\"}, \"_providers\": [\"sharpapi\", \"sportsgameodds\"], \"_sport_key\": \"\", \"_league_id\": \"mlb\", \"_notes\": {\"lambda\": [4.26, 3.94], \"evidence\": {\"books\": 9, \"providers\": 2, \"dispersion\": 0.017, \"quality\": \"main\", \"se\": 0.0251, \"p_lcb\": 0.6161, \"edge\": null, \"sharp\": false, \"rank\": 0.6161}, \"family\": \"handicap_main\", \"z\": 1.252}}",
-   "sport": "baseball",
-   "start_utc": "2026-09-19T18:10:00Z",
-   "stat": "points",
-   "status": "pending",
-   "tier": "daily"
-  },
-  {
    "away": "Stade Rennes",
    "books": 2,
    "closing_price": null,
@@ -1264,7 +1383,7 @@
    "provider_event_id": "france_-_ligue_1_olympiquelyon_staderennais_2026-09-19_b3",
    "provider_odd_id": "87788325398153",
    "quality": "main",
-   "rank": 8,
+   "rank": 7,
    "rank_score": 0.7106628495854758,
    "result_json": null,
    "selection": "home_away",
@@ -1272,6 +1391,43 @@
    "sources": "{\"market\": 0.7347, \"score_model\": 0.7472, \"_alt_ids\": {}, \"_providers\": [\"sharpapi\"], \"_sport_key\": \"\", \"_league_id\": \"france_-_ligue_1\", \"_notes\": {\"lambda\": [1.74, 1.46], \"evidence\": {\"books\": 2, \"providers\": 1, \"dispersion\": 0.0, \"quality\": \"main\", \"se\": 0.025, \"p_lcb\": 0.7107, \"edge\": null, \"sharp\": false, \"rank\": 0.7107}, \"family\": \"safety\", \"z\": 1.237}}",
    "sport": "football",
    "start_utc": "2026-09-19T18:45:00Z",
+   "stat": "points",
+   "status": "pending",
+   "tier": "daily"
+  },
+  {
+   "away": "Detroit Tigers",
+   "books": 9,
+   "closing_price": null,
+   "clv": null,
+   "edge_ev": null,
+   "entity": "all",
+   "ev": -0.03332785519809767,
+   "fixture_key": "baseball|mlb|tigers|white sox|2026091918",
+   "home": "Chicago White Sox",
+   "label": "Detroit Tigers +1.5",
+   "league": "MLB",
+   "line": 1.5,
+   "market": "handicap",
+   "p_fair": null,
+   "p_market": 0.6399945665675363,
+   "period": "full",
+   "pick_date": "2026-09-19",
+   "price": 1.5076,
+   "prob": 0.6411993531453318,
+   "prob_raw": 0.6411993531453318,
+   "provider": "sharpapi",
+   "provider_event_id": "mlb_tigers_whitesox_2026-09-19_b2",
+   "provider_odd_id": "points-away-game-sp-away",
+   "quality": "main",
+   "rank": 8,
+   "rank_score": 0.6161270429549756,
+   "result_json": null,
+   "selection": "away",
+   "settled_at": null,
+   "sources": "{\"market\": 0.64, \"score_model\": 0.663, \"_alt_ids\": {\"sportsgameodds\": \"paB8rF92CSd8CmMvmX2B\"}, \"_providers\": [\"sharpapi\", \"sportsgameodds\"], \"_sport_key\": \"\", \"_league_id\": \"mlb\", \"_notes\": {\"lambda\": [4.26, 3.94], \"evidence\": {\"books\": 9, \"providers\": 2, \"dispersion\": 0.017, \"quality\": \"main\", \"se\": 0.0251, \"p_lcb\": 0.6161, \"edge\": null, \"sharp\": false, \"rank\": 0.6161}, \"family\": \"handicap_main\", \"z\": 1.16}}",
+   "sport": "baseball",
+   "start_utc": "2026-09-19T18:10:00Z",
    "stat": "points",
    "status": "pending",
    "tier": "daily"

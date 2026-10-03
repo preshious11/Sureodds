@@ -1,5 +1,6 @@
 """SQLite provider portions: completed sources are reused during partial retries."""
 import json
+import hashlib
 import logging
 import time
 from collections import Counter
@@ -13,6 +14,27 @@ from predbot.util.timeutil import iso, parse_iso, to_local, utcnow, day_bounds
 
 log = logging.getLogger(__name__)
 PROVIDER_CACHE_VERSION = 1
+
+
+def collection_signature(name, cfg):
+    """Version the inputs that decide which events/quotes are collected. No secrets.
+
+    Date-only keys otherwise keep a completed pre-deploy feed alive even when
+    international leagues or market filters were added to the configuration.
+    Selection thresholds do not invalidate provider data or spend more credits.
+    """
+    fields = {
+        'sharpapi': ('sharpapi_leagues', 'sharpapi_sports', 'sharpapi_markets',
+                     'sharpapi_markets_football', 'sharpapi_markets_baseball',
+                     'sharpapi_main_lines_only', 'sharpapi_max_pages', 'sharpapi_events_per_target'),
+        'oddsapi': ('odds_api_league_allowlist', 'odds_api_regions', 'odds_api_max_leagues_per_sport'),
+        'sportsgameodds': ('sgo_leagues', 'sgo_sports', 'sgo_allowed_stats', 'sgo_allowed_periods',
+                          'max_player_props'),
+    }.get(name, ())
+    inputs = {k: getattr(cfg, k, None) for k in
+              (*fields, 'allowed_sports', 'day_window_end_offset_hours', 'price_mode')}
+    inputs['normalization_revision'] = 1
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 
 
 def encode_events(events):
@@ -90,6 +112,7 @@ def collect_persisted(chain, start, end):
                 continue
             _w, _c = time.perf_counter(), time.process_time()
             key = f'provider:v1:{cfg.timezone}:{day}:{name}'
+            signature = collection_signature(name, cfg)
             row = chain.db.get_provider_cache(key)
             events, report = [], None
             if row and row['cache_version'] == PROVIDER_CACHE_VERSION:
@@ -101,10 +124,22 @@ def collect_persisted(chain, start, end):
                         report = json.loads(row['metadata_json'])
                 except (ValueError, TypeError, KeyError):
                     report = None
+            compatible = report and report.get('collection_signature') == signature
+            # Unversioned real-provider rows have unknown collection settings.
+            # Refresh them once through the existing quota-controlled providers.
             retry_at = parse_iso(report.get('retry_after', '')) if report else None
-            reuse = report and (report['status'] == 'complete' or
+            complete_nonempty = report and report['status'] == 'complete' and bool(events)
+            reuse = compatible and (complete_nonempty or
                                 (retry_at and now < retry_at and not getattr(chain, 'force_retry', False)))
+            refresh_reason = ('settings_changed' if report and not compatible else
+                              'empty_retry' if report and report['status'] == 'complete' and not events else
+                              'retry' if report else 'cache_miss')
+            if report and not compatible:
+                # Cached quotes from removed leagues/markets must not leak into
+                # the replacement when a provider fails its fresh request.
+                events = []
             plan.append({'name': name, 'provider': provider, 'key': key, 'events': events, 'report': report,
+                         'signature': signature, 'refresh_reason': refresh_reason,
                          'reuse': bool(reuse), 'spent': (time.perf_counter() - _w, time.process_time() - _c)})
 
         # Phase 2: the providers that need a refresh are fetched CONCURRENTLY. Each has its own rate limiter and
@@ -165,11 +200,13 @@ def collect_persisted(chain, start, end):
                     events = previous
                     report.update(outcome='failed', error_type=type(exc).__name__)
                     log.warning('Provider refresh failed | provider=%s | error=%s', name, type(exc).__name__)
-                report.update(events=dict(Counter(e.sport for e in events)),
+                report.update(collection_signature=p['signature'],
+                              events=dict(Counter(e.sport for e in events)),
                               retry_after=iso(now + timedelta(seconds=chain.cfg.cache_retry_seconds)),
                               updated_at=iso(now))
                 chain.db.upsert_provider_cache(key, day, encode_events(events), report, iso(midnight))
-            chain.last_report[name] = report
+            chain.last_report[name] = dict(report, cache='reused' if p['reuse'] else 'refreshed',
+                                          refresh_reason=None if p['reuse'] else p['refresh_reason'])
             for e in events:
                 e.markets = consolidate_lines(e.markets)         # one line per bet, cached rows included
             pool = merge_events(pool, [e for e in events if start <= e.start < end],

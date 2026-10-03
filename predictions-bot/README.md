@@ -104,7 +104,7 @@ The **picker** then applies your rules:
 
 - **Top picks** are main markets only (result, DNB, double chance, the main total / handicap), with high model
   probability, at least `TOP_MIN_BOOKS` (3) *distinct* bookmakers, and — where a sharp book priced the line — a price
-  no worse than `MIN_EDGE_VS_SHARP` against the sharp fair probability. The 2–3 leg combination with the best
+  no worse than `MIN_EDGE_VS_SHARP` against the sharp fair probability. The 1–3 leg combination with the best
   evidence-adjusted joint confidence inside `TOP_COMBINED_ODDS` (~2.00) – `TOP_ODDS_MAX` is chosen.
 - **Daily picks** are sized on their own: the Daily ticket alone aims for `DAILY_COMBINED_MIN_ODDS` (10) and never
   exceeds `DAILY_COMBINED_MAX_ODDS` (12). The builder takes the best-evidenced legs first and **stops as soon as 10
@@ -153,9 +153,16 @@ The **picker** then applies your rules:
   "Los Angeles Dodgers"), are recognised as the same match. `MAX_PICKS_PER_EVENT` then counts per tier; `forbid`
   keeps a Top match off-limits to the Daily. The `picks` table has a unique index on (date, fixture key, selection)
   as a last line of defence.
-- **Top ticket never empty**: when the strict search (2-3 legs, odds 2.00-2.50, every leg at `TOP_MIN_PROB`) finds
+- **Top ticket search**: when the strict search (1-3 legs, odds 2.00-2.50, every leg at `TOP_MIN_PROB`) finds
   nothing, `TOP_RELAXED_FALLBACK=1` widens the band by `TOP_RELAX_BAND`; `TOP_RELAX_PROB` (default 0 — the Top is
-  not weakened to reach its target) can lower the per-leg probability floor; never one leg, never more than three.
+  not weakened to reach its target) can lower the per-leg probability floor only when explicitly configured.
+  The widened band is restricted to 2-3 legs; singles require the strict band. Insufficient quality can still leave Top empty.
+
+Operator-only Top investigation: `python diagnose_top.py --db tests/fixtures/replay/replay.db --json data/top_diagnostic.json --csv data/top_candidates.csv`.
+Use `--live --record data/top_recording.db` to capture current data on a database copy without changing served picks or sending messages.
+`/lastrun` reports the Top funnel, grouped rejection reasons, effective settings, runtime revision, and provider cache reuse/refresh reasons.
+Provider caches detect changed collection settings; completed empty responses expire after `CACHE_RETRY_SECONDS` during generation.
+Subscriber views continue to serve their cached snapshot without provider calls.
   `/lastrun` shows "Top fallback".
 
 ---

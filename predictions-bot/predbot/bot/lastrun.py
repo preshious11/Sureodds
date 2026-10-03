@@ -48,7 +48,10 @@ def _provider_line(name: str, report: Dict, usage: Dict) -> str:
     status = report.get("status", "?")
     if report.get("outcome") and report.get("outcome") != "success":
         status += f"/{report['outcome']}"
-    return f"• <b>{esc(name)}</b> — {esc(status)} · {esc(_events(report))}{esc(spent)}"
+    cache = f" · cache {esc(report['cache'])}" if report.get('cache') else ""
+    if report.get('refresh_reason'):
+        cache += f" ({esc(report['refresh_reason'])})"
+    return f"• <b>{esc(name)}</b> — {esc(status)} · {esc(_events(report))}{esc(spent)}{cache}"
 
 
 def _feed_lines(providers: Dict) -> List[str]:
@@ -102,6 +105,16 @@ def _funnel(gen: Dict) -> List[str]:
              f"Daily pool: {esc(_kv(gen.get('daily_eligible_by_sport')))} | rejected: {esc(_kv(gen.get('daily_pool_rejections')))}",
              f"Top tickets evaluated: {gen.get('combinations_checked', '?')}"
              + (f" · Top odds {gen['top_odds']:.2f}" if gen.get("top_odds") else "")]
+    if gen.get("top_funnel"):
+        lines += ["<b>TOP FUNNEL</b>"]
+        lines += [f"• {esc(k.replace('_', ' '))}: {v}" for k, v in gen["top_funnel"].items()]
+        lines.append("Top rejection reasons: " + esc(_kv(gen.get("top_rejection_reasons"))))
+        lines.append("Top-quality book coverage: " + esc(_kv(gen.get("top_quality_book_coverage"))))
+        lines.append("Top ticket result: " + esc(gen.get("top_ticket_status", 'unknown')))
+        config = gen.get("top_config") or {}
+        fields = ("top_min_prob", "top_relax_prob", "top_min_books", "top_legs_min", "top_legs_max",
+                  "top_odds_target", "top_odds_max", "min_edge_vs_sharp", "market_quality")
+        lines.append("Effective Top config: " + esc(_kv({k: config[k] for k in fields if k in config})))
     if gen.get("merged_events") is not None:
         lines.append(f"Merged across providers: <b>{gen['merged_events']}</b> events | by league: "
                      f"{esc(_kv(gen.get('merged_pairs_by_league')))}")
@@ -169,6 +182,8 @@ def lastrun_text(db, cfg, now: Optional[datetime] = None) -> str:
            f"(reads that day: {esc(hits)} hit / {esc(misses)} miss)", "",
            "<b>Providers</b>"]
     providers = gen.get("providers") or {}
+    if gen.get("top_diagnostic_version"):
+        out.append(f"Top diagnostic v{gen['top_diagnostic_version']} · revision {esc(gen.get('runtime_revision', 'unknown'))}")
     out += [_provider_line(n, r, usage) for n, r in sorted(providers.items())] or ["• none recorded"]
     parse = [f"{esc(n)}: {esc(_kv(r.get('rejections')))}" for n, r in sorted(providers.items())
              if isinstance(r, dict) and r.get("rejections")]
