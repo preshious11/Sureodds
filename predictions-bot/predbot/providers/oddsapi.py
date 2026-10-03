@@ -204,6 +204,27 @@ class OddsApiProvider(BaseProvider):
         """Odds API pricing: an odds request costs 1 credit x regions x markets."""
         return len(self.regions) * len(self.markets)
 
+    SPORTS_CATALOG_TTL = timedelta(hours=12)
+
+    def _sports_catalog(self) -> Optional[List[Dict]]:
+        """GET /sports, kept in the database so a restart or a second process does not ask again.
+
+        The in-season list changes on a scale of days, so a half-day TTL is safe; a failed fetch is not cached."""
+        from predbot.providers import capabilities
+        cached = capabilities.load_cached(self.db, "oddsapi:sports", self.SPORTS_CATALOG_TTL)
+        if cached is not None:
+            return cached.get("rows") or []
+        try:
+            data = self._get("/sports")
+        except ProviderError as e:
+            log.warning("OddsAPI: sport discovery failed (%s)", e)
+            return None
+        rows = [{"key": r.get("key", ""), "active": r.get("active", True)}
+                for r in (data if isinstance(data, list) else []) if isinstance(r, dict)]
+        if rows:
+            capabilities.store(self.db, "oddsapi:sports", {"provider": "oddsapi", "rows": rows}, self.SPORTS_CATALOG_TTL)
+        return rows
+
     def _discover_sports(self) -> Dict[str, List[str]]:
         """In-season football/tennis league keys from GET /sports.
 
@@ -215,16 +236,12 @@ class OddsApiProvider(BaseProvider):
         """
         if self.sport_keys:
             return self.sport_keys
-        try:
-            data = self._get("/sports")
-        except ProviderError as e:
-            log.warning("OddsAPI: sport discovery failed (%s)", e)
+        data = self._sports_catalog()
+        if data is None:
             return {}
 
         football_keys, tennis_keys = [], []
-        for row in data if isinstance(data, list) else []:
-            if not isinstance(row, dict):
-                continue
+        for row in data:
             if not row.get("active", True):
                 continue
             key = row.get("key", "").strip()

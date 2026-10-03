@@ -36,6 +36,11 @@ def live_delivery_kind(fixture_key: str, ended: bool) -> str:
     return f"match_{'end' if ended else 'start'}:{digest}"
 
 
+def _received_any(row, chat_id: str, received) -> bool:
+    """A live notification goes to a subscriber who was sent a collection this prediction belongs to."""
+    return any(chat_id in received.get(c, ()) for c in (row.get("collections") or ()))
+
+
 def deliver_live(db: Database, tg: Telegram, pick_date: str, fixture_key: str,
                  rows, result, ended: bool = False):
     """Return (sent, complete), persisting each success before the next send.
@@ -52,7 +57,7 @@ def deliver_live(db: Database, tg: Telegram, pick_date: str, fixture_key: str,
     subscribers = db.subscribers_active()
     for user in subscribers:
         chat_id = str(user["chat_id"])
-        relevant = [r for r in rows if chat_id in received.get(r["tier"], set())]
+        relevant = [r for r in rows if _received_any(r, chat_id, received)]
         if not relevant or chat_id in done:
             continue
         if not tg.token:
@@ -70,7 +75,7 @@ def deliver_live(db: Database, tg: Telegram, pick_date: str, fixture_key: str,
         time.sleep(1.0 / SENDS_PER_SECOND)
     # Re-evaluate only the recipients attempted in this run, without another API call.
     complete = all(str(u["chat_id"]) in done or not any(
-        str(u["chat_id"]) in received.get(r["tier"], set()) for r in rows)
+        _received_any(r, str(u["chat_id"]), received) for r in rows)
         for u in subscribers)
     if sent:
         log.info("live: %s notification delivered to %d subscribers", "end" if ended else "start", sent)

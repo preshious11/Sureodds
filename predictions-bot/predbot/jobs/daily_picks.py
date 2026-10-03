@@ -19,24 +19,35 @@ from predbot.providers.base import Event
 from predbot.providers.budget import Budget
 from predbot.markets.settlement import make_results_gate
 from predbot.providers.chain import ProviderChain, merge_events
-from predbot.selection.picker import PickSet, same_fixture, select
+from predbot.selection.picker import PickSet
+from predbot.model.engine import generate, ModelSettings
+from predbot.model.independent import IndependentModels
+from predbot.storage.identity import failure_record, resolve_events_detailed, unique_failed_fixtures
+from predbot.selection.evidence import assess
+from predbot.util.fixtures import fixture_orientation
 from predbot.storage.db import Database
 from predbot.util.fixtures import fixture_key
+from predbot.util.http import request_counts, request_delta
+from predbot.util.pipeline_report import pipeline_lines
 from predbot.util.timing import Timings
 from predbot.util.timeutil import iso, parse_iso, to_local, utcnow, day_bounds
 
 log = logging.getLogger(__name__)
 
 
-def score_events(events: List[Event], db: Database, cfg: Config) -> List[Scored]:
+def score_events(events: List[Event], db: Database, cfg: Config, independent=None) -> List[Scored]:
     elo = Elo(db)
     cal = Calibrator(db)
+    mode = getattr(cfg, "independent_model_mode", "shadow")
+    if independent is None and mode != "off":
+        independent = IndependentModels.default(db, cfg)
     scored: List[Scored] = []
     for ev in events:
         try:
             model = EventModel(ev, elo, cal, shrink=cfg.model_shrink, sharp_books=getattr(cfg, "sharp_books", None),
                                elo_min_games=getattr(cfg, "elo_min_games", 10),
-                               edge_price=getattr(cfg, "edge_price", "best"))
+                               edge_price=getattr(cfg, "edge_price", "best"),
+                               independent=independent, independent_mode=mode)
             scored.extend(model.score_all())
         except Exception as e:  # noqa: BLE001
             log.exception("model failed for %s: %s", ev.name, e)
@@ -75,7 +86,9 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     if start >= end:
         return PickSet()
     timings = Timings()
+    providers_map = chain.providers if isinstance(chain, ProviderChain) else None
     usage_before = _api_usage(chain)
+    http_before = request_counts()
     with timings.stage('collect'):
         events = chain.collect(start, end)
 
@@ -94,40 +107,12 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
             prior.append(SimpleNamespace(sport=r["sport"], home=r["home"], away=r["away"], start=st))
     if prior:
         before = len(events)
-        events = [e for e in events if not any(same_fixture(e, p) for p in prior)]
+        events = [e for e in events if not any(fixture_orientation(e, p) is not None for p in prior)]
         if before - len(events):
             log.info("dropped %d events already picked on a previous day", before - len(events))
 
-    # Top ticket priority source: The Odds API is tried first for the Top
-    # picks combo (kept out of provider_order so it never joins the Daily
-    # ticket's three-provider pool on its own). Its events are merged into the
-    # shared pool purely so a match it shares with the other three still
-    # dedupes/enriches normally; picker.select() decides who gets to build Top.
-    top_priority_source: Optional[str] = None
-    top_priority_report: Dict = {}
-    providers_map = chain.providers if isinstance(chain, ProviderChain) else None
-    # Driven entirely by cfg.top_provider_priority - not hardcoded to any one
-    # provider name, so setting TOP_PROVIDER_PRIORITY to something other than
-    # "oddsapi" actually takes effect instead of silently doing nothing.
-    priority_available = providers_map and any(
-        (p := providers_map.get(name)) is not None and p.enabled() for name in cfg.top_provider_priority)
-    # A priority provider that is already a full member of PROVIDER_ORDER was
-    # collected by the main chain above: do not spend its credits twice.
-    in_main_chain = next((n for n in cfg.top_provider_priority if n in chain.order
-                          and (p := providers_map.get(n)) is not None and p.enabled()), None) if providers_map else None
-    if priority_available and in_main_chain:
-        top_priority_source = in_main_chain
-        top_priority_report = {in_main_chain: getattr(chain, "last_report", {}).get(in_main_chain, {})}
-    elif priority_available:
-        top_chain = ProviderChain(providers_map, cfg.top_provider_priority)
-        top_chain.db, top_chain.cfg = chain.db, chain.cfg
-        priority_events = top_chain.collect(start, end)
-        top_priority_report = getattr(top_chain, "last_report", {})
-        if priority_events:
-            events = merge_events(events, priority_events, cfg.price_mode)
-            top_priority_source = top_chain.order[0] if top_chain.order else None
-
     api_usage = _api_usage(chain, usage_before)
+    http_requests = request_delta(http_before)
     log.info("API usage this cycle: %s", {n: f"+{u['cycle']} ({u['today']}/{u['limit'] or '?'} today)"
                                           for n, u in api_usage.items()})
     log.info("collected %d events (%d markets)", len(events), sum(len(e.markets) for e in events))
@@ -136,17 +121,43 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
                     for e in events for m in e.extra.get("merged", [])]
     if merged_pairs:
         log.info("merged %d events across providers", len(merged_pairs))
-    with timings.stage('score'):
-        scored = score_events(events, db, cfg)
+    events, own_failed = resolve_events_detailed(events, db, cfg.supported_competitions)   # no-op for resolved events
+    providers = getattr(chain, 'last_report', {})
+    # Counts are per UNIQUE canonical fixture: the same fixture failing through two providers is one failure,
+    # and one that another provider resolved is not a failure. Per-provider attempt counts stay separate.
+    records = [failure_record(e, r) for e, r in own_failed]
+    provider_failures = {}
+    for name, report in providers.items():
+        records += report.get('identity_failed_fixtures', [])
+        if report.get('identity_failures'):
+            provider_failures[name] = dict(report['identity_failures'])
+    unique_failed = unique_failed_fixtures(records, events)
+    identity_failures = dict(Counter(unique_failed.values()))
+    discovered = len(events) + len(unique_failed)
+
     gate = make_results_gate(cfg, providers_map) if providers_map else None
-    with timings.stage('select'):
-        ps = select(scored, cfg, now, top_priority_source=top_priority_source, results_gate=gate)
-    timings.stages.update({k: v for k, v in (ps.diagnostics.pop('select_timings', None) or {}).items()})
-    # Completeness is judged on the three-provider Daily chain only, unchanged
-    # from before the Odds API existed; the Top-priority source has its own
-    # fallback (picker.select) so its own outages never flip the snapshot to PARTIAL.
-    providers = getattr(chain, "last_report", {})
-    ps.complete = bool(providers) and all(p["status"] == "complete" for p in providers.values())
+    independent = IndependentModels.default(db, cfg, now) if cfg.independent_model_mode != "off" else None
+    with timings.stage('analyze'):
+        generation = generate(events, db, ModelSettings(cfg.model_shrink, tuple(cfg.sharp_books),
+                                                       cfg.elo_min_games, cfg.edge_price), gate,
+                              scorer=lambda batch: score_events(batch, db, cfg, independent))
+    tables = {}
+    for s in generation.predictions:
+        evidence = assess(s, cfg, tables)
+        s.quality, s.se, s.p_lcb, s.rank_score = evidence.quality, evidence.se, evidence.p_lcb, evidence.rank
+        s.notes['evidence'] = evidence.as_notes()
+        s.notes['independent'] = s.independent
+    ps = PickSet(predictions=generation.predictions, pool_size=discovered, eligible=len(events),
+                 diagnostics=generation.diagnostics)
+    unsupported = identity_failures.get("unsupported_competition", 0)
+    ps.diagnostics.update(fixtures_discovered=discovered, supported_fixtures=discovered - unsupported,
+                          normalized=len(events),
+                          normalization_failures=sum(identity_failures.values()) - unsupported,
+                          normalization_rejections={k: v for k, v in identity_failures.items()
+                                                    if k != "unsupported_competition"},
+                          unsupported_competition=unsupported,
+                          provider_identity_failures=provider_failures)
+    ps.complete = bool(providers) and all(p.get('status') == 'complete' for p in providers.values())
     last = getattr(chain, 'last_timings', None)
     for name, t in (last.items() if isinstance(last, dict) else ()):
         if isinstance(t, dict):
@@ -155,13 +166,13 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     ps.diagnostics.update({"merged_events": len(merged_pairs),
                            "merged_pairs_by_league": dict(Counter(p["league"] for p in merged_pairs)),
                            "merged_pairs": merged_pairs})
-    ps.diagnostics.update({"providers": providers, "api_usage": api_usage,
-                           "top_diagnostic_version": 1,
+    ps.diagnostics.update({"providers": providers, "api_usage": api_usage, "http_requests": http_requests,
+                           "pipeline_version": 4,
                            "runtime_revision": os.environ.get("RAILWAY_GIT_COMMIT_SHA") or os.environ.get("SOURCE_VERSION") or "unknown",
-                           "top_priority_provider_report": top_priority_report,
+
                            "events_by_sport": dict(Counter(e.sport for e in events)),
                            "markets_by_sport": dict(Counter(e.sport for e in events for m in e.markets)),
-                           "scored_by_sport": dict(Counter(s.event.sport for s in scored)),
+                           "scored_by_sport": dict(Counter(s.event.sport for s in generation.predictions)),
                            "complete": ps.complete, "generated_at": iso(now),
                            "retry_after": iso(now + timedelta(seconds=cfg.cache_retry_seconds)),
                            "retry_until": cfg.delivery_time})
@@ -170,57 +181,37 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
                if isinstance(getattr(p, "skipped_no_results", None), list)}
     ps.diagnostics["leagues_skipped_no_results"] = {n: v for n, v in skipped.items() if v}
     log.info("Prediction generation %s: %s", day, ps.diagnostics)
+    log.info("Generation funnel %s | %s", day, " | ".join(l for l in pipeline_lines(ps.diagnostics) if l))
     return ps
 
 
-def _selection_identity(tier: str, s) -> tuple:
-    e, m = s.event, s.line
-    return (tier, e.provider, e.provider_event_id, m.market, m.period, m.stat, m.entity, m.line, m.selection)
+def store_picks(ps: PickSet, db: Database, pick_date: str) -> None:
+    """Store every All Prediction (one per fixture x market family) before any collection selector runs.
 
-
-def store_picks(ps: PickSet, db: Database, pick_date: str, replace_pending: bool = True) -> None:
-    """Persist a pickset. Regenerating a day that nobody has been sent yet REPLACES its
-    pending picks (those not in the new set are deleted, in the caller's transaction),
-    so a retry cannot leave stale legs that settlement and stats would count. Once a
-    card has been delivered the stored rows are what people saw: they are never touched."""
-    if replace_pending and not db.deliveries_exist("picks", pick_date):
-        keep = [_selection_identity(tier, s) for tier, items in (("top", ps.top), ("daily", ps.daily)) for s in items]
-        removed = db.delete_pending_picks_not_in(pick_date, keep)
-        if removed:
-            log.info("regeneration replaced %d stale pending pick(s) for %s", removed, pick_date)
-    for tier, items in (("top", ps.top), ("daily", ps.daily)):
-        for rank, s in enumerate(items, 1):
-            if db.has_pick_selection(pick_date, tier, s):
-                continue
-            ml = s.line
-            e = s.event
-            key = fixture_key(e)
-            if db.has_fixture_selection(pick_date, key, s):
-                log.warning("not storing %s pick '%s' (%s v %s): the same selection on this match is already stored "
-                            "for %s in another tier/provider view", tier, s.label, e.home, e.away, pick_date)
-                continue
+    First-write-wins: refresh and settlement never replace a recorded forecast.
+    Explicit safe reset is the sole path that can remove unpublished future rows.
+    """
+    with db.transaction():
+        for rank, s in enumerate(ps.predictions, 1):
+            ml, e = s.line, s.event
             row = {
-                "pick_date": pick_date, "tier": tier, "rank": rank,
-                "provider": e.provider, "provider_event_id": e.provider_event_id,
-                "sport": e.sport, "league": e.league, "home": e.home, "away": e.away,
-                "start_utc": iso(e.start), "market": ml.market, "period": ml.period, "stat": ml.stat,
-                "entity": ml.entity, "line": ml.line, "selection": ml.selection, "label": s.label,
-                "price": ml.price, "prob": s.p_model, "prob_raw": s.p_raw, "ev": s.ev, "p_market": s.p_market,
-                # evidence at selection time. ``prob`` is the calibrated probability; ``rank_score`` is the (separate)
-                # ranking value and is never a probability. p_fair / edge_ev stay NULL without a sharp reference.
-                "p_fair": s.p_fair, "edge_ev": s.edge_ev, "rank_score": s.rank_score if s.p_lcb is not None else None,
-                "books": ml.distinct_books(), "quality": s.quality or None,
-                "sources": {**{k: round(v, 4) for k, v in s.sources.items()},
-                            "_alt_ids": e.extra.get("alt_ids", {}), "_providers": e.sources,
-                            "_sport_key": e.extra.get("sport_key", ""), "_league_id": e.league_id,
-                            "_notes": s.notes},
-                "provider_odd_id": ml.provider_odd_id, "fixture_key": key,
+                'pick_date': pick_date, 'tier': 'all', 'rank': rank,
+                'provider': e.provider, 'provider_event_id': e.provider_event_id,
+                'sport': e.sport, 'league': e.league, 'home': e.home, 'away': e.away,
+                'start_utc': iso(e.start), 'market': ml.market, 'period': ml.period, 'stat': ml.stat,
+                'entity': ml.entity, 'line': ml.line, 'selection': ml.selection, 'label': s.label,
+                'price': ml.price, 'prob': s.p_model, 'prob_raw': s.p_raw, 'ev': s.ev,
+                'p_market': s.p_market, 'p_fair': s.p_fair, 'edge_ev': s.edge_ev,
+                'rank_score': s.rank_score, 'books': ml.distinct_books(), 'quality': s.quality,
+                'sources': {**s.sources, '_alt_ids': e.extra.get('alt_ids', {}), '_providers': e.sources,
+                            '_sport_key': e.extra.get('sport_key', ''), '_league_id': e.league_id,
+                            '_notes': {**s.notes, 'edge': s.edge}},
+                'provider_odd_id': ml.provider_odd_id, 'fixture_key': fixture_key(e),
+                'canonical_event_id': e.canonical_event_id, 'canonical_competition_id': e.canonical_competition_id,
+                'home_id': e.home_id, 'away_id': e.away_id,
             }
-            try:
-                db.insert_pick(row)
-            except sqlite3.IntegrityError:
-                log.warning("not storing %s pick '%s' (%s v %s): unique (date, fixture, selection) constraint", tier,
-                            s.label, e.home, e.away)
+            db.store_prediction(row)
+    ps.diagnostics['stored_all_predictions'] = len(db.collection_predictions('all', pick_date))
 
 
 def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram], force: bool = False,

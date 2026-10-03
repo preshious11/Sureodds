@@ -286,7 +286,7 @@ def test_yesterday_command_and_button_open_the_same_view(final_db, monkeypatch):
     from predbot.config import Config
     from tests.test_subscribers_broadcast import FakeTG
 
-    service = SimpleNamespace(get_daily_snapshot=lambda: DailySnapshot(date="2030-06-02"))
+    service = SimpleNamespace(get_daily_snapshot=lambda **_kw: DailySnapshot(date="2030-06-02"))
     tg = FakeTG()
     cfg = Config(timezone="UTC", view_navigation="new")
     assert handle_command("/yesterday", "42", service=service, tg=tg, cfg=cfg, db=final_db)

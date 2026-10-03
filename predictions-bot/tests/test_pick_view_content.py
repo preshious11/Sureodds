@@ -23,7 +23,7 @@ def test_each_route_uses_its_own_picks_and_total(view, expected, absent, total):
     ])
     # Exercise the serialized cache format as well as the command/button routes.
     restored = DailySnapshot.from_dict(snapshot.to_dict())
-    service = SimpleNamespace(get_daily_snapshot=lambda: restored)
+    service = SimpleNamespace(get_daily_snapshot=lambda **_kw: restored)
     tg = FakeTG()
     handle_command('/' + view, '42', service=service, tg=tg, cfg=Config())
     handle_callback(_cb('pg|' + view + '|0'), service=service, tg=tg, cfg=Config())
@@ -37,7 +37,7 @@ def test_empty_top_does_not_fall_back_to_daily():
     snapshot = DailySnapshot(date='2030-06-01', daily_picks=[
         PickRecord(label='DAILY ONLY', price=2.0)])
     tg = FakeTG()
-    handle_command('/top', '42', service=SimpleNamespace(get_daily_snapshot=lambda: snapshot),
+    handle_command('/top', '42', service=SimpleNamespace(get_daily_snapshot=lambda **_kw: snapshot),
                    tg=tg, cfg=Config())
     assert 'Predictions being analyzed' in tg.sends[0]['text']
     assert 'DAILY ONLY' not in tg.sends[0]['text']

@@ -22,7 +22,7 @@ from predbot.bot.pagination import (VIEW_COMMAND, VIEW_DESC, VIEW_ICON,
                                     view_button_label)
 from predbot.bot.telegram import Telegram, esc
 from predbot.cache.fetcher import UnifiedFetcher
-from predbot.cache.models import VIEW_DAILY, VIEW_STATS, VIEW_TOP, VIEW_YESTERDAY
+from predbot.cache.models import SPORT_VIEW_PREFIX, VIEW_ALL, VIEW_DAILY, VIEW_STATS, VIEW_TOP, VIEW_YESTERDAY
 from predbot.config import Config
 from predbot.storage.db import Database
 from predbot.util.timeutil import resolve_timezone
@@ -84,6 +84,7 @@ def _detect_user_timezone(user: Dict[str, Any]) -> Optional[str]:
 #: views (``pagination.VIEW_COMMAND``), so a tap and a type are the same action
 #: and cannot drift apart.
 COMMANDS: Dict[str, str] = {
+    "/all": VIEW_ALL,
     "/top": VIEW_TOP,        # strongest picks
     "/daily": VIEW_DAILY,    # every prediction for today
     "/today": VIEW_DAILY,    # alias kept for older clients
@@ -95,6 +96,7 @@ WAVING = "\U0001F44B"        # 👋
 
 #: What Telegram lists when a reader types "/" (registered at startup with setMyCommands).
 BOT_COMMANDS = [
+    {"command": "all", "description": "All model predictions for today"},
     {"command": "top", "description": "Top picks of the day"},
     {"command": "daily", "description": "Daily picks"},
     {"command": "stats", "description": "Results so far: yesterday and the last 7 days"},
@@ -126,12 +128,13 @@ def view_button(view: str) -> Dict[str, str]:
 def commands_text() -> str:
     """The three view commands - one definition for the welcome screen and /help."""
     return "\n".join(f"<b>{VIEW_ICON[v]} {VIEW_COMMAND[v]}</b> – {VIEW_DESC[v]}"
-                     for v in (VIEW_TOP, VIEW_DAILY, VIEW_STATS))
+                     for v in (VIEW_ALL, VIEW_TOP, VIEW_DAILY, VIEW_STATS))
 
 
 #: The welcome screen's command list, kept exactly as it has always read (/start is unchanged); /help lists all
 #: the view commands via commands_text().
 WELCOME_COMMANDS = ("<b>🏆 /top</b> – Top picks of the day\n"
+                    "<b>📚 /all</b> – All predictions\n"
                     "<b>📋 /daily</b> – Daily picks · Accumulator slip\n"
                     "<b>📊 /stats</b> – See prediction results")
 
@@ -150,6 +153,7 @@ def menu_markup() -> Dict[str, Any]:
     and picks only ever arrive on the schedule.
     """
     return {"inline_keyboard": [
+        [view_button(VIEW_ALL)],
         [view_button(VIEW_TOP), view_button(VIEW_DAILY)],
         [view_button(VIEW_STATS), view_button(VIEW_YESTERDAY)],
     ]}
@@ -195,8 +199,11 @@ def open_view(view: str, *, service: UnifiedFetcher, tg: Telegram, cfg: Config,
     message it came from are given (VIEW_NAVIGATION=edit / edit_pages); both receive the same text and
     keyboard. ``day`` (page-turn buttons carry it) renders that day's picks instead of today's.
     """
-    snapshot = service.get_daily_snapshot()          # cache-first read
-    if day and view in (VIEW_TOP, VIEW_DAILY) and day != snapshot.date and hasattr(service, "snapshot_for"):
+    # Page turns and statistics are storage-only, even when today's snapshot is missing.
+    read_only = (day is not None or view in (VIEW_STATS, VIEW_YESTERDAY)
+                 or view.startswith(('stats_', 'results_', SPORT_VIEW_PREFIX)))
+    snapshot = service.get_daily_snapshot(allow_api_call=False) if read_only else service.get_daily_snapshot()
+    if day and pagination.is_prediction_view(view) and day != snapshot.date and hasattr(service, "snapshot_for"):
         snapshot = service.snapshot_for(day)         # an old message keeps turning ITS day's pages
     timezone = resolve_timezone(db.subscriber_timezone(chat_id) if db is not None else "",
                                 cfg.timezone)
@@ -264,7 +271,8 @@ def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram
         open_view(view, service=service, tg=tg, cfg=cfg, chat_id=chat_id, db=db,
                   page=page, message_id=message_id, page_size=page_size, day=day, edit=edit)
         if mode == "edit":
-            toast = _toast(view, page, page_size, service.get_daily_snapshot())
+            # the view above already generated if it was allowed to; the toast only reads what is stored
+            toast = _toast(view, page, page_size, service.get_daily_snapshot(allow_api_call=False))
         else:
             toast = _new_toast(view, page, page_turn, service, day, page_size)
         tg.answer_callback_query(cb_id, text=toast)
@@ -276,8 +284,8 @@ def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram
 
 def _new_toast(view: str, page: int, page_turn: bool, service, day: Optional[str], size: int) -> str:
     """The toast when a press sent a message: 'Daily picks ↓' for a view, 'Page 2 of 3' for a turn."""
-    if page_turn and view in (VIEW_TOP, VIEW_DAILY):
-        snapshot = service.snapshot_for(day) if day and hasattr(service, "snapshot_for") else service.get_daily_snapshot()
+    if page_turn and pagination.is_prediction_view(view) and view != VIEW_ALL:
+        snapshot = service.snapshot_for(day) if day and hasattr(service, "snapshot_for") else service.get_daily_snapshot(allow_api_call=False)
         count = len(snapshot.view_items(view))
         return f"Page {pagination.clamp_page(page, count, size) + 1} of {pagination.total_pages(count, size)}"
     if page_turn:
@@ -287,7 +295,7 @@ def _new_toast(view: str, page: int, page_turn: bool, service, day: Optional[str
 
 def _toast(view: str, page: int, size: int, snapshot) -> str:
     """Short confirmation shown at the top of the chat when a button is used."""
-    if view in (VIEW_STATS, VIEW_YESTERDAY):
+    if view in (VIEW_STATS, VIEW_YESTERDAY, VIEW_ALL):
         return pagination.VIEW_LABEL[view]
     count = len(snapshot.view_items(view))
     page = pagination.clamp_page(page, count, size)   # toast matches the rendered page

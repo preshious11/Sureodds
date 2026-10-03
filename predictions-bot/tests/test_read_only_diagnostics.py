@@ -17,6 +17,7 @@ from predbot.config import Config
 from predbot.jobs import daily_picks
 from predbot.selection.picker import PickSet
 from tests.conftest import dt
+from tests.real_events import pickset
 from tests.test_picker import ev, sc
 
 NOW = dt(hh=12)
@@ -27,11 +28,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 def _pickset():
     """A real, valid slate: two Top legs (1.45 x 1.45 = 2.10) and a Daily pick."""
     a, b, c = ev(1), ev(2), ev(3)
-    top = [sc(a, "result3", "home", 0.72, 1.45), sc(b, "result3", "home", 0.72, 1.45)]
-    daily = [sc(c, "result3", "home", 0.70, 1.50)]
-    ps = PickSet(top=top, daily=daily)
-    ps.complete = True
-    return ps
+    return pickset([sc(a, "result3", "home", 0.72, 1.45), sc(b, "result3", "home", 0.72, 1.45),
+                    sc(c, "result3", "home", 0.70, 1.50)])
 
 
 @pytest.fixture

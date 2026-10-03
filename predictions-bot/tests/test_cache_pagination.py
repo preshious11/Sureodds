@@ -202,13 +202,15 @@ def test_render_stats_matches_the_stats_command(db):
     _insert_picks(db, "2030-05-31", 2)
     for row in db.picks_for_date("2030-05-31"):
         db.settle_pick(row["id"], "won")
-    expected = stats_message(stats_mod.compute(db, to_local(now, "UTC")))
-
     text, markup = pagination.render_stats(make_snapshot(), db=db, tz="UTC", now=now)
 
-    assert text == expected                     # one renderer, no drift
-    assert text.startswith("📊 STATS · Sat 1 Jun") and "📈 Last 1 day\n" in text
-    assert markup["inline_keyboard"][-1][0]["text"] == "📊 Stats"
+    # the Stats button/command now sends the collection performance card (headline over All Predictions)
+    assert text == pagination.render_view(make_snapshot(), pagination.VIEW_STATS, 0, 10, "UTC", db=db, now=now)[0]
+    assert text.startswith("<b>Performance</b>")
+    assert "All Time\n2/2 · 100%" in text and "Last 7 Days\n2/2 · 100%" in text
+    assert "Today\n0/0" in text
+    assert [b["callback_data"] for row in markup["inline_keyboard"] for b in row] == \
+        ["pg|stats_top|0", "pg|stats_daily|0", "pg|stats_all|0"]
 
 
 def test_render_stats_without_db_falls_back_to_the_snapshot():

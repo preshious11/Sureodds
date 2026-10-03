@@ -1,4 +1,4 @@
-"""Manual controls:  python cli.py picks [--dry-run] [--force] | settle | recap [--dry-run] | stats | accuracy | stats-card | test-post | budget | sgo-usage"""
+"""Manual controls:  python cli.py picks [--dry-run] [--force] | settle | recap [--dry-run] | stats | accuracy | stats-card | test-post | budget | sgo-usage | reset-day [YYYY-MM-DD] [--yes] | history-status | history-import-csv FILE [competition] | history-backfill [--competitions PL,PD] [--seasons 2023,2024] [--yes] | history-elo"""
 from __future__ import annotations
 
 import os
@@ -18,12 +18,84 @@ from predbot.storage.db import Database
 from predbot.util.timeutil import to_local, utcnow
 
 
+def reset_day(cfg, args):
+    """Force the next prediction read to generate once with the current code.
+
+    Deletes only today's shared snapshot row and its unpublished, not-yet-started pending predictions. Settled
+    rows, started fixtures, other days, subscribers, provider caches and quota counters are untouched. Without
+    --yes this only reports what would be removed."""
+    day = next((a for a in args if not a.startswith("--")), to_local(utcnow(), cfg.timezone).date().isoformat())
+    db = Database(cfg.db_path)
+    try:
+        result = db.reset_prediction_day(day, cfg.timezone, utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                         dry_run="--yes" not in args)
+    except ValueError as exc:
+        print(f"refused: {exc}")
+        return
+    print(result)
+    if result["dry_run"]:
+        print("dry run only - nothing deleted. Re-run with --yes to apply.")
+
+
+def history_command(cfg, cmd, args):
+    """Historical football results (the independent model's only training data). Never part of normal bot operation:
+    every command is explicit, and the only one that can call a provider (``history-backfill``) is a dry run until
+    ``--yes`` and reports the exact request count first (one request per competition-season, free tier 10/minute)."""
+    import time
+    from predbot.history import ingest
+    from predbot.history.store import HistoryStore, season_of
+    db = Database(cfg.db_path)
+    store = HistoryStore(db)
+    if cmd == "history-status":
+        cov = store.coverage()
+        print(f"{sum(c['matches'] for c in cov.values())} football results in {len(cov)} competitions")
+        for comp, c in cov.items():
+            print(f"  {comp:14s} {c['matches']:6d} matches {c['teams']:3d} teams {c['first'][:10]}..{c['last'][:10]} "
+                  f"seasons {','.join(c['seasons'])} odds on {c['with_odds']}")
+        pending = db.query("SELECT COUNT(*) AS n FROM match_results WHERE elo_applied=0")[0]["n"]
+        print(f"{pending} results not yet applied to Elo")
+    elif cmd == "history-import-csv":
+        if not args:
+            print("usage: history-import-csv FILE [competition_id]")
+            return
+        text = open(args[0], encoding="utf-8-sig", errors="replace").read()
+        print(dict(ingest.ingest_csv(db, text, args[1] if len(args) > 1 else None)))
+    elif cmd == "history-backfill":
+        flags = {a.split("=")[0]: a.split("=")[1] for a in args if a.startswith("--") and "=" in a}
+        codes = (flags.get("--competitions") or "PL,ELC,PD,SA,BL1,FL1,DED,PPL").split(",")
+        this = int(season_of(utcnow()))
+        seasons = (flags.get("--seasons") or ",".join(str(y) for y in range(this - 2, this + 1))).split(",")
+        plan = ingest.plan_football_data(db, codes, seasons)
+        print(f"{len(plan)} requests needed (~{len(plan) * ingest.REQUEST_SPACING_SECONDS / 60:.1f} min at the free-tier pace): {plan}")
+        if "--yes" not in args:
+            print("dry run only - nothing requested. Re-run with --yes to fetch (each season is fetched once, ever).")
+            return
+        if not cfg.football_data_key:
+            print("FOOTBALL_DATA_KEY is not set")
+            return
+        from predbot.providers.football_data import FootballDataProvider
+        provider = FootballDataProvider(cfg.football_data_key)
+        report = ingest.ingest_football_data(db, provider.http.get, sorted({c for c, _ in plan}), sorted({s for _, s in plan}),
+                                             sleep=time.sleep)
+        for key, row in report.items():
+            print(key, row)
+        print("Elo learned from", store.apply_pending_elo(), "new results")
+    elif cmd == "history-elo":
+        print("Elo learned from", store.apply_pending_elo(), "pending results")
+    else:
+        print(__doc__)
+
+
 def main(argv):
     # attribute every SGO request this process makes to a person at a terminal, not to the scheduler
     os.environ.setdefault("PREDBOT_SGO_ORIGIN", "manual")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")   # emoji-safe terminal output on Windows
     cfg = load_config()
+    if len(argv) > 1 and argv[1] == "reset-day":
+        return reset_day(cfg, argv[2:])
+    if len(argv) > 1 and argv[1].startswith("history-"):
+        return history_command(cfg, argv[1], argv[2:])
     setup_logging(cfg.log_level, cfg.log_file, secrets=[cfg.sgo_key, cfg.sharpapi_key, cfg.odds_api_key,
                                                          cfg.football_data_key, cfg.telegram_token])
     require_provider_keys(cfg)

@@ -19,7 +19,7 @@ from predbot.providers.espn import ESPNProvider
 from predbot.providers.euroleague import EuroLeagueProvider, season_code
 from predbot.providers.sharpapi import SharpApiProvider
 from predbot.providers.budget import Budget
-from predbot.selection.picker import select
+from tests.pipeline_helpers import select
 from predbot.util.http import ProviderError
 from predbot.util.timeutil import parse_iso
 from tests.conftest import dt, load
@@ -188,7 +188,7 @@ def test_a_first_half_market_on_a_full_only_path_is_rejected_at_selection():
     first_half.line.period = "1h"
     ps = select([full, first_half], Config(), dt(), results_gate=_paths_gate(ResultPath("espn", frozenset({"full"}),
                                                                                        frozenset({"points"}))))
-    assert ps.diagnostics["selection_rejections"]["PERIOD_UNSETTLEABLE"] == 1
+    assert ps.diagnostics["line_rejections"]["missing_required_stats"] == 1         # an unsettleable period is no prediction
     assert [s.event for s in ps.all()] == [a]
 
 
@@ -198,8 +198,8 @@ def test_the_same_market_passes_on_a_path_that_grades_halves():
     first_half.line.period = "1h"
     gate = _paths_gate(ResultPath("football_data", frozenset({"full", "1h", "2h"}), frozenset({"points"})))
     ps = select([first_half, sc(ev(3), "result3", "home", 0.75, 1.45)], Config(), dt(), results_gate=gate)
-    assert "PERIOD_UNSETTLEABLE" not in ps.diagnostics["selection_rejections"]
-    assert b in [s.event for s in ps.all()]
+    assert "missing_required_stats" not in ps.diagnostics["line_rejections"]
+    assert b not in [s.event for s in ps.all()]      # period markets are outside the representative pool: gated in, then not a prediction
 
 
 def test_a_stat_no_path_can_grade_is_rejected():
@@ -207,7 +207,7 @@ def test_a_stat_no_path_can_grade_is_rejected():
     corners = sc(e, "total", "over", 0.75, 1.45, line=9.5)
     corners.line.stat = "corners"
     ps = select([corners], Config(), dt(), results_gate=_paths_gate(ResultPath("espn", frozenset({"full"}), frozenset({"points"}))))
-    assert ps.diagnostics["selection_rejections"]["STAT_UNSETTLEABLE"] == 1 and not ps.all()
+    assert ps.diagnostics["line_rejections"]["missing_required_stats"] == 1 and not ps.all()
 
 
 # ================================================================ C3: the resolver, end to end with real parsers

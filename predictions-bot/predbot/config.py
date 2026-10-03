@@ -78,22 +78,6 @@ def _float(name: str, default: float) -> float:
     return value
 
 
-def _ranking(value: str) -> str:
-    v = str(value or "").strip().lower()
-    if v in ("family_z", "raw"):
-        return v
-    log.warning("DAILY_RANKING=%r is not family_z or raw - using family_z", value)
-    return "family_z"
-
-
-def _cross_tier(value: str) -> str:
-    v = str(value or "").strip().lower()
-    if v in ("different_outcome", "forbid"):
-        return v
-    log.warning("CROSS_TIER_SAME_FIXTURE=%r is not different_outcome or forbid - using different_outcome", value)
-    return "different_outcome"
-
-
 def _view_navigation(value: str) -> str:
     v = str(value or "").strip().lower()
     if v in ("new", "edit_pages", "edit"):
@@ -153,6 +137,7 @@ def _with_international(listed: List[str], required: Tuple[str, ...]) -> List[st
 
 @dataclass
 class Config:
+    supported_competitions: List[str] = field(default_factory=lambda: _list("SUPPORTED_COMPETITIONS", ""))
     cache_retry_seconds: int = field(default_factory=lambda: max(60, _int("CACHE_RETRY_SECONDS", 900)))
     cache_retention_days: int = field(default_factory=lambda: max(1, _int("CACHE_RETENTION_DAYS", 7)))
 
@@ -194,9 +179,6 @@ class Config:
         "soccer_epl,soccer_spain_la_liga,soccer_italy_serie_a,soccer_germany_bundesliga,soccer_france_ligue_one,soccer_uefa_champs_league,soccer_uefa_europa_league,soccer_uefa_nations_league,soccer_efl_champ,soccer_netherlands_eredivisie,soccer_portugal_primeira_liga,soccer_turkey_super_league"), INTERNATIONAL_ODDS_KEYS))
     oddsapi_min_keys_per_sport: int = field(default_factory=lambda: _int("ODDSAPI_MIN_KEYS_PER_SPORT", 1))
     provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "oddsapi,sharpapi,sportsgameodds"))
-    #: Provider tried first for the Top ticket only; falls back to
-    #: ``provider_order`` when it can't supply enough qualifying picks.
-    top_provider_priority: List[str] = field(default_factory=lambda: _list("TOP_PROVIDER_PRIORITY", "oddsapi"))
     sgo_sports: List[str] = field(default_factory=lambda: _list("SGO_SPORTS", ""))
     sgo_leagues: List[str] = field(default_factory=lambda: _list("SGO_LEAGUES", "NBA,NFL,MLB,MLS,NCAAF,NCAAB,UEFA_CHAMPIONS_LEAGUE"))
     sgo_event_limit: int = field(default_factory=lambda: _int("SGO_EVENT_LIMIT", 50))
@@ -290,12 +272,6 @@ class Config:
     #: p_model inside top_odds_target..top_odds_max. top_odds_max is a HARD
     #: reject on the combined ticket. Per-leg odds do not matter for this
     #: confidence product - top_leg_odds_min is only a data-sanity floor.
-    #: when the strict Top search finds no ticket: first widen the odds band by TOP_RELAX_BAND on each side, then
-    #: lower the per-leg probability floor by TOP_RELAX_PROB inside that band. Never fewer than 2 or more than 3 legs.
-    top_relaxed_fallback: bool = field(default_factory=lambda: _bool("TOP_RELAXED_FALLBACK", True))
-    top_relax_band: float = field(default_factory=lambda: _float("TOP_RELAX_BAND", 0.25))
-    #: 0.0 = the Top never lowers its per-leg probability floor just to reach its odds target (only the band widens)
-    top_relax_prob: float = field(default_factory=lambda: _float("TOP_RELAX_PROB", 0.0))
     top_legs_min: int = field(default_factory=lambda: _int("TOP_LEGS_MIN", 1))
     # TOP_LEGS_MAX is canonical; honour the operator's TOP_MAX_PICKS alias.
     top_legs_max: int = field(default_factory=lambda: _int("TOP_LEGS_MAX", _int("TOP_MAX_PICKS", 3)))
@@ -363,9 +339,6 @@ class Config:
     se_no_sharp: float = field(default_factory=lambda: _float("SE_NO_SHARP", 0.020))
     #: Elo only counts as an independent signal once BOTH teams have this many rated games
     elo_min_games: int = field(default_factory=lambda: _int("ELO_MIN_GAMES", 10))
-    #: One selection per real fixture across Top + Daily: two legs on one match are
-    #: correlated, so the slate never carries both.
-    max_picks_per_event: int = field(default_factory=lambda: _int("MAX_PICKS_PER_EVENT", 1))
     max_player_props: int = field(default_factory=lambda: _int("MAX_PLAYER_PROPS", 0))
     #: Daily-list diversity quotas, so one market (e.g. corners totals), one
     #: sport or one league can never take over the single daily ticket. Shares
@@ -376,17 +349,19 @@ class Config:
     #: Cross-market cap on one stat ("corners" can appear as totals AND 1X2
     #: result3 lines; the (market, stat) cap above sees them as two markets).
     daily_max_stat_share: float = field(default_factory=lambda: _float("DAILY_MAX_STAT_SHARE", 0.40))
-    #: order the Daily builder is offered candidates in: ``family_z`` ranks each market family against its
-    #: own peers (a straight win competes with wins, not with +1.5 lines); ``raw`` = ``_daily_score`` alone
-    #: (market-quality tier still comes first: a restricted market is never offered ahead of a main one)
-    daily_ranking: str = field(default_factory=lambda: _ranking(_env("DAILY_RANKING", "family_z")))
-    #: what the Daily may do on a match that is already in the Top ticket: ``different_outcome`` = allowed
-    #: only with a tip that is neither the same nor nested in a Top leg; ``forbid`` = the match is off-limits
-    cross_tier_same_fixture: str = field(default_factory=lambda: _cross_tier(_env("CROSS_TIER_SAME_FIXTURE", "different_outcome")))
     daily_max_sport_share: float = field(default_factory=lambda: _float("DAILY_MAX_SPORT_SHARE", 0.60))
     daily_max_per_league: int = field(default_factory=lambda: _int("DAILY_MAX_PER_LEAGUE", 3))
-    daily_max_period_share: float = field(default_factory=lambda: _float("DAILY_MAX_PERIOD_SHARE", 0.15))
     model_shrink: float = field(default_factory=lambda: _float("MODEL_SHRINK_TO_MARKET", 0.80))
+    #: How the independent (history-based) estimate relates to p_model. ``off``: not computed. ``shadow`` (default):
+    #: computed and stored next to p_model (p_independent, edge, EV, status) but p_model is unchanged. ``independent``:
+    #: p_model IS the independent estimate where one exists (the market-derived value stays as the labelled
+    #: fallback elsewhere). Blends with market information are deliberately not offered until the backtest has
+    #: chosen their weights.
+    independent_model_mode: str = field(default_factory=lambda: _env("INDEPENDENT_MODEL_MODE", "shadow").strip().lower())
+    #: Strength-model hyper-parameters. Provisional defaults: select them with tools/backtest_football.py on real history.
+    strength_half_life_days: float = field(default_factory=lambda: _float("STRENGTH_HALF_LIFE_DAYS", 365.0))
+    strength_prior: float = field(default_factory=lambda: _float("STRENGTH_PRIOR", 8.0))
+    strength_min_matches: float = field(default_factory=lambda: _float("STRENGTH_MIN_MATCHES", 5.0))
 
     # Schedule
     live_updates_enabled: bool = field(default_factory=lambda: _bool("LIVE_UPDATES_ENABLED", True))
@@ -454,12 +429,10 @@ class Config:
             ("MODEL_SHRINK_TO_MARKET in [0,1]", 0.0 <= self.model_shrink <= 1.0),
             ("TOP_LEGS_MIN >= 1", self.top_legs_min >= 1),
             ("TOP_LEGS_MAX >= TOP_LEGS_MIN", self.top_legs_max >= self.top_legs_min),
-            ("MAX_PICKS_PER_EVENT >= 1", self.max_picks_per_event >= 1),
             ("DAILY_MAX_MARKET_SHARE in (0,1]", 0.0 < self.daily_max_market_share <= 1.0),
             ("DAILY_MAX_STAT_SHARE in (0,1]", 0.0 < self.daily_max_stat_share <= 1.0),
             ("DAILY_MAX_SPORT_SHARE in (0,1]", 0.0 < self.daily_max_sport_share <= 1.0),
             ("DAILY_MAX_PER_LEAGUE >= 1", self.daily_max_per_league >= 1),
-            ("DAILY_MAX_PERIOD_SHARE in (0,1]", 0.0 < self.daily_max_period_share <= 1.0),
         ]
         for name, ok in checks:
             if not ok:

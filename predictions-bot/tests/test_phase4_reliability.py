@@ -15,7 +15,7 @@ from predbot.cache.models import DailySnapshot
 from predbot.config import Config
 from predbot.jobs import daily_picks, scheduler, settle
 from predbot.jobs.scheduler import DynamicJob
-from predbot.selection.picker import select
+from tests.pipeline_helpers import select
 from tests.conftest import dt
 from tests.test_picker import ev, sc
 from tests.test_sqlite_prediction_cache import clock, service  # noqa: F401  (fixtures)
@@ -92,14 +92,19 @@ def _pending(db):
     return {r["provider_event_id"] for r in db.picks_for_date("2030-06-01")}
 
 
-def test_regenerating_a_day_nobody_was_sent_replaces_its_pending_picks(db):
+def test_regenerating_a_day_never_replaces_stored_predictions_only_an_explicit_reset_does(db):
+    """First-write-wins: a plain regeneration only adds new events. Dropping a stale unpublished prediction is the
+    job of the explicit, published-day-refusing db.reset_prediction_day."""
     a, b, c = ev(1), ev(2), ev(3)
     daily_picks.store_picks(_pickset(a, b), db, "2030-06-01")
     assert _pending(db) == {"1", "2"}
 
     daily_picks.store_picks(_pickset(a, c), db, "2030-06-01")
+    assert _pending(db) == {"1", "2", "3"}                     # 2 kept, 3 added, 1 untouched
 
-    assert _pending(db) == {"1", "3"}                          # 2 was stale, 3 is new, 1 is untouched
+    db.reset_prediction_day("2030-06-01", "UTC", "2030-06-01T00:00:00Z")
+    daily_picks.store_picks(_pickset(a, c), db, "2030-06-01")
+    assert _pending(db) == {"1", "3"}                          # the reset is what dropped the stale 2
 
 
 def test_after_delivery_the_stored_rows_are_never_touched(db):

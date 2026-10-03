@@ -26,8 +26,8 @@ class Slow:
         time.sleep(self.delay)
         if self.fail:
             raise RuntimeError("boom")
-        return [Event(provider=self.name, provider_event_id=f"{self.name}-1", sport="football", league="L", home=self.home,
-                      away="Away", start=dt(hh=22), markets=[MarketLine("result3", "home", 2.0)], sources=[self.name])]
+        return [Event(provider=self.name, provider_event_id=f"{self.name}-1", sport="football", league="England - Premier League", home=self.home,
+                      away=f"{self.home} Visitors", start=dt(hh=22), markets=[MarketLine("result3", "home", 2.0)], sources=[self.name])]
 
 
 def _chain(db, providers, order):

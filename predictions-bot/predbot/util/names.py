@@ -73,14 +73,23 @@ def strip_abbreviation(name: str) -> str:
     return " ".join(tokens)
 
 
+#: Last words that name an institution or a kind of place, not a team: "Ohio State" and "Kent State" do not share a
+#: nickname. A name ending in one of these (or in a single letter, "Texas A&M") has no nickname to reduce to.
+GENERIC_TAILS = {"state", "university", "college", "tech", "institute", "polytechnic", "city", "county"}
+
+
 def canonical_team(name: str, sport: str = "") -> str:
-    """A spelling-independent token for a team, used to build fixture keys. Football keeps the normalised
-    name; US-style sports reduce to the nickname (the last word, "red sox"/"white sox" keep two)."""
+    """A spelling-independent token for a team, used to build fixture keys and participant identity. Football keeps
+    the normalised name; US-style sports reduce to the nickname (the last word, "red sox"/"white sox" keep two) -
+    but only when that last word IS a nickname. A name that ends in a generic institutional word ("Ohio State",
+    "Kent State", "Texas A&M") keeps its full normalised form, otherwise every "<place> State" would be one team."""
     if sport not in NICKNAME_SPORTS:
         return normalize(name)
     tokens = normalize(strip_abbreviation(name)).split()
     if not tokens:
         return normalize(name)
+    if len(tokens) > 1 and (tokens[-1] in GENERIC_TAILS or len(tokens[-1]) == 1):
+        return " ".join(tokens)
     return " ".join(tokens[-2:]) if tokens[-1] == "sox" and len(tokens) > 1 else tokens[-1]
 
 
@@ -97,5 +106,7 @@ def same_team(a: str, b: str, threshold: float = 0.82, sport: str = "") -> bool:
         ta, tb = normalize(sa).split(), normalize(sb).split()
         if ta and tb:
             short, long_ = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+            if len(short) == 1 and (short[0] in GENERIC_TAILS or len(short[0]) == 1):
+                return False
             return long_[-len(short):] == short
     return False

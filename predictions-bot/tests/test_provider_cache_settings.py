@@ -13,7 +13,8 @@ from predbot.jobs import daily_picks
 from predbot.providers.chain import ProviderChain
 from predbot.util.timeutil import iso
 from tests.conftest import dt
-from tests.test_picker import ev, sc
+from tests.real_events import real_ev as ev
+from tests.test_picker import sc
 
 
 class Source:
@@ -127,8 +128,8 @@ def test_new_international_coverage_reaches_top_without_sgo_or_weaker_gates(db, 
     result = app.get_daily_snapshot(force_refresh=True, scheduled=True)
     assert len(result.top_picks) == 2 and result.daily_picks
     assert result.generation['providers']['oddsapi']['refresh_reason'] == 'settings_changed'
-    assert result.generation['top_config']['top_min_books'] == 3
-    assert result.generation['top_config']['top_relax_prob'] == 0
+    assert cfg.top_min_books == 3                        # the Top book-coverage gate was not weakened to get picks
+    assert not hasattr(cfg, 'top_relax_prob')            # and the relaxed fallback no longer exists
     source.fetch_events.reset_mock()
     app.get_daily_snapshot()  # subscriber reads never spend calls, even after retry expiry
     clock[0] += timedelta(minutes=16)

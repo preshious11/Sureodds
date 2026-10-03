@@ -24,13 +24,26 @@ def _fresh_warnings(monkeypatch):
     ("DAILY_PICKS_TARGET", "20", "daily_target", 12),
     ("DAILY_MIN_PROB", "0.30", "daily_min_prob", 0.55),
     ("DAILY_MIN_PROB", "0.3", "daily_min_prob", 0.55),
-    ("TOP_RELAX_PROB", "0.04", "top_relax_prob", 0.0),
 ])
 def test_a_pinned_pre_rework_default_is_ignored_with_a_warning(monkeypatch, caplog, name, old, attr, new):
     monkeypatch.setenv(name, old)
     with caplog.at_level(logging.WARNING):
         assert getattr(Config(), attr) == new
     assert any(name in r.message and "pre-rework default" in r.message for r in caplog.records)
+
+
+@pytest.mark.parametrize("name,value,attr", [
+    ("TOP_RELAXED_FALLBACK", "1", "top_relaxed_fallback"), ("TOP_RELAX_PROB", "0.04", "top_relax_prob"),
+    ("CROSS_TIER_SAME_FIXTURE", "1", "cross_tier_same_fixture"), ("MAX_PICKS_PER_EVENT", "3", "max_picks_per_event"),
+    ("DAILY_MAX_PERIOD_SHARE", "0.5", "daily_max_period_share"),
+    ("TOP_PROVIDER_PRIORITY", "oddsapi", "top_provider_priority"),
+])
+def test_an_env_that_still_sets_a_removed_flag_is_simply_ignored(monkeypatch, name, value, attr):
+    """The dashboard may still carry flags of the deleted Top fallback / cross-tier / priority architecture."""
+    monkeypatch.setenv(name, value)
+    c = Config()
+    assert not hasattr(c, attr)
+    assert c.top_min_books >= 1 and c.daily_target == 12        # the rest of the config is unaffected
 
 
 def test_a_stale_pin_is_not_reported_as_an_active_override(monkeypatch):

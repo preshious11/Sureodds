@@ -17,7 +17,7 @@ from predbot.model.calibration import Calibrator, MIN_SAMPLES
 from predbot.model.elo import Elo
 from predbot.model.ensemble import EventModel
 from predbot.providers.base import Event, MarketLine
-from predbot.selection.picker import select
+from tests.pipeline_helpers import select
 from predbot.storage.db import Database
 from predbot.util.timeutil import canonical_tz
 from tests.conftest import dt

@@ -12,8 +12,7 @@ import pytest
 
 from predbot.bot.format import combined_odds, picks_message
 from predbot.config import Config
-from predbot.markets.catalog import is_equivalent
-from predbot.selection.picker import select
+from tests.pipeline_helpers import select
 
 from tests.conftest import dt
 from tests.test_picker import _fx, cfg, ev, sc
@@ -78,7 +77,10 @@ def test_same_match_same_outcome_appears_only_once():
     assert len(keys) == len(set(keys))
 
 
-def test_no_duplicate_outcome_between_top_and_daily_sections():
+def test_equivalent_outcomes_collapse_to_one_prediction_so_sections_cannot_hold_duplicates():
+    """1X2 and Moneyline are different families, so a fixture offering both keeps one representative of each in All;
+    Top and Daily (which only reference stored predictions) hold at most ONE prediction per fixture, and the same
+    prediction may legitimately sit in both sections."""
     now = dt()
     pool = []
     for i in range(25):
@@ -86,21 +88,26 @@ def test_no_duplicate_outcome_between_top_and_daily_sections():
         pool.append(sc(e, "result3", "home", 0.70, 1.80))       # top-quality pick
         pool.append(sc(e, "result2", "home", 0.65, 1.70))       # near-equivalent outcome
     ps = select(pool, cfg(), now)
+    assert len(ps.all()) == 50
+    for section in (ps.top, ps.daily):
+        events = [s.event.canonical_event_id for s in section]
+        assert len(events) == len(set(events))
     for t in ps.top:
         for d in ps.daily:
-            if t.event.dedupe_key() == d.event.dedupe_key():
-                assert not is_equivalent(t.line, d.line)
+            if t.event.canonical_event_id == d.event.canonical_event_id:
+                assert t is d
 
 
 def test_same_match_with_different_outcomes_is_capped_at_one_pick():
-    """MAX_PICKS_PER_EVENT=1: two legs on one match are correlated, so even
-    genuinely different outcomes never both make the slate."""
+    """One prediction per fixture in Top and Daily: two legs on one match are correlated, so even genuinely different outcomes never both make
+    Top or Daily - although both are All Predictions of the fixture."""
     now = dt()
     e = ev(1)
     pool = [sc(e, "result3", "home", 0.70, 1.80),
             sc(e, "total", "over", 0.64, 1.80, line=2.5)]
     ps = select(pool, cfg(), now)
-    assert len(ps.all()) == 1
+    assert len(ps.all()) == 2
+    assert len(ps.top) <= 1 and len(ps.daily) <= 1
 
 
 # -------------------------------------------------- section total counts
@@ -123,23 +130,24 @@ def test_top_ticket_never_overshoots_the_target():
 
 def test_daily_section_lands_in_the_10_to_12_window():
     now = dt()
-    pool = [sc(_fx(i), "result3", "home" if i % 2 == 0 else "away", 0.62, 1.35) for i in range(40)]
+    kinds = [("result3", "home", None), ("total", "over", 2.5), ("btts", "yes", None), ("dnb", "home", None)]
+    pool = [sc(_fx(i), kinds[i % 4][0], kinds[i % 4][1], 0.62, 1.35, line=kinds[i % 4][2]) for i in range(40)]
     ps = select(pool, cfg(), now)
     ticket = math.prod(s.price for s in ps.daily)
     c = cfg()
     assert (c.daily_odds_min, c.daily_odds_max) == (10.0, 12.0)
     assert c.daily_odds_min <= ticket <= c.daily_odds_max      # 10..12: the Daily ALONE, the Top is not counted
-    assert len(ps.all()) <= c.daily_target                     # hard pick cap
+    assert len(ps.daily) <= c.daily_target                     # hard pick cap on the Daily section
 
 
 def test_total_counts_are_reported_per_section():
     now = dt()
     pool = [sc(ev(i), "result3", "home", 0.70, 1.45) for i in range(12)]
     ps = select(pool, cfg(), now)
-    assert len(ps.top) + len(ps.daily) == len(ps.all())
+    shown = len(ps.top) + len(ps.daily)                       # a prediction in both sections is shown in both
     card = picks_message(ps.top, ps.daily, DAY, "UTC")
     odds_lines = [ln for ln in card.splitlines() if ln.startswith("💰")]
-    assert len(odds_lines) == len(ps.all())                   # one odds line per pick
-    assert card.count("📊") == len(ps.all())                  # one block per pick
+    assert len(odds_lines) == shown                           # one odds line per section entry
+    assert card.count("📊") == shown                          # one block per section entry
     headers = [ln for ln in card.splitlines() if ln.startswith("🎟 Combined odds")]
     assert [int(re.search(r"· (\d+) picks?", h).group(1)) for h in headers] ==         [n for n in (len(ps.top), len(ps.daily)) if n]        # each header counts its own ticket

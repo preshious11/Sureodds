@@ -11,12 +11,13 @@ import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
-from predbot.bot.format import (DAILY_TITLE, NO_RESULTS_YET, TOP_TITLE, PickLine,
-                                by_kickoff, format_outcome, pick_line_from_record, pick_lines,
+from predbot.bot.format import (DAILY_TITLE, NO_RESULTS_YET, SPORT_ICON, SPORT_LABEL, TOP_TITLE, PickLine,
+                                by_kickoff, fixture_block, format_outcome, pick_line_from_record, pick_lines,
                                 picks_card, stats_message, yesterday_header, yesterday_pick_line,
                                 zone_label)
-from predbot.cache.models import (DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STATS,
-                                  VIEW_TOP, VIEW_YESTERDAY)
+from predbot.cache.models import (DailySnapshot, PickRecord, SPORT_VIEW_PREFIX, VIEW_DAILY, VIEW_STATS,
+                                  VIEW_ALL, VIEW_TOP, VIEW_YESTERDAY, sport_bucket)
+from predbot.selection.representatives import FAMILY_ORDER
 from predbot.util.timeutil import parse_iso, to_local, utcnow
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,24 @@ VIEW_DESC = {VIEW_TOP: "Top picks of the day",
              VIEW_YESTERDAY: "Every pick from yesterday, with its result"}
 #: the buttons under every card, two to a row
 SWITCH_ROWS = ((VIEW_TOP, VIEW_DAILY), (VIEW_STATS, VIEW_YESTERDAY))
+VIEW_TITLES[VIEW_ALL] = 'ALL PREDICTIONS'
+VIEW_ICON[VIEW_ALL], VIEW_LABEL[VIEW_ALL], VIEW_COMMAND[VIEW_ALL] = '📚', 'All Predictions', '/all'
+VIEW_DESC[VIEW_ALL] = 'Every model prediction, by match'
+SWITCH_ROWS = ((VIEW_ALL,), (VIEW_TOP, VIEW_DAILY), (VIEW_STATS, VIEW_YESTERDAY))
+for _sport, _name in SPORT_LABEL.items():
+    _view = SPORT_VIEW_PREFIX + _sport
+    VIEW_TITLES[_view] = 'ALL PREDICTIONS'
+    VIEW_LABEL[_view], VIEW_ICON[_view] = _name, SPORT_ICON.get(_sport, SPORT_ICON['other'])
+for _collection in ('all', 'top', 'daily'):
+    for _prefix in ('stats_', 'results_'):
+        _view = _prefix + _collection
+        VIEW_TITLES[_view] = VIEW_LABEL[_collection]
+        VIEW_LABEL[_view], VIEW_ICON[_view] = VIEW_LABEL[_collection], '📊'
+
+
+def is_prediction_view(view: str) -> bool:
+    """Views that read the day's stored predictions (page turns and sport taps never reach a provider)."""
+    return view in (VIEW_ALL, VIEW_TOP, VIEW_DAILY) or view.startswith(SPORT_VIEW_PREFIX)
 
 
 def view_button_label(view: str) -> str:
@@ -114,8 +133,9 @@ def render_pick(pick: PickRecord, tz: str, user_tz: Optional[str] = None) -> str
     return "\n".join(pick_lines(pick_line_from_record(pick, tz, user_tz)))
 
 
-def build_keyboard(view: str, page: int, pages: int, day: Optional[str] = None) -> Dict:
-    """InlineKeyboardMarkup dict: arrows (when useful) + view-switch row. The arrows carry ``day``."""
+def build_keyboard(view: str, page: int, pages: int, day: Optional[str] = None, extra_rows=()) -> Dict:
+    """InlineKeyboardMarkup dict: arrows (when useful), any ``extra_rows`` (the sport menu / back button) and the
+    view-switch rows. The arrows carry ``day``."""
     row: List[Dict[str, str]] = []
     if pages > 1:
         if page > 0:
@@ -125,7 +145,7 @@ def build_keyboard(view: str, page: int, pages: int, day: Optional[str] = None) 
             row.append({"text": "▶️", "callback_data": encode_callback(view, page + 1, day)})
     switch = [[{"text": view_button_label(v), "callback_data": encode_callback(v, 0)} for v in views]
               for views in SWITCH_ROWS]
-    return {"inline_keyboard": ([row] if row else []) + switch}
+    return {"inline_keyboard": ([row] if row else []) + [list(r) for r in extra_rows] + switch}
 
 def _retry_hint(snapshot: DailySnapshot, tz: str) -> str:
     """' Retrying around 11:00 Africa/Lagos.' when a partial refresh is scheduled."""
@@ -140,6 +160,10 @@ def _retry_until(snapshot: DailySnapshot) -> str:
 
 
 def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> str:
+    if snapshot.all_predictions and view != VIEW_ALL:
+        return f'No {VIEW_LABEL[view]} qualified today. {len(snapshot.all_predictions)} All Predictions are available in /all.'
+    if view == VIEW_ALL and snapshot.status == 'COMPLETE':
+        return 'No valid model predictions were generated today.'
     if (snapshot.generation or {}).get("reason") == "before_post_time":
         return f"📋 Today's picks are ready at {snapshot.generation.get('ready_at', 'the scheduled time')}."
     if (snapshot.generation or {}).get("reason") == "generating":
@@ -163,6 +187,62 @@ def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> s
 
 
 
+def _sports_back_row(day: str):
+    return ([{"text": "◀️ Sports", "callback_data": encode_callback(VIEW_ALL, 0, day)}],)
+
+
+def _valid(items: List[PickRecord]) -> List[PickRecord]:
+    return [p for p in items if format_outcome(p) and math.isfinite(p.price) and p.price > 1.0]
+
+
+def fixture_of(p: PickRecord) -> str:
+    """The fixture a stored prediction belongs to (several predictions - one per market family - share one)."""
+    return p.fixture_id or f"{p.sport}|{p.home}|{p.away}|{p.kickoff_utc}"
+
+
+def group_by_fixture(items: List[PickRecord]) -> List[List[PickRecord]]:
+    """All Predictions grouped by fixture: fixtures in kick-off order, each one's predictions in the stable market-family
+    order (1X2 / Moneyline, Double Chance, DNB, Handicap, Over/Under, BTTS). A fixture is never split."""
+    groups: Dict[str, List[PickRecord]] = {}
+    for p in items:
+        groups.setdefault(fixture_of(p), []).append(p)
+    far = datetime.max.replace(tzinfo=None)
+
+    def kickoff(g: List[PickRecord]):
+        t = parse_iso(g[0].kickoff_utc)
+        return (t is None, t.replace(tzinfo=None) if t else far)
+
+    for g in groups.values():
+        g.sort(key=lambda p: (FAMILY_ORDER.get(p.market, len(FAMILY_ORDER)), p.rank))
+    return sorted(groups.values(), key=kickoff)
+
+
+def _plural(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+def render_sport_menu(snapshot: DailySnapshot) -> Tuple[str, Dict]:
+    """All Predictions, step one: only the sports that have a prediction today, each with its prediction and match counts.
+    Reads the stored snapshot; a tap opens that sport's pages (``all_<sport>``) with no provider call."""
+    items = _valid(snapshot.all_predictions)
+    if not items:
+        return empty_view_message(snapshot, VIEW_ALL), build_keyboard(VIEW_ALL, 0, 1)
+    counts: Dict[str, int] = {}
+    matches: Dict[str, set] = {}
+    for p in items:
+        b = sport_bucket(p.sport)
+        counts[b] = counts.get(b, 0) + 1
+        matches.setdefault(b, set()).add(fixture_of(p))
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    fixtures = len({fixture_of(p) for p in items})
+    text = '\n\n'.join(['<b>ALL PREDICTIONS</b>', f'{snapshot.date} · {_plural(len(items), "prediction", "predictions")} · '
+                         f'{_plural(fixtures, "match", "matches")}', 'Pick a sport:'])
+    buttons = [{"text": f"{SPORT_ICON.get(s, SPORT_ICON['other'])} {SPORT_LABEL.get(s, s)} ({n} · {_plural(len(matches[s]), 'match', 'matches')})",
+                "callback_data": encode_callback(SPORT_VIEW_PREFIX + s, 0, snapshot.date)} for s, n in ordered]
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    return text, build_keyboard(VIEW_ALL, 0, 1, snapshot.date, extra_rows=rows)
+
+
 def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
                 tz: str, user_tz: Optional[str] = None,
                 now: Optional[datetime] = None) -> Tuple[str, Dict]:
@@ -174,14 +254,32 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
     ``items`` - the same list the cards were sliced from. Nothing is priced
     from a second, hidden collection.
     """
+    if view == VIEW_ALL:
+        return render_sport_menu(snapshot)
     items = snapshot.view_items(view)
     # A pick with unusable odds (<=1.0, non-finite) would make combined_odds()
     # raise and blank the whole page; drop it the same way an ambiguous
     # outcome is dropped, instead of failing the entire view.
     items = [p for p in items if format_outcome(p) and math.isfinite(p.price) and p.price > 1.0]
     if not items:
+        if view.startswith(SPORT_VIEW_PREFIX):
+            return (f'No {VIEW_LABEL[view]} predictions today.',
+                    build_keyboard(view, 0, 1, snapshot.date, extra_rows=_sports_back_row(snapshot.date)))
         return empty_view_message(snapshot, view, tz), build_keyboard(view, 0, 1)
     display_tz = user_tz or tz
+    if view.startswith(SPORT_VIEW_PREFIX):
+        # one block per FIXTURE (its predictions together), ``size`` fixtures per page, a fixture never split
+        sport = view[len(SPORT_VIEW_PREFIX):]
+        groups = group_by_fixture(items)
+        pages = total_pages(len(groups), size)
+        page = clamp_page(page, len(groups), size)
+        blocks = ['\n'.join(fixture_block([pick_line_from_record(p, tz, user_tz, now) for p in g]))
+                  for g in groups[page * size:(page + 1) * size]]
+        text = '\n\n'.join([f'<b>ALL PREDICTIONS</b> · {SPORT_ICON.get(sport, SPORT_ICON["other"])} {VIEW_LABEL[view]}',
+                             f'{snapshot.date} · {_plural(len(items), "prediction", "predictions")} · '
+                             f'{_plural(len(groups), "match", "matches")}',
+                             *blocks, f'Page {page + 1} of {pages}'])
+        return text, build_keyboard(view, page, pages, snapshot.date, extra_rows=_sports_back_row(snapshot.date))
     lines = by_kickoff(pick_line_from_record(p, tz, user_tz, now) for p in items)     # kickoff order, then paged
     pages = total_pages(len(lines), size)
     page = clamp_page(page, len(lines), size)
@@ -201,6 +299,8 @@ def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC",
 
     With a Database handle the numbers are computed fresh, on the READER's local dates; without one the cached
     snapshot's stats are used (older shape: read as a settled day)."""
+    if db is not None:
+        return render_collection_stats(db, 'all', tz, now, main=True)
     raw = None
     display_tz = user_tz or tz          # "today" has to mean the subscriber's today
     if db is not None:
@@ -229,7 +329,7 @@ def render_yesterday(db=None, tz: str = "UTC", page: int = 0, size: int = PAGE_S
         return NO_RESULTS_YET, build_keyboard(VIEW_YESTERDAY, 0, 1)
     display_tz = user_tz or tz
     day = day or (to_local(now or utcnow(), display_tz) - timedelta(days=1)).strftime("%Y-%m-%d")
-    rows = stats_mod.ordered(db.picks_for_date(day))
+    rows = stats_mod.ordered(db.picks_for_date(day, published_only=True))
     header = yesterday_header(day, stats_mod.day_block(rows))
     if not rows:
         return "\n".join(header), build_keyboard(VIEW_YESTERDAY, 0, 1, day)
@@ -250,7 +350,48 @@ def render_view(snapshot: DailySnapshot, view: str, page: int, size: int,
                 now: Optional[datetime] = None, day: Optional[str] = None) -> Tuple[str, Dict]:
     """Entry point used by both the /daily command and callback navigation."""
     if view == VIEW_STATS:
-        return render_stats(snapshot, db=db, tz=tz, user_tz=user_tz)
+        return render_stats(snapshot, db=db, tz=tz, now=now, user_tz=user_tz)
+    if view.startswith('stats_'):
+        return render_collection_stats(db, view[6:], user_tz or tz, now)
+    if view.startswith('results_'):
+        return render_collection_results(db, view[8:], page, size, day or snapshot.date)
     if view == VIEW_YESTERDAY:
         return render_yesterday(db, tz, page, size, day, now, user_tz)
     return render_page(snapshot, view, page, size, tz, user_tz, now)
+
+
+def render_collection_stats(db, collection, tz, now=None, main=False):
+    from predbot.jobs.stats import collection_stats
+    if db is None:
+        return NO_RESULTS_YET, build_keyboard(VIEW_STATS, 0, 1)
+    local = to_local(now or utcnow(), tz)
+    values = collection_stats(db, collection, local)
+    text = ['<b>Performance</b>' if main else f'<b>{VIEW_LABEL[collection].upper()}</b>']
+    windows = (('today', 'Today'), ('last7', 'Last 7 Days'), ('all', 'All Time')) if main else (
+        ('today', 'Today'), ('last7', '7 Days'), ('last30', '30 Days'), ('all', 'All Time'))
+    for key, title in windows:
+        b = values[key]
+        rate = f"{b['hit_rate']:.0f}%" if b['hit_rate'] is not None else '—'
+        text += ['', title, f"{b['won']}/{b['decided']} · {rate}"]
+        if collection == 'all' and b['issued']:
+            text.append(f"{b['issued']} predictions · {b['fixtures']} matches")          # several predictions per match
+        if b['pending']:
+            text.append(f"{b['pending']} pending")
+    buttons = [[{'text': VIEW_LABEL[c], 'callback_data': encode_callback('stats_' + c, 0)}
+                for c in ('top', 'daily', 'all')]]
+    if not main:
+        buttons.insert(0, [{'text': 'View Results', 'callback_data': encode_callback('results_' + collection, 0, local.date().isoformat())}])
+    return '\n'.join(text), {'inline_keyboard': buttons}
+
+
+def render_collection_results(db, collection, page, size, day):
+    from predbot.jobs import stats as stats_mod
+    rows = [] if db is None else [r for r in db.collection_predictions(collection, settled_only=True)
+                                  if r['pick_date'] <= day]
+    rows.sort(key=lambda r: (r['pick_date'], r['start_utc'], r['id']), reverse=True)
+    pages = total_pages(len(rows), size)
+    page = clamp_page(page, len(rows), size)
+    text = [f'<b>{VIEW_LABEL[collection]} · Results</b>']
+    text += [yesterday_pick_line(r, stats_mod.outcome(r)) for r in rows[page * size:(page + 1) * size]]
+    text += [f'Page {page + 1} of {pages}'] if rows else ['No settled predictions yet.']
+    return '\n\n'.join(text), build_keyboard('results_' + collection, page, pages, day)

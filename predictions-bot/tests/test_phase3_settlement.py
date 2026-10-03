@@ -19,7 +19,7 @@ from predbot.providers.budget import Budget
 from predbot.providers.chain import ResultsResolver, build_providers
 from predbot.providers.football_data import FootballDataProvider, competition_for
 from predbot.providers.oddsapi import OddsApiProvider
-from predbot.selection.picker import select
+from tests.pipeline_helpers import select
 from predbot.util.http import ProviderError
 from tests.conftest import dt, load
 from tests.test_picker import ev, sc
@@ -287,7 +287,7 @@ def test_the_gate_logs_each_league_without_a_path_once(caplog):
     assert len(lines) == 2 and "turkey_-_super_lig" in lines[0]
 
 
-def test_the_picker_rejects_events_without_a_results_path_and_counts_them_per_league():
+def test_the_engine_rejects_events_without_a_results_path_and_counts_the_candidates():
     e_ok, e_no, e_no2 = ev(1), ev(2), ev(3)
     e_ok.league_id, e_no.league_id, e_no2.league_id = "england_-_premier_league", "turkey_-_super_lig", "turkey_-_super_lig"
     pool = [sc(e, "result3", "home", 0.75, 1.45) for e in (e_ok, e_no, e_no2)] + [sc(e_no, "total", "over", 0.75, 1.45, line=2.5)]
@@ -295,16 +295,18 @@ def test_the_picker_rejects_events_without_a_results_path_and_counts_them_per_le
 
     ps = select(pool, Config(), dt(), results_gate=gate)
 
-    assert ps.diagnostics["selection_rejections"]["NO_RESULTS_PATH"] == 3          # three candidates ...
-    assert ps.diagnostics["no_results_path_by_league"] == {"turkey_-_super_lig": 2}   # ... on two events
-    assert all(s.event is e_ok for s in ps.all())
+    assert ps.diagnostics["line_rejections"]["missing_required_stats"] == 3             # three candidates (the per-league
+    # breakdown is no longer a diagnostic; the gate logs each league without a path once, see above)
+    assert [s.event for s in ps.all()] == [e_ok]                                   # only the settleable event predicts
 
 
 def test_build_picks_wires_the_gate_from_the_chain_providers(db, monkeypatch):
     from predbot.providers.chain import ProviderChain
     fd = Mock(); fd.enabled.return_value = True; fd.fetch_events.return_value = []
     src = Mock(); src.enabled.return_value = True
-    a, b = ev(1), ev(2)
+    from tests.real_events import real_ev
+    a, b = real_ev(1), real_ev(2)       # supported competitions with a quoted market: both survive identity
+    b.league = "Turkey - Super Lig"
     a.league_id, b.league_id = "england_-_premier_league", "turkey_-_super_lig"
     a.provider = b.provider = "sharpapi"
     src.fetch_events.return_value = [a, b]
@@ -315,7 +317,8 @@ def test_build_picks_wires_the_gate_from_the_chain_providers(db, monkeypatch):
 
     ps = daily_picks.build_picks(chain, db, Config(timezone="UTC", provider_order=["sharpapi"]), dt())
 
-    assert ps.diagnostics["no_results_path_by_league"] == {"turkey_-_super_lig": 1}
+    assert ps.diagnostics["line_rejections"] == {"missing_required_stats": 1}        # the gate came from the chain providers
+    assert [s.event for s in ps.predictions] == [a]
 
 
 # ============================================================ 3d resolver order

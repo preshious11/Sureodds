@@ -13,7 +13,9 @@ from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
 from predbot.jobs import daily_picks
 from predbot.selection.picker import PickSet
-from tests.test_picker import ev, sc
+from tests.test_picker import sc
+from tests.real_events import pickset
+from tests.test_picker import ev
 from tests.test_subscribers_broadcast import FakeTG
 
 LAGOS = "Africa/Lagos"          # UTC+1, POST_TIME 09:00 -> 08:00Z
@@ -21,10 +23,8 @@ LAGOS = "Africa/Lagos"          # UTC+1, POST_TIME 09:00 -> 08:00Z
 
 def _pickset():
     a, b, c = ev(1), ev(2), ev(3)
-    ps = PickSet(top=[sc(a, "result3", "home", 0.72, 1.45), sc(b, "result3", "home", 0.72, 1.45)],
-                 daily=[sc(c, "result3", "home", 0.70, 1.50)])
-    ps.complete = True
-    return ps
+    return pickset([sc(a, "result3", "home", 0.72, 1.45), sc(b, "result3", "home", 0.72, 1.45),
+                    sc(c, "result3", "home", 0.70, 1.50)])
 
 
 @pytest.fixture
@@ -154,6 +154,6 @@ def test_stats_still_works_before_post_time(world):
 
     callbacks.handle_command("/stats", "42", service=fetcher, tg=tg, cfg=cfg, db=db)
 
-    assert "STATS" in tg.sends[0]["text"] or "No results yet" in tg.sends[0]["text"]
+    assert "Performance" in tg.sends[0]["text"]
     assert "ready at" not in tg.sends[0]["text"]
     built.assert_not_called()

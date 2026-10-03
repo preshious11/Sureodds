@@ -196,8 +196,9 @@ def compute(db: Database, today_local: datetime) -> Dict:
     since30 = (d0 - timedelta(days=30)).strftime("%Y-%m-%d")
     today_str = d0.strftime("%Y-%m-%d")
 
-    all_rows = db.query("SELECT * FROM picks WHERE status NOT IN ('pending')")
-    recent = db.query("SELECT * FROM picks WHERE pick_date >= ? AND pick_date < ?", (since7, today_str))
+    # Legacy "picks" figures describe what was PUBLISHED (Top + Daily legs); collection_stats covers All Predictions.
+    all_rows = db.picks_where("p.status NOT IN ('pending')", published_only=True)
+    recent = db.picks_where("p.pick_date >= ? AND p.pick_date < ?", (since7, today_str), published_only=True)
     rows7 = [r for r in recent if since7 <= r["pick_date"] < today_str]
     rows30 = [r for r in all_rows if since30 <= r["pick_date"] < today_str]
     rows_y_all = [r for r in recent if r["pick_date"] == y]
@@ -228,8 +229,32 @@ def compute(db: Database, today_local: datetime) -> Dict:
     return out
 
 
+def _fixture_id(row):
+    """The fixture a prediction belongs to: its canonical event, else its fixture key (legacy rows)."""
+    return row['canonical_event_id'] or row['fixture_key']
+
+
+def collection_stats(db, collection, today_local):
+    """Each stored prediction counts once within its collection, including today's settled results. A fixture may hold
+    several predictions (one per market family), so ``issued`` counts predictions and ``fixtures`` counts the distinct
+    fixtures behind them; both are always reported apart."""
+    rows = db.collection_predictions(collection)
+    day = today_local.date()
+    out = {}
+    for label, days in (('today', 1), ('last7', 7), ('last30', 30), ('all', None)):
+        since = (day - timedelta(days=days - 1)).isoformat() if days else ''
+        subset = [r for r in rows if since <= r['pick_date'] <= day.isoformat()]
+        block = _block(subset)
+        decided = block['won'] + block['lost']
+        block.update(issued=len(subset), fixtures=len({_fixture_id(r) for r in subset}),
+                     pending=sum(r['status'] == 'pending' for r in subset),
+                     hit_rate=100 * block['won'] / decided if decided else None, decided=decided)
+        out[label] = block
+    return out
+
+
 def rows_for_recap(db: Database, date_str: str) -> List[Dict]:
-    return [dict(r) for r in db.picks_for_date(date_str)]
+    return [dict(r) for r in db.picks_for_date(date_str, published_only=True)]
 
 
 # ------------------------------------------------------------------ prediction accuracy

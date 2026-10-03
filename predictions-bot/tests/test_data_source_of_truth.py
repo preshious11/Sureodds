@@ -28,7 +28,7 @@ from predbot.model.ensemble import Scored
 from predbot.providers.base import Event, MarketLine
 from predbot.providers.chain import ProviderChain, filter_allowed, merge_events
 from predbot.providers.sharpapi import SharpApiProvider, sport_for_league
-from predbot.selection.picker import select
+from tests.pipeline_helpers import select
 from predbot.storage.db import Database
 from tests.conftest import dt
 
@@ -99,17 +99,18 @@ def test_picker_rejection_reasons_tracked():
     now = dt()
     cfg = Config()
     pool = []
-    # Imminent event (below lead time) -> WRONG_DATE
-    soon = Event(provider="t", provider_event_id="1", sport="football", league="L",
-                 home="A", away="B", start=now + timedelta(minutes=15), sources=["a"])
-    pool.append(_make_scored(soon, "result3", "home", 0.70, 1.8))
-    # Low odds -> INVALID_PRICE
-    low_odds = Event(provider="t", provider_event_id="2", sport="football", league="L",
-                      home="C", away="D", start=now + timedelta(hours=2), sources=["a"])
-    pool.append(_make_scored(low_odds, "result3", "home", 0.70, 1.05))
+    # Already started -> started_or_settled (a collection rule: the prediction still exists)
+    started = Event(provider="t", provider_event_id="1", sport="football", league="L",
+                    home="A", away="B", start=now - timedelta(minutes=15), sources=["a"])
+    pool.append(_make_scored(started, "result3", "home", 0.70, 1.8))
+    # Price at or below 1.0 -> missing_odds (invalid: no prediction at all)
+    no_price = Event(provider="t", provider_event_id="2", sport="football", league="L",
+                     home="C", away="D", start=now + timedelta(hours=2), sources=["a"])
+    pool.append(_make_scored(no_price, "result3", "home", 0.70, 0.95))
     ps = select(pool, cfg, now)
-    rejections = ps.diagnostics.get("selection_rejections", {})
-    assert "WRONG_DATE" in rejections or "INVALID_PRICE" in rejections
+    assert ps.diagnostics["line_rejections"] == {"missing_odds": 1}
+    assert ps.diagnostics["daily"]["rejections"] == {"started_or_settled": 1}
+    assert len(ps.predictions) == 1
 
 
 def test_picker_top_rejections_tracked():
@@ -117,17 +118,18 @@ def test_picker_top_rejections_tracked():
     now = dt()
     cfg = Config()
     pool = []
-    # Player prop -> excluded from top
+    # Player prop: the score model cannot price it (spec.modelable is False), so it is not a prediction
     e1 = Event(provider="t", provider_event_id="1", sport="baseball", league="MLB",
                home="A", away="B", start=now + timedelta(hours=2), sources=["a"])
     pool.append(_make_scored(e1, "prop", "over", 0.75, 2.0, line=1.5, stat="hits"))
-    # Low agreement -> BELOW_THRESHOLD
+    # A prediction below the Top probability floor: kept, but not promoted
     e2 = Event(provider="t", provider_event_id="2", sport="football", league="L",
                home="C", away="D", start=now + timedelta(hours=2), sources=["a"])
-    pool.append(_make_scored(e2, "result3", "home", 0.70, 1.8, agreement=0.2))
+    pool.append(_make_scored(e2, "result3", "home", 0.58, 1.8))
     ps = select(pool, cfg, now)
-    top_rej = ps.diagnostics.get("top_pool_rejections", {})
-    assert "PLAYER_PROP" in top_rej or "BELOW_THRESHOLD" in top_rej
+    assert ps.diagnostics["line_rejections"] == {"invalid_market": 1}
+    assert ps.diagnostics["top"]["rejections"]["below_probability"] == 1
+    assert len(ps.predictions) == 1
 
 
 def test_picker_daily_rejections_tracked():
@@ -138,10 +140,10 @@ def test_picker_daily_rejections_tracked():
     # Low confidence -> BELOW_THRESHOLD
     e1 = Event(provider="t", provider_event_id="1", sport="football", league="L",
                home="A", away="B", start=now + timedelta(hours=2), sources=["a"])
-    pool.append(_make_scored(e1, "result3", "home", 0.20, 1.8))
+    pool.append(_make_scored(e1, "result3", "home", 0.52, 1.8))
     ps = select(pool, cfg, now)
-    daily_rej = ps.diagnostics.get("daily_pool_rejections", {})
-    assert "BELOW_THRESHOLD" in daily_rej
+    assert ps.diagnostics["daily"]["rejections"] == {"below_probability": 1}
+    assert len(ps.predictions) == 1             # the weak prediction is still stored in All Predictions
 
 
 # ------------------------------------------------------------------- deduplication

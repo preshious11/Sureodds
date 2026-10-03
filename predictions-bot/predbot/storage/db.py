@@ -65,6 +65,67 @@ CREATE TABLE IF NOT EXISTS picks (
 );
 CREATE INDEX IF NOT EXISTS idx_picks_status ON picks(status);
 CREATE INDEX IF NOT EXISTS idx_picks_date ON picks(pick_date);
+CREATE TABLE IF NOT EXISTS prediction_memberships (
+    prediction_id INTEGER NOT NULL REFERENCES picks(id),
+    collection TEXT NOT NULL CHECK(collection IN ('all','top','daily')),
+    rank INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(prediction_id,collection)
+);
+CREATE INDEX IF NOT EXISTS idx_membership_collection ON prediction_memberships(collection,prediction_id);
+CREATE TABLE IF NOT EXISTS canonical_participants (id TEXT PRIMARY KEY, sport TEXT NOT NULL, name TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS canonical_events (
+    id TEXT PRIMARY KEY, competition_id TEXT NOT NULL, home_id TEXT NOT NULL,
+    away_id TEXT NOT NULL, kickoff_utc TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS match_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sport TEXT NOT NULL,
+    competition_id TEXT NOT NULL,
+    season TEXT NOT NULL DEFAULT '',
+    kickoff_utc TEXT NOT NULL,
+    home_id TEXT NOT NULL,
+    away_id TEXT NOT NULL,
+    home_goals INTEGER NOT NULL,
+    away_goals INTEGER NOT NULL,
+    home_ht INTEGER,
+    away_ht INTEGER,
+    source TEXT NOT NULL,
+    source_match_id TEXT NOT NULL,
+    ingested_at TEXT NOT NULL,
+    elo_applied INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(source, source_match_id)
+);
+CREATE INDEX IF NOT EXISTS idx_match_results_comp ON match_results(competition_id, kickoff_utc);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_match_results_fixture ON match_results(competition_id, home_id, away_id, substr(kickoff_utc,1,10));
+CREATE TABLE IF NOT EXISTS match_odds (
+    match_id INTEGER NOT NULL REFERENCES match_results(id),
+    book TEXT NOT NULL,
+    odds_home REAL NOT NULL, odds_draw REAL NOT NULL, odds_away REAL NOT NULL,
+    PRIMARY KEY(match_id, book)
+);
+-- reference bookmaker prices for EVALUATION only (never a model input): raw decimal odds exactly as published.
+-- market '1x2' = (home, draw, away); 'ou25' = (over 2.5, under 2.5). kind 'pre' = the pre-match collection columns,
+-- 'close' = the closing columns. ``columns`` names the source CSV columns, so provenance is never lost.
+CREATE TABLE IF NOT EXISTS match_odds_ext (
+    match_id INTEGER NOT NULL REFERENCES match_results(id),
+    book TEXT NOT NULL, market TEXT NOT NULL, kind TEXT NOT NULL,
+    o1 REAL NOT NULL, o2 REAL NOT NULL, o3 REAL, columns TEXT NOT NULL,
+    PRIMARY KEY(match_id, book, market, kind)
+);
+CREATE TABLE IF NOT EXISTS history_fetches (
+    source TEXT NOT NULL, competition_id TEXT NOT NULL, season TEXT NOT NULL,
+    status TEXT NOT NULL, rows INTEGER NOT NULL DEFAULT 0, fetched_at TEXT NOT NULL,
+    PRIMARY KEY(source, competition_id, season)
+);
+CREATE TABLE IF NOT EXISTS participant_aliases (
+    sport TEXT NOT NULL, alias TEXT NOT NULL, canonical_id TEXT NOT NULL,
+    PRIMARY KEY(sport,alias)
+);
+CREATE TABLE IF NOT EXISTS provider_identity (
+    provider TEXT NOT NULL, kind TEXT NOT NULL, provider_id TEXT NOT NULL,
+    scope TEXT NOT NULL, canonical_id TEXT NOT NULL,
+    PRIMARY KEY(provider,kind,provider_id,scope)
+);
 
 CREATE TABLE IF NOT EXISTS ratings (
     sport TEXT NOT NULL,
@@ -216,6 +277,26 @@ class Database:
         if pick_cols:
             self._migrate_fixture_key("fixture_key" in pick_cols)
         self._migrate_split_picks_kind()
+        for col in ("canonical_event_id", "canonical_competition_id", "home_id", "away_id"):
+            if col not in pick_cols:
+                self.conn.execute(f"ALTER TABLE picks ADD COLUMN {col} TEXT")
+        self._migrate_prediction_uniqueness()
+        if self.get_kv('migration:prediction_memberships:v1') != 'done':
+            self.conn.execute("INSERT OR IGNORE INTO prediction_memberships SELECT id,'all',rank FROM picks")
+            self.conn.execute("INSERT OR IGNORE INTO prediction_memberships SELECT id,tier,rank FROM picks WHERE tier IN ('top','daily')")
+            self.conn.execute("INSERT OR REPLACE INTO kv VALUES('migration:prediction_memberships:v1','done')")
+        self.conn.commit()
+
+    def _migrate_prediction_uniqueness(self) -> None:
+        """One stored prediction per (day, canonical event, market FAMILY) - was one per (day, canonical event).
+
+        ``market`` is the canonical family key (result3, result2, dc, dnb, handicap, total, btts), never a display string.
+        The old index is only dropped, never any row, so every stored and settled prediction survives; the new, looser
+        index can always be built because the old rule already implied it. Idempotent."""
+        self.conn.execute("DROP INDEX IF EXISTS uq_prediction_event_day")
+        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_prediction_event_family_day "
+                          "ON picks(pick_date,canonical_event_id,market) "
+                          "WHERE canonical_event_id IS NOT NULL AND canonical_event_id<>''")
 
     def _migrate_split_picks_kind(self) -> None:
         """The card went out as ONE ``picks`` message; it is now two (``picks_top``, ``picks_daily``). A ``picks`` row
@@ -310,42 +391,11 @@ class Database:
         self.execute('UPDATE prediction_cache SET retry_after=? WHERE cache_key=?',
                      (retry_after, cache_key))
 
-    def has_pick_selection(self, date, tier, scored):
-        e, m = scored.event, scored.line
-        return bool(self.query('SELECT id FROM picks WHERE pick_date=? AND tier=? AND '
-                              'provider=? AND provider_event_id=? AND market=? AND period=? '
-                              'AND stat=? AND entity=? AND line IS ? AND selection=? LIMIT 1',
-                              (date, tier, e.provider, e.provider_event_id, m.market, m.period,
-                               m.stat, m.entity, m.line, m.selection)))
-
-    def has_fixture_selection(self, date, fixture_key, scored):
-        """True when this selection on this match is already stored for ``date`` in ANY tier."""
-        m = scored.line
-        return bool(self.query('SELECT id FROM picks WHERE pick_date=? AND fixture_key=? AND market=? AND period=? '
-                               'AND stat=? AND entity=? AND line IS ? AND selection=? LIMIT 1',
-                               (date, fixture_key, m.market, m.period, m.stat, m.entity, m.line, m.selection)))
-
     def deliveries_exist(self, kind: str, post_date: str) -> bool:
         """True once ANY subscriber has been sent ``kind`` for ``post_date`` (``picks`` = either of its two messages)."""
         kinds = ("picks", "picks_top", "picks_daily") if kind == "picks" else (kind,)
         marks = ",".join("?" for _ in kinds)
         return bool(self.query(f"SELECT 1 FROM deliveries WHERE kind IN ({marks}) AND post_date=? LIMIT 1", (*kinds, post_date)))
-
-    def delete_pending_picks_not_in(self, date, keep):
-        """Delete ``date``'s still-pending picks that are not in ``keep`` - an iterable of
-        (tier, provider, provider_event_id, market, period, stat, entity, line, selection)
-        tuples (the ``has_pick_selection`` identity). Returns the number deleted."""
-        keep = set(keep)
-        gone = []
-        for r in self.query("SELECT id, tier, provider, provider_event_id, market, period, stat, entity, line, "
-                            "selection FROM picks WHERE pick_date=? AND status='pending'", (date,)):
-            ident = (r["tier"], r["provider"], r["provider_event_id"], r["market"], r["period"], r["stat"],
-                     r["entity"], r["line"], r["selection"])
-            if ident not in keep:
-                gone.append(r["id"])
-        for pid in gone:
-            self.execute("DELETE FROM picks WHERE id=?", (pid,))
-        return len(gone)
 
     def prune_prediction_cache(self, before_date):
         with self.transaction():
@@ -415,15 +465,93 @@ class Database:
         cols = ",".join(row.keys())
         qs = ",".join("?" for _ in row)
         cur = self.execute(f"INSERT INTO picks({cols}) VALUES({qs})", list(row.values()))
-        return int(cur.lastrowid)
+        pid = int(cur.lastrowid)
+        self.add_membership(pid, 'all', row.get('rank', 0))
+        if row.get('tier') in ('top', 'daily'):
+            self.add_membership(pid, row['tier'], row.get('rank', 0))
+        return pid
 
-    def picks_for_date(self, pick_date: str) -> List[sqlite3.Row]:
-        return self.query("SELECT * FROM picks WHERE pick_date=? ORDER BY tier DESC, rank ASC", (pick_date,))
+    def add_membership(self, prediction_id, collection, rank=0):
+        self.execute("INSERT OR IGNORE INTO prediction_memberships VALUES(?,?,?)", (prediction_id, collection, rank))
 
-    def latest_pick_date(self) -> str:
-        """The most recent pick_date in the store ('' when nothing is published)."""
-        rows = self.query("SELECT MAX(pick_date) AS d FROM picks")
-        return str(rows[0]["d"] or "") if rows and rows[0]["d"] else ""
+    def collection_predictions(self, collection='all', pick_date=None, settled_only=False):
+        if collection not in ('all', 'top', 'daily'):
+            raise ValueError('unknown prediction collection')
+        where, params = ['m.collection=?'], [collection]
+        if pick_date is not None:
+            where.append('p.pick_date=?')
+            params.append(pick_date)
+        if settled_only:
+            where.append("p.status<>'pending'")
+        return self.query("SELECT p.*,m.collection AS collection,m.rank AS collection_rank FROM picks p "
+                          "JOIN prediction_memberships m ON m.prediction_id=p.id WHERE " + ' AND '.join(where) +
+                          " ORDER BY p.pick_date DESC,m.rank,p.id", params)
+
+    def store_prediction(self, row):
+        """Immutable first prediction for a canonical event x market family on a day, irrespective of collection.
+        A fixture may hold several predictions (one per family); a stored one is never replaced or updated."""
+        existing = self.query("SELECT id FROM picks WHERE pick_date=? AND canonical_event_id=? AND market=?",
+                              (row['pick_date'], row['canonical_event_id'], row['market']))
+        if existing:
+            return int(existing[0]['id'])
+        return self.insert_pick(dict(row, tier='all'))
+
+    def reset_prediction_day(self, day, timezone, now_utc, dry_run=False):
+        """Invalidate only the shared snapshot and the unpublished future pending pool for ``day``.
+
+        Provider raw data/metadata, settled records, started fixtures, history and quota accounting survive,
+        so the next read regenerates once from cached provider data without spending quota. A published day is
+        refused rather than altering cards subscribers already hold. ``dry_run`` reports without deleting."""
+        date.fromisoformat(day)
+        if self.deliveries_exist('picks', day) or self.query("SELECT 1 FROM posts WHERE post_date=? "
+                                                          "AND kind IN ('picks','picks_top','picks_daily')", (day,)):
+            raise ValueError('cannot reset a published prediction day')
+        key = f'daily_predictions:{timezone}:{day}'
+        with self.prediction_lock, self.transaction():
+            ids = [r['id'] for r in self.query("SELECT id FROM picks WHERE pick_date=? AND status='pending' "
+                                               "AND start_utc>?", (day, now_utc))]
+            kept = self.query("SELECT COUNT(*) AS n FROM picks WHERE pick_date=?", (day,))[0]['n'] - len(ids)
+            if not dry_run:
+                for pid in ids:
+                    self.execute('DELETE FROM prediction_memberships WHERE prediction_id=?', (pid,))
+                    self.execute('DELETE FROM picks WHERE id=?', (pid,))
+                self.delete_prediction_cache(key)
+        return {'snapshot_key': key, 'pending_predictions_removed': len(ids), 'dry_run': dry_run,
+                'predictions_kept_for_day': kept, 'provider_cache_preserved': True, 'history_preserved': True}
+
+    _WITH_COLLECTIONS = (
+        "SELECT p.*, "
+        "(SELECT group_concat(collection) FROM prediction_memberships m WHERE m.prediction_id=p.id) AS collections, "
+        "(SELECT rank FROM prediction_memberships m WHERE m.prediction_id=p.id AND m.collection='top') AS top_rank, "
+        "(SELECT rank FROM prediction_memberships m WHERE m.prediction_id=p.id AND m.collection='daily') AS daily_rank "
+        "FROM picks p ")
+
+    def picks_where(self, where: str = "1=1", params=(), published_only: bool = False) -> List[Dict]:
+        """Canonical prediction rows with their collection memberships attached.
+
+        ``collections`` is the set of memberships (all/top/daily); ``tier`` is derived for display code that
+        distinguishes published picks - 'top' if the prediction is in Top Picks, else 'daily' if in Daily Picks, else
+        'all' - and ``rank`` is its rank in that collection. One row per prediction, whatever it belongs to."""
+        out = []
+        for r in self.query(self._WITH_COLLECTIONS + "WHERE " + where, tuple(params)):
+            d = dict(r)
+            cols = set(str(d.pop("collections") or "").split(",")) - {""}
+            top_rank, daily_rank = d.pop("top_rank"), d.pop("daily_rank")
+            d["collections"] = cols
+            d["tier"] = "top" if "top" in cols else "daily" if "daily" in cols else "all"
+            if d["tier"] == "top":
+                d["rank"] = top_rank
+            elif d["tier"] == "daily":
+                d["rank"] = daily_rank
+            if published_only and d["tier"] == "all":
+                continue
+            out.append(d)
+        order = {"top": 0, "daily": 1, "all": 2}
+        out.sort(key=lambda d: (d["pick_date"], order[d["tier"]], d["rank"] or 0, d["id"]))
+        return out
+
+    def picks_for_date(self, pick_date: str, published_only: bool = False) -> List[Dict]:
+        return self.picks_where("p.pick_date=?", (pick_date,), published_only)
 
     def has_picks_for_date(self, pick_date: str) -> bool:
         return bool(self.query("SELECT 1 FROM picks WHERE pick_date=? LIMIT 1", (pick_date,)))
@@ -433,14 +561,20 @@ class Database:
             return self.query("SELECT * FROM picks WHERE status='pending' AND start_utc<=? ORDER BY start_utc", (before_utc,))
         return self.query("SELECT * FROM picks WHERE status='pending' ORDER BY start_utc")
 
-    def live_picks(self, earliest: str, latest: str) -> List[sqlite3.Row]:
-        """All legs of due pending fixtures, plus durable unfinished lifecycle work.
+    def live_picks(self, earliest: str, latest: str) -> List[Dict]:
+        """All predictions on due pending fixtures that reached Top or Daily, plus durable unfinished lifecycle work.
+
+        Fixtures only in All Predictions are settled by the ordinary settlement job, not polled live.
 
         Terminal delivery retries are not tied to pending picks or the stale watch
         window. Nonterminal watches expire with the ordinary settlement safety net.
         """
-        return self.query("""
-            SELECT p.* FROM picks p WHERE EXISTS (
+        return self.picks_where("""
+            EXISTS (    -- live status is only worth provider calls for fixtures a subscriber was actually sent
+                SELECT 1 FROM prediction_memberships pm JOIN picks pp ON pp.id=pm.prediction_id
+                WHERE pp.pick_date=p.pick_date AND pp.fixture_key=p.fixture_key
+                AND pm.collection IN ('top','daily')
+            ) AND (EXISTS (
                 SELECT 1 FROM picks q WHERE q.pick_date=p.pick_date
                 AND q.fixture_key=p.fixture_key AND q.status='pending'
                 AND q.start_utc BETWEEN ? AND ?
@@ -448,7 +582,7 @@ class Database:
                 SELECT 1 FROM live_fixture_state s WHERE s.pick_date=p.pick_date
                 AND s.fixture_key=p.fixture_key AND s.notifications_done=0
                 AND (s.status IN ('final','postponed','cancelled') OR p.start_utc BETWEEN ? AND ?)
-            ) ORDER BY p.id
+            ))
         """, (earliest, latest, earliest, latest))
 
     def live_state(self, pick_date: str, fixture_key: str):
@@ -485,13 +619,8 @@ class Database:
                      "WHERE pick_date=? AND fixture_key=?", (_now(), pick_date, fixture_key))
 
     def settle_pick(self, pick_id: int, status: str, result: Optional[Dict] = None) -> None:
-        self.execute("UPDATE picks SET status=?, settled_at=?, result_json=? WHERE id=?",
+        self.execute("UPDATE picks SET status=?, settled_at=?, result_json=? WHERE id=? AND status='pending'",
                      (status, _now(), json.dumps(result) if result else None, pick_id))
-
-    def settled_picks_since(self, since_date: str) -> List[sqlite3.Row]:
-        return self.query(
-            "SELECT * FROM picks WHERE pick_date>=? AND status IN ('won','lost','push','half_won','half_lost') "
-            "ORDER BY pick_date, tier DESC, rank", (since_date,))
 
     def all_settled_for_calibration(self, limit: int = 3000) -> List[sqlite3.Row]:
         return self.query(

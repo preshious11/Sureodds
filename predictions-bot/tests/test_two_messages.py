@@ -16,7 +16,7 @@ from tests.test_subscribers_broadcast import FakeTG, _snapshot
 
 NOW = datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)
 CFG = Config(timezone="UTC")
-LABELS = ["🔥 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
+LABELS = ["📚 All Predictions", "🔥 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
 
 
 @pytest.fixture(autouse=True)

@@ -26,7 +26,7 @@ def isolated_environment(monkeypatch):
 # =========================================================== 2c: ALLOWED_SPORTS gate
 def _mixed_events():
     from predbot.providers.base import Event
-    mk = lambda i, sport: Event(provider="p", provider_event_id=str(i), sport=sport, league=f"L{i}",
+    mk = lambda i, sport: Event(provider="p", provider_event_id=str(i), sport=sport, league="England - Premier League" if sport == "football" else f"L{i}",
                                 home=f"Alpha{i}x", away=f"Beta{i}y", start=dt(hh=20), sources=["p"])
     return [mk(1, "football"), mk(2, "hockey"), mk(3, "handball")]
 
@@ -198,18 +198,26 @@ def test_player_props_are_dropped_by_default_and_capped_when_allowed(db):
 
 
 # ============================================================= 2f: DISABLED_MARKETS
-def test_disabled_markets_are_rejected_in_the_base_filter():
-    from predbot.selection.picker import select
-    pool = [sc(ev(1), "odd_even", "odd", 0.75, 1.80), sc(ev(2), "winning_margin", "home_1", 0.75, 1.80),
-            sc(ev(3), "ht_ft", "home/home", 0.75, 1.80), sc(ev(4), "result3", "home", 0.75, 1.80)]
+def test_disabled_markets_stay_predictions_and_are_only_blocked_from_promotion():
+    from dataclasses import replace
+    from tests.pipeline_helpers import select
+    pool = [sc(ev(1), "btts", "yes", 0.75, 1.80), sc(ev(2), "dnb", "home", 0.75, 1.80),
+            sc(ev(3), "total", "over", 0.75, 1.80, line=2.5), sc(ev(4), "result3", "home", 0.75, 1.80)]
 
-    ps = select(pool, Config(), dt())
+    ps = select(pool, replace(Config(), disabled_markets=["btts", "dnb", "total"]), dt())
 
-    assert ps.diagnostics["selection_rejections"]["DISABLED_MARKET"] == 3
-    assert all(s.line.market == "result3" for s in ps.all())
+    # DISABLED_MARKETS is a product-selection choice (these markets ARE model-priced and settleable), so the
+    # prediction engine keeps them; only the Top/Daily selectors refuse to promote them.
+    assert "disabled_market" not in ps.diagnostics["line_rejections"]
+    assert {s.line.market for s in ps.all()} == {"btts", "dnb", "total", "result3"}
+    assert ps.diagnostics["top"]["rejections"]["disabled_market"] == 3
+    assert ps.diagnostics["daily"]["rejections"]["disabled_market"] == 3
+    assert all(s.line.market == "result3" for s in ps.top + ps.daily)
 
 
 def test_disabled_markets_can_be_emptied_from_the_config():
-    from predbot.selection.picker import select
-    ps = select([sc(ev(1), "odd_even", "odd", 0.75, 1.80)], Config(disabled_markets=[]), dt())
-    assert "DISABLED_MARKET" not in ps.diagnostics["selection_rejections"]
+    from tests.pipeline_helpers import select
+    ps = select([sc(ev(1), "btts", "yes", 0.75, 1.80)], Config(disabled_markets=[]), dt())
+    assert "disabled_market" not in ps.diagnostics["top"]["rejections"]
+    assert "disabled_market" not in ps.diagnostics["daily"]["rejections"]
+    assert [s.line.market for s in ps.all()] == ["btts"]

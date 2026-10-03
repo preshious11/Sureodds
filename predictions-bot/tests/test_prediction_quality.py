@@ -22,7 +22,14 @@ from predbot.providers.base import Event, MarketLine, norm_book
 from predbot.providers.chain import ProviderChain, merge_events
 from predbot.providers.oddsapi import OddsApiProvider
 from predbot.selection import evidence as evmod
-from predbot.selection.picker import PickSet, select
+from predbot.selection.picker import PickSet
+from tests.pipeline_helpers import select as _select
+
+
+def select(scored, cfg, now, **kw):
+    """Top/Daily mechanics on the given predictions (see pipeline_helpers.select)."""
+    kw.setdefault("raw", True)
+    return _select(scored, cfg, now, **kw)
 from predbot.util.http import ProviderError
 from tests.conftest import dt
 from tests.test_picker import _fx, ev, sc
@@ -62,19 +69,22 @@ def test_top_target_is_unchanged():
 
 
 def test_the_top_is_not_weakened_to_reach_its_target_by_default():
-    assert Config().top_relax_prob == 0.0           # the per-leg probability floor never drops by default
+    c = Config()
+    assert not hasattr(c, "top_relax_prob")          # there is no relaxed fallback any more
+    leg = cand(_fx(0), p=c.top_min_prob - 0.01, price=1.45)
+    ps = select([leg], c, dt())
+    assert ps.top == [] and len(ps.predictions) == 1   # a sub-floor leg is never forced into Top; it still exists
 
 
 def test_daily_probability_floor_is_one_consistent_value():
     c = Config()
     assert c.daily_min_prob >= 0.5                  # no 30% candidate can be a Daily leg
-    # the picker's own rejection note names the configured value - there is no second, hard-coded number
+    # the selector's gate is the configured value - there is no second, hard-coded number
     pool = [cand(_fx(0), p=c.daily_min_prob - 0.01, price=1.8)]
-    trace = {}
-    ps = select(pool, c, dt(), trace=trace)
+    ps = select(pool, c, dt())
     assert ps.daily == []
-    assert f"DAILY_MIN_PROB ({c.daily_min_prob:.3f} < {c.daily_min_prob})" in trace[id(pool[0])] or \
-        "DAILY_MIN_PROB" in trace[id(pool[0])]
+    assert ps.diagnostics["daily"]["rejections"]["below_probability"] == 1
+    assert len(ps.predictions) == 1
 
 
 def test_a_sub_floor_leg_is_never_admitted_to_fill_a_ticket():
@@ -83,7 +93,8 @@ def test_a_sub_floor_leg_is_never_admitted_to_fill_a_ticket():
     weak = [cand(_fx(i), p=0.45 + 0.003 * i, price=1.9) for i in range(30)]
     strong = [cand(_fx(100 + i), p=0.72, price=1.35, selection="home" if i % 2 else "away") for i in range(3)]
     ps = select(weak + strong, c, dt())
-    assert all(s.p_model >= c.daily_min_prob for s in ps.all())
+    assert all(s.p_model >= c.daily_min_prob for s in ps.daily + ps.top)
+    assert len(ps.all()) == 33                                              # weak predictions exist, just not promoted
     assert math.prod(s.price for s in ps.daily) < c.daily_odds_min          # short of 10, and posted short
 
 
@@ -95,8 +106,13 @@ def test_misconfigured_daily_floor_is_flagged(caplog):
 
 
 # =========================================================================== Daily sizing (10-12, never forced)
+_KINDS = (("result3", "home", None), ("total", "over", 2.5), ("btts", "yes", None), ("dnb", "home", None))
+
+
 def _daily_pool(price, n=40, p=0.70):
-    return [cand(_fx(i), selection="home" if i % 2 == 0 else "away", p=p, price=price) for i in range(n)]
+    """Varied markets: the Daily's own per-market share cap is not what ends the ticket."""
+    return [cand(_fx(i), _KINDS[i % 4][0], _KINDS[i % 4][1], p=p, price=price, line=_KINDS[i % 4][2])
+            for i in range(n)]
 
 
 @pytest.mark.parametrize("price", [1.25, 1.30, 1.35, 1.40, 1.45, 1.50, 1.60, 1.80])
@@ -109,7 +125,7 @@ def test_daily_lands_inside_the_band_when_the_slate_allows():
     ps = select(_daily_pool(1.35), Config(), dt())
     ticket = math.prod(s.price for s in ps.daily)
     assert 10.0 <= ticket <= 12.0
-    assert ps.diagnostics["daily_target_reached"] is True
+    assert ps.diagnostics["daily"]["target_reached"] is True
 
 
 def test_daily_stops_as_soon_as_the_target_is_reached():
@@ -118,11 +134,11 @@ def test_daily_stops_as_soon_as_the_target_is_reached():
 
 
 def test_daily_returns_below_10_when_no_further_qualified_pick_exists():
-    pool = [cand(_fx(i), selection="home" if i % 2 else "away", p=0.70, price=1.7) for i in range(4)]
+    pool = [cand(_fx(i), _KINDS[i][0], _KINDS[i][1], p=0.70, price=1.7, line=_KINDS[i][2]) for i in range(4)]
     ps = select(pool, Config(), dt())
     ticket = math.prod(s.price for s in ps.daily)
     assert 0 < len(ps.daily) and ticket < 10.0
-    assert ps.diagnostics["daily_target_reached"] is False
+    assert ps.diagnostics["daily"]["target_reached"] is False
 
 
 def test_no_fixed_leg_count_is_required():
@@ -133,25 +149,25 @@ def test_no_fixed_leg_count_is_required():
 
 def test_ticket_maths_and_diagnostics_agree():
     ps = select(_daily_pool(1.35), Config(), dt())
-    assert ps.diagnostics["daily_own_odds"] == pytest.approx(math.prod(s.price for s in ps.daily), abs=0.01)
-    assert ps.diagnostics["daily_legs"] == len(ps.daily)
+    assert ps.diagnostics["daily"]["combined_odds"] == pytest.approx(math.prod(s.price for s in ps.daily), abs=0.01)
+    assert ps.diagnostics["daily"]["selected"] == len(ps.daily)
 
 
-def test_one_selection_per_match_is_still_enforced():
+def test_one_selection_per_match_is_still_enforced_in_top_and_daily():
     e = _fx(0)
     pool = [cand(e, "result3", "home", 0.72, 1.4), cand(e, "total", "over", 0.70, 1.5, line=2.5),
-            cand(e, "dc", "home_draw", 0.80, 1.25), cand(e, "btts", "yes", 0.66, 1.7)]
+            cand(e, "dnb", "home", 0.80, 1.25), cand(e, "btts", "yes", 0.66, 1.7)]
     ps = select(pool, Config(), dt())
-    assert sum(1 for s in ps.all() if s.event is e) <= 1
+    assert sum(1 for s in ps.all() if s.event is e) == 4            # four families: four predictions of the fixture
+    assert sum(1 for s in ps.top if s.event is e) <= 1 and sum(1 for s in ps.daily if s.event is e) <= 1
 
 
 # =========================================================================== book coverage
 def test_single_book_candidate_never_enters_the_daily():
     lone = cand(_fx(0), p=0.80, price=1.3, quotes={"onlybook": 1.3})
-    trace = {}
-    ps = select([lone], Config(), dt(), trace=trace)
-    assert ps.daily == [] and "backed by 1 book" in trace[id(lone)]
-    assert ps.diagnostics["daily_pool_rejections"]["INSUFFICIENT_BOOKS"] == 1
+    ps = select([lone], Config(), dt())
+    assert ps.daily == [] and ps.predictions == [lone]                 # kept out of Daily, still a prediction
+    assert ps.diagnostics["daily"]["rejections"]["insufficient_books"] == 1
 
 
 def test_two_books_are_enough_for_a_main_market_daily_leg():
@@ -180,9 +196,9 @@ def test_top_needs_three_distinct_books():
 def test_books_disagreeing_widely_are_rejected_as_stale():
     stale = cand(_fx(0), p=0.80, price=1.4, quotes={"a": 1.20, "b": 1.60, "c": 1.40})        # implied 0.83 vs 0.625
     assert evmod.assess(stale, Config()).dispersion > Config().max_book_dispersion
-    trace = {}
-    ps = select([stale], Config(), dt(), trace=trace)
-    assert ps.daily == [] and ps.diagnostics["daily_pool_rejections"]["OUTLIER_BOOKS"] == 1
+    ps = select([stale], Config(), dt())
+    assert ps.daily == [] and ps.diagnostics["daily"]["rejections"]["book_disagreement"] == 1
+    assert ps.predictions == [stale]
 
 
 def test_coverage_affects_ranking_through_the_uncertainty():
@@ -266,13 +282,13 @@ def test_negative_edge_vs_sharp_cannot_beat_a_stronger_positive_edge_on_raw_prob
 def test_a_clearly_negative_edge_vs_sharp_is_rejected_outright():
     assert Config().min_edge_vs_sharp == -0.04
     bad = cand(_fx(0), p=0.80, price=1.30, p_fair=0.78, edge_ev=-0.07)
-    trace = {}
-    ps = select([bad], Config(), dt(), trace=trace)
-    assert ps.daily == [] and ps.diagnostics["daily_pool_rejections"]["NEGATIVE_EDGE_VS_SHARP"] == 1
+    ps = select([bad], Config(), dt())
+    assert ps.daily == [] and ps.diagnostics["daily"]["rejections"]["poor_reference_value"] == 1
+    assert ps.predictions == [bad]
 
 
 def test_ranking_orders_the_daily_by_evidence_not_probability():
-    c = Config(daily_odds_min=1.3, daily_odds_max=1.5, daily_ranking="raw")      # one leg completes the ticket
+    c = Config(daily_odds_min=1.3, daily_odds_max=1.5)      # one leg completes the ticket
     # two books each: eligible for the Daily (2) but not the Top (3), so only the Daily ordering is exercised
     high_p = cand(_fx(0), p=0.74, price=1.35, p_fair=0.74, edge_ev=-0.005, quotes=books(2, 1.35))
     value = cand(_fx(1), p=0.69, price=1.35, p_fair=0.69, edge_ev=0.10, quotes=books(2, 1.35))
@@ -300,7 +316,8 @@ def test_an_unsupported_claim_over_the_market_is_rejected():
     backed = cand(_fx(1), p=0.80, price=1.4, edge=0.12, independent=("elo",))
     ps = select([big, backed], Config(), dt())
     assert big not in ps.daily and backed in ps.daily
-    assert ps.diagnostics["daily_pool_rejections"]["UNSUPPORTED_EDGE"] == 1
+    assert big in ps.predictions                             # kept as a prediction, not promoted
+    assert ps.diagnostics["daily"]["rejections"]["unsupported_edge"] == 1
 
 
 def test_ranking_score_and_probability_stay_separate():

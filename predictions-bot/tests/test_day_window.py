@@ -14,6 +14,7 @@ from predbot.providers.base import Event
 from predbot.providers.chain import ProviderChain
 from predbot.util.timeutil import day_bounds
 from tests.conftest import dt
+from predbot.providers.base import MarketLine
 from tests.test_picker import sc
 
 TZ = "Africa/Lagos"          # UTC+1, so local midnight == 23:00 UTC
@@ -36,8 +37,10 @@ class WindowedProvider:
 
 
 def _event(pid, home, away, start, provider="fake"):
-    return Event(provider=provider, provider_event_id=pid, sport="football", league="L",
-                 home=home, away=away, start=start, sources=[provider])
+    e = Event(provider=provider, provider_event_id=pid, sport="football", league="England - Premier League",
+              home=home, away=away, start=start, sources=[provider])
+    e.markets = [MarketLine("result3", "home", 1.5, n_books=5)]
+    return e
 
 
 EVENING = _event("e1", "Evening Town", "Dusk United", dt(hh=20))          # 21:00 Lagos
@@ -49,7 +52,7 @@ def scored_events(monkeypatch):
     """Capture whatever build_picks hands to the model."""
     seen = []
 
-    def fake_score(events, db, cfg):
+    def fake_score(events, db, cfg, independent=None):
         seen.extend(events)
         return [sc(e, "result3", "home", 0.7, 1.45) for e in events]
 

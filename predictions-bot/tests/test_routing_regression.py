@@ -27,7 +27,7 @@ PRED = ROOT / "predbot"
 def _forbidden_service():
     """A service that explodes if anything onboarding-related touches it."""
     return SimpleNamespace(
-        get_daily_snapshot=lambda: (_ for _ in ()).throw(
+        get_daily_snapshot=lambda **_kw: (_ for _ in ()).throw(
             AssertionError("onboarding fetched the prediction snapshot")))
 
 
@@ -89,7 +89,8 @@ def test_removed_subscribe_toggle_cannot_send_predictions(db):
     assert (len(tg.sends), len(tg.edits)) == before   # unknown payloads: nothing happens
     assert db.subscribers_active()                    # and they cannot undo /start
     buttons = [b for row in menu_markup()["inline_keyboard"] for b in row]
-    assert [b["text"] for b in buttons] == ["🔥 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
+    assert [b["text"] for b in buttons] == ["📚 All Predictions", "🔥 Top Picks", "📋 Daily Picks", "📊 Stats",
+                                                 "🗓 Yesterday"]
     assert not any(b["callback_data"].startswith("sub|") for b in buttons)
 
 

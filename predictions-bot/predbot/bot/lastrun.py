@@ -17,6 +17,7 @@ from predbot.bot.broadcast import picks_text
 from predbot.bot.format import kickoff_label
 from predbot.bot.telegram import esc
 from predbot.cache.models import DailySnapshot
+from predbot.util.pipeline_report import pipeline_lines
 from predbot.util.timeutil import parse_hhmm, parse_iso, to_local, utcnow
 
 
@@ -73,7 +74,7 @@ def _feed_lines(providers: Dict) -> List[str]:
 
 
 def _quota_lines(db, gen: Dict) -> List[str]:
-    report = (gen.get("top_priority_provider_report") or {}).get("oddsapi") or {}
+    report = (gen.get("providers") or {}).get("oddsapi") or {}
     quota = report.get("quota") or {}
     remaining = quota.get("requests_remaining", db.get_kv("oddsapi:requests_remaining"))
     used = quota.get("requests_used", db.get_kv("oddsapi:requests_used"))
@@ -98,23 +99,7 @@ def _sgo_lines(db) -> List[str]:
 
 
 def _funnel(gen: Dict) -> List[str]:
-    scored = sum((gen.get("scored_by_sport") or {}).values())
-    base = sum((gen.get("base_by_sport") or {}).values())
-    lines = [f"scored {scored} → eligible {base}",
-             f"Top pool: {esc(_kv(gen.get('top_eligible_by_sport')))} | rejected: {esc(_kv(gen.get('top_pool_rejections')))}",
-             f"Daily pool: {esc(_kv(gen.get('daily_eligible_by_sport')))} | rejected: {esc(_kv(gen.get('daily_pool_rejections')))}",
-             f"Top tickets evaluated: {gen.get('combinations_checked', '?')}"
-             + (f" · Top odds {gen['top_odds']:.2f}" if gen.get("top_odds") else "")]
-    if gen.get("top_funnel"):
-        lines += ["<b>TOP FUNNEL</b>"]
-        lines += [f"• {esc(k.replace('_', ' '))}: {v}" for k, v in gen["top_funnel"].items()]
-        lines.append("Top rejection reasons: " + esc(_kv(gen.get("top_rejection_reasons"))))
-        lines.append("Top-quality book coverage: " + esc(_kv(gen.get("top_quality_book_coverage"))))
-        lines.append("Top ticket result: " + esc(gen.get("top_ticket_status", 'unknown')))
-        config = gen.get("top_config") or {}
-        fields = ("top_min_prob", "top_relax_prob", "top_min_books", "top_legs_min", "top_legs_max",
-                  "top_odds_target", "top_odds_max", "min_edge_vs_sharp", "market_quality")
-        lines.append("Effective Top config: " + esc(_kv({k: config[k] for k in fields if k in config})))
+    lines = [esc(l) for l in pipeline_lines(gen)]
     if gen.get("merged_events") is not None:
         lines.append(f"Merged across providers: <b>{gen['merged_events']}</b> events | by league: "
                      f"{esc(_kv(gen.get('merged_pairs_by_league')))}")
@@ -123,22 +108,9 @@ def _funnel(gen: Dict) -> List[str]:
     if gen.get("timings"):
         lines.append("Timings (wall/cpu s): " + esc(", ".join(f"{k} {v['wall']:.2f}/{v['cpu']:.2f}"
                                                             for k, v in gen["timings"].items())))
-    if "top_relaxed" in gen:
-        lines.append("Top fallback: " + (f"relaxed by {esc(str(gen['top_relaxed']))}" if gen.get("top_relaxed") else "not needed / none found"))
-    if gen.get("daily_family_pool") is not None:
-        lines.append(f"Daily by family ({esc(gen.get('daily_ranking', '?'))}): pool {esc(_kv(gen.get('daily_family_pool')))}"
-                     f" | picked {esc(_kv(gen.get('daily_family_picks')))}")
-    rejections = gen.get("selection_rejections") or {}
-    lines.append("Results gate: " + esc(_kv({k: rejections[k] for k in
-                                             ("NO_RESULTS_PATH", "PERIOD_UNSETTLEABLE", "STAT_UNSETTLEABLE")
-                                             if k in rejections})))
-    if gen.get("no_results_path_by_league"):
-        lines.append("No results path (events per league): " + esc(_kv(gen["no_results_path_by_league"])))
     skipped = gen.get("leagues_skipped_no_results") or {}
     lines.append("Leagues not fetched (no results path): "
                  + (esc("; ".join(f"{p}: {', '.join(v)}" for p, v in sorted(skipped.items()))) if skipped else "none"))
-    relaxed = gen.get("daily_caps_relaxed")
-    lines.append("Relaxations: " + (esc(json.dumps(relaxed, sort_keys=True)) if relaxed else "none"))
     return lines
 
 
@@ -154,7 +126,7 @@ def _price_source(pick) -> str:
 
 
 def _price_sources(snapshot) -> List[str]:
-    picks = list(snapshot.top_picks) + list(snapshot.daily_picks)
+    picks = list(snapshot.all_predictions)
     return [f"• {esc(p.label)} @ {p.price:.2f} — {esc(_price_source(p))}" for p in picks] or ["• none"]
 
 
@@ -182,8 +154,7 @@ def lastrun_text(db, cfg, now: Optional[datetime] = None) -> str:
            f"(reads that day: {esc(hits)} hit / {esc(misses)} miss)", "",
            "<b>Providers</b>"]
     providers = gen.get("providers") or {}
-    if gen.get("top_diagnostic_version"):
-        out.append(f"Top diagnostic v{gen['top_diagnostic_version']} · revision {esc(gen.get('runtime_revision', 'unknown'))}")
+    out.append(f"Pipeline v{esc(gen.get('pipeline_version', '?'))} · revision {esc(gen.get('runtime_revision', 'unknown'))}")
     out += [_provider_line(n, r, usage) for n, r in sorted(providers.items())] or ["• none recorded"]
     parse = [f"{esc(n)}: {esc(_kv(r.get('rejections')))}" for n, r in sorted(providers.items())
              if isinstance(r, dict) and r.get("rejections")]
@@ -192,13 +163,14 @@ def lastrun_text(db, cfg, now: Optional[datetime] = None) -> str:
     feed = _feed_lines(providers)
     if feed:
         out += ["", "<b>SharpAPI feeds</b>"] + feed
-    out += ["", "<b>Odds API</b> (Top priority)"] + _quota_lines(db, gen)
+    out += ["", "<b>Odds API</b>"] + _quota_lines(db, gen)
     out += ["", "<b>SportsGameOdds usage</b> (this database, last 30 days)"] + _sgo_lines(db)
     out += ["", "<b>Funnel</b>"] + _funnel(gen)
     out += ["", "<b>Price sources</b> (not shown on the card)"] + _price_sources(snapshot)
-    out += ["", f"<b>Slates</b>: Top {len(snapshot.top_picks)} legs · combined {_product(snapshot.top_picks):.2f} | "
-                f"Daily {len(snapshot.daily_picks)} picks · own odds {_product(snapshot.daily_picks):.2f}"
-                f" (with the Top: {_product(snapshot.top_picks) * _product(snapshot.daily_picks):.2f}, old sizing)"]
+    fixtures = len({p.fixture_id or (p.provider, p.provider_event_id) for p in snapshot.all_predictions})
+    out += ["", f"<b>Collections</b>: All {len(snapshot.all_predictions)} predictions on {fixtures} fixtures | "
+                f"Top {len(snapshot.top_picks)} legs · combined {_product(snapshot.top_picks):.2f} | "
+                f"Daily {len(snapshot.daily_picks)} picks · combined {_product(snapshot.daily_picks):.2f}"]
 
     # Both slates exactly as a subscriber's card renders them at DELIVERY_TIME in the bot's zone.
     d_hour, d_minute = parse_hhmm(cfg.delivery_time, "09:30")

@@ -28,13 +28,16 @@ def test_replay_reproduces_the_golden_render_byte_for_byte():
     assert replay.golden_text(result, "render") + "\n" == replay.GOLDEN_RENDER.read_text(encoding="utf-8")
 
 
-def test_replay_is_offline_and_cross_tier_counters_are_zero():
+def test_replay_is_offline_and_every_prediction_is_one_row_per_event_and_family():
+    """Top and Daily are views over the same stored prediction rows: one stored row per canonical event x market family
+    (a fixture holds several), memberships that never copy a row, and no network."""
     slate = replay.run(send_delay=0.0)["slate"]
     diag = slate["diagnostics"]
-    # The selection layer refuses Daily legs that duplicate or nest inside a Top leg (CROSS_TIER_DUPLICATE / _NESTED are
-    # those refusals and are expected). What must stay zero is the SAFETY NET: a Daily leg the selection layer let
-    # through and the post-hoc invariant had to remove.
-    assert "CROSS_TIER_DUPLICATE_REMOVED" not in diag["selection_rejections"]
-    assert not diag.get("cross_tier_removed")
+    rows = slate["stored_picks"]
+    assert len(rows) == len({(r["canonical_event_id"], r["market"]) for r in rows}) == diag["valid_predictions_generated"]
+    assert len({r["canonical_event_id"] for r in rows}) == diag["fixtures_with_predictions"]
+    assert len(rows) > diag["fixtures_with_predictions"]                       # several predictions per fixture
+    assert diag["stored_all_predictions"] == diag["all_predictions"] == len(rows)
+    assert {r["tier"] for r in rows} <= {"top", "daily", "all"}
     assert diag["merged_events"] >= 15
     assert slate["delivery"]["second_pass"] == 0                # deliveries are once per subscriber per day

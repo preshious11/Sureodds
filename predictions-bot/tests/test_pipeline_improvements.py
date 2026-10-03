@@ -9,7 +9,7 @@ import pytest
 from predbot.config import Config
 from predbot.model.ensemble import Scored
 from predbot.providers.base import Event, MarketLine
-from predbot.selection.picker import select
+from tests.pipeline_helpers import select
 
 from tests.conftest import dt
 
@@ -45,39 +45,8 @@ def cfg(**overrides) -> Config:
 
 # ── Fix 2: period cap ────────────────────────────────────────────────────────
 
-def test_period_cap_limits_1h_legs():
-    """With DAILY_MAX_PERIOD_SHARE=0.15, period-tagged (1H) legs must stay
-    within their share of however big a slate the pool actually supports."""
-    now = dt()
-    # Five distinct real markets/selections (own family + own market-share
-    # bucket each) so the market/family diversity caps don't starve the
-    # ticket before the period cap gets a chance to bind; daily_odds_min is
-    # dropped to a floor every ticket clears trivially, so the strict pass
-    # never has a reason to relax the very share caps under test.
-    combos = [("result3", "home"), ("result2", "away"), ("dc", "draw"),
-              ("total", "over"), ("btts", "yes")]
-    pool = []
-    for i in range(20):
-        m, s = combos[i % len(combos)]
-        pool.append(sc(ev(i), market=m, selection=s, period="1h", n_books=5, p_model=0.75, price=1.60))
-    for i in range(20, 40):
-        m, s = combos[i % len(combos)]
-        pool.append(sc(ev(i), market=m, selection=s, period="full", n_books=5, p_model=0.72, price=1.60))
-    c = cfg(daily_max_period_share=0.15, daily_min_prob=0.65)
-    ps = select(pool, c, now)
-    period_picks = [p for p in ps.daily if p.line.period not in ("full", "reg", "", None)]
-    n = len(ps.daily)
-    assert n >= 4, f"Slate too small to meaningfully exercise the period cap (n={n})"
-    max_allowed = max(1, math.ceil(0.15 * n))
-    assert len(period_picks) <= max_allowed, (
-        f"Expected <= {max_allowed} period picks in {n}-pick slate, got {len(period_picks)}"
-    )
 
 
-def test_period_cap_config_field_exists():
-    c = Config()
-    assert hasattr(c, "daily_max_period_share")
-    assert 0.0 < c.daily_max_period_share <= 1.0
 
 
 # ── Fix 3: top min books ─────────────────────────────────────────────────────

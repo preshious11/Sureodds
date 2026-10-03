@@ -16,7 +16,7 @@ from tests.test_subscribers_broadcast import FakeTG
 
 def _service(*snaps):
     today, older = snaps[0], {s.date: s for s in snaps}
-    return SimpleNamespace(get_daily_snapshot=lambda: today, snapshot_for=lambda day: older[day])
+    return SimpleNamespace(get_daily_snapshot=lambda **_kw: today, snapshot_for=lambda day: older[day])
 
 
 def _press(data, service, mode, message_id=55, tg=None):

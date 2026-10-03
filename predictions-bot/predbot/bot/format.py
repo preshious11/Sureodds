@@ -265,6 +265,20 @@ def pick_lines(p: PickLine) -> List[str]:
             f"💰 {p.price:.2f}  ·  📊 {round(p.confidence * 100)}%  ·  🕘 {esc(p.when)}{mark}"]
 
 
+def fixture_block(lines: List[PickLine]) -> List[str]:
+    """One fixture of the /all sport pages: a header line (league, match, kick-off) then one compact line per prediction:
+
+        ⚽ France • Ligue 1 · Angers vs ESTAC Troyes · 🕘 7:45 PM
+        🎯 Angers to Win · 💰 2.02 · 📊 46%
+
+    ``lines`` are the fixture's predictions in the order to show (the caller sorts them by market family)."""
+    first = lines[0]
+    mark = STARTED_MARK if first.state == "started" else FINISHED_MARK if first.state == "finished" else ""
+    out = [f"{pick_lines(first)[0]} · 🕘 {esc(first.when)}{mark}"]
+    out += [f"🎯 {esc(p.outcome)} · 💰 {p.price:.2f} · 📊 {round(p.confidence * 100)}%" for p in lines]
+    return out
+
+
 TOP_TITLE = "🔥 TOP PICKS"
 DAILY_TITLE = "📋 DAILY PICKS"
 

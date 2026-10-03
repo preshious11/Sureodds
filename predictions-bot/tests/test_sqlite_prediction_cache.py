@@ -17,7 +17,8 @@ from predbot.storage.db import Database
 from predbot.util.http import ProviderError
 from predbot.util.timeutil import parse_iso
 from tests.conftest import dt
-from tests.test_picker import ev, sc
+from tests.test_picker import sc
+from tests.real_events import real_ev as ev
 
 
 class Provider:

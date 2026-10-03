@@ -206,7 +206,7 @@ def test_view_combined_odds_come_from_the_same_list_as_the_cards():
 # ================================================ 14/15: command == button parity
 def test_top_and_daily_command_and_button_render_identically(db):
     snap = _summary_snapshot()
-    service = SimpleNamespace(get_daily_snapshot=lambda: snap)
+    service = SimpleNamespace(get_daily_snapshot=lambda **_kw: snap)
     for view in (VIEW_TOP, VIEW_DAILY):
         tg = FakeTG()
         handle_command('/' + view, "42", service=service, tg=tg,
@@ -233,7 +233,7 @@ def test_all_summary_paths_share_one_canonical_copy():
                                    "Over/Under", "Batting_Hits"])
 def test_old_and_stale_copy_cannot_appear_from_any_active_formatter(db, stale):
     snap = _summary_snapshot()
-    service = SimpleNamespace(get_daily_snapshot=lambda: snap)
+    service = SimpleNamespace(get_daily_snapshot=lambda **_kw: snap)
     tg = FakeTG()
     handle_command('/daily', "42", service=service, tg=tg, cfg=Config(timezone="UTC"), db=db)
     handle_callback(_cb("pg|top|0"), service=service, tg=tg,

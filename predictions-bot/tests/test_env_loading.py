@@ -92,57 +92,57 @@ def test_the_env_path_is_next_to_main_py_and_ignores_the_working_directory(tmp_p
 def test_a_stale_env_in_the_working_directory_is_never_read(tmp_path, monkeypatch):
     stale_cwd = tmp_path / "elsewhere"
     stale_cwd.mkdir()
-    (stale_cwd / ".env").write_text("MAX_PICKS_PER_EVENT=9\n", encoding="utf-8")
+    (stale_cwd / ".env").write_text("DAILY_PICKS_TARGET=9\n", encoding="utf-8")
     project = tmp_path / "project.env"
-    project.write_text("MAX_PICKS_PER_EVENT=3\n", encoding="utf-8")
-    _clear(monkeypatch, "MAX_PICKS_PER_EVENT")
+    project.write_text("DAILY_PICKS_TARGET=3\n", encoding="utf-8")
+    _clear(monkeypatch, "DAILY_PICKS_TARGET")
     monkeypatch.chdir(stale_cwd)
 
     cfg = load_config(env_file=str(project))
 
-    assert cfg.max_picks_per_event == 3 and cfg.env_file == str(project)
+    assert cfg.daily_target == 3 and cfg.env_file == str(project)
 
 
 def test_load_config_without_an_argument_reads_the_project_env_not_the_cwd(tmp_path, monkeypatch):
-    (tmp_path / ".env").write_text("MAX_PICKS_PER_EVENT=9\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("DAILY_PICKS_TARGET=9\n", encoding="utf-8")
     seen = {}
     monkeypatch.setattr(config_mod, "default_env_path", lambda: seen.setdefault("p", tmp_path / "proj.env"))
-    (tmp_path / "proj.env").write_text("MAX_PICKS_PER_EVENT=4\n", encoding="utf-8")
+    (tmp_path / "proj.env").write_text("DAILY_PICKS_TARGET=4\n", encoding="utf-8")
     other = tmp_path / "other"
     other.mkdir()
     monkeypatch.chdir(other)
-    _clear(monkeypatch, "MAX_PICKS_PER_EVENT")
+    _clear(monkeypatch, "DAILY_PICKS_TARGET")
 
-    assert load_config().max_picks_per_event == 4
+    assert load_config().daily_target == 4
 
 
 def test_a_real_environment_variable_beats_the_env_file(tmp_path, monkeypatch):
     f = tmp_path / ".env"
-    f.write_text("MAX_PICKS_PER_EVENT=3\n", encoding="utf-8")
-    monkeypatch.setenv("MAX_PICKS_PER_EVENT", "5")            # what a hosting dashboard sets
+    f.write_text("DAILY_PICKS_TARGET=3\n", encoding="utf-8")
+    monkeypatch.setenv("DAILY_PICKS_TARGET", "5")            # what a hosting dashboard sets
 
     cfg = load_config(env_file=str(f))
 
-    assert cfg.max_picks_per_event == 5
-    assert any(o["key"] == "MAX_PICKS_PER_EVENT" and o["source"] == "process env"
+    assert cfg.daily_target == 5
+    assert any(o["key"] == "DAILY_PICKS_TARGET" and o["source"] == "process env"
                for o in cfg.env_report["overrides"])
 
 
 # ------------------------------------------------------------- the startup report
 def test_startup_report_names_the_file_the_overrides_and_the_ignored_keys(tmp_path, monkeypatch):
     f = tmp_path / ".env"
-    f.write_text("MAX_PICKS_PER_EVENT=3\n"
+    f.write_text("DAILY_PICKS_TARGET=3\n"
                  "ODDS_API_REGIONS=eu\n"                       # equals the default -> not an override
                  "TELEGRAM_BOT_TOKEN=abc123-very-secret\n"
                  "ODDS_API_KEY=odds-secret-key\n"
                  "LEGACY_SERVICE_URL=https://user:pw@host\n"     # a key this version never reads
                  "OLD_UNUSED_SETTING=football\n", encoding="utf-8")
-    _clear(monkeypatch, "MAX_PICKS_PER_EVENT", "ODDS_API_REGIONS", "TELEGRAM_BOT_TOKEN", "ODDS_API_KEY")
+    _clear(monkeypatch, "DAILY_PICKS_TARGET", "ODDS_API_REGIONS", "TELEGRAM_BOT_TOKEN", "ODDS_API_KEY")
 
     text = "\n".join(startup_lines(load_config(env_file=str(f))))
 
     assert f"loaded .env from {f}" in text and "(6 keys)" in text
-    assert "MAX_PICKS_PER_EVENT=3 [.env]" in text
+    assert "DAILY_PICKS_TARGET=3 [.env]" in text
     assert "TELEGRAM_BOT_TOKEN=*** [.env]" in text and "ODDS_API_KEY=*** [.env]" in text
     assert "ODDS_API_REGIONS" not in text.split("override the code default:")[1].split("\n")[0]
     assert "WARNING .env keys this version never reads (ignored): LEGACY_SERVICE_URL, OLD_UNUSED_SETTING" in text
@@ -160,7 +160,7 @@ def test_secrets_are_masked_everywhere_in_the_report(tmp_path, monkeypatch):
     for secret in ("abc123-very-secret", "k3", "k4", "k5"):
         assert secret not in everything.replace("ODDS_API_KEY", "").replace("SHARPAPI_KEY", "")
     assert mask("TELEGRAM_BOT_TOKEN", "x") == "***" and mask("SOME_SERVICE_URL", "x") == "***"
-    assert mask("MAX_PICKS_PER_EVENT", 1) == "1"
+    assert mask("DAILY_PICKS_TARGET", 1) == "1"
 
 
 def test_a_missing_env_file_is_reported_not_fatal(tmp_path):
@@ -172,7 +172,7 @@ def test_a_missing_env_file_is_reported_not_fatal(tmp_path):
 
 def test_no_override_is_reported_when_everything_is_default(tmp_path, monkeypatch):
     f = tmp_path / ".env"
-    f.write_text("MAX_PICKS_PER_EVENT=1\n", encoding="utf-8")          # equal to the default
-    _clear(monkeypatch, "MAX_PICKS_PER_EVENT")
+    f.write_text("DAILY_PICKS_TARGET=12\n", encoding="utf-8")          # equal to the default
+    _clear(monkeypatch, "DAILY_PICKS_TARGET")
 
     assert "no key overrides a code default" in "\n".join(startup_lines(load_config(env_file=str(f))))

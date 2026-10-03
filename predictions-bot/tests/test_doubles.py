@@ -7,7 +7,7 @@ from types import SimpleNamespace as N
 from predbot.config import Config
 from predbot.markets.settlement import make_results_gate, result_paths
 from predbot.providers.sharpapi import SharpApiProvider
-from predbot.selection.picker import select
+from tests.pipeline_helpers import select
 from predbot.util.names import is_doubles
 from tests.conftest import dt
 from tests.test_picker import ev, sc
@@ -51,6 +51,6 @@ def test_a_doubles_event_reaching_the_gate_gets_no_results_path():
     e2.league_id = "wta"
     gate = make_results_gate(Config(), {"espn": espn})
     ps = select([sc(e, "result2", "home", 0.7, 1.5), sc(e2, "result2", "home", 0.7, 1.5)], Config(), dt(), results_gate=gate)
-    assert ps.diagnostics["selection_rejections"].get("NO_RESULTS_PATH") == 1
+    assert ps.diagnostics["line_rejections"].get("missing_required_stats") == 1       # no way to settle it: no prediction
     assert all(s.event.home != "Dabrowski / Stefani" for s in ps.all())
 

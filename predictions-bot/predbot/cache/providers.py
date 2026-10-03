@@ -209,7 +209,15 @@ def collect_persisted(chain, start, end):
                                           refresh_reason=None if p['reuse'] else p['refresh_reason'])
             for e in events:
                 e.markets = consolidate_lines(e.markets)         # one line per bet, cached rows included
-            pool = merge_events(pool, [e for e in events if start <= e.start < end],
+            from predbot.storage.identity import failure_record, resolve_events_detailed
+            # Canonical identity is resolved once, here, so cross-provider merging keys on resolved IDs rather
+            # than on re-fuzzy-matched names. Failures are kept per provider (attempts) AND as records so the
+            # run can count unique fixtures.
+            windowed = [e for e in events if start <= e.start < end]       # only fixtures in today's window are counted or resolved
+            resolved, failed = resolve_events_detailed(windowed, chain.db, getattr(cfg, 'supported_competitions', ()))
+            chain.last_report[name]['identity_failures'] = dict(Counter(r for _, r in failed))
+            chain.last_report[name]['identity_failed_fixtures'] = [failure_record(e, r) for e, r in failed]
+            pool = merge_events(pool, resolved,
                                 getattr(cfg, 'price_mode', 'median'))
             chain.last_timings[name] = {'wall': round(p['spent'][0] + fetch_wall + time.perf_counter() - _w, 4),
                                         'cpu': round(p['spent'][1] + fetch_cpu + time.process_time() - _c, 4)}

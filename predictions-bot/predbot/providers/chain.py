@@ -177,6 +177,10 @@ def _same_match(ex: Event, ev: Event) -> Optional[str]:
     """``None`` = different matches, else ``"same"`` / ``"swapped"`` (``ev`` lists home/away the other way
     round). Teams, kickoff and the competition veto come from ``fixture_orientation`` (the one matcher);
     when the competition is not known for BOTH events, the league must agree case-insensitively."""
+    if ex.canonical_event_id and ev.canonical_event_id:
+        if ex.canonical_event_id != ev.canonical_event_id:
+            return None
+        return "same" if ex.home_id == ev.home_id else "swapped"
     ca, cb = competition_id(ex), competition_id(ev)
     if not (ca and cb):
         if ex.league_id and ev.league_id and ex.league_id.casefold() != ev.league_id.casefold():

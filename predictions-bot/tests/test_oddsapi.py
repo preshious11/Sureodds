@@ -8,7 +8,7 @@ from predbot.jobs.daily_picks import build_picks
 from predbot.providers.base import Event, MarketLine
 from predbot.providers.chain import ProviderChain
 from predbot.providers.oddsapi import OddsApiProvider, sport_key_to_canonical
-from predbot.selection.picker import select
+from tests.pipeline_helpers import select
 from tests.conftest import dt
 from tests.test_picker import ev, sc
 
@@ -239,95 +239,51 @@ def oddssgo_event(price=1.60, i=1):
     # from the same real fixture even across providers.
     clubs = [("Real Madrid", "Valencia"), ("Ajax", "Feyenoord"), ("Porto", "Braga")]
     home, away = clubs[(i - 1) % len(clubs)]
-    e = Event(provider="oddsapi", provider_event_id=f"oa{i}", sport="football", league="L",
+    e = Event(provider="oddsapi", provider_event_id=f"oa{i}", sport="football", league="England - Premier League",
               home=home, away=away, start=dt(hh=22), sources=["oddsapi"])
     e.markets = [MarketLine("result3", "home", price)]
     return e
 
 
-def test_top_priority_uses_oddsapi_pool_when_it_reaches_target():
-    oa_event = oddssgo_event(price=1.45)
-    other_event = ev(2)
-    pool = [
-        sc(oa_event, "result3", "home", 0.75, 1.45, sources=2),
-        sc(other_event, "result3", "home", 0.70, 1.45, sources=2),
-    ]
-    # combined 1.45*1.45 = 2.1 >= target 2.0, priority pool alone should suffice
-    # but a single oddsapi pick alone (1.45) doesn't reach 2.0, so add a second oddsapi event
-    oa_event2 = oddssgo_event(price=1.50, i=2)
-    pool.append(sc(oa_event2, "result3", "home", 0.75, 1.50, sources=2))
-    result = select(pool, Config(), dt(), top_priority_source="oddsapi")
-    assert result.top
-    assert all("oddsapi" in s.event.sources for s in result.top)
-    assert result.diagnostics["top_priority_used"] is True
-
-
-def test_top_priority_falls_back_to_other_providers_when_oddsapi_insufficient():
-    # Only one weak oddsapi candidate: cannot reach the 2.00 target alone.
-    oa_event = oddssgo_event(price=1.40)
-    other_event = ev(2)
-    pool = [
-        sc(oa_event, "result3", "home", 0.75, 1.40, sources=2),
-        sc(other_event, "result3", "home", 0.75, 1.50, sources=2),
-    ]
-    result = select(pool, Config(), dt(), top_priority_source="oddsapi")
-    assert result.top
-    assert result.diagnostics["top_priority_used"] is False
-    # fallback pool includes the non-oddsapi event
-    assert any("oddsapi" not in s.event.sources for s in result.top)
-
-
 def test_oddsapi_only_events_can_join_the_daily_ticket():
-    """The Odds API is a full chain member: the old RESERVED_FOR_TOP_PRIORITY_SOURCE rule is gone."""
+    """The Odds API is a full chain member with no reserved/priority role: its prediction is an ordinary one."""
     oa_event = oddssgo_event(price=1.20)
     pool = [sc(oa_event, "result3", "home", 0.70, 1.20, sources=2, ev_val=0.06)]
-    result = select(pool, Config(), dt(), top_priority_source="oddsapi")
+    result = select(pool, Config(), dt())
     assert len(result.daily) == 1
-    assert "RESERVED_FOR_TOP_PRIORITY_SOURCE" not in result.diagnostics["daily_pool_rejections"]
+    assert "RESERVED_FOR_TOP_PRIORITY_SOURCE" not in str(result.diagnostics)
 
 
-def test_build_picks_tries_oddsapi_chain_first_for_top(db, monkeypatch):
+def test_build_picks_treats_oddsapi_and_other_providers_alike(db, monkeypatch):
+    """Architecture change: there is no Odds API-first Top search any more. Every provider's events go through the
+    same identity + engine path and each becomes one stored primary prediction."""
     now = dt()
     oa_event = oddssgo_event(price=1.50, i=1)
-    # Real fixture builds go through ProviderChain.collect() -> merge_events(),
-    # unlike the picker-only tests above. same_team() fuzzily matches names
-    # that differ only by a trailing digit (e.g. "OddsHome1"/"OddsHome2"), so
-    # this second event needs a genuinely distinct club name or merge_events()
-    # folds both legs into one fixture before scoring ever sees two.
     oa_event2 = oddssgo_event(price=1.45, i=2)
     oa_event2.home, oa_event2.away = "Sporting", "Feyenoord"
-    sgo_event = ev(3)
+    sgo_event = ev(3, league="England - Premier League")
+    sgo_event.markets = [MarketLine("result3", "home", 1.5)]
 
     oddsapi_provider = Mock()
     oddsapi_provider.enabled.return_value = True
     oddsapi_provider.fetch_events.return_value = [oa_event, oa_event2]
-
     daily_provider = Mock()
     daily_provider.enabled.return_value = True
     daily_provider.fetch_events.return_value = [sgo_event]
-
     chain = ProviderChain({"sportsgameodds": daily_provider, "oddsapi": oddsapi_provider},
-                          ["sportsgameodds"], 1)
+                          ["sportsgameodds", "oddsapi"], 1)
     chain.db, chain.cfg = None, None
 
-    def fake_score(events, db_, cfg_):
-        out = []
-        for e in events:
-            if e.provider == "oddsapi":
-                out.append(sc(e, "result3", "home", 0.75, e.markets[0].price, sources=2))
-            else:
-                out.append(sc(e, "result3", "home", 0.60, 1.50, sources=2))
-        return out
+    def fake_score(events, db_, cfg_, independent=None):
+        return [sc(e, "result3", "home", 0.75, e.markets[0].price, sources=2) for e in events]
 
     monkeypatch.setattr("predbot.jobs.daily_picks.score_events", fake_score)
     monkeypatch.setattr("predbot.jobs.daily_picks.make_results_gate", lambda cfg, providers: (lambda event: "test"))
-    cfg = Config(timezone="UTC", top_provider_priority=["oddsapi"])
-    result = build_picks(chain, db, cfg, now)
-    assert result.top
-    assert all(s.event.provider == "oddsapi" for s in result.top)
+    result = build_picks(chain, db, Config(timezone="UTC"), now)
+    assert {s.event.provider_event_id for s in result.predictions} == {"oa1", "oa2", "3"}
+    assert len(result.predictions) == 3
     oddsapi_provider.fetch_events.assert_called_once()
     daily_provider.fetch_events.assert_called_once()
-
 
 # ------------------------------------------------- per-sport credit allocation
 def _alloc_provider(budget, football_events, tennis_events, max_credits=15):
@@ -418,6 +374,18 @@ def test_min_keys_per_sport_is_configurable_and_zero_event_sports_cost_nothing(b
 
     p2, requested2 = _alloc_provider(budget, {k: 6 for k in PRIORITY_FOOTBALL},
                                      {"tennis_atp_us_open": 3, "tennis_wta_us_open": 3})
+    budget.db.set_kv('capabilities:v1:oddsapi:sports', '')      # the /sports catalog is cached per db: force a refetch
     p2.min_keys_per_sport = 2
     p2.fetch_events(dt(), dt(hh=23))
     assert sum(1 for k in requested2 if k.startswith("tennis")) == 2
+
+
+def test_a_second_provider_on_the_same_db_reuses_the_cached_sports_catalog(budget):
+    p1, _ = _alloc_provider(budget, {k: 2 for k in PRIORITY_FOOTBALL[:2]}, {})
+    p1.fetch_events(dt(), dt(hh=23))
+    assert sum(1 for c in p1.http.get.call_args_list if c.args[0] == "/sports") == 1
+
+    p2, _ = _alloc_provider(budget, {k: 2 for k in PRIORITY_FOOTBALL[:2]}, {})
+    p2.fetch_events(dt(), dt(hh=23))
+
+    assert sum(1 for c in p2.http.get.call_args_list if c.args[0] == "/sports") == 0   # zero extra /sports requests

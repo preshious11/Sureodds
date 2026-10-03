@@ -8,10 +8,15 @@ from datetime import timedelta
 import pytest
 
 from predbot.config import Config
-from predbot.markets.catalog import contradicts, is_equivalent, selection_family
 from predbot.model.ensemble import Scored
 from predbot.providers.base import Event, MarketLine
-from predbot.selection.picker import select
+from tests.pipeline_helpers import select as _select
+
+
+def select(scored, cfg, now, **kw):
+    """Top/Daily mechanics on the given predictions (see pipeline_helpers.select)."""
+    kw.setdefault("raw", True)
+    return _select(scored, cfg, now, **kw)
 
 from tests.conftest import dt
 
@@ -55,63 +60,22 @@ def test_weak_picks_excluded():
     assert ps.daily == []
 
 
-def test_no_overlap_between_top_and_daily():
+def test_one_prediction_per_event_and_family_even_when_it_sits_in_top_and_daily():
+    """Collections reference predictions; they never copy them. An event offering three families yields ONE prediction
+    per family, and a single prediction may sit in both Top and Daily."""
     now = dt()
     pool = []
     for i in range(25):
         e = ev(i)
-        # strong home pick (top candidate) and the same outcome again (should dedupe)
         pool.append(sc(e, "result3", "home", 0.70, 1.75))
-        pool.append(sc(e, "result2", "home", 0.70, 1.70))   # equivalent-ish outcome
+        pool.append(sc(e, "result2", "home", 0.70, 1.70))
         pool.append(sc(e, "total", "over", 0.66, 1.8, line=2.5))
-    ps = select(pool, cfg(), now)
-    for t in ps.top:
-        for d in ps.daily:
-            if t.event.dedupe_key() == d.event.dedupe_key():
-                assert not is_equivalent(t.line, d.line)
-                assert not contradicts(t.line, d.line)
-
-
-def test_same_fixture_same_outcome_from_different_providers_never_leaks_into_daily():
-    """A Top pick's fixture/outcome must not reappear in Daily even when it
-    arrives as a SEPARATE, unmerged Event object whose exact-match dedupe_key()
-    differs - e.g. the Odds API priority sub-chain reported a kickoff time 90
-    minutes off from what sharpapi reported for the very same match, which
-    puts them in different dedupe_key() hour buckets even though they are
-    obviously the same fixture."""
-    now = dt()
-    top_event = Event(provider="oddsapi", provider_event_id="oa1", sport="football",
-                      league="L", home="Arsenal", away="Chelsea", start=dt(hh=21), sources=["oddsapi"])
-    other_provider_event = Event(provider="sharpapi", provider_event_id="sp9", sport="football",
-                                 league="L", home="Arsenal", away="Chelsea", start=dt(hh=22, mm=30),
-                                 sources=["sharpapi"])
-    assert top_event.dedupe_key() != other_provider_event.dedupe_key()
-
-    top_candidate = sc(top_event, "result3", "home", 0.75, 1.60, ev_val=0.10)
-    # Top is a 2-leg minimum accumulator: top_candidate needs a partner leg
-    # under the 2.50 combined-odds ceiling (1.60 * 1.36 = 2.18) to be
-    # selectable at all - a single leg can no longer win on its own.
-    partner_event = Event(provider="oddsapi", provider_event_id="oa2", sport="football",
-                          league="L", home="Porto", away="Braga", start=dt(hh=21), sources=["oddsapi"])
-    partner_candidate = sc(partner_event, "result3", "home", 0.70, 1.36, ev_val=0.08)
-    # Below top_min_odds (1.35 default) so it can never combinatorially join
-    # Top itself - the only way it could reach the ticket is via Daily, which
-    # is exactly the leak this test guards against.
-    duplicate_candidate = sc(other_provider_event, "result3", "home", 0.70, 1.32, ev_val=0.08)
-    # Distinct, dissimilar team names so the fuzzy same_team() match used by
-    # same_fixture() can't confuse one filler fixture for another. Priced
-    # above the 2.50 ceiling in any pairing so they can't outscore the
-    # intended top_candidate/partner_candidate combo.
-    filler_names = ["Bayern", "Feyenoord", "Sporting", "Galatasaray", "Benfica",
-                    "Napoli", "Sevilla", "Ajax", "Lazio", "Monaco"]
-    filler = [sc(ev(10 + i, home=name, away=f"Opponent{i}"), "result3", "home", 0.62, 1.80)
-             for i, name in enumerate(filler_names)]
-
-    ps = select([top_candidate, partner_candidate, duplicate_candidate] + filler, cfg(), now)
-
-    assert top_candidate in ps.top
-    assert duplicate_candidate not in ps.daily
-    assert ps.diagnostics["daily_pool_rejections"].get("DUPLICATE_OF_TOP") == 1
+    ps = _select(pool, cfg(), now, raw=False)
+    per_event = Counter(s.event.canonical_event_id for s in ps.predictions)
+    assert len(ps.predictions) == 75 and set(per_event.values()) == {3}
+    assert len({(s.event.canonical_event_id, s.line.market) for s in ps.predictions}) == 75
+    for chosen in ps.top + ps.daily:
+        assert chosen in ps.predictions            # a membership of a stored prediction, not a new one
 
 
 def test_top_picks_meet_quality_bar():
@@ -131,43 +95,24 @@ def test_top_picks_meet_quality_bar():
     assert ps.top and ticket >= c.top_odds_target
 
 
-def test_single_source_never_top():
+def test_single_book_never_top():
     now = dt()
-    pool = [sc(ev(i), "result3", "home", 0.72, 1.8, sources=1, agreement=0.0) for i in range(10)]
+    pool = [sc(ev(i), "result3", "home", 0.72, 1.8, sources=1, books=1, agreement=0.0) for i in range(10)]
     ps = select(pool, cfg(), now)
-    assert ps.top == []   # top requires >= 2 agreeing sources
+    assert ps.top == []   # Top needs real bookmaker coverage ...
+    assert len(ps.predictions) == 10   # ... but the predictions themselves still exist
+    assert ps.diagnostics["top"]["rejections"]["insufficient_books"] == 10
 
 
-def test_family_cap_prevents_all_same_outcome():
-    now = dt()
-    # 40 strong home picks across distinct events; family cap must stop 20 homes
-    pool = [sc(ev(i), "result3", "home", 0.66, 1.7) for i in range(40)]
-    ps = select(pool, cfg(), now)
-    homes = sum(1 for s in ps.daily if selection_family(s.line) == "home")
-    assert homes < len(ps.daily) or len(ps.daily) < cfg().daily_target
-    # with only one family available it still won't exceed the family cap share badly
-    assert homes <= cfg().daily_target
 
-
-def test_max_two_picks_per_event():
-    now = dt()
-    e = ev(1)
-    pool = [
-        sc(e, "result3", "home", 0.66, 1.7),
-        sc(e, "total", "over", 0.64, 1.8, line=2.5),
-        sc(e, "btts", "yes", 0.63, 1.9),
-        sc(e, "dc", "home_draw", 0.75, 1.35),
-    ]
-    ps = select(pool, cfg(), now)
-    count = sum(1 for s in ps.all() if s.event.dedupe_key() == e.dedupe_key())
-    assert count <= cfg().max_picks_per_event
 
 
 def test_min_lead_time_excludes_imminent():
     now = dt(hh=21, mm=50)
-    soon = ev(1, start=dt(hh=22, mm=0))   # 10 min away, below 30 min lead
-    ps = select([sc(soon, "result3", "home", 0.7, 1.8)], cfg(), now)
-    assert ps.all() == []
+    started = ev(1, start=dt(hh=21, mm=40))   # already under way when the collections are built
+    ps = select([sc(started, "result3", "home", 0.7, 1.8)], cfg(), now)
+    assert ps.top == [] and ps.daily == []
+    assert ps.diagnostics["top"]["rejections"]["started_or_settled"] == 1
 
 
 # ------------------------------------------------------------- ticket sizing
@@ -196,15 +141,17 @@ def test_two_legs_already_at_target_beat_adding_a_third():
 
 def test_daily_list_is_sized_by_the_combined_odds_window():
     now = dt()
-    # alternating home / away so the per-outcome family cap is not what ends the ticket
-    pool = [sc(_fx(i), "result3", "home" if i % 2 == 0 else "away", 0.62, 1.35) for i in range(30)]
+    # varied markets so the Daily's own per-market share is not what ends the ticket
+    kinds = [("result3", "home", None), ("total", "over", 2.5), ("btts", "yes", None), ("dnb", "home", None)]
+    pool = [sc(_fx(i), kinds[i % 4][0], kinds[i % 4][1], 0.62, 1.35, line=kinds[i % 4][2]) for i in range(30)]
     ps = select(pool, cfg(), now)
     c = cfg()
     ticket = math.prod(s.price for s in ps.daily)
 
     assert c.daily_odds_min <= ticket <= c.daily_odds_max   # 10 .. 12 on the Daily's own legs
     assert len(ps.daily) == 8                               # 1.35**8 = 11.03: it stops the moment 10 is passed
-    assert len(ps.all()) < 30                               # stops long before the pool runs out
+    assert ps.diagnostics["daily"]["target_reached"]
+    assert len(ps.all()) == 30                              # the Daily never deletes a prediction
 
 
 def test_pick_count_never_passes_the_cap():
@@ -213,7 +160,9 @@ def test_pick_count_never_passes_the_cap():
     pool = [sc(ev(i), "result3", "home", 0.62, 1.45) for i in range(40)]
     ps = select(pool, c, now)
 
-    assert len(ps.all()) <= c.daily_target
+    assert len(ps.daily) <= c.daily_target
+    assert len(ps.top) <= 3
+    assert len(ps.all()) == 40                                # ... while every prediction is still stored
 
 
 # ------------------------------------------------------------- diversity quotas
@@ -336,25 +285,6 @@ def test_points_stat_is_not_capped_by_the_stat_share():
     assert "stat" not in (ps.diagnostics.get("daily_caps_relaxed") or {}).get("exceeded", {})
 
 
-def test_trace_records_the_rule_that_stopped_each_candidate():
-    now = dt()
-    pool = [sc(ev(i), "result3", "home", 0.70 if i < 4 else 0.20, 1.45) for i in range(8)]
-    trace: dict = {}
-    c = cfg()
-    ps = select(pool, c, now, trace=trace)
-    assert trace
-    # the weak candidates are recorded as failing the probability floor
-    weak = [s for s in pool if s.p_model < 0.30]
-    assert all(id(s) in trace for s in weak)
-    assert all("p_model" in trace[id(s)] for s in weak)
-    # daily picks are never marked as blocked; a Top leg legitimately carries
-    # the "already a Top leg" note, and a candidate admitted via the relaxed
-    # pass keeps its strict-pass note but setdefault keeps only the first one.
-    daily_ids = {id(s) for s in ps.daily}
-    for chosen in ps.all():
-        if id(chosen) in daily_ids:
-            continue
-        assert id(chosen) not in trace or trace[id(chosen)] == "daily: already a Top leg"
 
 
 def test_corners_across_several_markets_cannot_take_the_list():
@@ -419,87 +349,32 @@ def test_market_derived_score_model_does_not_trigger_the_disagreement_floor():
 
 
 def test_independent_signal_candidates_have_a_disagreement_floor_not_an_edge_requirement():
-    """With an independent signal (elo), a candidate is rejected only when
-    that signal says the market is MATERIALLY overpricing it (ev < -0.05);
-    mildly negative EV no longer disqualifies."""
+    """With an independent signal (elo), a candidate is kept out of Top/Daily only when that signal says the
+    market is MATERIALLY overpricing it (ev < -0.05). That is a value judgement on the collections: the model
+    prediction itself still exists in All Predictions."""
     now = dt()
     mildly_negative = sc(ev(1), "result3", "home", 0.70, 1.50, sources=1, ev_val=-0.03)
     mildly_negative.sources = {"market": 0.68, "elo": 0.72}
+    mildly_negative.independent = ["elo"]
     strongly_overpriced = sc(ev(2), "result3", "home", 0.70, 1.50, sources=1, ev_val=-0.10)
     strongly_overpriced.sources = {"market": 0.68, "elo": 0.72}
+    strongly_overpriced.independent = ["elo"]
     ps = select([mildly_negative, strongly_overpriced], cfg(), now)
-    assert mildly_negative.event.dedupe_key() in {s.event.dedupe_key() for s in ps.all()}
-    assert strongly_overpriced.event.dedupe_key() not in {s.event.dedupe_key() for s in ps.all()}
-    assert ps.diagnostics["daily_pool_rejections"].get("BELOW_THRESHOLD", 0) == 1
+    keys = lambda rows: {s.event.dedupe_key() for s in rows}
+    assert keys(ps.all()) == {mildly_negative.event.dedupe_key(), strongly_overpriced.event.dedupe_key()}
+    assert keys(ps.daily) == {mildly_negative.event.dedupe_key()}
+    assert strongly_overpriced.event.dedupe_key() not in keys(ps.top)
+    assert ps.diagnostics["daily"]["rejections"].get("poor_model_value", 0) == 1
 
 
-# ------------------------------------------------- canonical fixture ids (#4)
-def test_fixture_conflicts_link_the_same_match_seen_through_two_providers():
-    from predbot.selection.picker import fixture_conflicts
-    a1 = Event(provider="oddsapi", provider_event_id="1", sport="football", league="L",
-               home="Arsenal", away="Chelsea", start=dt(hh=21), sources=["oddsapi"])
-    a2 = Event(provider="sharpapi", provider_event_id="2", sport="football", league="L",
-               home="Arsenal FC", away="Chelsea", start=dt(hh=22, mm=30), sources=["sharpapi"])
-    b = Event(provider="oddsapi", provider_event_id="3", sport="football", league="L",
-              home="Porto", away="Braga", start=dt(hh=21), sources=["oddsapi"])
-
-    conflicts = fixture_conflicts([a1, a2, b])
-
-    assert conflicts == [{1}, {0}, set()]
 
 
-def test_top_ticket_never_uses_two_providers_view_of_one_fixture_as_two_legs():
-    arsenal_a = Event(provider="oddsapi", provider_event_id="1", sport="football", league="L",
-                      home="Arsenal", away="Chelsea", start=dt(hh=21), sources=["oddsapi", "x"])
-    arsenal_b = Event(provider="sharpapi", provider_event_id="2", sport="football", league="L",
-                      home="Arsenal FC", away="Chelsea", start=dt(hh=22, mm=30), sources=["sharpapi", "x"])
-    porto = Event(provider="oddsapi", provider_event_id="3", sport="football", league="L",
-                  home="Porto", away="Braga", start=dt(hh=21), sources=["oddsapi", "x"])
-    pool = [sc(arsenal_a, "result3", "home", 0.80, 1.45), sc(arsenal_b, "result3", "home", 0.80, 1.45),
-            sc(porto, "result3", "home", 0.70, 1.45)]
-    from predbot.selection.picker import choose_top
-
-    top, _ = choose_top(pool, cfg())
-
-    assert len(top) == 2
-    assert porto in [s.event for s in top]                       # the only legal partner for either Arsenal view
-    assert sum(1 for s in top if s.event.home.startswith("Arsenal")) == 1
 
 
-def test_choose_top_runs_the_fuzzy_matcher_once_per_leg_pair_not_once_per_combination(monkeypatch):
-    """40 legs on 40 fixtures. The matcher may only run once per fixture PAIR
-    (780, up front, at event level); a per-combination check would be 30k+ calls."""
-    import predbot.selection.picker as picker
-    calls = {"n": 0}
-    real = picker.same_fixture
-
-    def counting(a, b):
-        calls["n"] += 1
-        return real(a, b)
-
-    monkeypatch.setattr(picker, "same_fixture", counting)
-    pool = [sc(ev(i, home=f"Club{chr(65 + i % 26)}{i}x", away=f"Rival{chr(90 - i % 26)}{i}y"), "result3", "home",
-               0.66 + (i % 10) / 100, 1.20 + (i % 15) / 100, sources=3) for i in range(40)]
-
-    top, checked = picker.choose_top(pool, cfg())
-
-    assert checked > 0                                            # in-band tickets were actually evaluated
-    assert calls["n"] <= 40 * 39 // 2
-    assert 2 <= len(top) <= 3
 
 
-def test_chained_near_matches_do_not_collapse_distinct_fixtures_into_one():
-    """Fuzzy matching is not transitive: Home10~Home11, Home11~Home12 ... must
-    not make every one of them "the same fixture" and leave no legal 2-leg ticket."""
-    pool = [sc(ev(i), "result3", "home", 0.70, 1.42, sources=3) for i in range(20)]
-    from predbot.selection.picker import choose_top
-
-    top, checked = choose_top(pool, cfg())
-
-    assert len(top) == 2 and checked > 0
 
 
-# ------------------------------------------------ band-aware exact Top search
 import random
 from itertools import combinations as _combos
 
@@ -514,115 +389,23 @@ def _leg(rng, i, price, p):
     return sc(ev(i, home=f"{home}{i}", away=f"{away}{i}"), "result3", "home", p, price, sources=3)
 
 
-def test_top_finds_a_band_combo_that_only_high_priced_legs_can_make_in_a_300_leg_pool():
-    """280 confident legs at 1.10-1.19 (no 2- or 3-leg product of them reaches 2.00)
-    plus 20 legs at 1.45-1.60. Every in-band ticket needs a 1.40+ leg. The old
-    shortlist (30 best by score + 30 lowest-priced) kept none of them."""
-    rng = random.Random(7)
-    low = [_leg(rng, i, round(1.10 + (i % 10) * 0.01, 2), 0.86 - (i % 10) * 0.005) for i in range(280)]
-    high = [_leg(rng, 1000 + i, round(1.45 + (i % 16) * 0.01, 2), 0.64) for i in range(20)]
-    import time
-    t0 = time.perf_counter()
-    top, checked = picker_choose_top(low + high)
-    elapsed = time.perf_counter() - t0
-
-    assert 2 <= len(top) <= 3
-    assert cfg().top_odds_target <= math.prod(s.price for s in top) <= cfg().top_odds_max
-    assert any(s.price >= 1.40 for s in top)
-    assert len({s.event.dedupe_key() for s in top}) == len(top)
-    assert elapsed < 2.0, f"took {elapsed:.2f}s"
 
 
-def picker_choose_top(pool):
-    from predbot.selection.picker import choose_top
-    return choose_top(pool, cfg())
 
 
-def _brute_force_best(pool, c):
-    """Reference: try EVERY 2..3-leg combination of distinct fixtures."""
-    best = None
-    for size in range(c.top_legs_min, c.top_legs_max + 1):
-        for g in _combos(pool, size):
-            if len({s.event.dedupe_key() for s in g}) != size:
-                continue
-            price = math.prod(s.price for s in g)
-            if not (c.top_odds_target <= price <= c.top_odds_max):
-                continue
-            conf = math.prod(s.p_model for s in g)
-            if best is None or conf > best:
-                best = conf
-    return best
 
 
-@pytest.mark.parametrize("seed", range(12))
-def test_band_search_matches_brute_force_on_random_pools(seed):
-    """The interval + branch-and-bound search must be EXACT: same optimal joint
-    confidence as trying every combination."""
-    rng = random.Random(seed)
-    pool = []
-    for i in range(rng.randint(8, 16)):
-        price = round(rng.uniform(1.10, 1.75), 2)
-        p = min(0.9, max(0.62, 1 / price + rng.uniform(-0.06, 0.04)))
-        pool.append(_leg(rng, i, price, p))
-    # a few fixtures carry several legs at different prices
-    extra = [_leg(rng, 500 + k, round(rng.uniform(1.10, 1.75), 2), 0.7) for k in range(3)]
-    for k, e in enumerate(extra):
-        e.event.home, e.event.away = pool[k].event.home, pool[k].event.away
-    pool += extra
-
-    top, _ = picker_choose_top(pool)
-    expected = _brute_force_best(pool, cfg())
-
-    if expected is None:
-        assert top == []
-    else:
-        assert math.prod(s.p_model for s in top) == pytest.approx(expected, rel=1e-12)
 
 
-def test_real_sized_pool_stays_well_under_a_second():
-    """1,255 qualifying legs over 73 fixtures, priced 1.15-1.60 like today's fallback pool."""
-    rng = random.Random(3)
-    pool = []
-    for fx in range(73):
-        home, away = _names(rng)
-        e = ev(fx, home=f"{home}{fx}", away=f"{away}{fx}")
-        for k in range(17):
-            price = round(rng.uniform(1.15, 1.60), 2)
-            pool.append(sc(e, "total", "over", min(0.85, max(0.62, 1 / price - 0.02 + rng.uniform(-0.03, 0.03))),
-                           price, line=1.5 + k * 0.25, sources=3))
-    import time
-    t0 = time.perf_counter()
-    top, checked = picker_choose_top(pool)
-    elapsed = time.perf_counter() - t0
-
-    assert 2 <= len(top) <= 3 and cfg().top_odds_target <= math.prod(s.price for s in top) <= cfg().top_odds_max
-    assert elapsed < 1.5, f"took {elapsed:.2f}s"
 
 
-def test_no_in_band_ticket_returns_nothing_rather_than_the_closest_miss():
-    rng = random.Random(1)
-    pool = [_leg(rng, i, 1.10, 0.86) for i in range(20)]        # 1.10^3 = 1.33: nothing can reach 2.00
-    top, checked = picker_choose_top(pool)
-    assert top == []
 
 
-# ------------------------------------------------- one selection per real fixture (MAX_PICKS_PER_EVENT=1)
-def _fixture_of(picks):
-    from predbot.selection.picker import same_fixture
-    clashes = []
-    for a, b in _combos(picks, 2):
-        if a.event.dedupe_key() == b.event.dedupe_key() or same_fixture(a.event, b.event):
-            clashes.append((a.label, b.label, a.event.home))
-    return clashes
+# ------------------------------------------------- one selection per real fixture
 
-
-def test_max_picks_per_event_defaults_to_one():
-    assert cfg().max_picks_per_event == 1
-
-
-def test_two_selections_from_the_same_fixture_never_both_appear():
-    """Every fixture offers three strong, different selections; the slate may
-    take at most ONE of them per fixture, across Top and Daily together."""
+def test_two_selections_from_the_same_fixture_never_both_reach_top_or_daily():
+    """Every fixture offers three strong, different families: all three are All Predictions (one per family), but Top and
+    Daily each take at most ONE prediction per fixture."""
     rng = random.Random(11)
     pool = []
     for i in range(24):
@@ -631,60 +414,23 @@ def test_two_selections_from_the_same_fixture_never_both_appear():
         pool.append(sc(e, "result3", "home", 0.70, 1.45, sources=3))
         pool.append(sc(e, "total", "over", 0.68, 1.50, line=2.5, sources=3))
         pool.append(sc(e, "btts", "yes", 0.66, 1.55, sources=3))
-    ps = select(pool, cfg(), dt())
+    ps = _select(pool, cfg(), dt(), raw=False)
 
     picks = ps.all()
-    assert len(picks) >= 4                                        # the slate is not trivially empty
-    assert _fixture_of(picks) == []
+    assert len(picks) == 72                                       # three families on each of 24 fixtures
     per_fixture = Counter(p.event.dedupe_key() for p in picks)
-    assert max(per_fixture.values()) == 1
+    assert set(per_fixture.values()) == {3}
+    assert max(Counter(p.event.dedupe_key() for p in ps.top).values(), default=0) <= 1
+    assert max(Counter(p.event.dedupe_key() for p in ps.daily).values(), default=0) <= 1
 
 
-def test_one_fixture_offering_many_selections_yields_at_most_one_pick():
+def test_one_fixture_offering_many_selections_yields_one_prediction_per_family():
     e = ev(1)
     pool = [sc(e, "result3", "home", 0.72, 1.45, sources=3), sc(e, "total", "over", 0.70, 1.50, line=2.5, sources=3),
             sc(e, "btts", "yes", 0.68, 1.55, sources=3), sc(e, "dc", "home_draw", 0.75, 1.35, sources=3)]
 
-    ps = select(pool, cfg(), dt())
+    ps = _select(pool, cfg(), dt(), raw=False)
 
-    assert len(ps.all()) <= 1
-
-
-def test_the_same_match_under_two_providers_names_still_counts_as_one_fixture():
-    """oddsapi says Arsenal v Chelsea at 21:00, sharpapi says Arsenal FC v Chelsea at
-    22:30 - different dedupe_key(), same match. The cap must still see one fixture."""
-    a1 = Event(provider="oddsapi", provider_event_id="1", sport="football", league="L",
-               home="Arsenal", away="Chelsea", start=dt(hh=21), sources=["a", "b"])
-    a2 = Event(provider="sharpapi", provider_event_id="2", sport="football", league="L",
-               home="Arsenal FC", away="Chelsea", start=dt(hh=22, mm=30), sources=["a", "b"])
-    assert a1.dedupe_key() != a2.dedupe_key()
-    pool = [sc(a1, "result3", "home", 0.72, 1.45, sources=3), sc(a2, "total", "over", 0.70, 1.50, line=2.5, sources=3),
-            sc(a2, "btts", "yes", 0.68, 1.55, sources=3)]
-    rng = random.Random(5)
-    for i in range(6):                                            # other fixtures so a slate exists at all
-        home, away = _names(rng)
-        pool.append(sc(ev(50 + i, home=f"{home}{i}", away=f"{away}{i}"), "result3", "home", 0.66, 1.40, sources=3))
-
-    # one match across BOTH tiers is the CROSS_TIER_SAME_FIXTURE=forbid contract; the default now lets a
-    # match appear in both tiers with different outcomes (tests/test_cross_tier.py)
-    ps = select(pool, Config(cross_tier_same_fixture="forbid"), dt())
-
-    assert _fixture_of(ps.all()) == []
-    assert sum(1 for p in ps.all() if p.event.home.startswith("Arsenal")) <= 1
-
-
-def test_a_top_fixture_never_reappears_in_daily_with_a_different_market():
-    top_a = ev(1, home="Alpha", away="Bravo")
-    top_b = ev(2, home="Charlie", away="Delta")
-    pool = [sc(top_a, "result3", "home", 0.72, 1.42, sources=3), sc(top_b, "result3", "home", 0.72, 1.42, sources=3),
-            # same fixtures, DIFFERENT markets, ideal Daily material
-            sc(top_a, "total", "over", 0.70, 1.50, line=2.5, sources=3), sc(top_b, "btts", "yes", 0.70, 1.50, sources=3)]
-    rng = random.Random(9)
-    for i in range(8):
-        home, away = _names(rng)
-        pool.append(sc(ev(80 + i, home=f"{home}{i}", away=f"{away}{i}"), "result3", "home", 0.62, 1.35, sources=3))
-
-    ps = select(pool, Config(cross_tier_same_fixture="forbid"), dt())     # forbid = the old cross-tier rule
-
-    assert {p.event.home for p in ps.top} == {"Alpha", "Charlie"}
-    assert {p.event.home for p in ps.daily}.isdisjoint({"Alpha", "Charlie"})
+    # a lone double-chance line cannot be shown to cover the two most likely outcomes (no complete 1X2): omitted
+    assert sorted(s.line.market for s in ps.all()) == ["btts", "result3", "total"]
+    assert len(ps.top) <= 1 and len(ps.daily) <= 1

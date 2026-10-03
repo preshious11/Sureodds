@@ -10,7 +10,8 @@ from predbot.config import Config
 from predbot.jobs import daily_picks
 from predbot.providers.chain import ProviderChain
 from predbot.providers.base import MarketLine
-from predbot.selection.picker import select
+from tests.pipeline_helpers import select
+from predbot.util.fixtures import fixture_key
 from predbot.util.http import ProviderError
 from tests.conftest import dt
 from tests.test_picker import ev, sc
@@ -54,14 +55,16 @@ def test_retry_reuses_successful_provider_only():
     assert second.fetch_events.call_count == 2
 
 
-def test_top_search_finds_better_pair_than_greedy_single():
+def test_top_takes_the_strongest_leg_alone_when_it_already_reaches_the_target():
+    """The ~2.00 target is a target, not a minimum: the old exhaustive pair search is gone, and the best-ranked
+    leg (2.26 >= 2.00) is a complete one-leg Top. Nothing is added just to build an accumulator."""
     pool = [sc(ev(1), 'result3', 'home', .80, 2.26),
             sc(ev(2), 'result3', 'home', .75, 1.38),
             sc(ev(3), 'result3', 'home', .73, 1.50)]
-    result = select(pool, Config(top_legs_min=2), dt())
-    assert sorted(s.price for s in result.top) == [1.38, 1.5]
-    assert prod(s.price for s in result.top) == pytest.approx(2.07)
-    assert result.diagnostics['combinations_checked'] >= 1     # complete in-band tickets evaluated
+    result = select(pool, Config(), dt())
+    assert [s.price for s in result.top] == [2.26]
+    assert result.diagnostics['top']['target_reached'] is True
+    assert len(result.all()) == 3                              # the other predictions are untouched
 
 
 def test_top_search_bounds_count_and_unique_matches():
@@ -70,7 +73,6 @@ def test_top_search_bounds_count_and_unique_matches():
     result = select(pool, Config(top_leg_odds_min=1.0, top_legs_max=5), dt())
     assert 1 <= len(result.top) <= 3
     assert len({s.event.dedupe_key() for s in result.top}) == len(result.top)
-    assert result.diagnostics['combinations_checked'] <= 60000
 
 
 def test_top_three_pick_combination():
@@ -83,33 +85,38 @@ def test_top_three_pick_combination():
 def test_football_above50_precedes_many_lower_probability_baseball():
     # DAILY_MIN_PROB is a real, respected floor (picker.py's "preferred" filter
     # honours cfg.daily_min_prob rather than a hardcoded 0.5) - set it
-    # explicitly so this scenario's premise (0.49 is below the floor, 0.60 is
+    # explicitly so this scenario's premise (0.52 is below the floor, 0.60 is
     # above it) still holds regardless of DAILY_MIN_PROB's own default.
-    pool = [sc(ev(i, sport='baseball'), 'result2', 'home', .49, 2.5) for i in range(40)]
+    pool = [sc(ev(i, sport='baseball'), 'result2', 'home', .52, 2.5) for i in range(40)]
     pool += [sc(ev(100), 'result3', 'home', .60, 1.8)]
-    result = select(pool, Config(daily_min_prob=0.5), dt())
-    assert result.all()
-    assert {s.event.sport for s in result.all()} == {'football'}
+    result = select(pool, Config(daily_min_prob=0.55), dt())
+    assert {s.event.sport for s in result.daily + result.top} == {'football'}
+    assert len(result.all()) == 41                            # sub-floor baseball is still a prediction, just not promoted
+    assert result.diagnostics['daily']['rejections']['below_probability'] == 40
 
 
 def test_a_leg_below_the_daily_floor_is_never_used_even_when_nothing_else_qualifies():
-    """There is no second, laxer pass: a 49% leg is not admitted because the slate would otherwise be empty."""
-    pool = [sc(ev(1), 'result3', 'home', .49, 2.5)]
+    """There is no second, laxer pass: a 52% leg is not admitted because the slate would otherwise be empty."""
+    pool = [sc(ev(1), 'result3', 'home', .52, 2.5)]
     assert Config().daily_min_prob >= 0.5
-    assert select(pool, Config(), dt()).daily == []
+    ps = select(pool, Config(), dt())
+    assert ps.daily == [] and len(ps.all()) == 1
 
 
 def test_generation_uses_lagos_day_including_utc_previous_date(db, monkeypatch):
     now = datetime(2030, 6, 1, 23, 0, tzinfo=timezone.utc)  # June 2 in Lagos
     event = ev(1, start=now + timedelta(minutes=45))
-    event2 = ev(2, start=now + timedelta(minutes=45))  # Top is a 2-leg minimum accumulator
+    event2 = ev(2, start=now + timedelta(minutes=45))
+    for e in (event, event2):
+        e.canonical_event_id = fixture_key(e)
+        e.markets = [MarketLine('result3', 'home', 1.45)]      # an event with no odds cannot be predicted
     chain = provider()
     chain.collect = Mock(return_value=[event, event2])
     chain.last_report = {}
     monkeypatch.setattr(daily_picks, 'score_events', lambda *args: [
         sc(event, 'result3', 'home', .75, 1.45), sc(event2, 'result3', 'home', .75, 1.45)])
     result = daily_picks.build_picks(chain, db, Config(timezone='Africa/Lagos'), now)
-    assert result.top
+    assert len(result.predictions) == 2           # generation yields stored-ready predictions; collections come later
     start, end = chain.collect.call_args.args
     assert start <= event.start < end
     # end = min(local midnight + DAY_WINDOW_END_OFFSET_HOURS, now + 24h):
@@ -121,8 +128,10 @@ def test_partial_generation_keeps_valid_picks(db, monkeypatch):
     now = dt()
     monkeypatch.setattr('predbot.cache.fetcher.utcnow', lambda: now)
     monkeypatch.setattr(daily_picks, 'utcnow', lambda: now)
-    # Top is a 2-leg minimum accumulator, so two independent candidates are needed.
     candidates = [sc(ev(1), 'result3', 'home', .75, 1.45), sc(ev(2), 'result3', 'home', .75, 1.45)]
+    for c in candidates:
+        c.event.canonical_event_id = fixture_key(c.event)
+        c.event.markets = [MarketLine('result3', 'home', 1.45)]
     monkeypatch.setattr(daily_picks, 'score_events', lambda *args: candidates)
     chain = Mock()
     chain.collect.return_value = [c.event for c in candidates]

@@ -151,6 +151,10 @@ class Event:
     league_id: str = ""            # provider league identifier
     extra: Dict = field(default_factory=dict)
     sources: List[str] = field(default_factory=list)  # providers merged into this event
+    canonical_event_id: str = ""
+    canonical_competition_id: str = ""
+    home_id: str = ""
+    away_id: str = ""
 
     @property
     def name(self) -> str:

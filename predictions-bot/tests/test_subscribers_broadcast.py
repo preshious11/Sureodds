@@ -116,10 +116,12 @@ def test_menu_has_no_subscription_button():
     """The subscribe/unsubscribe toggle was removed - it must not come back."""
     buttons = [b for row in menu_markup()["inline_keyboard"] for b in row]
     assert [b["text"] for b in buttons] == [
-        "\U0001f525 Top Picks", "\U0001f4cb Daily Picks", "\U0001f4ca Stats", "\U0001f5d3 Yesterday"]
-    assert [b["callback_data"] for b in buttons] == ["pg|top|0", "pg|daily|0", "pg|stats|0", "pg|yesterday|0"]
+        "\U0001f4da All Predictions", "\U0001f525 Top Picks", "\U0001f4cb Daily Picks", "\U0001f4ca Stats",
+        "\U0001f5d3 Yesterday"]
+    assert [b["callback_data"] for b in buttons] == ["pg|all|0", "pg|top|0", "pg|daily|0", "pg|stats|0",
+                                                     "pg|yesterday|0"]
     assert not any(b["callback_data"].startswith("sub|") for b in buttons)
-    assert [view_button_label(v) for v in ("top", "daily", "stats", "yesterday")] == \
+    assert [view_button_label(v) for v in ("all", "top", "daily", "stats", "yesterday")] == \
         [b["text"] for b in buttons]          # menu and switch row share one definition
 
 
@@ -482,7 +484,7 @@ def test_page_callbacks_still_work_after_router_change(db):
     assert tg.edits[0]["text"].startswith("🔥 TOP PICKS · ")
     assert "predictions——" not in tg.edits[0]["text"]          # old copy stays gone
     assert [b["text"] for row in tg.edits[0]["reply_markup"]["inline_keyboard"] for b in row] == \
-        ["🔥 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
+        ["📚 All Predictions", "🔥 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
 
 
 # ----------------------------------------------------------------- helpers

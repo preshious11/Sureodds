@@ -5,10 +5,32 @@ import logging
 import threading
 import time
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 import requests
 
 log = logging.getLogger(__name__)
+
+_REQUESTS: Dict[str, int] = {}
+_REQUESTS_LOCK = threading.Lock()
+
+
+def _count_request(url: str) -> None:
+    host = urlparse(url).netloc or "unknown"
+    with _REQUESTS_LOCK:
+        _REQUESTS[host] = _REQUESTS.get(host, 0) + 1
+
+
+def request_counts() -> Dict[str, int]:
+    """HTTP attempts made by this process, per host, retries included (billed or not). Diff two snapshots to
+    attribute a generation cycle's consumption."""
+    with _REQUESTS_LOCK:
+        return dict(_REQUESTS)
+
+
+def request_delta(before: Dict[str, int]) -> Dict[str, int]:
+    now = request_counts()
+    return {h: n - before.get(h, 0) for h, n in sorted(now.items()) if n - before.get(h, 0)}
 
 
 class ProviderError(Exception):
@@ -64,12 +86,14 @@ class Http:
 
     def get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
         url = path if path.startswith("http") else f"{self.base_url}/{path.lstrip('/')}"
+        from predbot.util.redact import redact
         last_err: Optional[Exception] = None
         self.last_attempts = 0
         for attempt in range(self.retries + 1):
             if self.rate:
                 self.rate.wait()
             self.last_attempts += 1
+            _count_request(url)
             try:
                 r = self.session.get(url, params=params, timeout=self.timeout)
             except requests.RequestException as e:

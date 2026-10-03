@@ -8,7 +8,9 @@ from predbot.cache.models import DailySnapshot, PickRecord
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
 from predbot.jobs.daily_picks import store_picks
-from predbot.selection.picker import select
+from predbot.selection.picker import package_predictions
+from predbot.util.timeutil import iso
+from tests.pipeline_helpers import select
 from tests.conftest import dt
 from tests.test_picker import cfg, ev, sc
 from tests.test_subscribers_broadcast import FakeTG, _cb
@@ -83,6 +85,7 @@ def test_selected_ticket_survives_database_and_cache_with_correct_totals(db):
     configuration = cfg()
     picks = select([sc(ev(i), 'result3', 'home', .70, 1.45) for i in range(40)], configuration, dt())
     store_picks(picks, db, '2030-06-01')
+    package_predictions(db, '2030-06-01', configuration, iso(dt()))     # memberships: the collections over stored rows
     fetcher = UnifiedFetcher(None, db, configuration)
     snap = fetcher._snapshot_from_rows(db.picks_for_date('2030-06-01'), dt().date(), 'db')
     restored = DailySnapshot.from_dict(snap.to_dict())
@@ -91,7 +94,9 @@ def test_selected_ticket_survives_database_and_cache_with_correct_totals(db):
     daily_total = prod(p.price for p in restored.view_items('daily'))
     assert top_total == pytest.approx(2.1025)
     assert len(restored.view_items('daily')) == len(picks.daily) and len(restored.view_items('top')) == len(picks.top)
-    assert 4 <= daily_total <= 20
+    # the restored ticket is exactly what the selectors chose (the old 4..20 band was a property of the removed
+    # selection rules; a homogeneous result3 pool is now capped by the market-diversity limit)
+    assert daily_total == pytest.approx(prod(s.price for s in picks.daily)) and daily_total > 1
     for view, total in [('top', top_total), ('daily', daily_total)]:
         n = len(restored.view_items(view))
         text, _ = render_page(restored, view, 0, 1, 'UTC')

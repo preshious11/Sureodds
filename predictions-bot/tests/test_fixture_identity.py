@@ -1,5 +1,5 @@
 """One match, however each provider spells it: same_team with the US-sports rules, home/away swaps, the
-competition veto and fixture_key. Names come from analysis/cross_tier_repro.py (the Phase 0 cases)."""
+competition veto and fixture_key."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from predbot.providers.base import Event
-from predbot.selection.picker import fixture_conflicts, fixture_relation, same_fixture
+from predbot.util.fixtures import same_fixture
 from predbot.util.fixtures import fixture_key, fixture_orientation
 from predbot.util.names import canonical_team, same_team
 
@@ -77,8 +77,7 @@ def test_phase0_mlb_pair_with_a_city_abbreviation_links():
 def test_phase0_mlb_pair_with_prefix_and_swapped_sides_links_as_swapped():
     a = _e("sharpapi", "baseball", "TEX Rangers", "BOS Red Sox", _t(18, 10), "MLB")
     b = _e("sportsgameodds", "baseball", "Boston Red Sox", "Texas Rangers", _t(18, 10), "MLB")
-    assert fixture_orientation(a, b) == "swapped" and fixture_relation(a, b) is True
-    assert fixture_relation(b, a) is True
+    assert fixture_orientation(a, b) == "swapped"
 
 
 def test_a_football_home_away_swap_links_as_swapped():
@@ -91,7 +90,6 @@ def test_different_sport_or_far_apart_kickoffs_never_link():
     a = _e("x", "football", "Le Mans", "Lorient", _t(18, 45))
     assert fixture_orientation(a, _e("y", "hockey", "Le Mans", "Lorient", _t(18, 45))) is None
     assert fixture_orientation(a, _e("y", "football", "Le Mans", "Lorient", _t(23, 0))) is None
-    assert fixture_relation(a, _e("y", "football", "Nantes", "Lorient", _t(18, 45))) is None
 
 
 def test_a_premier_league_match_cannot_link_to_a_championship_one():
@@ -103,11 +101,7 @@ def test_a_premier_league_match_cannot_link_to_a_championship_one():
     assert same_fixture(epl, unknown)                                       # an unresolved competition does not veto
 
 
-def test_the_existing_two_provider_link_still_holds():
-    a1 = _e("oddsapi", "football", "Arsenal", "Chelsea", _t(21), "L")
-    a2 = _e("sharpapi", "football", "Arsenal FC", "Chelsea", _t(22, 30), "L")
-    b = _e("oddsapi", "football", "Porto", "Braga", _t(21), "L")
-    assert fixture_conflicts([a1, a2, b]) == [{1}, {0}, set()]
+
 
 
 # --------------------------------------------------------------------------- fixture_key

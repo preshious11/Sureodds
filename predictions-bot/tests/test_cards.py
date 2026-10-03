@@ -56,7 +56,7 @@ def test_top_card():
         "🎯 DC United or Charlotte FC",
         "💰 1.31  ·  📊 76%  ·  🕘 12:00 AM")
     assert [b["callback_data"] for row in markup["inline_keyboard"] for b in row] == \
-        ["pg|top|0", "pg|daily|0", "pg|stats|0", "pg|yesterday|0"]
+        ["pg|all|0", "pg|top|0", "pg|daily|0", "pg|stats|0", "pg|yesterday|0"]
 
 
 def test_daily_page_2_of_3():
@@ -171,7 +171,7 @@ def test_a_match_under_way_appends_a_red_circle_after_its_time():
 
 
 # ------------------------------------------------------------------------------------------------ the vocabulary
-ALLOWED = set("🔥📋🎟🎯💰📊🕘🔴✅❌➖🏆📈🗓🏅💹⚽🏀🏈⚾🎾🥊") | {"️", "↩", "◀", "▶", "↓", "•", "·", "—", "–"}
+ALLOWED = set("🔥📋📚🎟🎯💰📊🕘🔴✅❌➖🏆📈🗓🏅💹⚽🏀🏈⚾🎾🥊") | {"️", "↩", "◀", "▶", "↓", "•", "·", "—", "–"}
 
 
 def emoji_of(text):

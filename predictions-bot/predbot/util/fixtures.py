@@ -89,3 +89,10 @@ def row_fixture_key(row) -> str:
                             extra={"sport_key": meta.get("_sport_key") or ""}, home=col("home") or "",
                             away=col("away") or "", start=start)
     return fixture_key(event)
+
+
+
+
+
+def same_fixture(a, b):
+    return fixture_orientation(a, b) is not None

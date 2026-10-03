@@ -111,18 +111,11 @@ def test_build_picks_does_not_build_a_second_chain_when_oddsapi_is_in_provider_o
     oa = _oddsapi_provider([e1, e2])
     chain = ProviderChain({"oddsapi": oa}, ["oddsapi"], 1)
     chain.db, chain.cfg = None, None
-    seen = {}
-
-    def fake_select(scored, cfg, now, top_priority_source=None, **kw):
-        seen["source"] = top_priority_source
-        from predbot.selection.picker import PickSet
-        return PickSet()
-
     monkeypatch.setattr("predbot.jobs.daily_picks.score_events",
                         lambda events, *a: [sc(e, "result3", "home", 0.75, 1.5, sources=2) for e in events])
-    monkeypatch.setattr("predbot.jobs.daily_picks.select", fake_select)
+    monkeypatch.setattr("predbot.jobs.daily_picks.make_results_gate", lambda cfg, providers: (lambda event: "test"))
 
-    build_picks(chain, db, Config(timezone="UTC", provider_order=["oddsapi"], top_provider_priority=["oddsapi"]), dt())
+    result = build_picks(chain, db, Config(timezone="UTC", provider_order=["oddsapi"]), dt())
 
     assert oa.fetch_events.call_count == 1          # collected once: credits are not spent twice
-    assert seen["source"] == "oddsapi"              # but it is still handed to select()
+    assert len(result.predictions) == 2             # and its events are ordinary predictions (no priority sub-chain)

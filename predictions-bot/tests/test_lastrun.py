@@ -12,6 +12,8 @@ from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
 from predbot.jobs import daily_picks
 from predbot.selection.picker import PickSet
+from tests.real_events import pickset
+from tests.conftest import dt
 from tests.test_picker import ev, sc
 from tests.test_subscribers_broadcast import FakeTG
 
@@ -21,27 +23,23 @@ ADMIN, USER = "111", "222"
 
 
 def _pickset():
-    a, b, c = ev(1), ev(2), ev(3)
-    ps = PickSet(top=[sc(a, "result3", "home", 0.72, 1.45), sc(b, "result3", "home", 0.72, 1.45)],
-                 daily=[sc(c, "result3", "home", 0.70, 1.50)])
-    ps.complete = True
+    later = dt(d=2, hh=20)                         # after NOW, so the stored predictions are still promotable
+    a, b, c = ev(1, start=later), ev(2, start=later), ev(3, start=later)
+    ps = pickset([sc(a, "result3", "home", 0.72, 1.45), sc(b, "result3", "home", 0.72, 1.45),
+                  sc(c, "result3", "home", 0.70, 1.50)])
     ps.diagnostics = {
         "providers": {"sportsgameodds": {"status": "complete", "outcome": "success", "events": {"football": 30}},
-                      "sharpapi": {"status": "partial", "outcome": "failed", "events": {"football": 12, "tennis": 5}}},
+                      "sharpapi": {"status": "partial", "outcome": "failed", "events": {"football": 12, "tennis": 5}},
+                      "oddsapi": {"status": "complete", "outcome": "empty", "events": {},
+                                  "quota": {"requests_remaining": 0, "requests_used": 500, "reserve_credits": 50,
+                                            "refused_to_spend": True,
+                                            "refusal": "x-requests-remaining=0, reserve=50 - refused to spend 3 credits"}}},
         "api_usage": {"sportsgameodds": {"cycle": 7, "today": 37, "limit": 100},
                       "sharpapi": {"cycle": 3, "today": 30, "limit": None}},
-        "top_priority_provider_report": {"oddsapi": {
-            "status": "complete", "outcome": "empty", "events": {},
-            "quota": {"requests_remaining": 0, "requests_used": 500, "reserve_credits": 50,
-                      "refused_to_spend": True,
-                      "refusal": "x-requests-remaining=0, reserve=50 - refused to spend 3 credits"}}},
-        "scored_by_sport": {"football": 900, "tennis": 40}, "base_by_sport": {"football": 800, "tennis": 30},
-        "top_eligible_by_sport": {"football": 25}, "top_pool_rejections": {"BELOW_THRESHOLD": 700},
-        "daily_eligible_by_sport": {"football": 90, "tennis": 4},
-        "daily_pool_rejections": {"BELOW_THRESHOLD": 600, "DISABLED_MARKET": 12},
-        "combinations_checked": 4, "top_odds": 2.1025,
-        "daily_caps_relaxed": {"reason": "strict pass could not reach DAILY_COMBINED_MIN_ODDS",
-                               "strict_ticket": 6.7, "exceeded": {"market": 2}},
+        "fixtures_discovered": 50, "supported_fixtures": 44, "normalized": 44, "normalization_failures": 0,
+        "sufficient_analytical_data": 40, "event_rejections": {"missing_odds": 4},
+        "valid_predictions_generated": 3, "line_rejection_count": 12,
+        "line_rejections": {"missing_required_stats": 12},
     }
     return ps
 
@@ -74,11 +72,12 @@ def test_it_reports_the_whole_cycle(world):
     # Odds API remaining/used and the refusal
     assert "remaining <b>0</b>" in text and "used <b>500</b>" in text and "reserve 50" in text
     assert "refused to spend" in text
-    # funnel and relaxations
-    assert "scored 940 → eligible 830" in text and "BELOW_THRESHOLD=700" in text
-    assert "DISABLED_MARKET=12" in text and "Top tickets evaluated: 4" in text
-    assert "strict pass could not reach" in text and "&quot;market&quot;" not in text
-    assert "Top 2 legs · combined 2.10" in text and "Daily 1 picks" in text
+    # the funnel: every stage that drops an event names its reason
+    assert "Unique fixtures discovered: 50" in text and "Supported fixtures: 44" in text
+    assert "Sufficient analytical data: 40 · events not analysed: missing_odds=4" in text
+    assert "rejected: 12 (missing_required_stats=12)" in text
+    assert "All Predictions: 3" in text and "Top selected:" in text and "Daily selected:" in text
+    assert "<b>Collections</b>: All 3 predictions" in text
 
 
 def test_it_shows_both_slates_exactly_as_the_subscriber_card_renders_them(world):
@@ -88,7 +87,7 @@ def test_it_shows_both_slates_exactly_as_the_subscriber_card_renders_them(world)
     text = lastrun_text(db, cfg)
 
     assert "Slates as sent" in text and "09:30" in text
-    assert "TOP PICKS" in text and "DAILY PICKS" in text and "🎯" in text
+    assert "TOP PICKS" in text and "DAILY PICKS" in text
     assert "Generated 9:00 AM WAT" in text
 
 

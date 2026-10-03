@@ -108,6 +108,29 @@ def settle_result(r, res: MatchResult, db: Database, elo: Elo, now: datetime,
         _apply_result(r, res, db, elo, now, counts, expire_missing)
 
 
+def _pid(row, column: str) -> str:
+    try:
+        return str(row[column] or "")
+    except (KeyError, IndexError):
+        return ""
+
+
+def _learn(db, elo, sport, home, away, score, when, home_id, away_id, competition_id, source, source_id) -> None:
+    """Teach the ratings one final result, keyed by canonical participant ids.
+
+    A football result with a canonical competition and both participants goes through the historical-results store
+    (idempotent: the same real match from any source is stored once) and Elo then learns from the store's pending
+    rows - so a match that is already in the history is never counted twice. Everything else updates Elo directly."""
+    if sport == "football" and competition_id and home_id and away_id and home_id != away_id:
+        from predbot.history.store import HistoryStore
+        store = HistoryStore(db)
+        store.add_result(sport=sport, competition_id=competition_id, kickoff=when, home_id=home_id, away_id=away_id,
+                         home_goals=int(score[0]), away_goals=int(score[1]), source=source, source_match_id=source_id)
+        store.apply_pending_elo(sport)
+        return
+    elo.update(sport, home, away, score[0], score[1], home_id=home_id, away_id=away_id)
+
+
 def _apply_result(r, res, db, elo, now, counts, expire_missing):
     start = parse_iso(r["start_utc"])
     outcome = grade(_row_to_line(r), res, r["sport"])
@@ -138,7 +161,8 @@ def _apply_result(r, res, db, elo, now, counts, expire_missing):
         key = f"{r['sport']}|{r['home']}|{r['away']}|{start.strftime('%Y%m%d')}"
         if not db.result_seen(key):
             db.mark_result_seen(key, sc[0], sc[1])
-            elo.update(r["sport"], r["home"], r["away"], sc[0], sc[1])
+            _learn(db, elo, r["sport"], r["home"], r["away"], sc, start, _pid(r, "home_id"), _pid(r, "away_id"),
+                   _pid(r, "canonical_competition_id"), source="settlement", source_id=str(r["fixture_key"]))
 
 
 def _needs_by_event(rows) -> Dict[str, frozenset]:
@@ -214,6 +238,8 @@ def _harvest_elo_from_espn(resolver: "ResultsResolver", db: Database, elo: Elo) 
         return 0
 
     learned = 0
+    from predbot.storage.identity import IdentityRegistry
+    registry = IdentityRegistry(db)
     for comp in COMPETITIONS:
         if not comp.espn or not comp.sport:
             continue
@@ -250,7 +276,14 @@ def _harvest_elo_from_espn(resolver: "ResultsResolver", db: Database, elo: Elo) 
                 key = f"{comp.sport}|{h_name}|{a_name}|{when.strftime('%Y%m%d')}"
                 if not db.result_seen(key):
                     db.mark_result_seen(key, hs, as_)
-                    elo.update(comp.sport, h_name, a_name, hs, as_)
+                    reg = registry
+                    try:
+                        hid = reg.participant("espn", comp.sport, h_name)
+                        aid = reg.participant("espn", comp.sport, a_name)
+                    except ValueError:
+                        continue
+                    _learn(db, elo, comp.sport, h_name, a_name, (hs, as_), when, hid, aid, comp.id,
+                           source="espn", source_id=f"{comp.espn}:{c.get('id') or key}")
                     learned += 1
     return learned
 

@@ -26,6 +26,7 @@ def test_repeated_start_has_exact_copy_in_every_state(db, state):
     expected = ('👋 Hi, Ada &lt;&amp;&gt;\n\n'
                 'Use the menu below or these commands:\n\n'
                 '<b>🏆 /top</b> – Top picks of the day\n'
+                '<b>📚 /all</b> – All predictions\n'
                 '<b>📋 /daily</b> – Daily picks · Accumulator slip\n'
                 '<b>📊 /stats</b> – See prediction results')
     assert all(s['text'] == expected for s in tg.sends)

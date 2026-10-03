@@ -9,9 +9,19 @@ from typing import Any, Dict, List, Optional
 #: a snapshot written under an older version as a cache miss, so a slate built
 #: by superseded code is regenerated instead of being served for the rest of
 #: the day. 3 = per-(market, stat) / sport / league diversity quotas.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 VIEW_TOP = "top"
+VIEW_ALL = "all"
+#: ``all_<sport>`` views: All Predictions narrowed to one sport (the sport menu's buttons)
+SPORT_VIEW_PREFIX = "all_"
+KNOWN_SPORTS = ("football", "basketball", "american_football", "baseball", "tennis", "mma")
+
+
+def sport_bucket(sport: str) -> str:
+    """The sport menu's key for a prediction: its own sport, or ``other`` for one the bot has no label for."""
+    return sport if sport in KNOWN_SPORTS else "other"
+
 VIEW_DAILY = "daily"
 VIEW_STATS = "stats"
 VIEW_YESTERDAY = "yesterday"
@@ -49,6 +59,7 @@ class PickRecord:
     sources: List[str] = field(default_factory=list)   # contributing signals/providers
     status: str = "pending"                # pending | won | lost | push | ...
     pick_date: str = ""                    # YYYY-MM-DD the pick was published for
+    fixture_id: str = ""                   # canonical event id: several predictions (one per market family) share one
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -137,6 +148,7 @@ class DailySnapshot:
     origin: str = "cache"                  # cache | db | api  (how it was produced)
     top_picks: List[PickRecord] = field(default_factory=list)
     daily_picks: List[PickRecord] = field(default_factory=list)
+    all_predictions: List[PickRecord] = field(default_factory=list)
     stats: Optional[StatsSummary] = None
     schema_version: int = SCHEMA_VERSION
     generation: Dict[str, Any] = field(default_factory=dict)
@@ -144,6 +156,10 @@ class DailySnapshot:
     sport_status: Dict[str, Any] = field(default_factory=dict)
 
     def view_items(self, view: str) -> List[PickRecord]:
+        if view == VIEW_ALL:
+            return self.all_predictions
+        if view.startswith(SPORT_VIEW_PREFIX):
+            return [p for p in self.all_predictions if sport_bucket(p.sport) == view[len(SPORT_VIEW_PREFIX):]]
         if view == VIEW_TOP:
             return self.top_picks
         if view == VIEW_DAILY:
@@ -152,7 +168,8 @@ class DailySnapshot:
         return []
 
     def total_picks(self) -> int:
-        return len(self.top_picks) + len(self.daily_picks)
+        return len(self.all_predictions) or len({p.pick_id or (p.provider, p.provider_event_id, p.market, p.selection)
+                                               for p in self.top_picks + self.daily_picks})
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -166,6 +183,7 @@ class DailySnapshot:
             "top_combined_odds": prod(p.price for p in self.top_picks) if self.top_picks else None,
             "top_picks": [p.to_dict() for p in self.top_picks],
             "daily_picks": [p.to_dict() for p in self.daily_picks],
+            "all_predictions": [p.to_dict() for p in self.all_predictions],
             "stats": (asdict(self.stats) if self.stats else None),
         }
 
@@ -186,6 +204,7 @@ class DailySnapshot:
             sport_status=dict(data.get("sport_status") or {}),
             top_picks=[PickRecord.from_dict(p) for p in data.get("top_picks", [])],
             daily_picks=[PickRecord.from_dict(p) for p in data.get("daily_picks", [])],
+            all_predictions=[PickRecord.from_dict(p) for p in data.get("all_predictions", [])],
             stats=(StatsSummary.from_raw(stats_raw) if stats_raw else None),
         )
 

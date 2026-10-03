@@ -31,9 +31,9 @@ def loop(tg):
     return CommandLoop(tg, SimpleNamespace(), Config(timezone="UTC"), {})
 
 
-def test_the_menu_lists_the_six_commands_with_one_line_descriptions():
+def test_the_menu_lists_the_seven_commands_with_one_line_descriptions():
     names = [c["command"] for c in callbacks.BOT_COMMANDS]
-    assert names == ["top", "daily", "stats", "yesterday", "timezone", "help"]
+    assert names == ["all", "top", "daily", "stats", "yesterday", "timezone", "help"]
     for c in callbacks.BOT_COMMANDS:
         assert c["description"] and "\n" not in c["description"] and len(c["description"]) <= 256
         assert set(c) == {"command", "description"} and c["command"] == c["command"].lower()

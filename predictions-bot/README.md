@@ -30,8 +30,11 @@ worker process (a Docker container; the root `Dockerfile` runs `python main.py`)
 - **Full market coverage.** Not just win/lose — see the list below.
 - **A real pricing model** (not just the odds read back at you) — see "How the
   model works".
-- **A Top ticket and a Daily ticket**, with hard rules: no padding, no favouring
-  one outcome type, one pick per real fixture, and no overlap between the two.
+- **Predictions first, packaging afterwards.** The model produces one eligible representative per match **and market
+  family** (1X2 / Moneyline, Double Chance, Draw No Bet, Handicap, Over/Under, BTTS) and every one is stored
+  (**All Predictions**). **Top Picks** (~2.00 combined odds as a *target*) and **Daily Picks**
+  are then selected from that stored pool; neither can remove a prediction, and either can legitimately be small
+  or empty. See "Architecture" below.
 - **Only picks that can be settled.** A candidate is accepted only if some provider
   can later return its result (see "Settlement"); otherwise it is rejected as
   `NO_RESULTS_PATH` and counted per league in the generation diagnostics.
@@ -55,9 +58,9 @@ and graded on settlement:
 | Other | Odd/Even (match & team) — priced and settled, but not selected by default |
 | Props | Player props (**only via SportsGameOdds**), off by default (`MAX_PLAYER_PROPS=0`) |
 
-`DISABLED_MARKETS` (default `odd_even,prop,winning_margin,ht_ft`) lists market ids
-the picker never selects (`DISABLED_MARKET` in the rejection counts); empty it to
-allow them. SportsGameOdds odds are also restricted to `SGO_ALLOWED_STATS`
+Only the seven families above enter All Predictions. `DISABLED_MARKETS` (default `odd_even,prop,winning_margin,ht_ft`) lists market ids
+the Top and Daily selectors never promote (`disabled_market` in their rejection counts); the
+prediction itself is still made and stays in All Predictions. Empty the list to allow promotion. SportsGameOdds odds are also restricted to `SGO_ALLOWED_STATS`
 (default `points,cornerKicks,yellowCards,weightedCards,bothTeamsScored`) and
 `SGO_ALLOWED_PERIODS` (default `game,reg,1h,2h`); anything else is rejected at parse
 time (`UNSUPPORTED_STAT` / `UNSUPPORTED_PERIOD`).
@@ -100,7 +103,7 @@ model never wanders far from the books without reason), and passed through a
 selection ends up with a market probability, a model probability, an agreement
 score across signals, and an expected value / edge.
 
-The **picker** then applies your rules:
+The **collection selectors** (Top and Daily, reading stored predictions) then apply your rules:
 
 - **Top picks** are main markets only (result, DNB, double chance, the main total / handicap), with high model
   probability, at least `TOP_MIN_BOOKS` (3) *distinct* bookmakers, and — where a sharp book priced the line — a price
@@ -115,28 +118,16 @@ The **picker** then applies your rules:
 - **Evidence-based ranking** (`predbot/selection/evidence.py`): candidates are ranked by the *lower confidence bound*
   of their probability (probability minus its uncertainty: market-class prior, book disagreement, single-book,
   no-sharp-reference) plus the edge over a sharp reference when one exists — never by raw probability. Market
-  quality is graded main / secondary / restricted (first half, corners, far alternate lines, exotics); the restricted
-  class is only offered after the rest. The ranking score is **not** a probability and is never shown as one.
+  quality is graded main / secondary / restricted (first half, corners, far alternate lines, exotics). The ranking score is **not** a probability and is never shown as one.
 - **Sharp reference** (`SHARP_BOOKMAKERS`, default Pinnacle / Betfair Exchange / Matchbook): when one of these quotes
   every side of a market, its Shin-de-vigged price is the fair probability; the card shows the *other* books' median
   price, and edge = fair probability × the best of those books' prices − 1 (`EDGE_PRICE`; a median book always carries
   its margin, so it would make every line look negative). Nothing is assumed present: with no sharp
   quote there is no reference, no edge, and a larger uncertainty. `python cli.py accuracy` reports per-leg hit rate,
   Brier vs the market, and results by sport / market / confidence / book count, separately from ticket results.
-- **No overlap:** a top-pick outcome is never repeated in the daily list, and no
-  contradictory/equivalent line on the same match is added. The same match *may*
-  appear again with a genuinely different outcome.
-- **No single-outcome bias:** caps on the share of home/away/over/under picks,
-  on any one market type, on exotics, and on player props, plus a soft per-sport
-  cap when multiple sports are available.
-- **Family-fair Daily ranking** (`DAILY_RANKING=family_z`, the default): the Daily score is
-  0.60 × probability, so on any match the safest line (+1.5, Over 1.5, double chance) used to
-  beat the straight win or the real Over 2.5, and "one pick per match" kept the safe line. The
-  builder is now *offered* candidates in the order of their z-score within their own family
-  (`win`, `total_main`/`total_alt`, `handicap_main`/`handicap_alt`, `safety`, `btts`,
-  `team_total`, `period`, `exotic`, `prop`; the main line is the one whose two sides are closest
-  to 50%). Only the order changes — every gate and cap is untouched, and the Top ticket is
-  unaffected. `DAILY_RANKING=raw` restores the old order; `/lastrun` shows "Daily by family".
+- **Daily portfolio rules** live only in the Daily selector (`predbot/selection/daily.py`): one leg per match,
+  caps on the share of any one market, stat, sport and league, and the combined-odds band. None of them is applied
+  while predictions are generated.
 - **International football** (UEFA / CONCACAF Nations League, friendlies) is fetched by default and topped up into
   `SHARPAPI_LEAGUES` / `ODDS_API_LEAGUE_ALLOWLIST` even when the environment pins its own lists
   (`INTERNATIONAL_FOOTBALL=false` opts out). ESPN settles them on the full-time score.
@@ -144,28 +135,73 @@ The **picker** then applies your rules:
   (they are kept for settlement). When the cap is gone it skips SGO immediately instead of retrying `429`s for minutes;
   settlement falls back to the free results sources.
 - **Stale environment values**: a dashboard still pinning a pre-rework default (`DAILY_COMBINED_MAX_ODDS=20`,
-  `DAILY_PICKS_TARGET=20`, `DAILY_MIN_PROB=0.30`, `TOP_RELAX_PROB=0.04`) is ignored with a warning;
+  `DAILY_PICKS_TARGET=20`, `DAILY_MIN_PROB=0.30`) is ignored with a warning;
   `HONOR_PINNED_VALUES=1` keeps an old value on purpose. Deliberate values (e.g. `TOP_MIN_BOOKS=2`) are never touched.
-- **Same match in Top and Daily** (`CROSS_TIER_SAME_FIXTURE=different_outcome`, the default): a match in the Top
-  ticket may also carry a Daily pick, but never the same tip - not the same selection, an equivalent one, nor one
-  nested in it (win / double chance / draw-no-bet on the same side; over or under at any line; the same handicap
-  side at any line). Providers that list home/away the other way round, or spell a team differently ("LA Dodgers" /
-  "Los Angeles Dodgers"), are recognised as the same match. `MAX_PICKS_PER_EVENT` then counts per tier; `forbid`
-  keeps a Top match off-limits to the Daily. The `picks` table has a unique index on (date, fixture key, selection)
-  as a last line of defence.
-- **Top ticket search**: when the strict search (1-3 legs, odds 2.00-2.50, every leg at `TOP_MIN_PROB`) finds
-  nothing, `TOP_RELAXED_FALLBACK=1` widens the band by `TOP_RELAX_BAND`; `TOP_RELAX_PROB` (default 0 — the Top is
-  not weakened to reach its target) can lower the per-leg probability floor only when explicitly configured.
-  The widened band is restricted to 2-3 legs; singles require the strict band. Insufficient quality can still leave Top empty.
+Operator view: `/lastrun` shows the generation funnel (fixtures discovered → normalized → analysed → predictions
+→ Top/Daily candidates and selected, each drop with its reason), runtime revision, per-provider API/HTTP usage and
+provider cache reuse/refresh reasons. Subscriber views never call a provider.
 
-Operator-only Top investigation: `python diagnose_top.py --db tests/fixtures/replay/replay.db --json data/top_diagnostic.json --csv data/top_candidates.csv`.
-Use `--live --record data/top_recording.db` to capture current data on a database copy without changing served picks or sending messages.
-`/lastrun` reports the Top funnel, grouped rejection reasons, effective settings, runtime revision, and provider cache reuse/refresh reasons.
-Provider caches detect changed collection settings; completed empty responses expire after `CACHE_RETRY_SECONDS` during generation.
-Subscriber views continue to serve their cached snapshot without provider calls.
-  `/lastrun` shows "Top fallback".
+## Architecture
+
+```
+Provider discovery -> provider adapters -> canonical normalization -> fixture/event resolution
+   -> data enrichment -> prediction engine -> prediction store (ALL PREDICTIONS)
+        -> Top Picks | Daily Picks | Stats  -> Telegram
+```
+
+- **Canonical identity** (`predbot/storage/identity.py`): competitions, participants and events get stable canonical
+  IDs persisted in `canonical_participants`, `canonical_events` and `provider_identity`. Provider IDs are used when a
+  provider supplies them; aliases/fuzzy matching run once at first encounter and the mapping is stored, so a
+  renamed team does not silently drop a competition.
+- **Prediction engine** (`predbot/model/engine.py`): knows nothing about tickets, odds targets or Telegram. For each
+  resolved event with enough data it prices the supported markets and keeps ONE eligible representative per market
+  family (`predbot/selection/representatives.py`: the modal 1X2 outcome, the double chance covering the two most likely
+  outcomes, the favourite for DNB / Moneyline, the likelier BTTS side above 50%, and the likelier side of the MAIN line
+  of Over/Under and Handicap; a handicap is kept only when |line| >= 1 and it can win alongside the fixture's other
+  predictions). A family with no eligible representative is omitted for that fixture, with a recorded reason. Team
+  totals, period markets, corners/cards and props are outside this pool. Bookmaker value is stored as metadata, never
+  as a gate on existence.
+- **Prediction store**: one row per prediction in `picks`, unique per (day, canonical event, market family); `prediction_memberships` says which collections
+  (`all`, `top`, `daily`) it belongs to. It is settled once, whatever it belongs to, and is never regenerated.
+- **Selectors** (`predbot/selection/top.py`, `daily.py`, orchestrated by `picker.package_predictions`) read stored
+  rows only. Top returns 0-3 legs and never pads to reach its target; Daily owns its portfolio rules. Top and Daily each
+  promote at most ONE prediction per fixture.
+- **Telegram**: `/all` (sports with predictions, then that sport's fixtures - a fixture's predictions together, ~5 fixtures per page), `/top`, `/daily`, `/stats` (compact Today / 7 days / All time,
+  buttons per collection, `View Results` pages). All of them read storage; pagination makes no provider call.
+- **Fresh generation**: `python cli.py reset-day [YYYY-MM-DD] [--yes]` invalidates only that day's shared snapshot
+  and its unpublished, not-yet-started pending predictions (dry run without `--yes`); settled rows, started
+  fixtures, history, subscribers, provider caches and quota counters are kept.
+
+### Independent football model (history -> ratings -> probabilities)
+
+`p_model` is meant to be OUR estimate and `p_market` the bookmaker's; they are stored separately.
+
+- **History**: `match_results` (canonical competition, canonical participants, kickoff, score, source) is filled by
+  `python cli.py history-import-csv FILE [competition]` (football-data.co.uk CSVs, no API) or
+  `python cli.py history-backfill [--competitions PL,PD] [--seasons 2023,2024] [--yes]` (football-data.org: one request
+  per competition-season, dry run until `--yes`, each season fetched once ever, current season at most daily). Results
+  settled by the bot also land here, and Elo (keyed by canonical participant id) learns each result exactly once.
+- **Model** (`predbot/model/football_strength.py`): time-weighted Poisson attack/defence ratings with a home effect,
+  fitted from results only; expected goals feed the existing `ScoreGrid` so 1X2, Double Chance, DNB, Over/Under, BTTS
+  and handicaps come from one score distribution. Bookmaker prices play no part.
+- **Modes** (`INDEPENDENT_MODEL_MODE`): `shadow` (default) stores `p_independent`, edge vs market, EV and a status next
+  to the unchanged `p_model`; `independent` makes `p_model` the independent estimate where one exists; `off`. A line
+  without an independent estimate keeps its market-derived value labelled `market_blend`, with the reason
+  (`unavailable:no_history | unknown_team | insufficient_history | unsupported_market | no_independent_model`).
+- **Backtest**: `python tools/backtest_football.py --db data/predbot.db [--select]` (walk-forward, leak-free; blend
+  weights and hyper-parameters are chosen on a validation window, scores come from the later test window).
+  `--synthetic` checks the machinery only.
 
 ---
+
+### Market comparison research (evaluation only)
+
+`predbot/history/odds_link.py` links free football-data.co.uk CSV odds (Pinnacle, Bet365, market average; pre-match and
+closing; 1X2 and Over/Under 2.5) to results **already in the store** - it never inserts a match or creates a participant,
+and ambiguous or score-mismatched fixtures are reported rather than guessed. Odds are reference data: no model reads them.
+
+    python tools/audit_history.py                      # duplicates, impossible scores, identity, gaps
+    python tools/market_comparison.py --json out.json  # model vs each bookmaker, separately, on the untouched test window
 
 ## Setup
 

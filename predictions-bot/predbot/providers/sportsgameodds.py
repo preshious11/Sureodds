@@ -506,6 +506,7 @@ class SportsGameOddsProvider(BaseProvider):
         e = Event(provider=self.name, provider_event_id=ev["eventID"], sport=sport,
                   league=str(ev.get("leagueID", "")).replace("_", " "), league_id=ev.get("leagueID", ""),
                   home=home, away=away, start=start, sources=[self.name])
+        e.extra['participant_ids'] = {side: str((teams.get(side) or {}).get('teamID') or '') for side in ('home','away')}
         player_props = 0
         for odd_id, o in (ev.get("odds") or {}).items():
             ml = self._parse_odd(odd_id, o, sport, players)

@@ -8,9 +8,9 @@ from predbot.bot.callbacks import handle_callback, handle_command, handle_start
 from predbot.bot.format import kickoff_label
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
-from predbot.jobs.daily_picks import store_picks
 from predbot.selection.picker import PickSet
 from predbot.util.timeutil import iso, parse_iso, resolve_timezone
+from tests.pipeline_helpers import store_selected
 from tests.test_picks_format import event, sc
 from tests.test_subscribers_broadcast import FakeTG, _cb
 
@@ -33,7 +33,7 @@ def test_utc_storage_to_local_command_button_and_broadcast(db, stamp, zone, cloc
     parsed = parse_iso(stamp)
     assert parsed.tzinfo == timezone.utc
     selection = sc(event(1, kickoff=stamp), 'Home Win', .81, 2.0)
-    store_picks(PickSet(top=[selection]) if view == 'top' else PickSet(daily=[selection]), db, stamp[:10])
+    store_selected(PickSet(top=[selection]) if view == 'top' else PickSet(daily=[selection]), db, stamp[:10])
     fetcher = UnifiedFetcher(None, db, Config())
     rows = db.picks_for_date(stamp[:10])
     snapshot = fetcher._snapshot_from_rows(rows, parsed.date(), 'db')
@@ -42,7 +42,7 @@ def test_utc_storage_to_local_command_button_and_broadcast(db, stamp, zone, cloc
     assert (snapshot.top_picks or snapshot.daily_picks)[0].kickoff_utc == stamp
     db.subscriber_add('42', timezone=zone)
     tg = FakeTG()
-    service = SimpleNamespace(get_daily_snapshot=lambda: snapshot)
+    service = SimpleNamespace(get_daily_snapshot=lambda **_kw: snapshot)
     handle_command('/' + view, '42', service=service, tg=tg, db=db, cfg=Config(timezone='UTC'))
     handle_callback(_cb('pg|' + view + '|0'), service=service, tg=tg, db=db, cfg=Config(timezone='UTC'))
     broadcast = picks_text(snapshot, subscriber_tz(db.subscribers_active()[0], 'UTC'))

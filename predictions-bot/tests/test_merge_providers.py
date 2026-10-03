@@ -10,7 +10,7 @@ from predbot.config import Config
 from predbot.markets.settlement import grade
 from predbot.providers.base import Event, MarketLine, MatchResult
 from predbot.providers.chain import merge_events
-from predbot.selection.picker import select
+from tests.pipeline_helpers import select
 from tests.conftest import dt
 from tests.test_picker import sc
 

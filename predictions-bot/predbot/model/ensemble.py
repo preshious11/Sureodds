@@ -81,6 +81,13 @@ class Scored:
     edge_ev: Optional[float] = None
     #: which of the signals that can contradict the soft market actually fed this estimate: subset of {sharp, elo}
     independent: List[str] = field(default_factory=list)
+    #: Independent (history-only) estimate and how p_model relates to it. ``p_independent`` is None when no
+    #: independent model could price this line; ``independent_status`` says why ('ok' or 'unavailable:<reason>').
+    #: ``p_model_basis`` is 'independent' only when p_model IS that estimate; otherwise p_model is the market-derived
+    #: value and the basis says so ('market_blend'), so a fallback is never mistaken for an independent prediction.
+    p_independent: Optional[float] = None
+    independent_status: str = "unavailable:not_configured"
+    p_model_basis: str = "market_blend"
     quality: str = ""                 # main | secondary | restricted - filled by selection.evidence
     se: float = 0.0                   # uncertainty of p_model (probability points) - selection.evidence
     p_lcb: Optional[float] = None     # p_model - z*se: the ranking input (NOT a probability to show)
@@ -92,7 +99,11 @@ class Scored:
 
 class EventModel:
     def __init__(self, event: Event, elo: Elo, calibrator: Calibrator, shrink: float = 0.8,
-                 sharp_books=None, elo_min_games: int = 10, edge_price: str = "best"):
+                 sharp_books=None, elo_min_games: int = 10, edge_price: str = "best",
+                 independent=None, independent_mode: str = "shadow"):
+        self.independent = independent
+        self.independent_mode = independent_mode if independent_mode in ("off", "shadow", "independent") else "shadow"
+        self.ind_estimate, self.ind_status = None, "unavailable:not_configured"
         self.sharp_books = [b for b in (sharp_books or []) if b]
         self.elo_min_games = elo_min_games
         self.edge_price = edge_price if edge_price in ("best", "median") else "best"
@@ -124,7 +135,10 @@ class EventModel:
         self._soft_prices()
         self._market_probs()
         self._score_model()
-        self.elo_probs, self.elo_games = self.elo.probs(self.sport, self.ev.home, self.ev.away)
+        self.elo_probs, self.elo_games = self.elo.probs(self.sport, self.ev.home, self.ev.away,
+                                                        home_id=self.ev.home_id, away_id=self.ev.away_id)
+        if self.independent is not None and self.independent_mode != "off":
+            self.ind_estimate, self.ind_status = self.independent.estimate(self.ev)
 
     def _soft_quotes(self, ml: MarketLine) -> List[float]:
         """Prices from the NON-sharp books: what a punter can actually be offered."""
@@ -340,6 +354,14 @@ class EventModel:
         # market-only lines (no model view) are shaded to the market entirely
         if len(contributing) == 1:
             p_final = p_base
+        # independent estimate: priced from history only; it never touches p_market and (in shadow mode) not p_model
+        p_ind, ind_status = None, self.ind_status
+        if self.ind_estimate is not None:
+            p_ind = self.ind_estimate.price(ml)
+            ind_status = "ok" if p_ind is not None else "unavailable:unsupported_market"
+        basis = "market_blend"
+        if self.independent_mode == "independent" and p_ind is not None:
+            p_final, basis = p_ind, "independent"
         p_raw = max(0.02, min(0.98, p_final))
         p_final = self.cal.apply(p_final)
         p_final = max(0.02, min(0.98, p_final))
@@ -363,9 +385,20 @@ class EventModel:
                 edge_ev = p_fair * usable - 1.0
         liquidity = min(1.0, ml.distinct_books() / 3.0)
         label = selection_label(ml, self.ev.home, self.ev.away, self.sport)
+        notes = dict(self.notes)
+        notes["model_basis"] = basis
+        notes["independent_model"] = {
+            "status": ind_status, "mode": self.independent_mode,
+            "source": getattr(self.ind_estimate, "source", None),
+            "p": None if p_ind is None else round(p_ind, 4),
+            "edge_vs_market": None if p_ind is None else round(p_ind - p_mkt, 4),
+            "ev": None if p_ind is None else round(p_ind * ml.price - 1.0, 4),
+            "lambdas": None if self.ind_estimate is None else [round(x, 3) for x in self.ind_estimate.lambdas],
+            "detail": None if self.ind_estimate is None else self.ind_estimate.detail}
         return Scored(event=self.ev, line=ml, p_market=p_mkt, p_model=p_final, p_raw=p_raw, sources=sources,
+                      p_independent=p_ind, independent_status=ind_status, p_model_basis=basis,
                       agreement=agreement, ev=ev, edge=edge, label=label, liquidity=liquidity,
-                      notes=dict(self.notes), p_fair=p_fair, fair_books=list(self.fair_books.get(ml.key(), [])),
+                      notes=notes, p_fair=p_fair, fair_books=list(self.fair_books.get(ml.key(), [])),
                       edge_ev=edge_ev, independent=[k for k in ("sharp", "elo") if k in contributing])
 
     def score_all(self) -> List[Scored]:

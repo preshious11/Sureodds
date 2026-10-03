@@ -44,14 +44,6 @@ CATALOG: Dict[str, MarketSpec] = {
     "prop":           MarketSpec("prop", "Prop", 2, "props", False, False),
 }
 
-# selection "families" used for contradiction / diversity checks
-OPPOSITE = {
-    "home": "away", "away": "home",
-    "over": "under", "under": "over",
-    "yes": "no", "no": "yes",
-    "even": "odd", "odd": "even",
-}
-
 STAT_NAMES = {
     "points": "", "goals": "Goals", "corners": "Corners", "cards": "Cards", "sets": "Sets",
     "games": "Games", "rounds": "Rounds", "hits": "Hits", "shots": "Shots",
@@ -323,73 +315,3 @@ def short_selection(ml: MarketLine, home: str = "", away: str = "", sport: str =
     else:
         core = ml.label or f"{ml.market_name or ml.market} {s}".strip() or s
     return f"{core}{suffix}"
-
-
-def selection_family(ml: MarketLine) -> str:
-    """Coarse class of the outcome, used to stop the bot leaning on one outcome
-    type (e.g. 20 home wins). Values: home, away, draw, over, under, yes, no,
-    other."""
-    s = ml.selection
-    if s in ("home", "away", "draw", "over", "under", "yes", "no"):
-        return s
-    if s.startswith("home"):
-        return "home"
-    if s.startswith("away"):
-        return "away"
-    return "other"
-
-
-#: Match-result markets whose selection implies a subset of {home, draw, away}
-#: - used to catch cross-market contradictions (e.g. "Arsenal to Win" and
-#: "Chelsea or Draw" on the same match) that same-market_key comparison alone
-#: cannot see because result3/result2/dnb/dc are different markets.
-_RESULT_OUTCOMES = {
-    "result3": {"home": {"home"}, "draw": {"draw"}, "away": {"away"}},
-    "result2": {"home": {"home"}, "away": {"away"}},
-    "dnb": {"home": {"home"}, "away": {"away"}},
-    "dc": {"home_draw": {"home", "draw"}, "away_draw": {"away", "draw"}, "home_away": {"home", "away"}},
-}
-
-
-def _implied_result(ml: MarketLine) -> Optional[set]:
-    return _RESULT_OUTCOMES.get(ml.market, {}).get(ml.selection)
-
-
-def contradicts(a: MarketLine, b: MarketLine) -> bool:
-    """True when two lines on the same event cannot both win.
-
-    Same-market cases (e.g. Over 2.5 & Under 2.5, Home & Away) are compared by
-    market_key(); result3/result2/dnb/dc selections are additionally compared
-    across markets via their implied {home, draw, away} outcome set, since a
-    one-winner result and a double-chance pick can contradict even though they
-    are technically different markets.
-    """
-    if a.market_key() == b.market_key():
-        if a.selection == b.selection:
-            return False
-        if OPPOSITE.get(a.selection) == b.selection:
-            return True
-        if a.market in ("result3", "result2", "dnb", "correct_score", "ht_ft"):
-            return True  # different selections of a one-winner market
-        return False  # DC-vs-DC (same market) selections overlap; not strictly contradictory
-    if a.period == b.period and a.entity == b.entity:
-        oa, ob = _implied_result(a), _implied_result(b)
-        if oa is not None and ob is not None:
-            return not (oa & ob)
-    return False
-
-
-def is_equivalent(a: MarketLine, b: MarketLine) -> bool:
-    """Same outcome expressed twice (e.g. result2 home == dnb home == handicap home 0)."""
-    if a.key() == b.key():
-        return True
-    norm_a, norm_b = _normalize_equiv(a), _normalize_equiv(b)
-    return norm_a is not None and norm_a == norm_b
-
-
-def _normalize_equiv(ml: MarketLine):
-    if ml.market in ("result2", "dnb"):
-        return ("win2", ml.period, ml.selection)
-    if ml.market == "handicap" and ml.line is not None and abs(ml.line) < 1e-9:
-        return ("win2", ml.period, ml.selection)
-    return None

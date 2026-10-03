@@ -21,7 +21,7 @@ from predbot.cache.models import DailySnapshot, PickRecord, VIEW_DAILY, VIEW_STA
 from predbot.config import Config
 from predbot.jobs import daily_picks
 from predbot.jobs import stats as stats_mod
-from predbot.selection.picker import select
+from tests.pipeline_helpers import select
 from tests.conftest import dt
 from tests.test_picker import _fx
 from tests.test_prediction_quality import cand

@@ -171,8 +171,7 @@ def _run(resolver, db, tg, now):
                 if not state or not state["settlement_done"]:
                     _settle_fixture(resolver, db, picks, result, now, cache, begun)
                 if result.status == "final":
-                    fresh = db.query("SELECT * FROM picks WHERE pick_date=? AND fixture_key=? ORDER BY id",
-                                     (pick_date, fixture_key))
+                    fresh = db.picks_where("p.pick_date=? AND p.fixture_key=?", (pick_date, fixture_key))
                     _, complete = deliver_live(db, tg, pick_date, fixture_key, fresh, result, ended=True)
                     if complete:
                         db.complete_live_notifications(pick_date, fixture_key)

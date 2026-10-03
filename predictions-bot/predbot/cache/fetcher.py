@@ -9,6 +9,7 @@ from predbot.cache.models import DailySnapshot, PickRecord, StatsSummary, SCHEMA
 from predbot.cache.providers import sport_states
 from predbot.jobs import daily_picks, stats as stats_mod
 from predbot.providers.chain import ProviderChain
+from predbot.selection.picker import PredictionPool
 from predbot.util.timeutil import iso, parse_hhmm, to_local, utcnow, day_bounds, parse_iso
 
 log = logging.getLogger(__name__)
@@ -125,11 +126,18 @@ class UnifiedFetcher:
             if kept_previous:
                 snapshot.top_picks = cached.top_picks
                 snapshot.daily_picks = cached.daily_picks
-            if persist:
-                with self.db.transaction():
-                    # the previous selections stay published, so their rows must stay too
-                    daily_picks.store_picks(pickset, self.db, day, replace_pending=not kept_previous)
-                    self._store(snapshot, now)
+            # One path for production and dry runs: store the canonical predictions in a pool, run the same
+            # selectors over what the pool stored, read the collections back. A dry run's pool is scratch memory.
+            pool = PredictionPool.persistent(self.db, day) if persist else PredictionPool.scratch(day)
+            try:
+                with pool.transaction():
+                    pool.store(pickset)
+                    snapshot.generation.update(pool.package(self.cfg, iso(now)))
+                    self._hydrate_collections(snapshot, pool)
+                    if persist:
+                        self._store(snapshot, now)
+            finally:
+                pool.close()
             return snapshot
         except Exception as exc:
             log.warning('Cache refresh failed | date=%s | error=%s', day, type(exc).__name__, exc_info=exc)
@@ -235,6 +243,7 @@ class UnifiedFetcher:
             sport_status=sport_states(providers), generation=pickset.diagnostics,
             top_picks=[self._pick_from_scored(s, i, 'top') for i, s in enumerate(pickset.top, 1)],
             daily_picks=[self._pick_from_scored(s, i, 'daily') for i, s in enumerate(pickset.daily, 1)],
+            all_predictions=[self._pick_from_scored(s, i, 'all') for i, s in enumerate(pickset.predictions, 1)],
             stats=self._stats_summary())
 
     def _pick_from_scored(self, scored, rank: int, tier: str) -> PickRecord:
@@ -252,6 +261,7 @@ class UnifiedFetcher:
             bookmaker=line.bookmaker, n_books=int(line.n_books),
             sources=sorted(scored.sources.keys()), status="pending",
             pick_date=to_local(utcnow(), self.cfg.timezone).strftime("%Y-%m-%d"),
+            fixture_id=str(event.canonical_event_id or ""),
         )
 
     def _pick_from_row(self, row) -> PickRecord:
@@ -264,7 +274,8 @@ class UnifiedFetcher:
             provider=str(row['provider']), provider_event_id=str(row['provider_event_id']),
             provider_odd_id=str(row['provider_odd_id'] or ''), period=str(row['period']),
             stat=str(row['stat']), entity=str(row['entity']),
-            pick_id=int(row["id"]), tier=str(row["tier"]), rank=int(row["rank"]),
+            pick_id=int(row["id"]), tier=str(dict(row).get('collection', row['tier'])),
+            rank=int(dict(row).get('collection_rank', row['rank'])),
             sport=str(row["sport"]), country="", league=str(row["league"] or ""),
             home=str(row["home"]), away=str(row["away"]),
             kickoff_utc=str(row["start_utc"]), label=str(row["label"]),
@@ -272,8 +283,9 @@ class UnifiedFetcher:
             line=(float(row["line"]) if row["line"] is not None else None),
             price=float(row["price"]), prob=float(row["prob"]), ev=float(row["ev"]),
             p_market=(float(row["p_market"]) if row["p_market"] is not None else None),
-            bookmaker="", n_books=1, sources=sources,
+            bookmaker="", n_books=int(dict(row).get('books') or 1), sources=sources,
             status=str(row["status"]), pick_date=str(row["pick_date"]),
+            fixture_id=str(dict(row).get('canonical_event_id') or dict(row).get('fixture_key') or ''),
         )
 
     def _stats_summary(self) -> StatsSummary:
@@ -282,8 +294,12 @@ class UnifiedFetcher:
 
     def _snapshot_from_rows(self, rows, day, origin):
         """Legacy row conversion for offline display; never a canonical cache read."""
-        picks = [self._pick_from_row(row) for row in rows]
-        return DailySnapshot(date=str(day), origin=origin,
-                             top_picks=[p for p in picks if p.tier == 'top'],
-                             daily_picks=[p for p in picks if p.tier != 'top'])
+        snapshot = DailySnapshot(date=str(day), origin=origin)
+        self._hydrate_collections(snapshot)
+        return snapshot
+
+    def _hydrate_collections(self, snapshot, pool=None):
+        pool = pool or PredictionPool.persistent(self.db, snapshot.date)
+        for collection, attribute in (('all', 'all_predictions'), ('top', 'top_picks'), ('daily', 'daily_picks')):
+            setattr(snapshot, attribute, [self._pick_from_row(r) for r in pool.rows(collection)])
 

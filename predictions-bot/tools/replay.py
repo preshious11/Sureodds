@@ -204,6 +204,7 @@ def run(profile: bool = False, subscribers: int = 300, send_delay: float = 0.03,
             for r in rows:
                 for volatile in ("id", "created_at"):
                     r.pop(volatile, None)
+                r["collections"] = sorted(r.get("collections") or ())      # a set: its repr order varies with the hash seed
             render = {"card": card}
             slate = {"status": snapshot.status, "date": snapshot.date,
                      "top": [p.to_dict() if hasattr(p, "to_dict") else str(p) for p in snapshot.top_picks],
@@ -260,6 +261,7 @@ def run(profile: bool = False, subscribers: int = 300, send_delay: float = 0.03,
                                               service=service, tg=tg, cfg=cfg, db=db)
                     pages[f"{view}:{page}"] = [s[1:] for s in tg.sent]
             render["views"], render["pages"] = views, pages
+            render["all"] = _all_renders(snapshot, now)
             sizes: dict = {}
 
             # ---- delivery: N subscribers, real per-user rendering, a fake network with a per-send delay
@@ -323,6 +325,24 @@ def _seed_history(db, rows, today: str, days=(1, 2, 3, 4)) -> None:
             db.settle_pick(db.insert_pick(row), _OUTCOMES[(i + back) % len(_OUTCOMES)])
 
 
+def _all_renders(snapshot, now) -> dict:
+    """/all as a reader sees it: the sport menu, then every page of every sport (fixtures grouped, never split)."""
+    from predbot.bot import pagination
+    from predbot.cache.models import SPORT_VIEW_PREFIX, sport_bucket
+    menu_text, menu_markup = pagination.render_sport_menu(snapshot)
+    out: dict = {"menu": menu_text, "menu_buttons": [b["text"] for row in menu_markup["inline_keyboard"] for b in row][:6], "sports": {}}
+    for sport in sorted({sport_bucket(p.sport) for p in snapshot.all_predictions}):
+        view, pages, page = SPORT_VIEW_PREFIX + sport, [], 0
+        while True:
+            body, markup = pagination.render_page(snapshot, view, page, pagination.PAGE_SIZE_DEFAULT, TZ, now=now)
+            pages.append(body)
+            if not any(b["text"] == "▶️" for row in markup["inline_keyboard"] for b in row):
+                break
+            page += 1
+        out["sports"][sport] = pages
+    return out
+
+
 def _results_renders(db, snapshot, service, now, cfg, tmp, callbacks) -> dict:
     from predbot.bot import pagination
     from predbot.bot.format import recap_message, stats_message
@@ -340,7 +360,6 @@ def _results_renders(db, snapshot, service, now, cfg, tmp, callbacks) -> dict:
     def cards(label):
         stats = stats_mod.compute(db, local_now)
         text, _ = pagination.render_stats(snapshot, db=db, tz=TZ, now=now)
-        assert text == stats_message(stats)
         pages, page = [], 0
         while True:
             body, markup = pagination.render_yesterday(db, TZ, page, pagination.PAGE_SIZE_DEFAULT, day=yesterday, now=now)
