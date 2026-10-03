@@ -59,7 +59,7 @@ SOCCER_HINTS = ("soccer", "futbol", "premier_league", "la_liga", "serie_a", "ser
                 "bundesliga", "ligue_1", "ligue_2", "eredivisie", "primeira_liga",
                 "super_lig", "superliga", "champions_league", "europa_league",
                 "conference_league", "nations_league", "major_league_soccer", "mls",
-                "copa", "libertadores", "championship", "league_one", "league_two",
+                "copa", "libertadores", "championship", "league_one", "league_two", "friendl", "nations",
                 "j1_league", "k_league", "a_league", "allsvenskan", "eliteserien",
                 "veikkausliiga", "premiership", "professional_league", "liga", "league")
 

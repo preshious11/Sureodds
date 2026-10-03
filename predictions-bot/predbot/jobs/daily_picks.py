@@ -34,7 +34,8 @@ def score_events(events: List[Event], db: Database, cfg: Config) -> List[Scored]
     for ev in events:
         try:
             model = EventModel(ev, elo, cal, shrink=cfg.model_shrink, sharp_books=getattr(cfg, "sharp_books", None),
-                               elo_min_games=getattr(cfg, "elo_min_games", 10))
+                               elo_min_games=getattr(cfg, "elo_min_games", 10),
+                               edge_price=getattr(cfg, "edge_price", "best"))
             scored.extend(model.score_all())
         except Exception as e:  # noqa: BLE001
             log.exception("model failed for %s: %s", ev.name, e)

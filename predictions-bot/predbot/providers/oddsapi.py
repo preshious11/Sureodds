@@ -48,7 +48,7 @@ def sport_key_to_canonical(key: str) -> str:
 FOOTBALL_LEAGUE_PRIORITY = [
     "soccer_epl", "soccer_spain_la_liga", "soccer_italy_serie_a", "soccer_germany_bundesliga",
     "soccer_france_ligue_one", "soccer_uefa_champs_league", "soccer_uefa_europa_league",
-    "soccer_uefa_europa_conference_league", "soccer_usa_mls", "soccer_netherlands_eredivisie",
+    "soccer_uefa_europa_conference_league", "soccer_uefa_nations_league", "soccer_usa_mls", "soccer_netherlands_eredivisie",
     "soccer_portugal_primeira_liga", "soccer_efl_champ", "soccer_brazil_campeonato",
     "soccer_mexico_ligamx", "soccer_belgium_first_div", "soccer_turkey_super_league",
     "soccer_conmebol_copa_libertadores", "soccer_conmebol_copa_sudamericana",

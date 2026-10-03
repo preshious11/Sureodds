@@ -29,7 +29,7 @@ def test_defaults_put_oddsapi_first_and_size_the_credit_budget_for_a_500_quota()
     cfg = Config()
     assert cfg.provider_order == ["oddsapi", "sharpapi", "sportsgameodds"]
     assert cfg.oddsapi_max_credits_per_cycle == 9 and cfg.oddsapi_reserve_credits == 80
-    assert "soccer_epl" in cfg.odds_api_league_allowlist and len(cfg.odds_api_league_allowlist) == 11
+    assert "soccer_epl" in cfg.odds_api_league_allowlist and len(cfg.odds_api_league_allowlist) == 12
 
 
 def test_an_unknown_provider_name_is_warned_about(monkeypatch, caplog):

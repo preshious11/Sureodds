@@ -118,8 +118,9 @@ The **picker** then applies your rules:
   quality is graded main / secondary / restricted (first half, corners, far alternate lines, exotics); the restricted
   class is only offered after the rest. The ranking score is **not** a probability and is never shown as one.
 - **Sharp reference** (`SHARP_BOOKMAKERS`, default Pinnacle / Betfair Exchange / Matchbook): when one of these quotes
-  every side of a market, its Shin-de-vigged price is the fair probability and the *other* books' median is the price
-  actually available; edge = fair probability × available price − 1. Nothing is assumed present: with no sharp
+  every side of a market, its Shin-de-vigged price is the fair probability; the card shows the *other* books' median
+  price, and edge = fair probability × the best of those books' prices − 1 (`EDGE_PRICE`; a median book always carries
+  its margin, so it would make every line look negative). Nothing is assumed present: with no sharp
   quote there is no reference, no edge, and a larger uncertainty. `python cli.py accuracy` reports per-leg hit rate,
   Brier vs the market, and results by sport / market / confidence / book count, separately from ticket results.
 - **No overlap:** a top-pick outcome is never repeated in the daily list, and no
@@ -136,6 +137,15 @@ The **picker** then applies your rules:
   `team_total`, `period`, `exotic`, `prop`; the main line is the one whose two sides are closest
   to 50%). Only the order changes — every gate and cap is untouched, and the Top ticket is
   unaffected. `DAILY_RANKING=raw` restores the old order; `/lastrun` shows "Daily by family".
+- **International football** (UEFA / CONCACAF Nations League, friendlies) is fetched by default and topped up into
+  `SHARPAPI_LEAGUES` / `ODDS_API_LEAGUE_ALLOWLIST` even when the environment pins its own lists
+  (`INTERNATIONAL_FOOTBALL=false` opts out). ESPN settles them on the full-time score.
+- **SportsGameOdds quota**: the bot reads SGO's own `/account/usage` and never spends the last entities of the month
+  (they are kept for settlement). When the cap is gone it skips SGO immediately instead of retrying `429`s for minutes;
+  settlement falls back to the free results sources.
+- **Stale environment values**: a dashboard still pinning a pre-rework default (`DAILY_COMBINED_MAX_ODDS=20`,
+  `DAILY_PICKS_TARGET=20`, `DAILY_MIN_PROB=0.30`, `TOP_RELAX_PROB=0.04`) is ignored with a warning;
+  `HONOR_PINNED_VALUES=1` keeps an old value on purpose. Deliberate values (e.g. `TOP_MIN_BOOKS=2`) are never touched.
 - **Same match in Top and Daily** (`CROSS_TIER_SAME_FIXTURE=different_outcome`, the default): a match in the Top
   ticket may also carry a Daily pick, but never the same tip - not the same selection, an equivalent one, nor one
   nested in it (win / double chance / draw-no-bet on the same side; over or under at any line; the same handicap

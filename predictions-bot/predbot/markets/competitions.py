@@ -49,6 +49,11 @@ COMPETITIONS: List[Competition] = [
        "soccer/uefa.europa.conf"),
     _c("nigeria_npfl", "football", "nigeria_-_premier_league", "", "", "", "soccer/nga.1"),
     _c("mls", "football", "", "", "MLS", "", "soccer/usa.1"),
+    # ---- international football (verified against the providers' live catalogues; ESPN settles all three on the
+    #      full-time score, so only full-match markets can be picked there)
+    _c("uefa_nations", "football", "uefa_-_nations_league", "soccer_uefa_nations_league", "", "", "soccer/uefa.nations"),
+    _c("concacaf_nations", "football", "concacaf_-_nations_league", "", "", "", "soccer/concacaf.nations.league"),
+    _c("intl_friendlies", "football", "world_-_international_friendlies", "", "", "", "soccer/fifa.friendly"),
     _c("world_cup", "football", "", "soccer_fifa_world_cup", "", "WC", ""),
     _c("brazil_serie_a", "football", "", "soccer_brazil_campeonato", "", "BSA", ""),
     # ---- basketball

@@ -39,3 +39,14 @@ def _classic_button_navigation(request, monkeypatch):
     if request.module.__name__.rsplit(".", 1)[-1] not in ("test_view_navigation", "test_replay_golden"):
         from predbot.bot import callbacks
         monkeypatch.setattr(callbacks, "navigation_mode", lambda cfg: "edit")
+
+
+@pytest.fixture(autouse=True)
+def _no_live_sgo_quota_probe(request, monkeypatch):
+    """SportsGameOddsProvider asks SGO's /account/usage for its real monthly quota. Tests must never reach the network
+    for that: by default the probe reports 'unknown' (no cap), exactly as when the endpoint cannot be read.
+    tests/test_sgo_quota.py exercises the real method with a fake client."""
+    if request.module.__name__.rsplit(".", 1)[-1] == "test_sgo_quota":
+        return
+    from predbot.providers.sportsgameodds import SportsGameOddsProvider
+    monkeypatch.setattr(SportsGameOddsProvider, "monthly_entities", lambda self: None)

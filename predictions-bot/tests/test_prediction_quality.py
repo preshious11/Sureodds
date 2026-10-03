@@ -264,7 +264,8 @@ def test_negative_edge_vs_sharp_cannot_beat_a_stronger_positive_edge_on_raw_prob
 
 
 def test_a_clearly_negative_edge_vs_sharp_is_rejected_outright():
-    bad = cand(_fx(0), p=0.80, price=1.30, p_fair=0.78, edge_ev=-0.03)
+    assert Config().min_edge_vs_sharp == -0.04
+    bad = cand(_fx(0), p=0.80, price=1.30, p_fair=0.78, edge_ev=-0.07)
     trace = {}
     ps = select([bad], Config(), dt(), trace=trace)
     assert ps.daily == [] and ps.diagnostics["daily_pool_rejections"]["NEGATIVE_EDGE_VS_SHARP"] == 1
@@ -386,12 +387,25 @@ def test_fair_probability_comes_from_the_sharp_book_alone(db):
     assert "sharp" in home.independent
 
 
-def test_edge_is_fair_probability_times_the_soft_price(db):
+def test_edge_is_fair_probability_times_the_best_soft_price(db):
     e = _model_event()
     home = _score(_model(db, e), "home")
-    soft_median = statistics.median([2.25, 2.20, 2.30])
-    assert home.line.price == pytest.approx(soft_median)                  # the sharp quote is not an OFFER
-    assert home.edge_ev == pytest.approx(home.p_fair * soft_median - 1.0)
+    soft_median, soft_best = statistics.median([2.25, 2.20, 2.30]), 2.30
+    assert home.line.price == pytest.approx(soft_median)                  # the card price: conservative, sharp excluded
+    assert home.edge_ev == pytest.approx(home.p_fair * soft_best - 1.0)  # the edge: the price a punter can shop for
+
+
+def test_edge_can_be_measured_against_the_median_soft_price(db):
+    home = _score(_model(db, _model_event(), edge_price="median"), "home")
+    assert home.edge_ev == pytest.approx(home.p_fair * statistics.median([2.25, 2.20, 2.30]) - 1.0)
+
+
+def test_a_median_book_carries_its_margin_so_the_best_price_is_the_fair_yardstick(db):
+    """Why EDGE_PRICE=best: against the median, an ordinary line looks several points negative."""
+    e = _model_event()
+    best = _score(_model(db, e), "home").edge_ev
+    median = _score(_model(db, _model_event(), edge_price="median"), "home").edge_ev
+    assert best > median
 
 
 def test_the_sharp_price_is_not_averaged_into_the_available_price(db):

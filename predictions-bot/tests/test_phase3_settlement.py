@@ -95,7 +95,7 @@ def test_no_match_or_wrong_kickoff_returns_none():
 
 def test_tennis_is_back_in_the_default_leagues_because_espn_settles_it():
     leagues = Config().sharpapi_leagues
-    assert "atp" in leagues and "wta" in leagues and len(leagues) == 19
+    assert "atp" in leagues and "wta" in leagues and len(leagues) == 22
     example = _parse_env_file(pathlib.Path(__file__).resolve().parent.parent / ".env.example")
     assert {"atp", "wta"} <= set(example["SHARPAPI_LEAGUES"].split(","))
 

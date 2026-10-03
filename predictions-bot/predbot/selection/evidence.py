@@ -11,7 +11,7 @@ noisy lines. That is the winner's curse. The ranking here instead asks, per cand
 
 and ranks on the LOWER confidence bound of the probability, plus the sharp edge (both in probability points):
 
-    rank = p_model - RANK_Z * se  +  EDGE_RANK_WEIGHT * clamp(p_fair - 1/available_price)
+    rank = p_model - RANK_Z * se  +  EDGE_RANK_WEIGHT * clamp(p_fair - 1/best_available_soft_price)
 
 ``rank`` is a ranking score, NOT a probability: it is never shown and never stored as one (``prob`` is the
 calibrated ``p_model``; the rank goes to ``rank_score`` next to it).

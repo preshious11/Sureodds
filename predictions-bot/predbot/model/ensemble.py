@@ -77,7 +77,7 @@ class Scored:
     #: sharp book quotes this line. NEVER invented: absent means "no reference", not "reference = market".
     p_fair: Optional[float] = None
     fair_books: List[str] = field(default_factory=list)
-    #: EV of the AVAILABLE (soft) price against ``p_fair``; ``None`` without a reference. ``ev`` stays p_model-based.
+    #: EV of the best AVAILABLE (soft) price against ``p_fair`` (EDGE_PRICE); ``None`` without a reference.
     edge_ev: Optional[float] = None
     #: which of the signals that can contradict the soft market actually fed this estimate: subset of {sharp, elo}
     independent: List[str] = field(default_factory=list)
@@ -92,9 +92,10 @@ class Scored:
 
 class EventModel:
     def __init__(self, event: Event, elo: Elo, calibrator: Calibrator, shrink: float = 0.8,
-                 sharp_books=None, elo_min_games: int = 10):
+                 sharp_books=None, elo_min_games: int = 10, edge_price: str = "best"):
         self.sharp_books = [b for b in (sharp_books or []) if b]
         self.elo_min_games = elo_min_games
+        self.edge_price = edge_price if edge_price in ("best", "median") else "best"
         self.p_fair: Dict[Tuple, float] = {}
         self.fair_books: Dict[Tuple, List[str]] = {}
         self.ev = event
@@ -356,7 +357,10 @@ class EventModel:
         if p_fair is not None:
             soft = self._soft_quotes(ml)
             if soft:
-                edge_ev = p_fair * float(statistics.median(soft)) - 1.0
+                # The best SOFT price is the actionable one: a median book always carries its margin, so against a
+                # sharp fair price its EV is negative for almost every line and says nothing about THIS line.
+                usable = max(soft) if self.edge_price == "best" else float(statistics.median(soft))
+                edge_ev = p_fair * usable - 1.0
         liquidity = min(1.0, ml.distinct_books() / 3.0)
         label = selection_label(ml, self.ev.home, self.ev.away, self.sport)
         return Scored(event=self.ev, line=ml, p_market=p_mkt, p_model=p_final, p_raw=p_raw, sources=sources,

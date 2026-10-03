@@ -7,9 +7,10 @@ complete results source. Billing is per *event object*, tracked in Budget.
 from __future__ import annotations
 
 import logging
+import time
 from collections import Counter
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, norm_book
 from predbot.providers.budget import Budget
@@ -81,9 +82,46 @@ class SportsGameOddsProvider(BaseProvider):
         self.parse_counts: Counter = Counter()           # rejection reasons
         self.http = Http("https://api.sportsgameodds.com/v2", headers={"X-Api-Key": api_key},
                          rate=RateLimiter(1.0))
+        # One-shot client for GET /account/usage (a metadata call that bills nothing): no retries, no sleeping.
+        self._probe = Http("https://api.sportsgameodds.com/v2", headers={"X-Api-Key": api_key},
+                           rate=RateLimiter(1.0), retries=0, timeout=15)
+        self.entity_reserve = 25                       # entities never spent, so a result lookup can still be paid for
+        self._usage_cache: Optional[Tuple[float, Optional[Tuple[int, int]]]] = None
 
     def enabled(self) -> bool:
         return bool(self.key)
+
+    # ------------------------------------------------------------------ the provider's own quota
+    USAGE_TTL = 600.0
+
+    def monthly_entities(self) -> Optional[Tuple[int, int]]:
+        """(used, max) of SGO's own monthly ENTITY quota from ``/account/usage`` (cached 10 min), or ``None`` when
+        it cannot be read or the plan has no entity cap. This - not our own object counter - is what SGO enforces: a
+        key that is over it answers every request with ``429 Rate limit exceeded``, which looks exactly like a
+        per-minute limit and used to be retried (6-36s sleeps) for every league."""
+        now = time.monotonic()
+        if self._usage_cache and now - self._usage_cache[0] < self.USAGE_TTL:
+            return self._usage_cache[1]
+        got: Optional[Tuple[int, int]] = None
+        try:
+            data = self._probe.get("/account/usage")
+            month = (((data or {}).get("data") or {}).get("rateLimits") or {}).get("per-month") or {}
+            used, cap = month.get("current-entities"), month.get("max-entities")
+            if isinstance(used, (int, float)) and isinstance(cap, (int, float)) and cap > 0:
+                got = (int(used), int(cap))
+        except ProviderError as e:
+            log.info("SGO: could not read /account/usage (%s); relying on the local budget", e)
+        self._usage_cache = (now, got)
+        return got
+
+    def quota_exhausted(self) -> bool:
+        q = self.monthly_entities()
+        return q is not None and q[0] >= q[1] - self.entity_reserve
+
+    def quota_state(self) -> Dict:
+        q = self.monthly_entities()
+        return {"monthly_entities_used": q[0] if q else None, "monthly_entities_max": q[1] if q else None,
+                "exhausted": self.quota_exhausted()}
 
     def available_leagues(self) -> Optional[set]:
         """LeagueIDs available to THIS key at its subscription tier (cached).
@@ -133,6 +171,15 @@ class SportsGameOddsProvider(BaseProvider):
         if self.budget.is_exhausted(self.name):
             self.last_fetch_complete = False
             return []                              # tier/quota problem already seen today
+        quota = self.monthly_entities()
+        if quota is not None:
+            if quota[0] >= quota[1] - self.entity_reserve:
+                self.last_fetch_complete = False
+                self.budget.mark_exhausted(self.name, f"SGO monthly entity quota used up ({quota[0]}/{quota[1]})")
+                log.warning("SGO: monthly entity quota is used up (%d/%d) - not calling it until it resets; "
+                            "settlement falls back to the free results sources", quota[0], quota[1])
+                return []
+            limit = min(limit, quota[1] - quota[0] - self.entity_reserve)   # never spend the last entities on fixtures
         # Auto-discover leagues when none are configured: use ALL leagues
         # available to this key (paid tiers get every sport; free tiers
         # get whatever the /leagues endpoint returns).
@@ -202,10 +249,17 @@ class SportsGameOddsProvider(BaseProvider):
             batch.clear()
         # Share the existing object allowance across configured leagues so the
         # first sport in a multi-league response cannot consume the whole page.
+        rate_limited_in_a_row = 0
         for index, league in enumerate(leagues):
             remaining = limit - n_raw
             if remaining <= 0:
                 self.last_fetch_complete = False
+                break
+            if rate_limited_in_a_row >= 2:
+                # two leagues in a row refused after their retries: the key is blocked, not busy. Stop instead of
+                # sleeping through every remaining league (that was a 291 s generation stall).
+                self.last_fetch_complete = False
+                log.warning("SGO: rate limited on %d consecutive leagues - stopping this run", rate_limited_in_a_row)
                 break
             page_limit = max(1, remaining // (len(leagues) - index))
             params = {"startsAfter": iso(start), "startsBefore": iso(end), "oddsAvailable": "true",
@@ -218,9 +272,11 @@ class SportsGameOddsProvider(BaseProvider):
             except ProviderError as exc:
                 if "leagueID" in str(exc):
                     self.budget.mark_exhausted(self.name, "league access/configuration error")
+                rate_limited_in_a_row = rate_limited_in_a_row + 1 if "rate limited" in str(exc).lower() else 0
                 self.last_fetch_complete = False
                 self.fetch_counts[league] = {"status": "failed"}
                 continue
+            rate_limited_in_a_row = 0
             batch = data.get("data", []) if isinstance(data, dict) else []
             self.budget.spend(self.name, len(batch))
             self.fetch_counts[league] = {"status": "complete", "raw_events": len(batch),
@@ -432,6 +488,8 @@ class SportsGameOddsProvider(BaseProvider):
     def fetch_result(self, provider_event_id: str, event_hint: Optional[Dict] = None) -> Optional[MatchResult]:
         if not self.budget.can_spend(self.name, 1, monthly_limit=self.monthly_limit):
             return None
+        if self.quota_exhausted():
+            return None                            # SGO would answer 429 to everything; other sources settle it
         data = self.http.get("/events", {"eventID": provider_event_id, "expandResults": "true"})
         events = data.get("data", []) if isinstance(data, dict) else []
         self.budget.spend(self.name, len(events))
@@ -445,6 +503,8 @@ class SportsGameOddsProvider(BaseProvider):
             return None
         query_limit = 50
         if not self.budget.can_spend(self.name, query_limit, monthly_limit=self.monthly_limit):
+            return None
+        if self.quota_exhausted():
             return None
         params = {"sportID": sgo_sport, "startsAfter": iso(start - timedelta(hours=2)),
                   "startsBefore": iso(start + timedelta(hours=2)), "type": "match",

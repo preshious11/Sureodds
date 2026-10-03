@@ -32,9 +32,29 @@ def mask(name: str, value: Any) -> str:
     return "***" if is_secret(name) else str(value)
 
 
+#: Values this rework moved away from (only ones that were old DEFAULTS - a deliberately chosen setting such as
+#: TOP_MIN_BOOKS=2 is never touched). A dashboard that still pins one of them is almost certainly holding a stale COPY
+#: of the old default (nobody chose "20 combined odds" or "a 30% Daily leg" on purpose after this change), so it is
+#: ignored with a warning and the new default applies. Set HONOR_PINNED_VALUES=1 to make an old value stick anyway.
+_STALE_PINS: Dict[str, Tuple[str, ...]] = {
+    "DAILY_COMBINED_MAX_ODDS": ("20", "20.0", "20.00"),
+    "DAILY_PICKS_TARGET": ("20",),
+    "DAILY_MIN_PROB": ("0.30", "0.3"),
+    "TOP_RELAX_PROB": ("0.04",),
+}
+_STALE_WARNED: set = set()
+
+
 def _env(name: str, default: str = "") -> str:
     v = os.environ.get(name)
     value = default if v is None or v == "" else v
+    if (name in _STALE_PINS and value.strip() in _STALE_PINS[name] and value != default
+            and os.environ.get("HONOR_PINNED_VALUES", "").strip().lower() not in ("1", "true", "yes", "on")):
+        if name not in _STALE_WARNED:
+            _STALE_WARNED.add(name)
+            log.warning("config: %s=%s is the pre-rework default; ignoring it and using %s "
+                        "(set HONOR_PINNED_VALUES=1 to keep an old value)", name, value, default)
+        value = default
     KNOWN_KEYS[name] = (default, value)
     return value
 
@@ -112,6 +132,24 @@ def _default_log_file() -> str:
     return os.path.join(os.path.dirname(_env("DB_PATH", "./data/predbot.db")) or ".", "predbot.log")
 
 
+#: verified against the providers' live catalogues (see markets/competitions.py)
+INTERNATIONAL_SHARP_LEAGUES = ("uefa_-_nations_league", "concacaf_-_nations_league", "world_-_international_friendlies")
+INTERNATIONAL_ODDS_KEYS = ("soccer_uefa_nations_league",)
+
+
+def _with_international(listed: List[str], required: Tuple[str, ...]) -> List[str]:
+    """``listed`` (read from the environment / defaults) plus any international competition it lacks. An EMPTY list
+    is left alone (the Odds API reads it as "every in-season key"), and INTERNATIONAL_FOOTBALL=false opts out. Applied
+    only to values that come from the environment: an explicit ``Config(sharpapi_leagues=[...])`` is taken as given."""
+    if not _bool("INTERNATIONAL_FOOTBALL", True) or not listed:
+        return listed
+    missing = [x for x in required if x not in listed]
+    if missing:
+        log.warning("config: league list did not include %s - added (INTERNATIONAL_FOOTBALL=false to opt out)",
+                    ", ".join(missing))
+    return listed + missing
+
+
 @dataclass
 class Config:
     cache_retry_seconds: int = field(default_factory=lambda: max(60, _int("CACHE_RETRY_SECONDS", 900)))
@@ -150,9 +188,9 @@ class Config:
     #: Football league keys the Odds API may spend credits on (empty = every
     #: in-season football key). The default is the nine-plus leagues Nigerian
     #: punters bet on; everything else is dropped at discovery.
-    odds_api_league_allowlist: List[str] = field(default_factory=lambda: _list(
+    odds_api_league_allowlist: List[str] = field(default_factory=lambda: _with_international(_list(
         "ODDS_API_LEAGUE_ALLOWLIST",
-        "soccer_epl,soccer_spain_la_liga,soccer_italy_serie_a,soccer_germany_bundesliga,soccer_france_ligue_one,soccer_uefa_champs_league,soccer_uefa_europa_league,soccer_efl_champ,soccer_netherlands_eredivisie,soccer_portugal_primeira_liga,soccer_turkey_super_league"))
+        "soccer_epl,soccer_spain_la_liga,soccer_italy_serie_a,soccer_germany_bundesliga,soccer_france_ligue_one,soccer_uefa_champs_league,soccer_uefa_europa_league,soccer_uefa_nations_league,soccer_efl_champ,soccer_netherlands_eredivisie,soccer_portugal_primeira_liga,soccer_turkey_super_league"), INTERNATIONAL_ODDS_KEYS))
     oddsapi_min_keys_per_sport: int = field(default_factory=lambda: _int("ODDSAPI_MIN_KEYS_PER_SPORT", 1))
     provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "oddsapi,sharpapi,sportsgameodds"))
     #: Provider tried first for the Top ticket only; falls back to
@@ -167,9 +205,9 @@ class Config:
         "SGO_ALLOWED_STATS", "points,cornerKicks,yellowCards,weightedCards,bothTeamsScored"))
     sgo_allowed_periods: List[str] = field(default_factory=lambda: _list("SGO_ALLOWED_PERIODS", "game,reg,1h,2h"))
     sgo_monthly_object_limit: int = field(default_factory=lambda: _int("SGO_MONTHLY_OBJECT_LIMIT", 1000))
-    sharpapi_leagues: List[str] = field(default_factory=lambda: _list(
+    sharpapi_leagues: List[str] = field(default_factory=lambda: _with_international(_list(
         "SHARPAPI_LEAGUES",
-        "england_-_premier_league,spain_-_la_liga,italy_-_serie_a,germany_-_bundesliga,france_-_ligue_1,england_-_championship,netherlands_-_eredivisie,portugal_-_primeira_liga,turkey_-_super_lig,uefa_-_champions_league,uefa_-_europa_league,uefa_-_europa_conference_league,nigeria_-_premier_league,atp,wta,nba,nfl,mlb,euroleague"))
+        "england_-_premier_league,spain_-_la_liga,italy_-_serie_a,germany_-_bundesliga,france_-_ligue_1,england_-_championship,netherlands_-_eredivisie,portugal_-_primeira_liga,turkey_-_super_lig,uefa_-_champions_league,uefa_-_europa_league,uefa_-_europa_conference_league,uefa_-_nations_league,concacaf_-_nations_league,world_-_international_friendlies,nigeria_-_premier_league,atp,wta,nba,nfl,mlb,euroleague"), INTERNATIONAL_SHARP_LEAGUES))
     # SHARPAPI_SPORTS walks the kick-off ordered global sport feed(s), e.g. soccer:
     # one or two pages reach today's fixtures without per-league requests.
     sharpapi_sports: List[str] = field(default_factory=lambda: _list("SHARPAPI_SPORTS"))
@@ -201,6 +239,12 @@ class Config:
     sharpapi_events_per_target: int = field(
         default_factory=lambda: _int("SHARPAPI_EVENTS_PER_TARGET", 40))
     sharpapi_min_interval: float = field(default_factory=lambda: _float("SHARPAPI_MIN_INTERVAL_SEC", 5.5))
+
+    #: International football (Nations League, friendlies) is ALWAYS fetched, even when the environment pins its own
+    #: league lists: a hand-set SHARPAPI_LEAGUES / ODDS_API_LEAGUE_ALLOWLIST written before these competitions existed
+    #: would otherwise exclude them silently (which is how match days with only internationals produced no picks).
+    #: INTERNATIONAL_FOOTBALL=false turns the top-up off. An EMPTY Odds API allowlist already means "every key".
+    international_football: bool = field(default_factory=lambda: _bool("INTERNATIONAL_FOOTBALL", True))
 
     #: Sports the bot will pick from; anything else a provider returns is
     #: dropped before merging and counted as ``sport_rejected`` in the provider report.
@@ -289,9 +333,14 @@ class Config:
     #: assumed to be present: a candidate without any of these simply has no reference (and no edge).
     sharp_books: List[str] = field(default_factory=lambda: _list(
         "SHARP_BOOKMAKERS", "pinnacle,betfair_ex_eu,betfair_ex_uk,matchbook"))
-    #: With a sharp reference, the soft price may be at most this far below fair value (EV vs the de-vigged sharp
-    #: probability, e.g. -0.01 = 1% negative) before the leg is dropped as not-value. Not applied without a reference.
-    min_edge_vs_sharp: float = field(default_factory=lambda: _float("MIN_EDGE_VS_SHARP", -0.01))
+    #: With a sharp reference, even the BEST soft price may be at most this far below fair value (EV against the
+    #: de-vigged sharp probability) before the leg is dropped as not-value. Not applied without a reference.
+    #: Judgement value from a live capture of 28 sharp-covered lines (best soft price vs fair: median -3.1%, quartiles
+    #: -5.7% / -0.6%): -0.04 drops roughly the worst-priced third. -0.01 dropped 71% of them and, measured against the
+    #: MEDIAN soft price, 100% - a median book always carries its margin. Refit from ``cli.py accuracy`` later.
+    min_edge_vs_sharp: float = field(default_factory=lambda: _float("MIN_EDGE_VS_SHARP", -0.04))
+    #: Which soft price the edge is measured against: ``best`` (the shoppable price, default) or ``median``.
+    edge_price: str = field(default_factory=lambda: _env("EDGE_PRICE", "best").strip().lower())
     #: Without a sharp reference the model may not claim to beat the market by more than this (p_model - p_market):
     #: a bigger claim with nothing independent behind it is noise, not an edge.
     max_unsupported_edge: float = field(default_factory=lambda: _float("MAX_UNSUPPORTED_EDGE", 0.08))
