@@ -26,7 +26,8 @@ DELIVERY_POLL_MINUTES = 5
 
 def main() -> None:
     cfg = load_config()
-    setup_logging(cfg.log_level, cfg.log_file)
+    setup_logging(cfg.log_level, cfg.log_file, secrets=[cfg.sgo_key, cfg.sharpapi_key, cfg.odds_api_key,
+                                                         cfg.football_data_key, cfg.telegram_token])
     for line in startup_lines(cfg):
         log.info(line)
     require_provider_keys(cfg)

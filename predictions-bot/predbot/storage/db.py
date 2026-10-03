@@ -124,6 +124,24 @@ CREATE TABLE IF NOT EXISTS deliveries (
     created_at TEXT NOT NULL,
     UNIQUE(kind, post_date, chat_id)
 );
+
+-- Every SportsGameOdds request, with WHY it was made. Internal only (never shown to subscribers); no credentials or
+-- account identifiers are ever stored here.
+CREATE TABLE IF NOT EXISTS sgo_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    day TEXT NOT NULL,                   -- UTC date
+    reason TEXT NOT NULL,                -- generation | settlement | fallback | diagnostic | manual | catalog | quota_probe
+    endpoint TEXT NOT NULL,              -- /events | /leagues | /account/usage
+    sport TEXT,
+    league TEXT,
+    event_id TEXT,
+    http_attempts INTEGER NOT NULL DEFAULT 1,   -- HTTP requests made (retries included)
+    objects_billed INTEGER NOT NULL DEFAULT 0,  -- what SGO bills: objects returned, minimum 1 per answered request
+    status TEXT NOT NULL,                -- ok | rate_limited | error | skipped
+    note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sgo_usage_day ON sgo_usage(day);
 CREATE TABLE IF NOT EXISTS live_fixture_state (
     pick_date TEXT NOT NULL,
     fixture_key TEXT NOT NULL,
@@ -349,6 +367,21 @@ class Database:
     def query(self, sql: str, params: Iterable = ()) -> List[sqlite3.Row]:
         with self._lock:
             return self.conn.execute(sql, tuple(params)).fetchall()
+
+    # ---- SportsGameOdds attribution ----
+    def sgo_usage_add(self, reason: str, endpoint: str, status: str, *, sport: str = "", league: str = "",
+                      event_id: str = "", http_attempts: int = 1, objects_billed: int = 0, note: str = "") -> None:
+        ts = _now()
+        self.execute("INSERT INTO sgo_usage(ts,day,reason,endpoint,sport,league,event_id,http_attempts,objects_billed,"
+                     "status,note) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                     (ts, ts[:10], reason, endpoint, sport or None, league or None, event_id or None,
+                      int(http_attempts), int(objects_billed), status, note or None))
+
+    def sgo_usage_summary(self, since_day: str) -> List[sqlite3.Row]:
+        """Per (day, reason, endpoint, status): requests, HTTP attempts, billed objects."""
+        return self.query("SELECT day, reason, endpoint, status, COUNT(*) AS requests, SUM(http_attempts) AS attempts, "
+                          "SUM(objects_billed) AS objects FROM sgo_usage WHERE day>=? "
+                          "GROUP BY day, reason, endpoint, status ORDER BY day, reason", (since_day,))
 
     def get_kv(self, k: str, default: Optional[str] = None) -> Optional[str]:
         rows = self.query("SELECT v FROM kv WHERE k=?", (k,))

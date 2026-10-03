@@ -202,6 +202,7 @@ class BaseProvider:
         """Return a MatchResult for a *known* provider event id, or None."""
         return None
 
-    def find_result(self, sport: str, home: str, away: str, start: datetime) -> Optional[MatchResult]:
+    def find_result(self, sport: str, home: str, away: str, start: datetime,
+                    event_hint: Optional[Dict] = None) -> Optional[MatchResult]:
         """Look a result up by teams/time (cross-provider settlement). Optional."""
         return None

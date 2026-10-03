@@ -258,9 +258,12 @@ rather than failing silently:
   450 of 500 a month. `ODDS_API_REGIONS=uk` adds UK books at the same cost.
 - **football-data.org** — 10 requests/minute (calls are spaced 6.5 s and cached per
   competition + date for one settlement run).
-- **SportsGameOdds** — billed per *event object* per month
-  (`SGO_MONTHLY_OBJECT_LIMIT`). The bot spreads the monthly allowance across the
-  days remaining in the month and keeps a reserve for settlement.
+- **SportsGameOdds** — billed per *object returned* (minimum 1 per response, so `/leagues`,
+  empty answers and `/account/usage` all cost), 2,500/month on the Amateur plan, 10 requests/minute,
+  rolling 30-day period. The real cap and usage are read from `/account/usage` (rarely); every request
+  is attributed (`sgo_usage` table: reason, endpoint, sport, league, objects billed) and gated by
+  `predbot/providers/sgo_meter.py` (50/75/90/100 % levels, a 429 cool-down, settlement back-off). Free
+  sources settle first; SGO is the fallback. `python cli.py sgo-usage` prints the breakdown.
 - **SharpAPI** — the free tier publishes **no monthly quota**, only 12 requests/minute
   (`X-RateLimit-*` headers). Requests are spaced `SHARPAPI_MIN_INTERVAL_SEC` apart and
   budgeted by us: `SHARPAPI_MONTHLY_REQUEST_LIMIT` (our own cap, default 3000) is spread

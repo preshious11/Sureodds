@@ -46,7 +46,14 @@ def _no_live_sgo_quota_probe(request, monkeypatch):
     """SportsGameOddsProvider asks SGO's /account/usage for its real monthly quota. Tests must never reach the network
     for that: by default the probe reports 'unknown' (no cap), exactly as when the endpoint cannot be read.
     tests/test_sgo_quota.py exercises the real method with a fake client."""
-    if request.module.__name__.rsplit(".", 1)[-1] == "test_sgo_quota":
+    if request.module.__name__.rsplit(".", 1)[-1] in ("test_sgo_quota", "test_sgo_usage_control"):
         return
     from predbot.providers.sportsgameodds import SportsGameOddsProvider
     monkeypatch.setattr(SportsGameOddsProvider, "monthly_entities", lambda self: None)
+
+
+@pytest.fixture(autouse=True)
+def _sgo_origin_is_scheduled(monkeypatch):
+    """cli.main() / the diagnose scripts tag SGO requests via PREDBOT_SGO_ORIGIN; a test that runs one must not leave
+    that behind for the next test (manual/diagnostic origins are throttled earlier by the quota policy)."""
+    monkeypatch.delenv("PREDBOT_SGO_ORIGIN", raising=False)

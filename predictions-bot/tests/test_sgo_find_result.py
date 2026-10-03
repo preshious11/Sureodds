@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 from predbot.providers.sportsgameodds import SPORT_TO_SGO, SportsGameOddsProvider
 
-NOW = datetime(2030, 6, 1, 18, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 6, 1, 18, 0, tzinfo=timezone.utc)
 
 
 def test_find_result_scopes_to_configured_leagues(budget):

@@ -669,7 +669,8 @@ class OddsApiProvider(BaseProvider):
             result.status = "in_progress"
         return result
 
-    def find_result(self, sport: str, home: str, away: str, start: datetime) -> Optional[MatchResult]:
+    def find_result(self, sport: str, home: str, away: str, start: datetime,
+                    event_hint: Optional[Dict] = None) -> Optional[MatchResult]:
         """Look up a result by teams/time (cross-provider settlement)."""
         # Odds API doesn't provide result endpoints on the free tier
         # Settlement will fall through to other providers

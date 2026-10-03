@@ -66,7 +66,8 @@ PICK_ERRORS = (ProviderError, ValueError, KeyError, TypeError, AttributeError)
 
 
 def _settle_row(r, resolver: ResultsResolver, db: Database, elo: Elo, now: datetime,
-                cache: Dict[str, MatchResult], counts: Dict[str, int]) -> None:
+                cache: Dict[str, MatchResult], counts: Dict[str, int],
+                needs: Optional[Dict[str, frozenset]] = None) -> None:
     start = parse_iso(r["start_utc"])
     if start is None:
         log.error("invalid start time for pick %s: %s", r["id"], r["start_utc"])
@@ -80,8 +81,7 @@ def _settle_row(r, resolver: ResultsResolver, db: Database, elo: Elo, now: datet
     except ValueError as e:
         log.warning("malformed sources JSON for pick %s: %s", r["id"], e)
         src = {}
-    hints = {"sport_key": src.get("_sport_key") or "", "league_id": src.get("_league_id") or "",
-             "league": r["league"] or ""}
+    _, hints = _resolve_args(r, needs)
     res = resolver.resolve(r["provider"], r["provider_event_id"], r["sport"], r["home"], r["away"],
                            start, alt_ids=src.get("_alt_ids") or {}, cache=cache, hints=hints)
     if res is None:
@@ -141,17 +141,32 @@ def _apply_result(r, res, db, elo, now, counts, expire_missing):
             elo.update(r["sport"], r["home"], r["away"], sc[0], sc[1])
 
 
-def _resolve_args(r):
+def _needs_by_event(rows) -> Dict[str, frozenset]:
+    """(period, stat) of every pending pick, per fixture: tells the resolver which result sources can grade ALL of a
+    fixture's picks, so a free source is asked first only when it can really settle them."""
+    out: Dict[str, set] = {}
+    for r in rows:
+        out.setdefault(f"{r['provider']}:{r['provider_event_id']}", set()).add((r["period"] or "full",
+                                                                                r["stat"] or "points"))
+    return {k: frozenset(v) for k, v in out.items()}
+
+
+def _resolve_args(r, needs: Optional[Dict[str, frozenset]] = None):
     try:
         src = json.loads(r["sources"]) if r["sources"] else {}
     except ValueError:
         src = {}
     hints = {"sport_key": src.get("_sport_key") or "", "league_id": src.get("_league_id") or "",
              "league": r["league"] or ""}
+    if needs:
+        n = needs.get(f"{r['provider']}:{r['provider_event_id']}")
+        if n:
+            hints["_needs"] = n
     return src.get("_alt_ids") or {}, hints
 
 
-def _prefetch(resolver: ResultsResolver, rows, now: datetime, cache: Dict[str, MatchResult]) -> None:
+def _prefetch(resolver: ResultsResolver, rows, now: datetime, cache: Dict[str, MatchResult],
+              needs: Optional[Dict[str, frozenset]] = None) -> None:
     """Look results up for every due pick BEFORE grading, one thread per first-choice source, so football-data.org's
     6.5 s pacing overlaps ESPN's and EuroLeague's instead of adding to them. Each source is asked by one thread at a
     time and its per-run caches are keyed by (competition, day), so N picks from one competition and day still cost
@@ -164,7 +179,7 @@ def _prefetch(resolver: ResultsResolver, rows, now: datetime, cache: Dict[str, M
         start = parse_iso(r["start_utc"])
         if start is None or start + timedelta(hours=DURATION_H.get(r["sport"], 3)) > now:
             continue
-        alt_ids, hints = _resolve_args(r)
+        alt_ids, hints = _resolve_args(r, needs)
         names = resolver.paths_for(r["provider"], r["sport"], alt_ids, hints)
         groups.setdefault(names[0] if names else "", []).append((r, start, alt_ids, hints))
     if len(groups) < 2:
@@ -258,11 +273,12 @@ def _run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]
         if callable(begin):
             begin()
     rows = db.pending_picks(before_utc=iso(now))
-    _prefetch(resolver, rows, now, cache)
+    needs = _needs_by_event(rows)
+    _prefetch(resolver, rows, now, cache, needs)
 
     for r in rows:
         try:
-            _settle_row(r, resolver, db, elo, now, cache, counts)
+            _settle_row(r, resolver, db, elo, now, cache, counts, needs)
         except PICK_ERRORS as e:
             log.exception("settle failed for pick %s: %s", r["id"], e)
             counts["errors"] += 1

@@ -22,6 +22,9 @@ from predbot.storage.db import Database
 from predbot.util.timeutil import day_bounds, iso, to_local, utcnow
 
 
+__import__("os").environ.setdefault("PREDBOT_SGO_ORIGIN", "diagnostic")   # SGO requests made here are attributed to diagnostics
+
+
 def base_valid(s, lead) -> str:
     """The picker's pre-threshold validation, returning '' when valid."""
     if not s.event.start:

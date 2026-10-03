@@ -40,7 +40,7 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
             cfg.sgo_key, budget, sports=cfg.sgo_sports, leagues=cfg.sgo_leagues,
             event_limit=cfg.sgo_event_limit, monthly_limit=cfg.sgo_monthly_object_limit,
             allowed_stats=cfg.sgo_allowed_stats, allowed_periods=cfg.sgo_allowed_periods,
-            max_player_props=cfg.max_player_props)
+            max_player_props=cfg.max_player_props, min_interval=cfg.sgo_min_interval_sec)
     if cfg.sharpapi_key:
         out["sharpapi"] = SharpApiProvider(cfg.sharpapi_key, budget, leagues=cfg.sharpapi_leagues,
                                            min_interval=cfg.sharpapi_min_interval,
@@ -298,19 +298,40 @@ class ResultsResolver:
         event = SimpleNamespace(sport=sport, league=hints.get("league", ""), league_id=hints.get("league_id", ""),
                                 provider=provider, sources=[provider, *alt_ids.keys()],
                                 extra={"sport_key": hints.get("sport_key", "")})
-        names = [p.name for p in result_paths(event, None, self.providers)]
+        paths = result_paths(event, None, self.providers)
+        names = self._prioritise(paths, hints.get("_needs"))
         if not names:
             # A pick stored without a recognisable competition (older rows): the gate would
             # refuse it today, but one that already exists is still worth a best-effort lookup.
             names = (["football_data"] if sport == "football" else []) + ["sportsgameodds"]
         return names
 
+    #: result sources that cost no SportsGameOdds quota
+    FREE_SOURCES = ("football_data", "espn", "euroleague")
+
+    @classmethod
+    def _prioritise(cls, paths, needs) -> List[str]:
+        """Order the paths. ``needs`` = the (period, stat) pairs of the pending picks on this fixture. When some paths can
+        grade ALL of them, those go first with the free sources ahead of the metered ones (SportsGameOdds bills per
+        object, so it is the last resort, not the first); the paths that cannot grade everything follow, so nothing that
+        used to be asked is dropped. With no ``needs`` or no path that covers them all, the original order is kept
+        (SportsGameOdds is then the only grader of e.g. first-half / corner / card markets and must stay reachable)."""
+        if not needs:
+            return [p.name for p in paths]
+        covering = [p for p in paths if all(p.allows_period(per) and p.allows_stat(st) for per, st in needs)]
+        if not covering:
+            return [p.name for p in paths]
+        rest = [p for p in paths if p not in covering]
+        ordered = [p for p in covering if p.name in cls.FREE_SOURCES] \
+            + [p for p in covering if p.name not in cls.FREE_SOURCES] + rest
+        return [p.name for p in ordered]
+
     def resolve(self, provider: str, provider_event_id: str, sport: str, home: str, away: str,
                 start: datetime, alt_ids: Optional[Dict[str, str]] = None,
                 cache: Optional[Dict[str, MatchResult]] = None,
                 hints: Optional[Dict[str, str]] = None) -> Optional[MatchResult]:
         """``hints`` carries what was stored with the pick: ``sport_key`` (Odds API),
-        ``league_id`` and ``league`` (competition lookup)."""
+        ``league_id`` and ``league`` (competition lookup), and optionally ``_needs`` (see ``_prioritise``)."""
         cache = cache if cache is not None else {}
         hints = hints or {}
         alt_ids = alt_ids or {}
@@ -318,7 +339,12 @@ class ResultsResolver:
         if ck in cache:
             return cache[ck]
         result: Optional[MatchResult] = None
-        for name in self.paths_for(provider, sport, alt_ids, hints):
+        names = self.paths_for(provider, sport, alt_ids, hints)
+        for i, name in enumerate(names):
+            if name == "sportsgameodds" and any(n in self.FREE_SOURCES for n in names[:i]):
+                # a free source was asked first and can still deliver: SGO is then only a stand-in, and the first thing
+                # the quota policy switches off as usage climbs
+                hints = {**hints, "_free_alt": True}
             r = self._ask(name, provider, provider_event_id, alt_ids, sport, home, away, start, hints)
             if r is not None and r.status != "unknown":
                 result = r
@@ -351,7 +377,7 @@ class ResultsResolver:
                     r = prov.fetch_result(alt_ids["sportsgameodds"], event_hint=hints)
                 if r is not None and r.status != "unknown":
                     return r
-                return prov.find_result(sport, home, away, start)
+                return prov.find_result(sport, home, away, start, event_hint=hints)
             # The Odds API /scores: by the id of whichever record is an Odds API one
             event_id = provider_event_id if provider == name else alt_ids.get(name)
             return prov.fetch_result(event_id, event_hint=hints) if event_id else None

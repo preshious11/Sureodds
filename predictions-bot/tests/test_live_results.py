@@ -453,7 +453,7 @@ def test_scheduler_installs_optional_interval_without_startup_poll(db, env, monk
     import main
     cfg = Config(live_updates_enabled=enabled, live_poll_minutes=3, enable_commands=False)
     monkeypatch.setattr(main, "load_config", lambda: cfg)
-    monkeypatch.setattr(main, "setup_logging", lambda *args: None)
+    monkeypatch.setattr(main, "setup_logging", lambda *args, **kwargs: None)
     monkeypatch.setattr(main, "require_provider_keys", lambda *args: None)
     monkeypatch.setattr(main, "Database", lambda _: db)
     monkeypatch.setattr(main, "build_providers", lambda *args: {})

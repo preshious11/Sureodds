@@ -86,6 +86,14 @@ def _quota_lines(db, gen: Dict) -> List[str]:
     return lines
 
 
+def _sgo_lines(db) -> List[str]:
+    try:
+        from predbot.providers.sgo_meter import usage_lines
+        return [f"• {esc(line)}" for line in usage_lines(db)]
+    except Exception:                                   # a report must never break /lastrun
+        return ["• unavailable"]
+
+
 def _funnel(gen: Dict) -> List[str]:
     scored = sum((gen.get("scored_by_sport") or {}).values())
     base = sum((gen.get("base_by_sport") or {}).values())
@@ -170,6 +178,7 @@ def lastrun_text(db, cfg, now: Optional[datetime] = None) -> str:
     if feed:
         out += ["", "<b>SharpAPI feeds</b>"] + feed
     out += ["", "<b>Odds API</b> (Top priority)"] + _quota_lines(db, gen)
+    out += ["", "<b>SportsGameOdds usage</b> (this database, last 30 days)"] + _sgo_lines(db)
     out += ["", "<b>Funnel</b>"] + _funnel(gen)
     out += ["", "<b>Price sources</b> (not shown on the card)"] + _price_sources(snapshot)
     out += ["", f"<b>Slates</b>: Top {len(snapshot.top_picks)} legs · combined {_product(snapshot.top_picks):.2f} | "

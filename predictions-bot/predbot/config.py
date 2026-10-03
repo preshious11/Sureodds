@@ -204,7 +204,9 @@ class Config:
     sgo_allowed_stats: List[str] = field(default_factory=lambda: _list(
         "SGO_ALLOWED_STATS", "points,cornerKicks,yellowCards,weightedCards,bothTeamsScored"))
     sgo_allowed_periods: List[str] = field(default_factory=lambda: _list("SGO_ALLOWED_PERIODS", "game,reg,1h,2h"))
-    sgo_monthly_object_limit: int = field(default_factory=lambda: _int("SGO_MONTHLY_OBJECT_LIMIT", 1000))
+    sgo_monthly_object_limit: int = field(default_factory=lambda: _int("SGO_MONTHLY_OBJECT_LIMIT", 2500))
+    #: SGO's Amateur plan allows 10 requests/minute; pace below it
+    sgo_min_interval_sec: float = field(default_factory=lambda: _float("SGO_MIN_INTERVAL_SEC", 6.5))
     sharpapi_leagues: List[str] = field(default_factory=lambda: _with_international(_list(
         "SHARPAPI_LEAGUES",
         "england_-_premier_league,spain_-_la_liga,italy_-_serie_a,germany_-_bundesliga,france_-_ligue_1,england_-_championship,netherlands_-_eredivisie,portugal_-_primeira_liga,turkey_-_super_lig,uefa_-_champions_league,uefa_-_europa_league,uefa_-_europa_conference_league,uefa_-_nations_league,concacaf_-_nations_league,world_-_international_friendlies,nigeria_-_premier_league,atp,wta,nba,nfl,mlb,euroleague"), INTERNATIONAL_SHARP_LEAGUES))

@@ -21,6 +21,9 @@ from predbot.providers.chain import build_providers
 from predbot.storage.db import Database
 
 
+__import__("os").environ.setdefault("PREDBOT_SGO_ORIGIN", "diagnostic")   # SGO requests made here are attributed to diagnostics
+
+
 def fmt(ps, cfg):
     lines = []
     for tier, items in (("TOP", ps.top), ("DAILY", ps.daily)):

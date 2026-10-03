@@ -4,7 +4,7 @@ import sys
 from typing import Optional
 
 
-def setup_logging(level: str = "INFO", log_file: Optional[str] = None) -> None:
+def setup_logging(level: str = "INFO", log_file: Optional[str] = None, secrets=()) -> None:
     """Log to stdout and, when ``log_file`` is given, to a rotating file too, so a
     generation cycle (cache hit/miss, API spend, quota refusals, the funnel) can
     be read back after the fact instead of only scrolling past in a terminal."""
@@ -22,3 +22,6 @@ def setup_logging(level: str = "INFO", log_file: Optional[str] = None) -> None:
         force=True,
     )
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+    # every record passes through the redactor: keys in URLs, tokens, e-mails and account ids never reach a log
+    from predbot.util.redact import install
+    install(secrets)

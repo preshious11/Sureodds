@@ -1,6 +1,7 @@
-"""Manual controls:  python cli.py picks [--dry-run] [--force] | settle | recap [--dry-run] | stats | accuracy | stats-card | test-post | budget"""
+"""Manual controls:  python cli.py picks [--dry-run] [--force] | settle | recap [--dry-run] | stats | accuracy | stats-card | test-post | budget | sgo-usage"""
 from __future__ import annotations
 
+import os
 import sys
 
 from predbot.bot import pagination
@@ -18,10 +19,13 @@ from predbot.util.timeutil import to_local, utcnow
 
 
 def main(argv):
+    # attribute every SGO request this process makes to a person at a terminal, not to the scheduler
+    os.environ.setdefault("PREDBOT_SGO_ORIGIN", "manual")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")   # emoji-safe terminal output on Windows
     cfg = load_config()
-    setup_logging(cfg.log_level, cfg.log_file)
+    setup_logging(cfg.log_level, cfg.log_file, secrets=[cfg.sgo_key, cfg.sharpapi_key, cfg.odds_api_key,
+                                                         cfg.football_data_key, cfg.telegram_token])
     require_provider_keys(cfg)
     db = Database(cfg.db_path)
     providers = build_providers(cfg, db)
@@ -47,6 +51,9 @@ def main(argv):
         print(text.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", ""))
     elif cmd == "test-post":
         print("sent" if tg.send("predbot online ✅") else "failed")
+    elif cmd == "sgo-usage":
+        from predbot.providers.sgo_meter import usage_lines
+        print("\n".join(usage_lines(db)))
     elif cmd == "budget":
         b = Budget(db)
         for p in providers:

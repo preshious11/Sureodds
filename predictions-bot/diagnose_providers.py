@@ -37,6 +37,9 @@ PREDICTION_CACHE_TABLE = "prediction_cache"
 CAPABILITY_KEY_PREFIX = "capabilities:v1:"
 
 
+__import__("os").environ.setdefault("PREDBOT_SGO_ORIGIN", "diagnostic")   # SGO requests made here are attributed to diagnostics
+
+
 def _load_config():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from predbot.config import Config, load_config

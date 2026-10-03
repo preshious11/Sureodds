@@ -18,6 +18,9 @@ from predbot.selection.picker import select
 from predbot.util.timeutil import utcnow, to_local, day_bounds
 
 
+__import__("os").environ.setdefault("PREDBOT_SGO_ORIGIN", "diagnostic")   # SGO requests made here are attributed to diagnostics
+
+
 def main():
     logging.disable(logging.CRITICAL)
     cfg = load_config()

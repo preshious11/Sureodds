@@ -58,7 +58,9 @@ def test_the_real_monthly_quota_is_read_from_account_usage(db):
     p = provider(db, FakeProbe(usage(2505, 2500)), FakeHttp())
     assert p.monthly_entities() == (2505, 2500)
     assert p.quota_exhausted() is True
-    assert p.quota_state() == {"monthly_entities_used": 2505, "monthly_entities_max": 2500, "exhausted": True}
+    state = p.quota_state()
+    assert (state["monthly_entities_used"], state["monthly_entities_max"], state["exhausted"]) == (2505, 2500, True)
+    assert state["level"] == 100 and state["generation_allowance_today"] == 0
 
 
 def test_an_exhausted_quota_fails_fast_without_calling_events(db):
@@ -75,20 +77,25 @@ def test_the_last_entities_are_kept_for_settlement(db):
     assert p.quota_exhausted() is True
 
 
-def test_the_fixture_allowance_never_exceeds_what_is_left(db):
+def test_the_fixture_allowance_never_exceeds_what_is_left(db, tmp_path):
+    from predbot.storage.db import Database
     base = load("sgo_event.json")
     base = base["data"][0] if "data" in base else base
     ev = copy.deepcopy(base)
     ev["leagueID"], ev["status"]["startsAt"] = "MLB", "2026-10-03T20:00:00Z"
     http = FakeHttp({"MLB": [ev]})
-    p = provider(db, FakeProbe(usage(2400, 2500)), http, leagues=("MLB",))   # 100 left - 25 reserve = 75: the 50-event limit still applies
+    p = provider(db, FakeProbe(usage(0, 2500)), http, leagues=("MLB",))      # plenty left: the 50-event limit applies
     p.fetch_events(START, END)
     asked = [c[1]["limit"] for c in http.calls if c[0] == "/events"]
     assert asked and max(asked) <= 50
     tight = FakeHttp({"MLB": [ev]})
-    p2 = provider(db, FakeProbe(usage(2460, 2500)), tight, leagues=("MLB",))  # 40 left - 25 reserve = 15
+    # 1,700 used: (2,500 - 1,700 - 600 held back for reserve / settlement / diagnostics) / 30 days = 6 a day
+    p2 = provider(Database(str(tmp_path / "b.db")), FakeProbe(usage(1700, 2500)), tight, leagues=("MLB",))
     p2.fetch_events(START, END)
-    assert max(c[1]["limit"] for c in tight.calls if c[0] == "/events") <= 15
+    assert max(c[1]["limit"] for c in tight.calls if c[0] == "/events") <= 6
+    spent = provider(Database(str(tmp_path / "c.db")), FakeProbe(usage(2400, 2500)), FakeHttp({"MLB": [ev]}), leagues=("MLB",))
+    spent.fetch_events(START, END)                                           # allowance 0: not one /events request
+    assert not [c for c in spent.http.calls if c[0] == "/events"]
 
 
 def test_an_unreadable_usage_endpoint_changes_nothing(db):
@@ -115,7 +122,9 @@ def test_repeated_429s_stop_the_run_instead_of_sleeping_through_every_league(db)
     p = provider(db, FakeProbe(usage(10, 2500)), http)                    # quota fine, but SGO still says 429
     with pytest.raises(ProviderError):
         p.fetch_events(START, END)
-    assert len([c for c in http.calls if c[0] == "/events"]) == 2         # two leagues, then it gives up (4 configured)
+    # exactly ONE request: the 429 starts a cool-down that stops the other leagues (it used to be 3 attempts x leagues)
+    assert len([c for c in http.calls if c[0] == "/events"]) == 1
+    assert p.meter.in_cooldown()
     assert p.last_fetch_complete is False
 
 
