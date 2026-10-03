@@ -266,16 +266,19 @@ def pick_lines(p: PickLine) -> List[str]:
 
 
 def fixture_block(lines: List[PickLine]) -> List[str]:
-    """One fixture of the /all sport pages: a header line (league, match, kick-off) then one compact line per prediction:
+    """One fixture of the /all sport pages, in the bot's own pick style: the original header line once, then each
+    prediction's original two lines (outcome; price, confidence and kick-off) - exactly what ``pick_lines`` renders:
 
-        ⚽ France • Ligue 1 · Angers vs ESTAC Troyes · 🕘 7:45 PM
-        🎯 Angers to Win · 💰 2.02 · 📊 46%
+        ⚽ France • Ligue 1 · Angers vs ESTAC Troyes
+        🎯 Angers to Win
+        💰 2.02  ·  📊 46%  ·  🕘 7:45 PM
+        🎯 Angers or ESTAC Troyes
+        💰 1.31  ·  📊 72%  ·  🕘 7:45 PM
 
     ``lines`` are the fixture's predictions in the order to show (the caller sorts them by market family)."""
-    first = lines[0]
-    mark = STARTED_MARK if first.state == "started" else FINISHED_MARK if first.state == "finished" else ""
-    out = [f"{pick_lines(first)[0]} · 🕘 {esc(first.when)}{mark}"]
-    out += [f"🎯 {esc(p.outcome)} · 💰 {p.price:.2f} · 📊 {round(p.confidence * 100)}%" for p in lines]
+    out = pick_lines(lines[0])[:1]
+    for p in lines:
+        out += pick_lines(p)[1:]
     return out
 
 
@@ -509,6 +512,22 @@ def recap_message(s: Dict) -> str:
 def stats_message(s: Dict) -> str:
     """The /stats card."""
     return _results_card("📊 STATS", s)
+
+
+def collection_stats_message(name: str, day: str, values: Dict, with_matches: bool = False) -> str:
+    """One collection's results (Top / Daily / All Predictions) in the /stats card's own vocabulary: ✅ ❌ ➖ counts,
+    🎯 hit rate, ⏳ pending. Predictions and matches are counted apart: several predictions can share one match."""
+    lines = [f"📊 STATS · {name} · {day_label(day)}"]
+    for key, title in (("today", "🗓 Today"), ("last7", "📈 Last 7 days"), ("last30", "📈 Last 30 days"), ("all", "📈 All time")):
+        b = values[key]
+        rate = f"  ·  🎯 {b['hit_rate']:.0f}%" if b["hit_rate"] is not None else ""
+        lines += ["", title, counts_line(b) + rate]
+        if b["issued"]:
+            n, m = b["issued"], b["fixtures"]
+            lines.append(f"{n} prediction{'' if n == 1 else 's'} · {m} match{'' if m == 1 else 'es'}" if with_matches else n_picks(n))
+        if b["pending"]:
+            lines.append(f"⏳ {b['pending']} pending")
+    return "\n".join(lines)
 
 
 def yesterday_header(day: str, y: Dict) -> List[str]:

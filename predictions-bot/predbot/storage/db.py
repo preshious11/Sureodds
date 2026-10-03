@@ -488,13 +488,32 @@ class Database:
                           " ORDER BY p.pick_date DESC,m.rank,p.id", params)
 
     def store_prediction(self, row):
-        """Immutable first prediction for a canonical event x market family on a day, irrespective of collection.
-        A fixture may hold several predictions (one per family); a stored one is never replaced or updated."""
+        """Immutable first prediction for a fixture x market family on a day, irrespective of collection.
+        A fixture may hold several predictions (one per family); a stored one is never replaced or updated.
+
+        "Same fixture x family" is recognised two ways: by canonical event id, and - for rows stored before canonical
+        ids existed (NULL) or under another provider's event id - by ``fixture_key`` and the family's own coordinates
+        (market, period, stat, entity). Without the second, such a row slips past the first check and the insert then
+        collides with ``uq_picks_fixture_selection`` (the exact-duplicate guard on fixture_key)."""
         existing = self.query("SELECT id FROM picks WHERE pick_date=? AND canonical_event_id=? AND market=?",
                               (row['pick_date'], row['canonical_event_id'], row['market']))
+        if not existing and row.get('fixture_key'):
+            existing = self.query("SELECT id FROM picks WHERE pick_date=? AND fixture_key=? AND market=? AND period=? "
+                                  "AND stat=? AND entity=? ORDER BY id LIMIT 1",
+                                  (row['pick_date'], row['fixture_key'], row['market'], row.get('period', 'full'),
+                                   row.get('stat', 'points'), row.get('entity', 'all')))
         if existing:
             return int(existing[0]['id'])
-        return self.insert_pick(dict(row, tier='all'))
+        try:
+            return self.insert_pick(dict(row, tier='all'))
+        except sqlite3.IntegrityError:                  # lost a race / an index we did not anticipate: first write wins
+            winner = self.query("SELECT id FROM picks WHERE pick_date=? AND fixture_key=? AND market=? AND period=? "
+                                "AND stat=? AND entity=? AND selection=? ORDER BY id LIMIT 1",
+                                (row['pick_date'], row.get('fixture_key') or '', row['market'], row.get('period', 'full'),
+                                 row.get('stat', 'points'), row.get('entity', 'all'), row['selection']))
+            if not winner:
+                raise
+            return int(winner[0]['id'])
 
     def reset_prediction_day(self, day, timezone, now_utc, dry_run=False):
         """Invalidate only the shared snapshot and the unpublished future pending pool for ``day``.

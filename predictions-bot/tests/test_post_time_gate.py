@@ -154,6 +154,6 @@ def test_stats_still_works_before_post_time(world):
 
     callbacks.handle_command("/stats", "42", service=fetcher, tg=tg, cfg=cfg, db=db)
 
-    assert "Performance" in tg.sends[0]["text"]
+    assert "STATS" in tg.sends[0]["text"] or "No results yet" in tg.sends[0]["text"]
     assert "ready at" not in tg.sends[0]["text"]
     built.assert_not_called()

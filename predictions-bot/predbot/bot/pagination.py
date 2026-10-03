@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from predbot.bot.format import (DAILY_TITLE, NO_RESULTS_YET, SPORT_ICON, SPORT_LABEL, TOP_TITLE, PickLine,
-                                by_kickoff, fixture_block, format_outcome, pick_line_from_record, pick_lines,
+                                by_kickoff, collection_stats_message, day_label, fixture_block, format_outcome, pick_line_from_record, pick_lines,
                                 picks_card, stats_message, yesterday_header, yesterday_pick_line,
                                 zone_label)
 from predbot.cache.models import (DailySnapshot, PickRecord, SPORT_VIEW_PREFIX, VIEW_DAILY, VIEW_STATS,
@@ -42,6 +42,7 @@ VIEW_DESC = {VIEW_TOP: "Top picks of the day",
              VIEW_YESTERDAY: "Every pick from yesterday, with its result"}
 #: the buttons under every card, two to a row
 SWITCH_ROWS = ((VIEW_TOP, VIEW_DAILY), (VIEW_STATS, VIEW_YESTERDAY))
+ALL_TITLE = '📚 ALL PREDICTIONS'               # the Top / Daily title style: icon, caps, then the day
 VIEW_TITLES[VIEW_ALL] = 'ALL PREDICTIONS'
 VIEW_ICON[VIEW_ALL], VIEW_LABEL[VIEW_ALL], VIEW_COMMAND[VIEW_ALL] = '📚', 'All Predictions', '/all'
 VIEW_DESC[VIEW_ALL] = 'Every model prediction, by match'
@@ -235,8 +236,9 @@ def render_sport_menu(snapshot: DailySnapshot) -> Tuple[str, Dict]:
         matches.setdefault(b, set()).add(fixture_of(p))
     ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     fixtures = len({fixture_of(p) for p in items})
-    text = '\n\n'.join(['<b>ALL PREDICTIONS</b>', f'{snapshot.date} · {_plural(len(items), "prediction", "predictions")} · '
-                         f'{_plural(fixtures, "match", "matches")}', 'Pick a sport:'])
+    text = '\n'.join([f'{ALL_TITLE} · {day_label(snapshot.date)}',
+                      f'{_plural(len(items), "prediction", "predictions")} · {_plural(fixtures, "match", "matches")}',
+                      '', 'Pick a sport:'])
     buttons = [{"text": f"{SPORT_ICON.get(s, SPORT_ICON['other'])} {SPORT_LABEL.get(s, s)} ({n} · {_plural(len(matches[s]), 'match', 'matches')})",
                 "callback_data": encode_callback(SPORT_VIEW_PREFIX + s, 0, snapshot.date)} for s, n in ordered]
     rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
@@ -275,10 +277,11 @@ def render_page(snapshot: DailySnapshot, view: str, page: int, size: int,
         page = clamp_page(page, len(groups), size)
         blocks = ['\n'.join(fixture_block([pick_line_from_record(p, tz, user_tz, now) for p in g]))
                   for g in groups[page * size:(page + 1) * size]]
-        text = '\n\n'.join([f'<b>ALL PREDICTIONS</b> · {SPORT_ICON.get(sport, SPORT_ICON["other"])} {VIEW_LABEL[view]}',
-                             f'{snapshot.date} · {_plural(len(items), "prediction", "predictions")} · '
-                             f'{_plural(len(groups), "match", "matches")}',
-                             *blocks, f'Page {page + 1} of {pages}'])
+        zone = zone_label(display_tz, snapshot.date)
+        head = [f'{ALL_TITLE} · {day_label(snapshot.date)}',
+                f'{SPORT_ICON.get(sport, SPORT_ICON["other"])} {VIEW_LABEL[view]} · {_plural(len(items), "prediction", "predictions")}'
+                f' · {_plural(len(groups), "match", "matches")}' + (f' · 🕘 times in {zone}' if zone else '')]
+        text = '\n\n'.join(['\n'.join(head), *blocks] + ([f'Page {page + 1} of {pages}'] if pages > 1 else []))
         return text, build_keyboard(view, page, pages, snapshot.date, extra_rows=_sports_back_row(snapshot.date))
     lines = by_kickoff(pick_line_from_record(p, tz, user_tz, now) for p in items)     # kickoff order, then paged
     pages = total_pages(len(lines), size)
@@ -299,8 +302,6 @@ def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC",
 
     With a Database handle the numbers are computed fresh, on the READER's local dates; without one the cached
     snapshot's stats are used (older shape: read as a settled day)."""
-    if db is not None:
-        return render_collection_stats(db, 'all', tz, now, main=True)
     raw = None
     display_tz = user_tz or tz          # "today" has to mean the subscriber's today
     if db is not None:
@@ -314,7 +315,7 @@ def render_stats(snapshot: DailySnapshot, db=None, tz: str = "UTC",
         if snapshot.stats is None:
             return NO_RESULTS_YET, build_keyboard(VIEW_STATS, 0, 1)
         raw = snapshot.stats.to_raw()
-    return stats_message(raw), build_keyboard(VIEW_STATS, 0, 1)
+    return stats_message(raw), build_keyboard(VIEW_STATS, 0, 1, extra_rows=_collection_stats_row() if db is not None else ())
 
 
 def render_yesterday(db=None, tz: str = "UTC", page: int = 0, size: int = PAGE_SIZE_DEFAULT,
@@ -360,28 +361,24 @@ def render_view(snapshot: DailySnapshot, view: str, page: int, size: int,
     return render_page(snapshot, view, page, size, tz, user_tz, now)
 
 
-def render_collection_stats(db, collection, tz, now=None, main=False):
+def _collection_stats_row():
+    """The one addition to the /stats card: a way into the per-collection numbers (Top, Daily, All Predictions)."""
+    return ([{'text': f'{VIEW_ICON[v]} {name} stats', 'callback_data': encode_callback('stats_' + k, 0)}
+             for k, v, name in (('top', VIEW_TOP, 'Top'), ('daily', VIEW_DAILY, 'Daily'), ('all', VIEW_ALL, 'All'))],)
+
+
+def render_collection_stats(db, collection, tz, now=None):
+    """One collection's results (Top / Daily / All Predictions), worded like the /stats card (see format.collection_stats_message)."""
     from predbot.jobs.stats import collection_stats
     if db is None:
         return NO_RESULTS_YET, build_keyboard(VIEW_STATS, 0, 1)
     local = to_local(now or utcnow(), tz)
     values = collection_stats(db, collection, local)
-    text = ['<b>Performance</b>' if main else f'<b>{VIEW_LABEL[collection].upper()}</b>']
-    windows = (('today', 'Today'), ('last7', 'Last 7 Days'), ('all', 'All Time')) if main else (
-        ('today', 'Today'), ('last7', '7 Days'), ('last30', '30 Days'), ('all', 'All Time'))
-    for key, title in windows:
-        b = values[key]
-        rate = f"{b['hit_rate']:.0f}%" if b['hit_rate'] is not None else '—'
-        text += ['', title, f"{b['won']}/{b['decided']} · {rate}"]
-        if collection == 'all' and b['issued']:
-            text.append(f"{b['issued']} predictions · {b['fixtures']} matches")          # several predictions per match
-        if b['pending']:
-            text.append(f"{b['pending']} pending")
-    buttons = [[{'text': VIEW_LABEL[c], 'callback_data': encode_callback('stats_' + c, 0)}
-                for c in ('top', 'daily', 'all')]]
-    if not main:
-        buttons.insert(0, [{'text': 'View Results', 'callback_data': encode_callback('results_' + collection, 0, local.date().isoformat())}])
-    return '\n'.join(text), {'inline_keyboard': buttons}
+    view = {'top': VIEW_TOP, 'daily': VIEW_DAILY, 'all': VIEW_ALL}[collection]
+    text = collection_stats_message(f"{VIEW_ICON[view]} {VIEW_LABEL[view]}", local.date().isoformat(), values,
+                                    with_matches=collection == 'all')
+    results = [{'text': '📊 View Results', 'callback_data': encode_callback('results_' + collection, 0, local.date().isoformat())}]
+    return text, build_keyboard('stats_' + collection, 0, 1, extra_rows=(results, *_collection_stats_row()))
 
 
 def render_collection_results(db, collection, page, size, day):
@@ -391,7 +388,11 @@ def render_collection_results(db, collection, page, size, day):
     rows.sort(key=lambda r: (r['pick_date'], r['start_utc'], r['id']), reverse=True)
     pages = total_pages(len(rows), size)
     page = clamp_page(page, len(rows), size)
-    text = [f'<b>{VIEW_LABEL[collection]} · Results</b>']
+    label = VIEW_LABEL[{'top': VIEW_TOP, 'daily': VIEW_DAILY, 'all': VIEW_ALL}[collection]]
+    text = [f"🗓 {label.upper()} · RESULTS"]
     text += [yesterday_pick_line(r, stats_mod.outcome(r)) for r in rows[page * size:(page + 1) * size]]
-    text += [f'Page {page + 1} of {pages}'] if rows else ['No settled predictions yet.']
-    return '\n\n'.join(text), build_keyboard('results_' + collection, page, pages, day)
+    if not rows:
+        text.append('No settled predictions yet.')
+    elif pages > 1:
+        text += ['', f'Page {page + 1} of {pages}']
+    return '\n'.join(text), build_keyboard('results_' + collection, page, pages, day)

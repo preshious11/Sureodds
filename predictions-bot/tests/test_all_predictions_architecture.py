@@ -96,6 +96,85 @@ def test_the_migration_replaces_the_per_event_rule_without_touching_any_data(tmp
     assert "uq_prediction_event_family_day" in _index_names(path)
 
 
+#: the production index exactly as commit 5fbadab ("Cross-tier Phase 3") created it and every release since has kept it
+LEGACY_FIXTURE_SELECTION_INDEX = ("CREATE UNIQUE INDEX uq_picks_fixture_selection ON picks("
+                                  "pick_date, fixture_key, market, period, stat, entity, COALESCE(line, -999999), selection)")
+
+
+def _production_legacy_database(path):
+    """What the live container holds: both historical unique indexes, and today's rows stored by the old architecture
+    BEFORE canonical event ids existed (canonical_event_id NULL), one tier per row."""
+    db = _old_database(path)
+    db.conn.execute("DROP INDEX IF EXISTS uq_picks_fixture_selection")
+    db.conn.execute(LEGACY_FIXTURE_SELECTION_INDEX)
+    db.conn.commit()
+    ids = [db.insert_pick(dict(row("e1", market="result3", selection="home", canonical_event_id=None), tier="top")),
+           db.insert_pick(dict(row("e2", market="total", selection="over", line=2.5, canonical_event_id=None), tier="daily")),
+           db.insert_pick(dict(row("e3", market="dnb", selection="away", canonical_event_id=None, status="won"), tier="daily"))]
+    db.subscriber_add("100", "u", "User", timezone="UTC")
+    db.conn.commit()
+    return db, ids
+
+
+def _sql(path, name):
+    con = sqlite3.connect(path)
+    try:
+        r = con.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name=?", (name,)).fetchone()
+        return r[0] if r else None
+    finally:
+        con.close()
+
+
+def test_a_production_legacy_database_stores_the_new_architecture_without_an_integrity_error(tmp_path):
+    """The first live run died with ``UNIQUE constraint failed: index 'uq_picks_fixture_selection'``: today's legacy rows
+    have a NULL canonical_event_id, so the canonical-id duplicate check missed them and the insert hit the fixture_key
+    guard. The guard is correct and stays; the duplicate check must recognise the same fixture x family."""
+    path = str(tmp_path / "prod.db")
+    old, ids = _production_legacy_database(path)
+    assert _sql(path, "uq_picks_fixture_selection") == LEGACY_FIXTURE_SELECTION_INDEX
+    before = [dict(r) for r in old.query("SELECT * FROM picks ORDER BY id")]
+    old.close()
+
+    db = Database(path)
+    assert _sql(path, "uq_prediction_event_day") is None                         # the old per-event rule is gone
+    assert "uq_prediction_event_family_day" in _index_names(path)               # the approved rule exists
+    assert "uq_picks_fixture_selection" in _index_names(path)                   # exact-duplicate guard: not one-per-fixture
+    after = [dict(r) for r in db.query("SELECT * FROM picks ORDER BY id")]
+    assert all({k: v for k, v in b.items()} == {k: a[k] for k in b} for a, b in zip(after, before))   # rows unchanged
+    assert db.query("SELECT COUNT(*) AS n FROM subscribers")[0]["n"] == 1
+
+    # the new generation regenerates the very same selection (canonical id now set): first write wins, no exception
+    assert db.store_prediction(row("e1", market="result3", selection="home")) == ids[0]
+    assert db.store_prediction(row("e1", market="result3", selection="draw", price=9.0)) == ids[0]      # same family, other tip
+    assert db.store_prediction(row("e1", market="result3", selection="home", canonical_event_id="evt-another-provider")) == ids[0]
+    assert db.store_prediction(row("e3", market="dnb", selection="away")) == ids[2]                      # a settled row is untouched
+    # several different families of the SAME fixture and day are allowed
+    families = [("total", "over", 2.5), ("btts", "yes", None), ("dc", "home_draw", None), ("handicap", "home", -1.5)]
+    new = [db.store_prediction(row("e1", market=m, selection=sel, line=ln)) for m, sel, ln in families]
+    assert len(set(new)) == 4 and not set(new) & set(ids)
+    assert db.query("SELECT COUNT(*) AS n FROM picks WHERE fixture_key='fk-e1'")[0]["n"] == 5
+    # a family the legacy row does not occupy (a team total is not the pool's Over/Under) is not mistaken for it
+    team_total = row("e2", market="total", selection="over", line=1.5, entity="home")
+    assert db.store_prediction(team_total) not in ids
+    assert db.query("SELECT status FROM picks WHERE id=?", (ids[2],))[0]["status"] == "won"
+    # uniqueness is not weakened: the indexes themselves still refuse a duplicate of the same fixture/day/family
+    with pytest.raises(sqlite3.IntegrityError):
+        db.insert_pick(dict(row("e1", market="total", selection="under", line=2.5), tier="all"))
+    with pytest.raises(sqlite3.IntegrityError):
+        db.insert_pick(dict(row("e2", market="total", selection="over", line=2.5, canonical_event_id=None), tier="all"))
+    snapshot = _dump(db)
+    db.close()
+    again = Database(path)                                                       # reopening changes nothing
+    assert _dump(again) == snapshot
+    again.close()
+
+
+def test_two_canonical_ids_for_one_fixture_key_never_raise_on_the_same_family(db):
+    first = db.store_prediction(row("e1", market="total", selection="over", line=2.5))
+    second = db.store_prediction(row("e1", market="total", selection="over", line=2.5, canonical_event_id="evt-duplicate"))
+    assert second == first and db.query("SELECT COUNT(*) AS n FROM picks")[0]["n"] == 1
+
+
 def test_the_new_rule_is_one_row_per_day_event_and_family(db):
     first = db.store_prediction(row("e1", market="result3", selection="home"))
     other_family = db.store_prediction(row("e1", market="total", selection="over", line=2.5))
