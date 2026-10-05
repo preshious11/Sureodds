@@ -161,14 +161,16 @@ def _retry_until(snapshot: DailySnapshot) -> str:
 
 
 def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> str:
-    if snapshot.all_predictions and view != VIEW_ALL:
-        return f'No {VIEW_LABEL[view]} qualified today. {len(snapshot.all_predictions)} All Predictions are available in /all.'
-    if view == VIEW_ALL and snapshot.status == 'COMPLETE':
-        return 'No valid model predictions were generated today.'
     if (snapshot.generation or {}).get("reason") == "before_post_time":
         return f"📋 Today's picks are ready at {snapshot.generation.get('ready_at', 'the scheduled time')}."
     if (snapshot.generation or {}).get("reason") == "generating":
         return "📋 Today's picks are being generated — try again in a minute."
+    if snapshot.all_predictions and view != VIEW_ALL:
+        if view == VIEW_TOP:
+            return f'There are no top picks for today. {len(snapshot.all_predictions)} All Predictions are available in /all.'
+        return f'There are no {VIEW_LABEL[view]} for today. {len(snapshot.all_predictions)} All Predictions are available in /all.'
+    if snapshot.status == 'COMPLETE' and not snapshot.total_picks():
+        return 'No valid model predictions were generated today.'
     """Why a view has nothing to show - the real reasons, kept distinct.
 
     * an empty tier of an otherwise fine card: top picks are a quality bar, not a

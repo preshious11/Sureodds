@@ -72,7 +72,7 @@ def test_complete_day_without_picks_keeps_the_quality_bar_line():
     from predbot.bot.pagination import render_page
     snapshot = DailySnapshot(date='2030-06-01', status='COMPLETE')
     text, _ = render_page(snapshot, 'daily', 0, 5, 'UTC')
-    assert 'Predictions being analyzed' in text
+    assert 'No valid model predictions were generated today.' in text
     assert 'still being assembled' not in text
 
 

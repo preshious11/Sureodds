@@ -90,8 +90,8 @@ def test_empty_states_keep_their_wording_and_gain_the_lead_emoji():
 
     assert view({"reason": "before_post_time", "ready_at": "09:00 WAT"}) == "📋 Today's picks are ready at 09:00 WAT."
     assert view({"reason": "generating"}) == "📋 Today's picks are being generated — try again in a minute."
-    assert view({}) == nl("🔥 TOP PICKS · Sat 1 Jun", no_selection_message("WAT"))
-    assert view({}, view_="daily") == nl("📋 DAILY PICKS · Sat 1 Jun", no_selection_message("WAT"))
+    assert view({}) == 'No valid model predictions were generated today.'
+    assert view({}, view_="daily") == 'No valid model predictions were generated today.'
     assert view({}, "PARTIAL").startswith("📋 <b>Today's predictions are still being assembled</b>")
 
 
