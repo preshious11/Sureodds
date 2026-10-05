@@ -20,7 +20,9 @@ def run(db: Database, cfg: Config, tg: Optional[Telegram], force: bool = False, 
     local = to_local(now, cfg.timezone)
     y = local - timedelta(days=1)
     y_str = y.strftime("%Y-%m-%d")
-    if not force and not dry_run and db.post_done("recap", y_str):
+    # ``force`` only recomputes the recap text; it never reposts a recap that is
+    # already recorded in ``posts`` (same regeneration-vs-repost split as picks).
+    if not dry_run and db.post_done("recap", y_str):
         return None
     rows = stats_mod.rows_for_recap(db, y_str)
     if not rows:

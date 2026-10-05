@@ -84,7 +84,12 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     midnight_end = midnight + timedelta(hours=max(0, cfg.day_window_end_offset_hours))
     end = min(midnight_end, now + timedelta(hours=cfg.pick_window_hours))
     if start >= end:
-        return PickSet()
+        # No usable generation window remains (e.g. a late-night retry after the
+        # day window closed). This is NOT a valid empty day: mark it PARTIAL so a
+        # previously cached valid snapshot is preserved instead of replaced.
+        ps = PickSet(complete=False)
+        ps.diagnostics["empty_reason"] = "no_remaining_window"
+        return ps
     timings = Timings()
     providers_map = chain.providers if isinstance(chain, ProviderChain) else None
     usage_before = _api_usage(chain)
@@ -232,9 +237,12 @@ def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram],
         return snapshot
     if tg and tg.enabled():
         # the channel gets the same two messages as a subscriber, each recorded on its own: a retry after a
-        # partial failure posts only the missing one, and the Daily is never posted before the Top
+        # partial failure posts only the missing one, and the Daily is never posted before the Top.
+        # ``force`` only refreshes the snapshot (regeneration/recovery); it never reposts a card that is
+        # already recorded in ``posts`` - regeneration and reposting are separate concepts and there is
+        # deliberately no repost path here.
         for kind, text, markup in messages:
-            if not force and db.post_done(kind, snapshot.date):
+            if db.post_done(kind, snapshot.date):
                 continue
             mid = tg.send(text, reply_markup=markup)
             if not mid:

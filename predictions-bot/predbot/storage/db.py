@@ -454,22 +454,28 @@ class Database:
 
     # ---- picks ----
     def insert_pick(self, row: Dict[str, Any]) -> int:
-        row = dict(row)
-        row.setdefault("created_at", _now())
-        row.setdefault("status", "pending")
-        if not row.get("fixture_key"):
-            from predbot.util.fixtures import row_fixture_key
-            row["fixture_key"] = row_fixture_key(row)
-        if isinstance(row.get("sources"), dict):
-            row["sources"] = json.dumps(row["sources"])
-        cols = ",".join(row.keys())
-        qs = ",".join("?" for _ in row)
-        cur = self.execute(f"INSERT INTO picks({cols}) VALUES({qs})", list(row.values()))
-        pid = int(cur.lastrowid)
-        self.add_membership(pid, 'all', row.get('rank', 0))
-        if row.get('tier') in ('top', 'daily'):
-            self.add_membership(pid, row['tier'], row.get('rank', 0))
-        return pid
+        # Self-atomic: the pick row and its memberships commit together, so a
+        # failure between the writes cannot leave a pick without its ``all``
+        # membership (invisible to every JOIN-based read). Safe under an outer
+        # ``transaction()``: the context manager nests via _transaction_depth and
+        # only the outermost level commits/rolls back.
+        with self.transaction():
+            row = dict(row)
+            row.setdefault("created_at", _now())
+            row.setdefault("status", "pending")
+            if not row.get("fixture_key"):
+                from predbot.util.fixtures import row_fixture_key
+                row["fixture_key"] = row_fixture_key(row)
+            if isinstance(row.get("sources"), dict):
+                row["sources"] = json.dumps(row["sources"])
+            cols = ",".join(row.keys())
+            qs = ",".join("?" for _ in row)
+            cur = self.execute(f"INSERT INTO picks({cols}) VALUES({qs})", list(row.values()))
+            pid = int(cur.lastrowid)
+            self.add_membership(pid, 'all', row.get('rank', 0))
+            if row.get('tier') in ('top', 'daily'):
+                self.add_membership(pid, row['tier'], row.get('rank', 0))
+            return pid
 
     def add_membership(self, prediction_id, collection, rank=0):
         self.execute("INSERT OR IGNORE INTO prediction_memberships VALUES(?,?,?)", (prediction_id, collection, rank))

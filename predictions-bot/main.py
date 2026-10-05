@@ -42,11 +42,18 @@ def main() -> None:
              "subscriber delivery: %s local, checked every %dm | cache: %s",
              ", ".join(chain.order) or "none", cfg.timezone, cfg.post_time, cfg.recap_time,
              cfg.post_time, DELIVERY_POLL_MINUTES, "sqlite")
+    log.info("single-instance: run exactly ONE worker per Telegram token against this database "
+             "(DB_PATH=%s); a second local or remote worker would duplicate scheduler runs, channel "
+             "posts and provider spend, and concurrent SQLite writers risk corruption. See README "
+             "'Deploy' for the persistent-volume and no-concurrent-manual-generation rules.",
+             cfg.db_path)
 
     def job_settle():
         settle.run(resolver, db, cfg)
 
     def job_live_results():
+        # Settlement inside still runs when subscriber DMs are disabled; only
+        # the pushes are skipped (see live_results._run).
         live_results.run(resolver, db, cfg, tg)
 
     def job_recap():
@@ -60,12 +67,16 @@ def main() -> None:
 
     def job_broadcast_recap():
         """Send recap to each subscriber after last fixture ends in their timezone."""
+        if not getattr(cfg, "subscriber_delivery_enabled", True):
+            return  # channel-only mode: the channel recap above still runs
         text = db.get_kv("recap_text")
         if text:
             broadcast.deliver_recap(db, cfg, tg, text)
 
     def job_deliver():
         """Poll: hand the card to every subscriber once DELIVERY_TIME has arrived."""
+        if not getattr(cfg, "subscriber_delivery_enabled", True):
+            return  # channel-only mode: generation and channel posts continue
         # Prevent API calls during delivery polling; only use cached data.
         snapshot = service.get_daily_snapshot(allow_api_call=False)
         if not snapshot.total_picks():

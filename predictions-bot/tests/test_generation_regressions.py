@@ -70,14 +70,14 @@ def test_top_takes_the_strongest_leg_alone_when_it_already_reaches_the_target():
 def test_top_search_bounds_count_and_unique_matches():
     # Stale maximums above 3 are bounded to the supported Top size.
     pool = [sc(ev(i // 2), 'result3', 'home', .75, 1.25 + i / 1000) for i in range(120)]
-    result = select(pool, Config(top_leg_odds_min=1.0, top_legs_max=5), dt())
+    result = select(pool, Config(top_legs_max=5), dt())
     assert 1 <= len(result.top) <= 3
     assert len({s.event.dedupe_key() for s in result.top}) == len(result.top)
 
 
 def test_top_three_pick_combination():
     result = select([sc(ev(i), 'result3', 'home', .8, 1.27) for i in range(3)],
-                    Config(top_leg_odds_min=1.2), dt())
+                    Config(), dt())
     assert len(result.top) == 3
     assert prod(s.price for s in result.top) == pytest.approx(1.27 ** 3)
 

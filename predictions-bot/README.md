@@ -275,11 +275,23 @@ try again in a minute." (or the already-published card).
 ## Deploy (justrunmy.app / any Docker host)
 
 1. Build from the repo-root `Dockerfile` (`CMD python main.py`, `DB_PATH=/data/predbot.db`).
-   It is a worker — there is no web port. Run exactly ONE instance per Telegram token
-   (two pollers cause 409 conflicts).
+   It is a worker — there is no web port. Production MUST run **exactly ONE
+   worker/replica per Telegram token against each database**. This is enforced by
+   the hosting platform (replica count = 1), not by the application: the polling
+   lease (`predbot/bot/runtime.py::PollingLease`) only arbitrates processes on the
+   same host and is not a distributed lock. A second worker would duplicate
+   scheduler runs, duplicate channel posts, double provider/API spend, cause
+   Telegram 409 polling conflicts, and risk SQLite corruption from concurrent
+   writers. Never scale this service horizontally.
 2. **Mount a persistent volume at `/data`.** The SQLite database holds your record,
    budget counters, Elo ratings and calibration; without a volume every redeploy
-   starts empty.
+   starts empty. `DB_PATH` must point inside that volume (e.g. `/data/predbot.db`).
+3. **Never run manual generation against the production database while the worker
+   is running** (`python cli.py picks`, `reset-day --yes`, or any diagnose script
+   that writes). Concurrent writers risk SQLite corruption and can rewrite the
+   snapshot, memberships or budget counters out from under the scheduler. Manual
+   commands against production are for reads (`stats`, `budget`, `sgo-usage`,
+   `picks --dry-run`, which writes nothing) or for a stopped worker only.
 3. Set the variables from `.env.example` in the host's dashboard. **Dashboard values
    override the code defaults**, so delete any variable you no longer want to pin
    (a `PROVIDER_ORDER` that still names a removed provider only produces a startup warning).

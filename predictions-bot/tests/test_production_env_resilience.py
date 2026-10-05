@@ -37,6 +37,8 @@ def test_a_pinned_pre_rework_default_is_ignored_with_a_warning(monkeypatch, capl
     ("CROSS_TIER_SAME_FIXTURE", "1", "cross_tier_same_fixture"), ("MAX_PICKS_PER_EVENT", "3", "max_picks_per_event"),
     ("DAILY_MAX_PERIOD_SHARE", "0.5", "daily_max_period_share"),
     ("TOP_PROVIDER_PRIORITY", "oddsapi", "top_provider_priority"),
+    ("TOP_LEGS_MIN", "2", "top_legs_min"), ("TOP_LEG_ODDS_MIN", "1.05", "top_leg_odds_min"),
+    ("TOP_MIN_AGREEMENT", "0.50", "top_min_agreement"),
 ])
 def test_an_env_that_still_sets_a_removed_flag_is_simply_ignored(monkeypatch, name, value, attr):
     """The dashboard may still carry flags of the deleted Top fallback / cross-tier / priority architecture."""

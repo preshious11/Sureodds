@@ -161,7 +161,7 @@ def report_top(cfg, scored):
     oa = [s for s in scored if s.event.provider == "oddsapi" and base_valid(s)]
     oa.sort(key=lambda s: -s.p_model)
     print(f"\n== top 10 Odds API candidates by p_model (pool={len(oa)}) | "
-          f"TOP_MIN_PROB={cfg.top_min_prob} TOP_LEG_ODDS_MIN={cfg.top_leg_odds_min} "
+          f"TOP_MIN_PROB={cfg.top_min_prob} "
           f"TOP_ODDS_MAX={cfg.top_odds_max} target={cfg.top_odds_target}")
     for s in oa[:10]:
         print(f"  p={s.p_model:.3f} pmkt={s.p_market:.3f} price={s.price:.2f} ev={s.ev:+.3f} "

@@ -167,7 +167,12 @@ def deliver_picks(db: Database, cfg, tg: Telegram,
 
     Accepts either a snapshot or a zero-argument provider (``published_snapshot``),
     so the scheduler can poll without forcing a provider fetch.
+
+    When ``SUBSCRIBER_DELIVERY_ENABLED`` is false (channel-only mode) no
+    subscriber DM is sent; the channel mirror is unaffected.
     """
+    if not getattr(cfg, "subscriber_delivery_enabled", True):
+        return 0
     if not tg.token:
         return 0
     if callable(snapshot):
@@ -180,7 +185,13 @@ def deliver_picks(db: Database, cfg, tg: Telegram,
 
 
 def deliver_recap(db: Database, cfg, tg: Telegram, text: Optional[str]) -> int:
-    """Send recap to each subscriber after last fixture ends in their timezone."""
+    """Send recap to each subscriber after last fixture ends in their timezone.
+
+    Disabled entirely when ``SUBSCRIBER_DELIVERY_ENABLED`` is false; the
+    channel recap is unaffected.
+    """
+    if not getattr(cfg, "subscriber_delivery_enabled", True):
+        return 0
     if not text:
         return 0
     yesterday = (to_local(utcnow(), cfg.timezone) - timedelta(days=1)).strftime("%Y-%m-%d")

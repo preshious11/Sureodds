@@ -80,6 +80,42 @@ def Mock_db():
     return Mock()
 
 
+PICK_SCALARS = {"DAILY_PICKS_TARGET": ("daily_target", "12"),
+                "TOP_COMBINED_ODDS": ("top_odds_target", "2.00"),
+                "TOP_LEGS_MAX": ("top_legs_max", "3"),
+                "TOP_ODDS_MAX": ("top_odds_max", "2.50"),
+                "DAILY_COMBINED_MIN_ODDS": ("daily_odds_min", "10"),
+                "DAILY_COMBINED_MAX_ODDS": ("daily_odds_max", "12"),
+                "DAILY_MIN_ODDS": ("daily_min_odds", "1.20"),
+                "DAILY_MAX_ODDS": ("daily_max_odds", "5.00"),
+                "DAILY_MIN_PROB": ("daily_min_prob", "0.55"),
+                "TOP_MIN_PROB": ("top_min_prob", "0.62"),
+                "TOP_MIN_BOOKS": ("top_min_books", "3")}
+
+
+def test_the_example_env_matches_pick_defaults(monkeypatch):
+    """Every prediction-related value in .env.example must equal the code default
+    (the example follows the application, never the other way around). Compared
+    numerically so display formatting (2.00 vs 2.0) does not matter."""
+    example = {}
+    for line in (ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            k, v = line.split("=", 1)
+            example[k.strip()] = v.split("#", 1)[0].strip()
+    _clear(monkeypatch, *PICK_SCALARS)
+    cfg = Config()
+    for env_name, (attr, text) in PICK_SCALARS.items():
+        assert example[env_name] == text, env_name
+        assert float(getattr(cfg, attr)) == float(text), env_name
+
+
+def test_the_example_env_documents_the_delivery_switch(monkeypatch):
+    _clear(monkeypatch, "SUBSCRIBER_DELIVERY_ENABLED")
+    assert Config().subscriber_delivery_enabled is True
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "SUBSCRIBER_DELIVERY_ENABLED=true" in example
+
+
 # ------------------------------------------------------------ where .env is read
 def test_the_env_path_is_next_to_main_py_and_ignores_the_working_directory(tmp_path, monkeypatch):
     before = default_env_path()

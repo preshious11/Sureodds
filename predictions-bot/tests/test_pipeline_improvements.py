@@ -58,7 +58,7 @@ def test_top_single_book_leg_excluded():
     lone = sc(ev(0), p_model=0.75, price=1.45, n_books=1, agreement=0.9)
     # Pad daily pool
     daily_pad = [sc(ev(i), p_model=0.72, price=1.35, n_books=4) for i in range(1, 20)]
-    c = cfg(top_min_prob=0.62, top_min_books=2, top_min_agreement=0.50)
+    c = cfg(top_min_prob=0.62, top_min_books=2)
     ps = select([lone] + daily_pad, c, now)
     assert all(s.line.n_books >= 2 for s in ps.top), (
         f"Top pick with n_books < 2 slipped through: {[(s.label, s.line.n_books) for s in ps.top]}"

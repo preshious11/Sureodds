@@ -65,7 +65,7 @@ def test_daily_target_is_10_to_12_odds():
 
 def test_top_target_is_unchanged():
     c = Config()
-    assert (c.top_odds_target, c.top_odds_max, c.top_legs_min, c.top_legs_max) == (2.00, 2.50, 1, 3)
+    assert (c.top_odds_target, c.top_odds_max, c.top_legs_max) == (2.00, 2.50, 3)
 
 
 def test_the_top_is_not_weakened_to_reach_its_target_by_default():

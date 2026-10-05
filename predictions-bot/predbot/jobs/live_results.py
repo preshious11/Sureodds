@@ -134,12 +134,15 @@ def run(resolver, db, cfg, tg, now=None):
     if not resolver.run_lock.acquire(blocking=False):
         return
     try:
-        _run(resolver, db, tg, now or utcnow())
+        _run(resolver, db, cfg, tg, now or utcnow())
     finally:
         resolver.run_lock.release()
 
 
-def _run(resolver, db, tg, now):
+def _run(resolver, db, cfg, tg, now):
+    # Channel-only mode (SUBSCRIBER_DELIVERY_ENABLED=false) still settles via
+    # this job; only the subscriber pushes below are skipped.
+    notify = getattr(cfg, "subscriber_delivery_enabled", True)
     rows = db.live_picks(iso(now - timedelta(days=settle.MAX_PENDING_DAYS)),
                          iso(now + timedelta(minutes=10)))
     groups = defaultdict(list)
@@ -171,13 +174,19 @@ def _run(resolver, db, tg, now):
                 if not state or not state["settlement_done"]:
                     _settle_fixture(resolver, db, picks, result, now, cache, begun)
                 if result.status == "final":
-                    fresh = db.picks_where("p.pick_date=? AND p.fixture_key=?", (pick_date, fixture_key))
-                    _, complete = deliver_live(db, tg, pick_date, fixture_key, fresh, result, ended=True)
-                    if complete:
+                    if notify:
+                        fresh = db.picks_where("p.pick_date=? AND p.fixture_key=?", (pick_date, fixture_key))
+                        _, complete = deliver_live(db, tg, pick_date, fixture_key, fresh, result, ended=True)
+                        if complete:
+                            db.complete_live_notifications(pick_date, fixture_key)
+                    else:
+                        # Settled normally; notifications recorded as handled so
+                        # re-enabling delivery later does not spam history.
                         db.complete_live_notifications(pick_date, fixture_key)
                 else:
                     db.complete_live_notifications(pick_date, fixture_key)
             elif result.status == "in_progress":
-                deliver_live(db, tg, pick_date, fixture_key, picks, result)
+                if notify:
+                    deliver_live(db, tg, pick_date, fixture_key, picks, result)
         except settle.PICK_ERRORS:
             log.exception("live: fixture processing failed; will retry")

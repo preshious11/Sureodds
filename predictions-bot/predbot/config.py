@@ -41,7 +41,6 @@ _STALE_PINS: Dict[str, Tuple[str, ...]] = {
     "DAILY_PICKS_TARGET": ("20",),
     "DAILY_MIN_PROB": ("0.30", "0.3"),
     "TOP_RELAX_PROB": ("0.04",),
-    "TOP_LEGS_MIN": ("2",),
 }
 _STALE_WARNED: set = set()
 
@@ -146,6 +145,11 @@ class Config:
     telegram_chat_id: str = field(default_factory=lambda: _env("TELEGRAM_CHAT_ID"))
     telegram_admin_ids: List[str] = field(default_factory=lambda: _list("TELEGRAM_ADMIN_IDS"))
     enable_commands: bool = field(default_factory=lambda: _bool("ENABLE_COMMANDS", True))
+    #: Automatic subscriber DMs (daily picks, recap, live-result pushes). The
+    #: channel mirror is unaffected. ``false`` keeps every subscriber row and
+    #: all delivery history; flipping it back to ``true`` and restarting
+    #: restores automatic subscriber delivery.
+    subscriber_delivery_enabled: bool = field(default_factory=lambda: _bool("SUBSCRIBER_DELIVERY_ENABLED", True))
 
     # Providers
     sgo_key: str = field(default_factory=lambda: _env("SPORTSGAMEODDS_KEY"))
@@ -271,8 +275,7 @@ class Config:
     #: of different fixtures and keeps the one with the highest product of
     #: p_model inside top_odds_target..top_odds_max. top_odds_max is a HARD
     #: reject on the combined ticket. Per-leg odds do not matter for this
-    #: confidence product - top_leg_odds_min is only a data-sanity floor.
-    top_legs_min: int = field(default_factory=lambda: _int("TOP_LEGS_MIN", 1))
+    #: confidence product.
     # TOP_LEGS_MAX is canonical; honour the operator's TOP_MAX_PICKS alias.
     top_legs_max: int = field(default_factory=lambda: _int("TOP_LEGS_MAX", _int("TOP_MAX_PICKS", 3)))
     top_odds_max: float = field(default_factory=lambda: _float("TOP_ODDS_MAX", 2.50))
@@ -289,13 +292,8 @@ class Config:
     #: floor on the LOWER confidence bound of a Daily leg (probability minus its uncertainty, see
     #: selection/evidence.py): a leg that is only above 50% if the market is exactly right is not a strong pick
     daily_min_lcb: float = field(default_factory=lambda: _float("DAILY_MIN_LCB", 0.50))
-    top_leg_odds_min: float = field(default_factory=lambda: _float("TOP_LEG_ODDS_MIN", 1.05))
     top_min_prob: float = field(default_factory=lambda: _float("TOP_MIN_PROB", 0.62))
     top_max_neg_ev: float = field(default_factory=lambda: _float("TOP_MAX_NEG_EV", -0.05))
-    #: How closely the model's own signals must agree with each other before a
-    #: selection may enter the Top ticket (0.50 = the historical bar). Lowering
-    #: it admits model-vs-market disagreement picks; the default is unchanged.
-    top_min_agreement: float = field(default_factory=lambda: _float("TOP_MIN_AGREEMENT", 0.50))
     #: DISTINCT bookmakers that must quote a Top leg. Measured on the 19 Sep capture: 65% of SharpAPI football main
     #: lines and 50% of SGO's had a single book, while the Odds API EU feed and SGO consensus carry 6+, so 3 keeps
     #: the Top on well-covered lines without emptying the slate.
@@ -396,10 +394,6 @@ class Config:
         if not 1 <= self.top_legs_max <= 3:
             log.warning("Config: TOP_LEGS_MAX=%s outside the supported 1-3 range; using 3", self.top_legs_max)
             self.top_legs_max = 3
-        if not 1 <= self.top_legs_min <= self.top_legs_max:
-            log.warning("Config: TOP_LEGS_MIN=%s cannot fit the 1-%s range; using 1",
-                        self.top_legs_min, self.top_legs_max)
-            self.top_legs_min = 1
         if self.price_mode not in ("median", "best"):
             log.warning("Config: PRICE_MODE=%r is not median|best - using median", self.price_mode)
             self.price_mode = "median"
@@ -416,7 +410,6 @@ class Config:
             ("TOP_COMBINED_ODDS > 1.0", self.top_odds_target > 1.0),
             ("TOP_ODDS_MAX >= TOP_COMBINED_ODDS", self.top_odds_max >= self.top_odds_target),
             ("DAILY_MIN_ODDS > 1.0", self.daily_min_odds > 1.0),
-            ("TOP_LEG_ODDS_MIN >= 1.0 (sanity floor)", self.top_leg_odds_min >= 1.0),
             ("TOP_MIN_PROB in [0,1]", 0.0 <= self.top_min_prob <= 1.0),
             ("DAILY_MIN_PROB in [0,1]", 0.0 <= self.daily_min_prob <= 1.0),
             ("DAILY_MIN_PROB >= 0.5 (a Daily leg is never worse than a coin flip)", self.daily_min_prob >= 0.5),
@@ -424,11 +417,8 @@ class Config:
              self.daily_min_books <= self.daily_secondary_min_books <= self.daily_restricted_min_books),
             ("DAILY_MAX_NEG_EV in [-1,0.5]", -1.0 <= self.daily_max_neg_ev <= 0.5),
             ("TOP_MAX_NEG_EV in [-1,0.5]", -1.0 <= self.top_max_neg_ev <= 0.5),
-            ("TOP_MIN_AGREEMENT in [0,1]", 0.0 <= self.top_min_agreement <= 1.0),
             ("TOP_MIN_BOOKS >= 1", self.top_min_books >= 1),
             ("MODEL_SHRINK_TO_MARKET in [0,1]", 0.0 <= self.model_shrink <= 1.0),
-            ("TOP_LEGS_MIN >= 1", self.top_legs_min >= 1),
-            ("TOP_LEGS_MAX >= TOP_LEGS_MIN", self.top_legs_max >= self.top_legs_min),
             ("DAILY_MAX_MARKET_SHARE in (0,1]", 0.0 < self.daily_max_market_share <= 1.0),
             ("DAILY_MAX_STAT_SHARE in (0,1]", 0.0 < self.daily_max_stat_share <= 1.0),
             ("DAILY_MAX_SPORT_SHARE in (0,1]", 0.0 < self.daily_max_sport_share <= 1.0),
