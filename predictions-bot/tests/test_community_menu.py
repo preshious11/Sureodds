@@ -195,7 +195,9 @@ def test_custom_picks_private_entry_is_distinct_and_does_not_subscribe(menu_loop
     before = list(db.conn.iterdump())
     menu_loop._handle_update(message_update("/start custom_picks", user_id="42"))
     entry.assert_called_once_with(menu_loop.tg, "42")
-    assert menu_loop.tg.sends == [{"chat_id": "42", "text": "✨ Custom Picks\n\nCustom Picks is coming soon.",
+    from predbot.custom_picks import INTRO
+    assert ('42', '42') in menu_loop._custom_users
+    assert menu_loop.tg.sends == [{"chat_id": "42", "text": INTRO,
                                  "reply_markup": None}]
     assert list(db.conn.iterdump()) == before
     assert menu_loop.service.mock_calls == []

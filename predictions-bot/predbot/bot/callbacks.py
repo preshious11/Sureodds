@@ -175,8 +175,9 @@ def community_menu_markup(bot_username: str) -> Dict[str, Any]:
 
 
 def handle_custom_picks_start(tg: Telegram, chat_id: str) -> None:
-    """Private-only entry point reserved for the future Custom Picks flow."""
-    tg.send("✨ Custom Picks\n\nCustom Picks is coming soon.", chat_id=chat_id)
+    """Introduction after CommandLoop activates this private user's mode."""
+    from predbot.custom_picks import INTRO
+    tg.send(INTRO, chat_id=chat_id)
 
 
 def handle_start(db: Database, tg: Telegram, chat_id: str, user: Optional[Dict[str, Any]]) -> None:

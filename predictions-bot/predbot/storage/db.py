@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import math
 import os
 import sqlite3
 import threading
@@ -11,6 +13,25 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS custom_pick_candidates (
+    prediction_date TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,
+    canonical_event_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    generated_at TEXT NOT NULL,
+    schema_version INTEGER NOT NULL,
+    PRIMARY KEY (timezone, prediction_date, candidate_id)
+);
+CREATE TABLE IF NOT EXISTS custom_pick_pools (
+    prediction_date TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    generated_at TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('COMPLETE','PARTIAL')),
+    diagnostics_json TEXT NOT NULL,
+    PRIMARY KEY (timezone, prediction_date)
+);
 CREATE TABLE IF NOT EXISTS prediction_cache (
     cache_key TEXT PRIMARY KEY,
     local_date TEXT NOT NULL,
@@ -368,6 +389,84 @@ class Database:
     def get_prediction_cache(self, cache_key):
         rows = self.query('SELECT * FROM prediction_cache WHERE cache_key=?', (cache_key,))
         return dict(rows[0]) if rows else None
+
+    def store_custom_pick_candidates(self, prediction_date, timezone, candidates, *, generated_at,
+                                     complete, diagnostics):
+        """Atomic, non-destructive daily union. Latest evaluation wins per bet.
+
+        Missing candidates are never deleted, including on an empty/failed retry.
+        Each record retains its evaluation time; this is an archive, not fresh odds.
+        Called inside the normal prediction publication transaction. No providers.
+        """
+        date.fromisoformat(prediction_date)
+        if not timezone:
+            raise ValueError('candidate archive requires the prediction timezone')
+
+        def clean(value):
+            # Optional nonfinite evaluated/provider fields cannot be JSON numbers.
+            # Required price/probability were already validated by the engine.
+            if isinstance(value, float) and not math.isfinite(value):
+                return None
+            if isinstance(value, dict):
+                return {k: clean(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [clean(v) for v in value]
+            return value
+
+        with self.transaction():
+            for candidate in candidates:
+                coordinates = [candidate['canonical_event_id'], candidate['market'], candidate['period'],
+                               candidate['stat'], candidate['entity'],
+                               None if candidate['line'] is None else float(candidate['line']) or 0.0,
+                               candidate['selection']]
+                identity = json.dumps(coordinates, separators=(',', ':'), ensure_ascii=True, allow_nan=False)
+                candidate_id = hashlib.sha256(identity.encode('utf-8')).hexdigest()
+                payload = json.dumps(clean(candidate), sort_keys=True, allow_nan=False)
+                self.execute(
+                    'INSERT INTO custom_pick_candidates VALUES(?,?,?,?,?,?,?,?) '
+                    'ON CONFLICT(timezone,prediction_date,candidate_id) DO UPDATE SET '
+                    'payload_json=excluded.payload_json,generated_at=excluded.generated_at,'
+                    'schema_version=excluded.schema_version '
+                    'WHERE excluded.generated_at>=custom_pick_candidates.generated_at',
+                    (prediction_date, timezone, candidate_id, candidate['canonical_event_id'], payload,
+                     generated_at, generated_at, 1))
+            # An empty failed refresh must not overwrite usable pool provenance.
+            if candidates or complete or not self.get_custom_pick_pool(prediction_date, timezone):
+                self.execute(
+                    'INSERT INTO custom_pick_pools VALUES(?,?,?,?,?) '
+                    'ON CONFLICT(timezone,prediction_date) DO UPDATE SET generated_at=excluded.generated_at,'
+                    'status=excluded.status,diagnostics_json=excluded.diagnostics_json '
+                    'WHERE excluded.generated_at>=custom_pick_pools.generated_at',
+                    (prediction_date, timezone, generated_at, 'COMPLETE' if complete else 'PARTIAL',
+                     json.dumps(clean(diagnostics), sort_keys=True, allow_nan=False)))
+            counts = self.query('SELECT COUNT(*) AS candidates,COUNT(DISTINCT canonical_event_id) AS fixtures '
+                                'FROM custom_pick_candidates WHERE prediction_date=? AND timezone=?',
+                                (prediction_date, timezone))
+            return dict(counts[0])
+
+    def get_custom_pick_candidates(self, prediction_date, timezone):
+        """SQLite SELECT only. Missing dates return []; never generate or refresh.
+
+        Returned dictionaries are detached copies, scoped to the application date
+        AND timezone. They are archived evaluations, not settlement predictions.
+        """
+        date.fromisoformat(prediction_date)
+        rows = self.query('SELECT * FROM custom_pick_candidates WHERE prediction_date=? AND timezone=? '
+                          'ORDER BY canonical_event_id,candidate_id', (prediction_date, timezone))
+        return [dict(json.loads(r['payload_json']), prediction_date=r['prediction_date'], timezone=r['timezone'],
+                     candidate_id=r['candidate_id'], first_seen_at=r['first_seen_at'], generated_at=r['generated_at'],
+                     archive_schema_version=r['schema_version']) for r in rows]
+
+    def get_custom_pick_pool(self, prediction_date, timezone):
+        """SQLite-only provenance/coverage read; None means no captured pool."""
+        date.fromisoformat(prediction_date)
+        rows = self.query('SELECT * FROM custom_pick_pools WHERE prediction_date=? AND timezone=?',
+                          (prediction_date, timezone))
+        if not rows:
+            return None
+        row = dict(rows[0])
+        row['diagnostics'] = json.loads(row.pop('diagnostics_json'))
+        return row
 
     def latest_prediction_cache_row(self):
         """The most recently generated snapshot row, whatever its day (or None)."""

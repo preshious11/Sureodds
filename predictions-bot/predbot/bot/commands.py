@@ -22,6 +22,7 @@ from predbot.bot.telegram import Telegram, PollingError
 from predbot.bot.runtime import PollingLease, log_identity
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
+from predbot.custom_picks import CustomPicks
 from predbot.jobs import stats as stats_mod
 from predbot.storage.db import Database
 from predbot.util.timeutil import canonical_tz, resolve_timezone, to_local, utcnow, parse_hhmm
@@ -101,6 +102,8 @@ class CommandLoop(threading.Thread):
         self.offset: Optional[int] = None
         self._stop_event = threading.Event()
         self._admin_threads: List[threading.Thread] = []
+        self._custom_users = set()
+        self._custom_picks = CustomPicks(db, cfg)
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -151,27 +154,37 @@ class CommandLoop(threading.Thread):
             return
         msg = upd.get("message") or {}
         text = (msg.get("text") or "").strip()
-        if not text.startswith("/"):
-            return
         chat_id = str(msg.get("chat", {}).get("id"))
         user_id = str((msg.get("from") or {}).get("id"))
-        cmd, args = split_command(text)
         chat_type = (msg.get("chat") or {}).get("type")
+        if not text.startswith("/"):
+            if text and chat_type == 'private' and chat_id.isdigit() and user_id.isdigit() and \
+                    (user_id, chat_id) in self._custom_users:
+                _retry_send(self.tg, self._custom_picks.reply(text, user_id), chat_id)
+            return
+        cmd, args = split_command(text)
         if cmd in ("/start", "/timezone") and (chat_type not in (None, "private") or chat_id.startswith("-")):
             _retry_send(self.tg, "Use this command in a private chat with the bot.", chat_id)
             return
         if cmd == "/start":
             try:
                 if args == [callbacks.CUSTOM_PICKS_START_PARAMETER]:
+                    if chat_type != 'private' or not chat_id.isdigit() or not user_id.isdigit():
+                        _retry_send(self.tg, "Use this command in a private chat with the bot.", chat_id)
+                        return
+                    self._custom_users.add((user_id, chat_id))
                     callbacks.handle_custom_picks_start(self.tg, chat_id)
                     log.info("custom_picks private entry | update_id=%s", upd.get("update_id"))
                     return
+                self._custom_users.discard((user_id, chat_id))
                 handle_start(self.db, self.tg, chat_id, msg.get("from") or {})
                 log.info("start handled | instance=%s | update_id=%s",
                          self.instance, upd["update_id"])
             except Exception as exc:
                 log.error("start failed | error_type=%s", type(exc).__name__)
             return
+        if cmd == '/stop':
+            self._custom_users.discard((user_id, chat_id))
         if self.service is not None and callbacks.is_view_command(cmd):
             self._send_view(cmd, chat_id)
             return

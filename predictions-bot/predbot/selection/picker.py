@@ -13,6 +13,8 @@ class PickSet:
     diagnostics: dict = field(default_factory=dict)
     complete: bool = True
     predictions: list = field(default_factory=list)
+    candidates: list = field(default_factory=list)
+    candidate_timezone: str = ""
 
     def all(self):
         return self.predictions

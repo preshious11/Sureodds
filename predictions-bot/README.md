@@ -542,6 +542,154 @@ Predictions use the existing SQLite database (`DB_PATH`) as the only cache.
 
 ---
 
+## Custom Picks candidate archive (Phase 2A.1)
+
+Normal prediction generation captures the validated `Scored` candidates in
+`representative_predictions()` immediately before `select_representatives(groups)`.
+Detached copies retain evaluated alternatives without changing representative
+selection, probability calculations, or All/Top/Daily collections. No additional
+provider fetches or model evaluations are performed.
+
+Two additive SQLite tables initialize automatically on existing databases:
+
+- `custom_pick_candidates`: prediction date, timezone, deterministic candidate ID,
+  canonical event ID, versioned evaluated JSON, first-seen time and last evaluation
+  time. Identity is SHA-256 of canonical event ID, market, period, stat, entity,
+  numeric line and selection, scoped by date and timezone. Numeric zero and signed
+  zero have the same identity; different outcomes and lines coexist.
+- `custom_pick_pools`: last usable generation time, COMPLETE/PARTIAL coverage status
+  and generation diagnostics, scoped by the same date and timezone.
+
+The payload retains event identity/participants/start, the candidate's complete
+`MarketLine` (including bookmaker quotes, provider IDs and fair/provider prices),
+evaluated probabilities, sources, EV/edge, agreement, liquidity, independent-model
+information and notes. The event's other market lines are not repeated. Ranking
+and evidence fields (`rank_score`, `quality`, `se`, `p_lcb`) are NULL because the
+normal pipeline assesses evidence only after choosing representatives. Optional
+nonfinite numeric fields are stored as NULL; required price/probability continue
+to use the existing engine validation.
+
+Persistence is a **non-destructive daily union**, including COMPLETE refreshes:
+available candidates are inserted or updated with their latest evaluation, and
+missing candidates are retained with their earlier `generated_at`. Older writes
+cannot replace newer evaluations. PARTIAL refreshes can expand the pool; an empty
+failed refresh preserves previous candidates and pool provenance. The archive,
+representatives, memberships and prediction snapshot commit in the existing
+publication transaction; a failed publication rolls back the archive too.
+Scratch/dry-run storage does not populate the production archive.
+
+Future consumers must use the explicit SQLite-only APIs:
+
+```python
+rows = db.get_custom_pick_candidates(prediction_date, cfg.timezone)
+coverage = db.get_custom_pick_pool(prediction_date, cfg.timezone)
+```
+
+Missing pools return `[]` / `None`, without generation, snapshot calls, refreshes,
+provider requests or model evaluation. Returned records are detached dictionaries.
+The archive is historical evaluated data, not a current betting eligibility view:
+future ticket logic must filter fixture start times and inspect per-row evaluation
+times/coverage. It must not assume all retained rows came from the latest refresh.
+No automatic archive pruning or provider backfill is introduced in this phase.
+
+These tables have no prediction memberships or settlement status and never feed
+settlement, live watches, statistics or recaps. The private interface described
+below reads this archive without creating prediction records. No new environment variables are required;
+restart/redeploy normally with the existing persistent SQLite volume. Previously
+generated days are not backfilled; candidates appear on the next normal generation.
+
+## Conversational Custom Picks (Phase 2A.2)
+
+The existing community Custom Picks button still opens this same bot privately
+with `/start custom_picks`. It activates an in-memory mode keyed by Telegram user
+and private chat, then shows five short examples. Ordinary text is handled only
+for that active user/chat with an explicit `private` chat type. Ordinary `/start`
+returns to the existing welcome/menu/subscription flow; `/stop` exits the mode
+while retaining its existing unsubscribe behavior. Other existing commands remain
+available and do not exit Custom Picks. Restarting the command loop clears mode;
+users reopen Custom Picks to resume. Every text is a complete new request, without
+previous-ticket editing or conversation history. Group/channel text is ignored.
+
+`Request` is an immutable local object with `target_odds`, `pick_count`, `sports`,
+`allowed_markets`, `excluded_markets`, and `preference` (`best` by default). Empty
+sport/market sets mean unrestricted. Prediction date is resolved from current time
+and `cfg.timezone`; users cannot select other dates. The deterministic parser makes
+no LLM/API calls. It supports:
+
+- Decimal targets (`4 odds`, `around 3.5 odds`, `odds of 5`), counts (`3 picks`,
+  `2 games`, `4 selections`), and both (`3 picks around 5 odds`).
+- Canonical supported sports and display names; soccer maps to football, NBA/WNBA
+  to basketball, ATP/WTA to tennis, NFL/American football to american_football,
+  MLB to baseball, UFC to MMA. All current application sports are supported:
+  football, basketball, tennis, baseball, american_football, mma, other. Registered
+  configured sport names extend the parser. Multiple named sports mean an allowed
+  set, not a requirement to include a selection from every named sport.
+- Market inclusion: DC/double chance → `dc`; DNB/draw no bet → `dnb`;
+  moneyline/money line/ML → `result2`; totals/over under/over-under/over/under →
+  `total`; BTTS/both teams to score → `btts`; handicap/spread → `handicap`;
+  1X2/match result → `result3`. Other modelable catalog keys/names are recognized.
+  `no`, `without`, and `avoid` exclude markets; connected exclusions such as
+  `no BTTS and handicap` exclude both. Markets are never reinterpreted by sport.
+- `safe`, `strong`, `best` are preferences. Unrecognized restrictions, conflicting
+  targets/counts, sport exclusions, historical/future requests, league/line-specific
+  constraints and ticket-edit/audit requests receive clarification instead of
+  silently discarding those constraints. `make it football only` is a fresh request
+  using the default count, not an edit of an earlier ticket.
+
+**Ranking policy:** minimum archived model probability is 0.65 for safe, 0.60 for
+strong, 0.50 for best/default. These are selection policy thresholds, not calibrated
+safety guarantees. Candidates rank by probability descending, then agreement,
+liquidity, bookmaker count (capped at 10), reference EV (clipped to [-0.1, 0.1],
+missing = -0.1), lower price, kickoff and deterministic fixture/market coordinates.
+No representative-only rank, uncertainty or lower-confidence-bound values are
+created or consulted. High EV cannot override low model probability.
+
+Tickets rank by mean model probability minus
+`0.02 * (legs - distinct_market_families) / legs`, then logarithmic distance to
+target, fewer legs, mean agreement/liquidity/books/reference EV and deterministic
+identity. The small repetition penalty allows comparably strong market diversity;
+it is disabled for explicit market inclusions. There is no forced sport diversity.
+All explicit count, sport and market constraints remain hard constraints.
+
+**Eligibility/freshness:** only the current prediction date/timezone is read through
+the two existing SQLite-only archive APIs. COMPLETE and PARTIAL pools are usable;
+partial tickets carry a short coverage notice. Pool/row evaluation timestamps must
+be parseable, timezone-aware, from this prediction date and no later than now;
+rows newer than the read pool metadata are skipped. There is no intraday age cutoff:
+older same-day evaluations may remain usable, and these are generation-time odds,
+not refreshed executable quotes. Started fixtures (`start <= now`), malformed or
+naive start times, invalid identities/markets/selections, nonfinite odds/probabilities
+and missing line coordinates are excluded locally. Missing data never triggers
+generation or providers. Read failures return unavailable without fallback.
+
+**Search:** a dedicated deterministic per-fixture beam processes at most 60 fixtures
+and four strong alternatives per fixture (prefer available market-family coverage).
+There are at most eight legs, 48 states per leg count, and 100,000 candidate
+expansions. Target searches divide states across 12 logarithmic odds buckets to
+retain different prices. Processing a fixture once enforces one selection per
+canonical event (legacy fixture-key fallback when needed). Products must remain
+finite. Selection work is bounded roughly by `fixtures * legs * beam * alternatives`,
+plus sorting retained expansions; it is not exhaustive combination enumeration.
+Large-pool loading/normalization remains linear in archived row count.
+
+Target tolerance is **±10%**, inclusive, using unrounded decimal-odds products.
+Targets outside that band fail with a lower-target/fewer-restrictions suggestion;
+the bot does not quietly return an out-of-band ticket. Counts are exact when
+explicitly requested (1–8). Both constraints must hold when both are requested.
+With neither target nor count, the default is three distinct fixtures, or fewer
+when fewer eligible fixtures remain. Bounded search can miss a feasible combination
+outside its retained pool/beam; its failure is not a proof of global infeasibility.
+
+Replies contain sport icons, fixtures, explicit outcomes, archived odds/model
+confidence, local kickoff and actual combined odds/count. Text is escaped and
+bounded for Telegram. Tickets are private and ephemeral: no inserts, settlements,
+live watches, stats, recaps or subscriber/community broadcasts. Minimal logs record
+request parameters, candidate counts and result without full message text.
+
+No environment variables, dependencies, provider/model calls or schema changes are
+added in Phase 2A.2. Deploy/restart normally using the Phase 2A.1 database. No ticket
+auditing, betting-code lookup, payments or subscriptions are implemented.
+
 ## Tests
 
 ```bash

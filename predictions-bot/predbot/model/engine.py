@@ -10,6 +10,7 @@ from predbot.markets.settlement import unsettleable_reason
 from predbot.model.calibration import Calibrator
 from predbot.model.elo import Elo
 from predbot.model.ensemble import EventModel
+from predbot.model.candidates import capture_candidate
 from predbot.selection.representatives import select_representatives
 
 
@@ -25,6 +26,7 @@ class ModelSettings:
 class Generation:
     predictions: list = field(default_factory=list)
     diagnostics: dict = field(default_factory=dict)
+    candidates: list = field(default_factory=list)
 
 
 def representative_predictions(scored, results_gate=None):
@@ -57,6 +59,7 @@ def representative_predictions(scored, results_gate=None):
             per_event.setdefault(key, Counter())[reason] += 1
             continue
         groups.setdefault(key, []).append(s)
+    candidates = [capture_candidate(s) for values in groups.values() for s in values]
     chosen = select_representatives(groups)
     # An event-level rejection: the event produced market lines but no representative. Its reason is the most common
     # line-level reason (ties by name) when no line was valid, else "no_representative", so event counts stay separate
@@ -77,7 +80,7 @@ def representative_predictions(scored, results_gate=None):
         "line_rejections": dict(rejected),
         "line_rejections_by_market": {m: dict(c) for m, c in sorted(by_market.items())},
         "event_no_valid_market": dict(no_valid),
-        "markets_evaluated": len(scored)})
+        "markets_evaluated": len(scored)}, candidates=candidates)
 
 
 def generate(events, db, settings: ModelSettings, results_gate=None, scorer=None):

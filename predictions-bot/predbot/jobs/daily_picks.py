@@ -153,7 +153,8 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
         s.notes['evidence'] = evidence.as_notes()
         s.notes['independent'] = s.independent
     ps = PickSet(predictions=generation.predictions, pool_size=discovered, eligible=len(events),
-                 diagnostics=generation.diagnostics)
+                 diagnostics=generation.diagnostics, candidates=generation.candidates,
+                 candidate_timezone=cfg.timezone)
     unsupported = identity_failures.get("unsupported_competition", 0)
     ps.diagnostics.update(fixtures_discovered=discovered, supported_fixtures=discovered - unsupported,
                           normalized=len(events),
@@ -216,6 +217,13 @@ def store_picks(ps: PickSet, db: Database, pick_date: str) -> None:
                 'home_id': e.home_id, 'away_id': e.away_id,
             }
             db.store_prediction(row)
+        if ps.candidate_timezone:
+            counts = db.store_custom_pick_candidates(
+                pick_date, ps.candidate_timezone, ps.candidates,
+                generated_at=ps.diagnostics['generated_at'], complete=ps.complete,
+                diagnostics=ps.diagnostics)
+            log.info('Custom Picks candidate archive | date=%s | candidates=%s | fixtures=%s | captured=%s',
+                     pick_date, counts['candidates'], counts['fixtures'], len(ps.candidates))
     ps.diagnostics['stored_all_predictions'] = len(db.collection_predictions('all', pick_date))
 
 
