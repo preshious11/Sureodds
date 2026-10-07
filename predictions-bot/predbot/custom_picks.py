@@ -1,13 +1,12 @@
 """Private, ephemeral tickets from archived evaluations. SQLite reads + local work only."""
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 import math
 import re
-import sqlite3
 
 from predbot.bot.format import SPORT_ICON, SPORT_LABEL, combined_odds, outcome_label
 from predbot.bot.telegram import esc
@@ -19,9 +18,10 @@ log = logging.getLogger(__name__)
 INTRO = ("✨ Custom Picks\n\nTell me what you want.\n\n"
          "• Safe 4 odds\n• 3 basketball picks\n• 5 odds, double chance only\n"
          "• 2 strong tennis picks\n• 6 odds from football and basketball")
-UNAVAILABLE = "Custom Picks aren't available yet for today. Try again after today's predictions are generated."
-TODAY_ONLY = "Custom Picks currently uses today's generated predictions only."
-HELP = "Try ‘safe 4 odds’, ‘3 basketball picks’ or ‘5 odds, double chance only’."
+UNAVAILABLE = "👨‍🍳 Still cooking\n\nToday's picks aren't ready yet. Check back in a bit."
+TODAY_ONLY = "😅 I'm living in today for now\n\nCustom Picks currently works with today's games only."
+HELP = ('😅 I didn\'t quite catch that\n\nTry something like “safe 4 odds”, '
+        '“3 basketball picks” or “5 odds, no BTTS”.')
 DEFAULT_COUNT, MAX_LEGS = 3, 8
 MAX_FIXTURES, ALTERNATIVES, BEAM_PER_COUNT, ODDS_BUCKETS = 60, 4, 48, 12
 MAX_EXPANSIONS = 100_000
@@ -41,7 +41,9 @@ MARKET_ALIASES = {**{key: key for key, spec in CATALOG.items() if spec.modelable
 
 
 class RequestError(ValueError):
-    pass
+    def __init__(self, message, reason='invalid_request'):
+        super().__init__(message)
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -65,7 +67,7 @@ def parse_request(text, supported_sports=()):
     if not text or len(text) > 512:
         raise RequestError(HELP)
     if re.search(r'\b(tomorrow|yesterday|next|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\b\d{4}-\d{2}-\d{2}\b', text):
-        raise RequestError(TODAY_ONLY)
+        raise RequestError(TODAY_ONLY, 'future_date')
     aliases = {k.replace('_', ' '): k for k in set(SPORT_LABEL) | set(supported_sports)}
     aliases.update({k: k for k in set(SPORT_LABEL) | set(supported_sports)})
     aliases.update(SPORT_ALIASES)
@@ -75,7 +77,7 @@ def parse_request(text, supported_sports=()):
     sports = frozenset(aliases[m.group()] for m in sport_matches)
     if re.search(r'\ball sports\b', text):
         if sports:
-            raise RequestError("Choose specific sports or all sports. " + HELP)
+            raise RequestError(HELP, 'conflicting_constraints')
         sports = frozenset()
     allowed, excluded, spans = set(), set(), []
     previous_end, negative = 0, False
@@ -87,7 +89,7 @@ def parse_request(text, supported_sports=()):
         spans.append(match.span())
         previous_end = match.end()
     if allowed & excluded:
-        raise RequestError("A market can't be both included and excluded. " + HELP)
+        raise RequestError(HELP, 'conflicting_constraints')
     number = r'([+-]?\d+(?:\.\d+)?)'
     targets = []
     for pattern in (r'(?<![\w.])' + number + r'\s*(?:combined\s+)?odds\b',
@@ -101,7 +103,7 @@ def parse_request(text, supported_sports=()):
         counts.append(float(match.group(1)))
         spans.append(match.span())
     if len(set(targets)) > 1 or len(set(counts)) > 1:
-        raise RequestError("Please give one odds target and one selection count. " + HELP)
+        raise RequestError(HELP, 'conflicting_constraints')
     target, count = (targets[0] if targets else None), (counts[0] if counts else None)
     if target is not None and (not math.isfinite(target) or target <= 1):
         raise RequestError("Combined decimal odds must be greater than 1.00.")
@@ -156,6 +158,7 @@ class Candidate:
     liquidity: float
     books: float
     reference_ev: float
+    evaluated_at: datetime | None = None
 
     def rank(self):
         return (-self.probability, -self.agreement, -self.liquidity, -self.books,
@@ -173,12 +176,12 @@ def valid_selection(market, selection):
     return selection in choices.get(market, set()) or bool(re.fullmatch(patterns.get(market, r'(?!)'), selection))
 
 
-def normalize(row, day, zone, now, pool_time, supported_sports):
+def normalize(row, day, zone, now, pool_time, supported_sports, *, include_started=False):
     """Validate archived fields without altering the stored evaluation."""
     if not isinstance(row, dict) or row.get('prediction_date') != day or row.get('timezone') != zone:
         return None
     start, evaluated = aware_time(row.get('start_utc')), aware_time(row.get('generated_at'))
-    if start is None or start <= now or evaluated is None or evaluated > pool_time or evaluated > now:
+    if start is None or (start <= now and not include_started) or evaluated is None or evaluated > pool_time or evaluated > now:
         return None
     if to_local(evaluated, zone).date().isoformat() != day:
         return None
@@ -220,7 +223,7 @@ def normalize(row, day, zone, now, pool_time, supported_sports):
                      max(0, min(1, finite(row.get('agreement'), 0))),
                      max(0, min(1, finite(row.get('liquidity'), 0))),
                      max(0, min(10, finite(row.get('bookmaker_count'), 0))),
-                     max(-.1, min(.1, finite(row.get('edge_ev'), -.1))))
+                     max(-.1, min(.1, finite(row.get('edge_ev'), -.1))), evaluated)
 
 
 @dataclass(frozen=True)
@@ -336,51 +339,15 @@ class CustomPicks:
     """No fetcher, provider or scoring dependency. Tickets are never persisted."""
     def __init__(self, db, cfg):
         self.db, self.cfg = db, cfg
+        from predbot.custom_recovery import Recovery
+        self.recovery = Recovery(db, cfg)
 
     def reply(self, text, user_id, now=None):
-        now = (now or utcnow()).astimezone(timezone.utc)
-        day = to_local(now, self.cfg.timezone).date().isoformat()
-        supported = set(SPORT_LABEL) | set(self.cfg.allowed_sports)
-        try:
-            request = parse_request(text, supported)
-        except RequestError as exc:
-            log.info('Custom Picks request | user=%s | result=clarification', user_id)
-            return str(exc)
-        def unavailable():
-            log.info('Custom Picks request | user=%s | target=%s | count=%s | sports=%s | candidates=0 | eligible=0 | result=unavailable',
-                     user_id, request.target_odds, request.pick_count, ','.join(sorted(request.sports)) or 'all')
-            return UNAVAILABLE
-        try:
-            coverage = self.db.get_custom_pick_pool(day, self.cfg.timezone)
-            rows = self.db.get_custom_pick_candidates(day, self.cfg.timezone) if coverage else []
-        except (sqlite3.Error, ValueError, TypeError) as exc:
-            log.warning('Custom Picks local read failed | error_type=%s', type(exc).__name__)
-            return unavailable()
-        pool_time = aware_time(coverage.get('generated_at')) if coverage else None
-        if not coverage or coverage.get('prediction_date') != day or coverage.get('timezone') != self.cfg.timezone or \
-                coverage.get('status') not in ('COMPLETE', 'PARTIAL') or pool_time is None or pool_time > now or \
-                to_local(pool_time, self.cfg.timezone).date().isoformat() != day:
-            return unavailable()
-        if not rows:
-            return unavailable()
-        candidates = [c for row in rows if (c := normalize(row, day, self.cfg.timezone, now, pool_time, supported))]
-        eligible = [c for c in candidates if c.probability >= MIN_PROBABILITY[request.preference] and
-                    (not request.sports or c.sport in request.sports) and
-                    (not request.allowed_markets or c.market in request.allowed_markets) and
-                    c.market not in request.excluded_markets]
-        state = search(eligible, request) if eligible else None
-        log.info('Custom Picks request | user=%s | target=%s | count=%s | sports=%s | candidates=%s | eligible=%s | result=%s',
-                 user_id, request.target_odds, request.pick_count, ','.join(sorted(request.sports)) or 'all',
-                 len(rows), len(eligible), round(state.odds, 2) if state else 'unavailable')
-        if state:
-            return format_ticket(state, coverage['status'] == 'PARTIAL', self.cfg.timezone)
-        if request.sports and not any(c.sport in request.sports for c in candidates):
-            sports = ' / '.join(SPORT_LABEL.get(s, s.replace('_', ' ').title()).lower() for s in sorted(request.sports))
-            return f"I don't have usable {sports} picks in today's available pool."
-        fixtures = len({c.fixture_id for c in eligible})
-        if request.pick_count and fixtures < request.pick_count:
-            return f'Only {fixtures} distinct games match your request today; I need {request.pick_count}. Try fewer picks or fewer restrictions.'
-        if not eligible:
-            return "No remaining picks match those sports, markets and strength preferences today. Try fewer restrictions."
-        target = f'a {request.target_odds:.2f} odds ticket' if request.target_odds else 'that ticket'
-        return f"I couldn't build {target} from the remaining games today. Try a lower target or fewer restrictions."
+        """Text-only compatibility API; Telegram uses respond() to include ready buttons."""
+        return self.respond(text, user_id, user_id, now).text
+
+    def respond(self, text, user_id, chat_id, now=None):
+        return self.recovery.respond(text, str(user_id), str(chat_id), now or utcnow())
+
+    def select(self, callback, now=None):
+        return self.recovery.select(callback, now or utcnow())

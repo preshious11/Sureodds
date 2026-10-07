@@ -690,6 +690,95 @@ No environment variables, dependencies, provider/model calls or schema changes a
 added in Phase 2A.2. Deploy/restart normally using the Phase 2A.1 database. No ticket
 auditing, betting-code lookup, payments or subscriptions are implemented.
 
+### Phase 2A.3: private recovery UX
+
+Active private Custom Picks conversations receive a ticket or a helpful empty
+state, including unexpected local failures. Prediction generation, archive
+publication, scoring and the existing bounded ticket search are unchanged.
+Started rows may be validated for explaining an empty state; they are always
+excluded from both normal and recovery tickets.
+
+Empty-state reason codes and final copy (the paragraph after the title is separated
+by a blank line in Telegram):
+
+| Reason | Title | Body |
+| --- | --- | --- |
+| `archive_unavailable` | 👨‍🍳 Still cooking | Today's picks aren't ready yet. Check back in a bit. |
+| `sport_unavailable` — football | ⚽ No football picks made the cut today | Try another sport or one of the ready options below. |
+| `sport_unavailable` — basketball | 🏀 No basketball on the menu today | I couldn't find any basketball picks worth serving right now. |
+| `sport_unavailable` — tennis | 🎾 The court is quiet today | No tennis picks made the cut right now. |
+| `sport_unavailable` — other/multiple | 👀 Nothing cooking for {sport} today | I don't have usable {sport} picks right now. |
+| `market_unavailable` | 😅 That market is a little dry today | I couldn't find enough {market} picks that meet the mark. |
+| `sport_market_unavailable` | 👀 That combo isn't on the board today | I couldn't find usable {market} picks for {sport}. |
+| `insufficient_count` | 😅 We're a few games short | You asked for {requested_count}, but I only found {available_count} that made the cut. |
+| `target_unreachable` | 😅 Couldn't stretch it to {target_odds} odds | I won't force weaker picks just to hit the number. |
+| `target_too_low` | 👀 That's a tight squeeze | I couldn't build a solid ticket close to {target_odds} odds from what's available. |
+| `conflicting_constraints` | 😂 You boxed me in there | Nothing available matches all those filters. |
+| `all_started` | ⏰ We missed the window | The matching games have already started. |
+| `partial_insufficient` | 👀 Slim pickings right now | Today's pool is still filling up and nothing available matches your request yet. |
+| `invalid_request` | 😅 I didn't quite catch that | Try something like “safe 4 odds”, “3 basketball picks” or “5 odds, no BTTS”. |
+| `future_date` | 😅 I'm living in today for now | Custom Picks currently works with today's games only. |
+| `search_failed` | 😅 Almost, but I won't force it | I couldn't build a solid ticket around that request from today's available picks. |
+| `below_quality_floor` | ✂️ Nothing made the cut today | I'd rather give you nothing than force weak picks. |
+| `expired` — options available | ⏰ That option has expired | A few games have moved on. Here are the options that are still ready: |
+| `expired` — none available | ⏰ That option has expired | There aren't enough upcoming picks left to rebuild it right now. |
+
+When ready alternatives exist, the original empty state adds **These are ready
+instead:** and at most three inline buttons. Every button is backed by an already
+prepared ticket from the same loaded, validated SQLite snapshot. Empty archives
+have no ticket buttons. Suggestions propose clearly named different requests;
+the original request's constraints and quality floor are never silently relaxed.
+
+Discovery runs at most 16 additional local searches. Relevance order favors a
+smaller satisfiable count with the original filters, the original sport with
+available markets (including Moneyline when present), achievable odds alternatives,
+an all-sports ticket and other actually available sports. Sports favor more usable
+fixtures, with canonical-name ties. Failed alternatives never become buttons.
+Target requests test the bounded ladder `20, 15, 12, 10, 8, 6, 5, 4, 3, 2`, moving
+downward for high targets and upward for impractically low targets. There are at
+most two odds suggestions, with actual products differing by at least a 1.35
+ratio, and no two displayed tickets use the identical fixture set. Every prepared
+result independently rechecks exact count, target tolerance, probability floor,
+sport/market filters, one pick per fixture, finite product and upcoming starts.
+
+`RecoverySuggestion` stores the random token, user ID, private chat ID, label,
+structured request, immutable ticket, creation time, prediction date, pool
+generation time, each selection's evaluation time, fixture start times, expiry
+and partial-pool flag. This is **memory-only UI state**, never a prediction record.
+Tokens are 96 random bits encoded in a 16-character URL-safe ID; callback data is
+`cp|<token>` (19 ASCII bytes). The route runs independently of the normal view
+service and requires an explicit private chat plus matching user/chat ownership.
+Wrong-owner/group/channel taps receive a safe callback acknowledgement and no
+ticket. Callback acknowledgement failure does not suppress the private reply.
+
+Expiry is the earliest of **10 minutes after preparation, local prediction-date
+midnight, or any fixture's start**. Every tap checks time/date and starts locally.
+A valid tap immediately sends its stored ticket privately, without posting a
+prompt, rerunning search or rereading SQLite. Expired/stale taps first reuse a
+still-valid cached option for that user/chat: it is served automatically only if
+it also meets the selected request, otherwise valid alternatives are shown for
+the user to choose. If none remain, recovery rereads only the two archive tables
+and prepares new proven buttons or returns the expired empty state. Restart or
+missing tokens use the same graceful recovery. Expired records are pruned on each
+interaction; follow-up requests do not invalidate still-current tokens. There are
+no per-user usage quotas, cache persistence or additional background jobs.
+
+Normal tickets, preparations and tapped tickets remain permanently **untracked**.
+Only `custom_pick_candidates` and `custom_pick_pools` are read; no prediction,
+membership, watch, settlement, calibration, stats, ROI, recap, subscriber or
+community-result state is written. Regression tests prohibit provider HTTP,
+collection, prediction generation, model evaluation and result jobs, compare full
+database dumps and normal collection/stats/recap/calibration/result-work inputs,
+and cover normal requests, repeated users, three prepared buttons, valid taps,
+expired recomputation and missing-token recovery.
+
+No new environment variables, dependencies or database migrations are required.
+Deploy and restart the existing bot normally. A restart loses recovery tokens and
+the existing in-memory conversational mode; `/start custom_picks` re-enters the
+conversation, and old button taps still receive helpful local recovery. Successful
+ticket follow-up buttons, auditing, betting codes, subscriptions and payments are
+intentionally deferred.
+
 ## Tests
 
 ```bash

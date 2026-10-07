@@ -235,20 +235,19 @@ def test_market_filters_are_hard_constraints(db):
     assert totals.count('Total Goals') == 2
     no_btts = custom.reply('3 picks no BTTS', '42', NOW)
     assert '🔥 Custom Picks' in no_btts and 'BTTS' not in no_btts
-    assert 'No remaining picks match' in custom.reply('basketball double chance only', '42', NOW) or \
-           "don't have usable basketball" in custom.reply('basketball double chance only', '42', NOW)
+    assert 'No basketball on the menu' in custom.reply('basketball double chance only', '42', NOW)
 
 
 def test_sport_specific_missing_market_is_not_reinterpreted(db):
     store(db, rows_for(1, 'basketball') + rows_for(2, 'basketball'))
     reply = CustomPicks(db, Config(timezone=ZONE)).reply('basketball double chance only', '42', NOW)
-    assert 'No remaining picks match' in reply and '🔥 Custom Picks' not in reply
+    assert "That combo isn't on the board" in reply and '🔥 Custom Picks' not in reply
 
 
 def test_exact_count_and_odds_constraints_fail_together_instead_of_relaxing(db):
     store(db, rows_for(1, price=1.2) + rows_for(2, price=1.2) + rows_for(3, price=1.2))
     reply = CustomPicks(db, Config(timezone=ZONE)).reply('3 picks around 5 odds', '42', NOW)
-    assert "couldn't build" in reply and '🔥 Custom Picks' not in reply
+    assert "Couldn't stretch it" in reply and '🔥 Custom Picks' not in reply
 
 
 @pytest.mark.parametrize('preference,floor', list(MIN_PROBABILITY.items()))
@@ -266,10 +265,10 @@ def test_unavailable_partial_insufficient_and_general_requests(db):
     store(db, rows_for(1) + rows_for(2) + rows_for(3), partial=True)
     general = custom.reply('give me best picks', '42', NOW)
     assert '3 selections' in general and 'pool is partial' in general
-    assert 'Only 3 distinct games' in custom.reply('5 picks', '42', NOW)
-    assert 'lower target' in custom.reply('100 odds', '42', NOW)
-    assert "don't have usable tennis" in custom.reply('2 tennis picks', '42', NOW)
-    assert custom.reply('3 picks tomorrow', '42', NOW) == TODAY_ONLY
+    assert 'Slim pickings right now' in custom.reply('5 picks', '42', NOW)
+    assert 'Slim pickings right now' in custom.reply('100 odds', '42', NOW)
+    assert 'Slim pickings right now' in custom.reply('2 tennis picks', '42', NOW)
+    assert custom.reply('3 picks tomorrow', '42', NOW).startswith(TODAY_ONLY)
 
 
 def test_current_date_and_evaluation_freshness(db):
@@ -288,7 +287,7 @@ def test_current_date_and_evaluation_freshness(db):
 def test_started_fixtures_are_not_recommended_and_no_fallback_runs(db):
     store(db, rows_for(1, start=NOW) + rows_for(2, start=NOW - timedelta(hours=4)))
     reply = CustomPicks(db, Config(timezone=ZONE)).reply('2 picks', '42', NOW)
-    assert 'Only 0 distinct games' in reply
+    assert 'We missed the window' in reply
 
 
 @pytest.fixture

@@ -160,7 +160,13 @@ class CommandLoop(threading.Thread):
         if not text.startswith("/"):
             if text and chat_type == 'private' and chat_id.isdigit() and user_id.isdigit() and \
                     (user_id, chat_id) in self._custom_users:
-                _retry_send(self.tg, self._custom_picks.reply(text, user_id), chat_id)
+                try:
+                    reply = self._custom_picks.respond(text, user_id, chat_id)
+                    _retry_send(self.tg, reply.text, chat_id, reply.reply_markup)
+                except Exception as exc:
+                    log.warning('Custom Picks private response failed | error_type=%s', type(exc).__name__)
+                    from predbot.custom_recovery import COPY
+                    _retry_send(self.tg, COPY['search_failed'], chat_id)
             return
         cmd, args = split_command(text)
         if cmd in ("/start", "/timezone") and (chat_type not in (None, "private") or chat_id.startswith("-")):
@@ -223,6 +229,24 @@ class CommandLoop(threading.Thread):
             _retry_send(self.tg, "That view is unavailable right now.", chat_id)
 
     def _dispatch_callback(self, cb: Dict) -> None:
+        from predbot.custom_recovery import CALLBACK_PREFIX, COPY
+        if str(cb.get('data') or '').startswith(CALLBACK_PREFIX):
+            try:
+                tap = self._custom_picks.select(cb)
+                # Acknowledge before sending; Telegram failures must not hide the private result.
+                try:
+                    self.tg.answer_callback_query(str(cb.get('id') or ''), text=tap.toast)
+                except Exception as exc:
+                    log.warning('Custom Picks callback acknowledgement failed | error_type=%s', type(exc).__name__)
+                if tap.response:
+                    chat_id = str(cb['message']['chat']['id'])
+                    _retry_send(self.tg, tap.response.text, chat_id, tap.response.reply_markup)
+            except Exception as exc:
+                log.warning('Custom Picks callback failed | error_type=%s', type(exc).__name__)
+                chat = ((cb.get('message') or {}).get('chat') or {})
+                if chat.get('type') == 'private' and str(chat.get('id')).isdigit():
+                    _retry_send(self.tg, COPY['search_failed'], str(chat['id']))
+            return
         if self.service is None and cb.get("data") != "menu":
             self.tg.answer_callback_query(str(cb.get("id") or ""), text="Unavailable.")
             return
