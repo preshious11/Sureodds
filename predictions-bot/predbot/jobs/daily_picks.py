@@ -236,16 +236,21 @@ def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram],
         print(picks_text(snapshot, cfg.timezone))
         return snapshot
     if tg and tg.enabled():
-        # the channel gets the same two messages as a subscriber, each recorded on its own: a retry after a
+        # the community gets the same two static cards, each recorded on its own: a retry after a
         # partial failure posts only the missing one, and the Daily is never posted before the Top.
         # ``force`` only refreshes the snapshot (regeneration/recovery); it never reposts a card that is
         # already recorded in ``posts`` - regeneration and reposting are separate concepts and there is
         # deliberately no repost path here.
-        for kind, text, markup in messages:
+        for kind, text, _markup in messages:
             if db.post_done(kind, snapshot.date):
                 continue
-            mid = tg.send(text, reply_markup=markup)
+            mid = tg.send(text)
             if not mid:
                 break
-            db.mark_post(kind, snapshot.date, mid)
+            with db.transaction():
+                db.mark_post(kind, snapshot.date, mid)
+                # Keep the existing publication/freeze marker and also record
+                # which destination actually received this collection. Legacy
+                # posts have no destination; never infer one or force a repost.
+                db.mark_delivery(f"community_{kind}", snapshot.date, str(tg.chat_id))
     return snapshot

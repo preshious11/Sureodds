@@ -159,6 +159,26 @@ def menu_markup() -> Dict[str, Any]:
     ]}
 
 
+COMMUNITY_MENU_TEXT = "⚽ Predictions\n\nToday's picks, results and more."
+CUSTOM_PICKS_START_PARAMETER = "custom_picks"
+
+
+def community_menu_markup(bot_username: str) -> Dict[str, Any]:
+    """Community entry points reuse the existing view callback payloads."""
+    return {"inline_keyboard": [
+        [view_button(VIEW_TOP), view_button(VIEW_DAILY)],
+        [view_button(VIEW_ALL)],
+        [view_button(VIEW_STATS), view_button(VIEW_YESTERDAY)],
+        [{"text": "✨ Custom Picks",
+          "url": f"https://t.me/{bot_username}?start={CUSTOM_PICKS_START_PARAMETER}"}],
+    ]}
+
+
+def handle_custom_picks_start(tg: Telegram, chat_id: str) -> None:
+    """Private-only entry point reserved for the future Custom Picks flow."""
+    tg.send("✨ Custom Picks\n\nCustom Picks is coming soon.", chat_id=chat_id)
+
+
 def handle_start(db: Database, tg: Telegram, chat_id: str, user: Optional[Dict[str, Any]]) -> None:
     """/start: subscribe, auto-detect the timezone, then show the menu.
 
@@ -268,6 +288,11 @@ def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram
         view, page, day = parsed
         page_turn = day is not None              # only page-turn buttons carry the day of their card
         edit = _edits(mode, page_turn)
+        # Keep the community's pinnable entry menu intact, including in classic edit mode.
+        if (chat_id == str(cfg.telegram_chat_id)
+                and (message.get("chat") or {}).get("type") == "supergroup"
+                and message.get("text") == COMMUNITY_MENU_TEXT):
+            edit = False
         open_view(view, service=service, tg=tg, cfg=cfg, chat_id=chat_id, db=db,
                   page=page, message_id=message_id, page_size=page_size, day=day, edit=edit)
         if mode == "edit":

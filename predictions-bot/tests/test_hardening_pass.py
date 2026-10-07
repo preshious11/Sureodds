@@ -61,6 +61,7 @@ class _Service:
 
 def _channel_tg():
     tg = Mock()
+    tg.chat_id = "-1001234567890"
     tg.enabled.return_value = True
     tg.send.side_effect = lambda text, **kw: "mid"
     return tg

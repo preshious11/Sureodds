@@ -54,7 +54,8 @@ class Provider:
 class Telegram:
     token = "test"
 
-    def __init__(self):
+    def __init__(self, chat_id=""):
+        self.chat_id = chat_id
         self.messages = []
         self.fail = set()
 
@@ -65,7 +66,7 @@ class Telegram:
         return "sent"
 
     def enabled(self):
-        return True
+        return bool(self.token and self.chat_id)
 
 
 @pytest.fixture

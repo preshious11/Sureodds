@@ -126,18 +126,21 @@ def _channel(db, monkeypatch, tg, force=False):
 
 def _channel_tg(fail_daily=False):
     tg = Mock()
+    tg.chat_id = "-1001234567890"
     tg.enabled.return_value = True
     tg.send.side_effect = lambda text, **kw: None if (fail_daily and text.startswith("📋")) else "mid"
     return tg
 
 
-def test_the_channel_post_is_two_messages_with_keyboards_recorded_separately(db, monkeypatch):
+def test_the_channel_post_is_two_static_messages_recorded_separately(db, monkeypatch):
     tg = _channel_tg()
     _channel(db, monkeypatch, tg)
     texts = [c.args[0][:1] for c in tg.send.call_args_list]
     assert texts == ["🔥", "📋"]
-    assert all(c.kwargs["reply_markup"]["inline_keyboard"] for c in tg.send.call_args_list)
+    assert all(not c.kwargs.get("reply_markup") for c in tg.send.call_args_list)
     assert db.post_done("picks_top", "2030-06-01") and db.post_done("picks_daily", "2030-06-01")
+    assert db.delivery_done("community_picks_top", "2030-06-01", tg.chat_id)
+    assert db.delivery_done("community_picks_daily", "2030-06-01", tg.chat_id)
     _channel(db, monkeypatch, tg)
     assert tg.send.call_count == 2                                           # already posted: nothing more
 
@@ -145,6 +148,8 @@ def test_the_channel_post_is_two_messages_with_keyboards_recorded_separately(db,
 def test_a_channel_retry_posts_only_the_missing_message(db, monkeypatch):
     _channel(db, monkeypatch, _channel_tg(fail_daily=True))
     assert db.post_done("picks_top", "2030-06-01") and not db.post_done("picks_daily", "2030-06-01")
+    assert db.delivery_done("community_picks_top", "2030-06-01", "-1001234567890")
+    assert not db.delivery_done("community_picks_daily", "2030-06-01", "-1001234567890")
     retry = _channel_tg()
     _channel(db, monkeypatch, retry)
     assert [c.args[0][:1] for c in retry.send.call_args_list] == ["📋"]

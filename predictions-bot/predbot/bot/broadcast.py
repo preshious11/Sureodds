@@ -81,6 +81,43 @@ def deliver_live(db: Database, tg: Telegram, pick_date: str, fixture_key: str,
         log.info("live: %s notification delivered to %d subscribers", "end" if ended else "start", sent)
     return sent, complete
 
+
+def deliver_community_live(db: Database, tg: Telegram, pick_date: str, fixture_key: str,
+                          rows, result, ended: bool = False):
+    """Send only predictions from cards published to this configured destination.
+
+    Community publication receipts are separate from subscriber pick receipts,
+    so they do not change generation/retry gates. Live receipts use the existing
+    per-fixture, per-date, per-chat key. The caller's live run lock serializes sends.
+    Return (sent, complete); failures remain retryable without re-settling.
+    """
+    from predbot.bot.format import live_match_message
+    from predbot.jobs.live_results import orient_result
+
+    if not tg or not tg.enabled():
+        return 0, True
+    chat_id = str(tg.chat_id)
+    published = {tier for tier in ("top", "daily")
+                 if db.delivery_done(f"community_picks_{tier}", pick_date, chat_id)}
+    relevant = [r for r in rows if published.intersection(r.get("collections") or ())]
+    if not relevant:
+        return 0, True
+    kind = live_delivery_kind(fixture_key, ended)
+    if db.delivery_done(kind, pick_date, chat_id):
+        return 0, True
+    text = live_match_message(relevant, orient_result(result, rows[0], relevant[0]), ended)
+    try:
+        success = tg.send(text, chat_id=chat_id)
+    except Exception:  # one destination failure must remain retryable
+        log.warning("live: community notification send failed; will retry")
+        return 0, False
+    if not success:
+        return 0, False
+    db.mark_delivery(kind, pick_date, chat_id)
+    log.info("live: %s notification delivered to configured community", "end" if ended else "start")
+    return 1, True
+
+
 #: Resolves the canonical card to deliver; ``UnifiedFetcher.published_snapshot``.
 SnapshotProvider = Callable[[], Optional[DailySnapshot]]
 

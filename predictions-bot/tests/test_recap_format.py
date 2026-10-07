@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 
 from predbot.bot.format import recap_message
 from predbot.config import Config
@@ -132,3 +133,18 @@ def test_recap_job_renders_the_new_card(db, capsys):
     assert "⚽ Football 1/1" in text
     assert "🏆 Best:" in text
     assert text in capsys.readouterr().out
+
+
+def test_failed_configured_recap_is_retryable_and_only_success_is_recorded(db, monkeypatch):
+    monkeypatch.setattr(recap, "utcnow", lambda: TODAY)
+    _pick(db)
+    cfg = Config(timezone="UTC", subscriber_delivery_enabled=False)
+    tg = Mock()
+    tg.enabled.return_value = True
+    tg.send.side_effect = [None, "sent"]
+    assert recap.run(db, cfg, tg)
+    assert not db.post_done("recap", YESTERDAY)
+    assert recap.run(db, cfg, tg)
+    assert db.post_done("recap", YESTERDAY)
+    assert recap.run(db, cfg, tg, force=True) is None
+    assert tg.send.call_count == 2

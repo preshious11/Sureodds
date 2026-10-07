@@ -3,7 +3,7 @@
 Typed /top, /daily (alias /today) and /stats are dispatched to
 ``callbacks.handle_command`` - the very handler the inline menu buttons use, so a
 tap and a type produce identical output.  /start shows the menu and subscribes,
-/stop unsubscribes; admins also get /run, /settle, /recap and /lastrun.
+/stop unsubscribes; admins also get /run, /settle, /recap, /lastrun and /menu.
 
 Timezones are never asked for: they are detected from the locale Telegram sends
 with every update (``callbacks._detect_user_timezone``).
@@ -156,8 +156,16 @@ class CommandLoop(threading.Thread):
         chat_id = str(msg.get("chat", {}).get("id"))
         user_id = str((msg.get("from") or {}).get("id"))
         cmd, args = split_command(text)
+        chat_type = (msg.get("chat") or {}).get("type")
+        if cmd in ("/start", "/timezone") and (chat_type not in (None, "private") or chat_id.startswith("-")):
+            _retry_send(self.tg, "Use this command in a private chat with the bot.", chat_id)
+            return
         if cmd == "/start":
             try:
+                if args == [callbacks.CUSTOM_PICKS_START_PARAMETER]:
+                    callbacks.handle_custom_picks_start(self.tg, chat_id)
+                    log.info("custom_picks private entry | update_id=%s", upd.get("update_id"))
+                    return
                 handle_start(self.db, self.tg, chat_id, msg.get("from") or {})
                 log.info("start handled | instance=%s | update_id=%s",
                          self.instance, upd["update_id"])
@@ -216,7 +224,7 @@ class CommandLoop(threading.Thread):
         """Text-only commands; the three views go through ``_send_view``."""
         local = to_local(utcnow(), self.cfg.timezone)
         if cmd == "/help":
-            extra = ("\n\n<b>Admin</b>: /run · /settle · /recap · /lastrun"
+            extra = ("\n\n<b>Admin</b>: /run · /settle · /recap · /lastrun · /menu"
                      if user_id in self.cfg.telegram_admin_ids else "")
             extra = "\n/timezone Area/City — kick-off times in your zone" + extra
             zone = resolve_timezone(self.db.subscriber_timezone(chat_id or user_id),
@@ -230,6 +238,10 @@ class CommandLoop(threading.Thread):
                     "Send /start whenever you want them back.")
         if cmd == "/timezone":
             return self._timezone(chat_id or user_id, args or [])
+        if cmd == "/menu":
+            if user_id not in self.cfg.telegram_admin_ids:
+                return "Not allowed."
+            return self._post_community_menu()
         if cmd == "/lastrun":
             if user_id not in self.cfg.telegram_admin_ids:
                 return "Not allowed."
@@ -240,6 +252,22 @@ class CommandLoop(threading.Thread):
             fn = self.actions.get(cmd)
             return fn() if fn else "Unavailable."
         return None
+
+    def _post_community_menu(self) -> str:
+        """Post only the menu to the configured community; no service or database access."""
+        destination = self.cfg.telegram_chat_id
+        if not destination:
+            return "Community destination is not configured. Set TELEGRAM_CHAT_ID."
+        username = self.tg.get_bot_username()
+        if not username:
+            return "Could not resolve this bot's username. Community menu was not posted. Try /menu again."
+        message_id = self.tg.send(callbacks.COMMUNITY_MENU_TEXT, chat_id=destination,
+                                  reply_markup=callbacks.community_menu_markup(username))
+        if not message_id:
+            log.warning("community menu failed | chat_id=%s", destination)
+            return "Community menu could not be posted. Check the bot's access and try /menu again."
+        log.info("community menu posted | chat_id=%s | message_id=%s", destination, message_id)
+        return f"Community menu posted. Message ID: {message_id}. You can pin it manually in Predictions."
 
     def _timezone(self, chat_id: str, args: List[str]) -> str:
         """``/timezone Africa/Lagos`` - the zone kick-off times are DISPLAYED in.

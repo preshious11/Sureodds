@@ -34,5 +34,6 @@ def run(db: Database, cfg: Config, tg: Optional[Telegram], force: bool = False, 
         return text
     if tg and tg.enabled():
         mid = tg.send(text)
-        db.mark_post("recap", y_str, mid)
+        if mid:
+            db.mark_post("recap", y_str, mid)
     return text

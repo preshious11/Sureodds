@@ -109,11 +109,12 @@ def test_the_example_env_matches_pick_defaults(monkeypatch):
         assert float(getattr(cfg, attr)) == float(text), env_name
 
 
-def test_the_example_env_documents_the_delivery_switch(monkeypatch):
+def test_the_example_env_uses_community_mode_without_changing_the_code_default(monkeypatch):
     _clear(monkeypatch, "SUBSCRIBER_DELIVERY_ENABLED")
     assert Config().subscriber_delivery_enabled is True
     example = (ROOT / ".env.example").read_text(encoding="utf-8")
-    assert "SUBSCRIBER_DELIVERY_ENABLED=true" in example
+    assert "SUBSCRIBER_DELIVERY_ENABLED=false" in example
+    assert "COMMUNITY_CHAT_ID=" not in example and "COMMUNITY_ENABLED=" not in example
 
 
 # ------------------------------------------------------------ where .env is read

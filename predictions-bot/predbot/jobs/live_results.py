@@ -6,7 +6,7 @@ import logging
 from collections import defaultdict
 from datetime import timedelta
 
-from predbot.bot.broadcast import deliver_live
+from predbot.bot.broadcast import deliver_community_live, deliver_live
 from predbot.jobs import settle
 from predbot.markets.competitions import lookup
 from predbot.markets.settlement import PENDING, grade
@@ -140,8 +140,8 @@ def run(resolver, db, cfg, tg, now=None):
 
 
 def _run(resolver, db, cfg, tg, now):
-    # Channel-only mode (SUBSCRIBER_DELIVERY_ENABLED=false) still settles via
-    # this job; only the subscriber pushes below are skipped.
+    # Subscriber pushes can be disabled independently of configured community
+    # delivery. Result tracking and settlement are unchanged in either mode.
     notify = getattr(cfg, "subscriber_delivery_enabled", True)
     rows = db.live_picks(iso(now - timedelta(days=settle.MAX_PENDING_DAYS)),
                          iso(now + timedelta(minutes=10)))
@@ -174,19 +174,21 @@ def _run(resolver, db, cfg, tg, now):
                 if not state or not state["settlement_done"]:
                     _settle_fixture(resolver, db, picks, result, now, cache, begun)
                 if result.status == "final":
+                    fresh = db.picks_where("p.pick_date=? AND p.fixture_key=?", (pick_date, fixture_key))
+                    complete = True
                     if notify:
-                        fresh = db.picks_where("p.pick_date=? AND p.fixture_key=?", (pick_date, fixture_key))
                         _, complete = deliver_live(db, tg, pick_date, fixture_key, fresh, result, ended=True)
-                        if complete:
-                            db.complete_live_notifications(pick_date, fixture_key)
-                    else:
-                        # Settled normally; notifications recorded as handled so
-                        # re-enabling delivery later does not spam history.
+                    _, community_complete = deliver_community_live(
+                        db, tg, pick_date, fixture_key, fresh, result, ended=True)
+                    if complete and community_complete:
+                        # Disabled subscriber pushes are treated as handled;
+                        # failed community delivery still keeps the final retryable.
                         db.complete_live_notifications(pick_date, fixture_key)
                 else:
                     db.complete_live_notifications(pick_date, fixture_key)
             elif result.status == "in_progress":
                 if notify:
                     deliver_live(db, tg, pick_date, fixture_key, picks, result)
+                deliver_community_live(db, tg, pick_date, fixture_key, picks, result)
         except settle.PICK_ERRORS:
             log.exception("live: fixture processing failed; will retry")

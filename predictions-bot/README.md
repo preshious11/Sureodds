@@ -221,9 +221,17 @@ A missing optional key only logs a warning at startup; the chain skips that prov
 ### 2. Telegram
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) → get the token.
-2. Add the bot to your channel/group as an admin (or DM it).
-3. Get the chat id (e.g. message [@userinfobot](https://t.me/userinfobot), or use
-   the numeric channel id like `-1001234567890`).
+2. Add the bot to the destination group/supergroup with permission to send text,
+   or to a channel as an administrator with permission to post messages.
+3. Obtain the destination's actual chat ID; do not use your personal user ID.
+   Temporarily stop the worker so there is no competing `getUpdates` consumer.
+   Send `/help@YourBotUsername` in the group, or publish a message in the channel.
+   Privately inspect the Bot API `getUpdates` response with
+   `allowed_updates=["message","channel_post"]`: read `message.chat.id` for a
+   group or `channel_post.chat.id` for a channel. Use your token locally without
+   sharing credential-bearing URLs or output. The worker restores its usual
+   message/callback update filter when restarted. An active webhook must be
+   removed before polling can work.
 
 ### 3. Configure
 
@@ -232,19 +240,91 @@ Copy `.env.example` to `.env` and fill it in. The important ones:
 ```
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
+SUBSCRIBER_DELIVERY_ENABLED=false # automatic delivery goes to the community
+ENABLE_COMMANDS=true             # private commands and buttons remain available
+LIVE_UPDATES_ENABLED=true         # community Match Started/Ended; live settlement
 SHARPAPI_KEY=...                 # required
 ODDS_API_KEY=...                 # recommended
 SPORTSGAMEODDS_KEY=...           # optional
 FOOTBALL_DATA_KEY=...            # optional (results only)
 PROVIDER_ORDER=oddsapi,sharpapi,sportsgameodds
 TIMEZONE=Africa/Lagos
-POST_TIME=09:00                  # picks are generated
-DELIVERY_TIME=09:30              # the card is sent (one instant, in TIMEZONE)
+POST_TIME=09:00                  # generation + configured community publication
+DELIVERY_TIME=09:30              # optional subscriber delivery / partial-retry cutoff
 DB_PATH=/data/predbot.db
 ```
 
 Every knob (pick targets, odds/probability/EV thresholds, budget limits,
 schedule) is documented in `.env.example`.
+
+Community mode uses the existing `TELEGRAM_CHAT_ID`; no extra destination variables
+are needed. Top and Daily are separate static cards sent when the existing
+`POST_TIME` generation finishes. Private prediction views retain their keyboards.
+The daily recap goes to the configured destination at `RECAP_TIME`. With live
+updates enabled, Match Started/Ended messages include only predictions in Top/Daily
+collections successfully published to that destination. Match Ended uses the
+existing settled prediction statuses and formatter.
+
+Successful configured cards keep their existing `posts` markers and also record
+`community_picks_top` / `community_picks_daily` destination receipts in the existing
+`deliveries` table. Live notifications use durable `match_start:<fixture hash>` /
+`match_end:<fixture hash>` receipts by date and chat. No community subscriber record
+is needed. Failed live sends remain retryable after settlement/restart; disabling
+subscriber delivery does not disable community delivery or live result tracking.
+`/start` and `/timezone` can register/change subscriber preferences only in private
+chats. Existing subscriber rows and delivery history are retained.
+
+**Cut over on a new prediction day.** Legacy `posts` rows have no destination ID,
+so they cannot establish community live eligibility. Do not delete publication
+history, backfill destination receipts, or force a same-day repost: existing posted
+cards still suppress reposts even after the configured destination changes. Keep
+the same persistent database, exactly one worker, and the current generation times.
+Production environment values override `.env`; restart/redeploy after changing them.
+
+Delivery success requires every Telegram message chunk to succeed. The transport
+retries a rejected HTTP 429 chunk once after a valid `retry_after`; it does not add
+a global rate limiter. A crash/network timeout after Telegram accepts a message
+but before its receipt is saved can still cause a retry duplicate. For a long
+partially sent card, retrying may repeat previously accepted chunks. A failed
+configured recap is no longer marked posted, but retries still require another
+recap invocation (admin/CLI or scheduler catch-up); no new recap retry job is added.
+Privacy mode can remain enabled for scheduled posting and private interaction.
+Community member detection and forum-topic targeting are outside this phase.
+
+**Predictions community menu.** With `ENABLE_COMMANDS=true`, a user whose numeric
+Telegram ID is in `TELEGRAM_ADMIN_IDS` can send `/menu` in the bot's private chat
+(or `/menu@YourBot` in Predictions). Being a Telegram group admin alone does not
+authorize this command. It posts the following menu to `TELEGRAM_CHAT_ID`:
+
+```text
+⚽ Predictions
+
+Today's picks, results and more.
+
+🔥 Top Picks       | 📋 Daily Picks
+📚 All Predictions
+📊 Stats           | 🗓 Yesterday
+✨ Custom Picks
+```
+
+The five public buttons use existing inline view callbacks. They do not send a
+member's chat message, so members can use them in the read-only supergroup. Views
+are posted in Predictions, while the original menu remains intact even with
+`VIEW_NAVIGATION=edit`. View pagination retains its existing navigation behavior
+and cache-first reads; opening the menu itself never reads or generates predictions.
+
+Custom Picks opens the same bot privately using
+`https://t.me/<bot_username>?start=custom_picks`. The username comes from Telegram
+`getMe` and is cached for the running client; no username setting is needed.
+`/start custom_picks` has a separate private handler that currently replies
+“✨ Custom Picks” / “Custom Picks is coming soon.” It does not register subscribers
+or implement predictions or payments. Ordinary `/start` and other private flows
+retain their existing behavior. Privacy mode and polling configuration need no changes.
+
+`/menu` returns and logs the posted message ID without adding subscribers or
+changing prediction/history/delivery records. Pin that message manually in
+Predictions. Each successful `/menu` invocation deliberately creates a new menu;
+run it once for initial setup. It never auto-pins or changes scheduled delivery.
 
 ### 4. Run locally
 
@@ -261,13 +341,14 @@ python main.py                   # run the scheduler (what the container runs)
 ```
 
 `main.py` runs the scheduler loop: recap at `RECAP_TIME`, picks generated at
-`POST_TIME`, the card delivered at `DELIVERY_TIME`, a PARTIAL slate retried every
+`POST_TIME` and posted to `TELEGRAM_CHAT_ID`, optional subscriber delivery at
+`DELIVERY_TIME`, a PARTIAL slate retried every
 `CACHE_RETRY_SECONDS` until then, and settlement dynamically after the day's last
 match ends (+ sport duration + 15 min). With `ENABLE_COMMANDS=true` the bot answers
 `/top`, `/daily`, `/stats`, `/yesterday`, `/timezone Area/City` and `/help`; ids in
-`TELEGRAM_ADMIN_IDS` also get `/run`, `/settle`, `/recap` and `/lastrun`.
-User commands and delivery polling only read the SQLite cache — they never call a
-provider. If a generation is running, a read gets "Today's picks are being generated —
+`TELEGRAM_ADMIN_IDS` also get `/run`, `/settle`, `/recap`, `/lastrun` and `/menu`.
+Private commands retain their existing cache-first behavior; delivery polling
+never calls a provider. If a generation is running, a read gets "Today's picks are being generated —
 try again in a minute." (or the already-published card).
 
 ---
@@ -459,8 +540,9 @@ tests/                  pytest suite + fixtures
 
 ### Shared daily delivery time
 
-Picks are generated at `POST_TIME` (default 09:00) and delivered at `DELIVERY_TIME`
-(default 09:30), both in `TIMEZONE` (default `Africa/Lagos`): every subscriber gets
+Configured community cards are published after generation at `POST_TIME` (default
+09:00). If `SUBSCRIBER_DELIVERY_ENABLED=true`, subscriber cards are delivered at
+`DELIVERY_TIME` (default 09:30), both in `TIMEZONE` (default `Africa/Lagos`): every subscriber gets
 the card at the same instant (09:30 WAT = 08:30 UTC), once per person per day. A
 subscriber's own zone only changes how kick-off times are displayed. Someone who
 subscribes after `DELIVERY_TIME` starts with the next day's card. Legs that have

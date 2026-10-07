@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -21,12 +22,39 @@ class Telegram:
         self.chat_id = chat_id
         self.base = f"https://api.telegram.org/bot{token}"
         self.session = requests.Session()
+        self._bot_username: Optional[str] = None
 
     def enabled(self) -> bool:
         return bool(self.token and self.chat_id)
 
+    def get_bot_username(self) -> Optional[str]:
+        """Resolve this token's bot username for private deep links; cache success."""
+        if self._bot_username:
+            return self._bot_username
+        if not self.token:
+            return None
+        try:
+            response = self.session.get(f"{self.base}/getMe", timeout=10)
+            if response.status_code != 200:
+                log.warning("getMe failed | HTTP %s", response.status_code)
+                return None
+            payload = response.json()
+            username = (payload.get("result") or {}).get("username")
+            if payload.get("ok") and isinstance(username, str) and re.fullmatch(r"[A-Za-z0-9_]+", username):
+                self._bot_username = username
+                return username
+            log.warning("getMe returned no valid bot username")
+        except (requests.RequestException, ValueError, TypeError, AttributeError) as exc:
+            log.warning("getMe failed | error_type=%s", type(exc).__name__)
+        return None
+
     def send(self, text: str, chat_id: Optional[str] = None, parse_mode: str = "HTML",
              reply_markup: Optional[Dict] = None) -> Optional[str]:
+        """Return the last message ID only if every chunk succeeds.
+
+        Retry a rate-limited chunk once after Telegram's retry_after. An HTTP or
+        transport failure returns None even when earlier chunks were accepted.
+        """
         chat = chat_id or self.chat_id
         last_id = None
         for chunk in _split(text):
@@ -35,18 +63,32 @@ class Telegram:
                 "disable_web_page_preview": True}
             if reply_markup:
                 body["reply_markup"] = reply_markup
-            try:
-                r = self.session.post(f"{self.base}/sendMessage", json=body, timeout=20)
-            except requests.RequestException as e:
-                # A transport failure here must fail like a bad HTTP status
-                # (return, don't raise) - callers throughout the bot treat
-                # send() as a plain success/failure signal, never an exception.
-                log.error("telegram send transport failure: %s", type(e).__name__)
-                return last_id
+            for attempt in range(2):
+                try:
+                    r = self.session.post(f"{self.base}/sendMessage", json=body, timeout=20)
+                except requests.RequestException as e:
+                    log.error("telegram send transport failure: %s", type(e).__name__)
+                    return None
+                if r.status_code == 429 and attempt == 0:
+                    try:
+                        retry_after = (r.json().get("parameters") or {}).get("retry_after")
+                    except (ValueError, TypeError, AttributeError):
+                        retry_after = None
+                    if type(retry_after) is int and retry_after > 0:
+                        time.sleep(retry_after)
+                        continue
+                break
             if r.status_code != 200:
                 log.error("telegram send failed %s: %s", r.status_code, r.text[:200])
-                return last_id
-            last_id = str((r.json().get("result") or {}).get("message_id"))
+                return None
+            try:
+                message_id = (r.json().get("result") or {}).get("message_id")
+            except (ValueError, TypeError, AttributeError):
+                message_id = None
+            if message_id is None:
+                log.error("telegram send returned no message ID")
+                return None
+            last_id = str(message_id)
         return last_id
 
     def edit_message_text(self, chat_id: str, message_id: int, text: str,
