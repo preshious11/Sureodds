@@ -49,7 +49,7 @@ def _pick(db, i, sport, league_id, home):
 
 
 def _setup(db, monkeypatch):
-    monkeypatch.setattr(settle, "utcnow", lambda: dt(d=3, hh=23))
+    monkeypatch.setattr(settle, "utcnow", lambda: dt(d=1, hh=23))  # within each sport's settlement grace
     for i in range(4):
         _pick(db, i, "football", "england_-_premier_league", f"Home{i}")      # football-data first, ESPN second
     for i in range(4, 7):

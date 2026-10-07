@@ -423,7 +423,7 @@ class _Resolver:
 
 @pytest.mark.parametrize("error", [ProviderError("x"), ValueError("x"), KeyError("x"), TypeError("x"), AttributeError("x")])
 def test_one_failing_pick_is_counted_and_the_rest_are_still_settled(db, monkeypatch, error):
-    monkeypatch.setattr(settle, "utcnow", lambda: dt(hh=23).replace(day=3))
+    monkeypatch.setattr(settle, "utcnow", lambda: dt(hh=23))  # result lookups remain inside the grace period
     for i in (1, 2, 3):
         _pick(db, i)
 
@@ -433,7 +433,7 @@ def test_one_failing_pick_is_counted_and_the_rest_are_still_settled(db, monkeypa
 
 
 def test_an_error_after_resolution_does_not_stop_the_run_either(db, monkeypatch):
-    monkeypatch.setattr(settle, "utcnow", lambda: dt(hh=23).replace(day=3))
+    monkeypatch.setattr(settle, "utcnow", lambda: dt(hh=23))
     for i in (1, 2):
         _pick(db, i)
     real = db.settle_pick
@@ -445,7 +445,7 @@ def test_an_error_after_resolution_does_not_stop_the_run_either(db, monkeypatch)
 
 
 def test_run_starts_each_provider_run_cache(db, monkeypatch):
-    monkeypatch.setattr(settle, "utcnow", lambda: dt(hh=23).replace(day=3))
+    monkeypatch.setattr(settle, "utcnow", lambda: dt(hh=23))
     resolver = _Resolver({})
     resolver.providers = {"oddsapi": Mock(), "football_data": Mock(spec=["begin_run"]), "sharpapi": Mock(spec=[])}
     settle.run(resolver, db, Config())

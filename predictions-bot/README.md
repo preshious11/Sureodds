@@ -435,15 +435,53 @@ Each path also declares which **periods and stats** it can grade (football-data 
 EuroLeague: full/halves; ESPN: full for football/baseball/tennis, plus halves and
 quarters for basketball/NFL; SportsGameOdds: anything). A market no path can grade —
 say a 1st-half bet on a `full`-only path — is rejected up front as `PERIOD_UNSETTLEABLE`
-(or `STAT_UNSETTLEABLE`) instead of sitting pending for four days and being voided; an
+(or `STAT_UNSETTLEABLE`) instead of sitting pending until finalization expires; an
 event with no path at all is `NO_RESULTS_PATH`. Leagues with no path are not fetched,
 and the startup log prints one table of every configured league and its path(s).
 
 `ResultsResolver` walks the same list, first usable result wins, every provider call is
 wrapped so an outage leaves the pick pending. Tennis settles on **sets** (match winner)
 and on **games** (totals/handicaps). `settle.run` never raises: a bad pick is counted in
-`errors` and the rest are settled; a pick with no result after `MAX_PENDING_DAYS` is
-voided. Football markets settle on the 90-minute score.
+`errors` and the rest are settled. Football markets settle on the 90-minute score.
+
+Result lookup has a bounded lifecycle using the existing sport durations in
+`predbot/util/duration.py`. Times below are measured from the stored UTC kickoff:
+
+| Sport | Expected duration | Live cutoff | Finalization grace after expected end | Settlement deadline |
+| --- | --- | --- | --- | --- |
+| Football | 2h 12m | +4h 12m | 24h | +26h 12m |
+| Basketball | 2h 48m | +5h 48m | 24h | +26h 48m |
+| American football | 3h 36m | +7h 36m | 24h | +27h 36m |
+| Baseball | 3h 36m | +9h 36m | 48h | +51h 36m |
+| Tennis | 3h | +9h | 48h | +51h |
+| MMA / other / unrecognized sports | 3h | +6h | 24h | +27h |
+
+Live status requests start at kickoff (never before it) and stop at the exclusive
+sport cutoff, even when a provider keeps returning `unknown` or `in_progress`.
+Ordinary settlement retains its expected-duration gate and existing free-first
+result paths, and may retry until the exclusive settlement deadline. A confirmed
+live final still permits early grading/richer-stat lookup within that deadline.
+These windows are fixed to the original kickoff; unknown/delayed responses never
+extend them. The longer tennis/baseball windows allow overnight interruptions.
+
+Both jobs first finalize expired pending predictions using confirmed live-state,
+settled-leg or canonical historical results already in SQLite. Within grace,
+usable stored results also take priority over provider requests. Settlement stores
+period/stat and provider grading details alongside scores so other fixture legs
+can reuse them. If the data cannot grade an expired prediction, it becomes
+persistent `void` with a deadline/reason in its result metadata **before** any
+provider prefetch or result call. Lookup guards recheck eligibility between sources
+and after acquiring provider locks; no final request is made after the deadline.
+
+VOID rows remain in picks/history, are excluded from later settlement lookups,
+and cannot restart a live watch after a restart. All-VOID watches close without
+new notifications. Durable confirmed finals can still retry existing Match Ended
+delivery without fetching results. Existing VOID formatting (`➖` / `VOID` where
+applicable) and win/loss, ROI, calibration and ticket calculations are retained.
+The daily settlement schedule remains latest expected completion plus the existing
+15-minute buffer; mixed sports use the latest expected end, rather than the sport
+of the latest kickoff. Expiry is applied on the next existing live/settlement run;
+no new jobs, environment settings or provider calls are added.
 
 ESPN needs no key but its edge returns 403 to most user agents, so the provider sends the
 default python-requests agent; if ESPN ever blocks the host, its paths fail as

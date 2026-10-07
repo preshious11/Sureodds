@@ -20,8 +20,7 @@ from predbot.util.timeutil import iso, parse_iso, utcnow
 log = logging.getLogger(__name__)
 
 # typical duration before we bother asking for a result (shared with the cards)
-from predbot.util.duration import DURATION_H  # noqa: E402
-MAX_PENDING_DAYS = 4
+from predbot.util.duration import expected_end, live_cutoff, settlement_deadline  # noqa: E402
 SETTLEMENT_BUFFER_MIN = 15  # buffer after last match to ensure all results are available
 
 
@@ -34,22 +33,20 @@ def compute_settlement_deadline(db: Database, today_local_date: str) -> Optional
     if not picks:
         return None
 
-    latest_start = None
-    latest_sport = "other"
+    latest_end = None
     for p in picks:
         start = parse_iso(p["start_utc"])
         if start is None:
             continue                       # an unparseable kick-off must not break the deadline
-        if latest_start is None or start > latest_start:
-            latest_start = start
-            latest_sport = p["sport"]
+        end = expected_end(start, p["sport"])
+        if latest_end is None or end > latest_end:
+            latest_end = end
 
-    if latest_start is None:
+    if latest_end is None:
         return None
 
-    duration_h = DURATION_H.get(latest_sport, 3.0)
-    deadline = latest_start + timedelta(hours=duration_h, minutes=SETTLEMENT_BUFFER_MIN)
-    log.info("settlement deadline: %s (%s + %.1fh for %s)", iso(deadline), iso(latest_start), duration_h, latest_sport)
+    deadline = latest_end + timedelta(minutes=SETTLEMENT_BUFFER_MIN)
+    log.info("settlement schedule: %s (latest expected completion + %dmin)", iso(deadline), SETTLEMENT_BUFFER_MIN)
     return deadline
 
 
@@ -65,16 +62,137 @@ def _row_to_line(r) -> MarketLine:
 PICK_ERRORS = (ProviderError, ValueError, KeyError, TypeError, AttributeError)
 
 
+def lookup_allowed(r, db: Database, now: datetime, *, live: bool = False,
+                   confirmed_final: bool = False) -> bool:
+    """Recheck time/status immediately before each result-source lookup."""
+    current = db.query("SELECT status FROM picks WHERE id=?", (r["id"],))
+    if not current or current[0]["status"] == VOID:
+        return False
+    start = parse_iso(r["start_utc"])
+    if start is None:
+        return False
+    if live:
+        return start <= now < live_cutoff(start, r["sport"])
+    due = start if confirmed_final else expected_end(start, r["sport"])
+    return current[0]["status"] == PENDING and due <= now < settlement_deadline(start, r["sport"])
+
+
+def _decode_result(payload):
+    data = json.loads(payload)
+    if data.get("status") not in ("final", "postponed", "cancelled"):
+        return None
+    return MatchResult(data["status"], {k: tuple(v) for k, v in data.get("scores", {}).items()},
+                       {(stat, period): tuple(value) for stat, period, value in data.get("stats", [])},
+                       data.get("odd_scores", {}), data.get("source", ""))
+
+
+def stored_result(r, db: Database) -> Optional[MatchResult]:
+    """Read confirmed results from live state, settled fixture legs or canonical history.
+
+    No provider methods are called. Scores are oriented to the requested prediction.
+    Unknown/live statuses never prove an outcome or immediately void a prediction.
+    """
+    from predbot.jobs.live_results import orient_result
+
+    rows = db.picks_where("p.pick_date=? AND p.fixture_key=?", (r["pick_date"], r["fixture_key"]))
+    state = db.live_state(r["pick_date"], r["fixture_key"])
+    candidates = [(rows[0], state["result_json"])] if rows and state and state["result_json"] else []
+    candidates += [(row, row["result_json"]) for row in rows if row["result_json"]]
+    for reference, payload in candidates:
+        try:
+            result = _decode_result(payload)
+            if result is not None:
+                result = orient_result(result, reference, r)
+                if grade(_row_to_line(r), result, r["sport"]) != PENDING:
+                    return result
+        except (ValueError, TypeError, KeyError, AttributeError):
+            log.warning("unusable stored result for pick %s", r["id"])
+    if r["sport"] == "football" and all(_pid(r, k) for k in ("canonical_competition_id", "home_id", "away_id")):
+        history = db.query(
+            "SELECT * FROM match_results WHERE sport=? AND competition_id=? AND kickoff_utc=? "
+            "AND ((home_id=? AND away_id=?) OR (home_id=? AND away_id=?)) LIMIT 1",
+            (r["sport"], r["canonical_competition_id"], iso(parse_iso(r["start_utc"])),
+             r["home_id"], r["away_id"], r["away_id"], r["home_id"]))
+        if history:
+            h = history[0]
+            scores = {"full": (h["home_goals"], h["away_goals"])}
+            if h["home_ht"] is not None and h["away_ht"] is not None:
+                scores["half1"] = (h["home_ht"], h["away_ht"])
+            if h["home_id"] != r["home_id"]:
+                scores = {key: (value[1], value[0]) for key, value in scores.items()}
+            result = MatchResult("final", scores, source=h["source"])
+            if grade(_row_to_line(r), result, r["sport"]) != PENDING:
+                return result
+    return None
+
+
+def _void_expired(r, db: Database, now: datetime, counts: Dict[str, int]) -> None:
+    start = parse_iso(r["start_utc"])
+    if start is None or now < settlement_deadline(start, r["sport"]):
+        return
+    with db.transaction():
+        current = db.query("SELECT status FROM picks WHERE id=?", (r["id"],))
+        if not current or current[0]["status"] != PENDING:
+            return
+        db.settle_pick(r["id"], VOID, {"reason": "settlement deadline expired",
+                                       "deadline": iso(settlement_deadline(start, r["sport"]))})
+        counts["void"] += 1
+        log.info("settlement: VOID unresolved pick %s | sport=%s | deadline=%s",
+                 r["id"], r["sport"], iso(settlement_deadline(start, r["sport"])))
+
+
+def expire_pending(db: Database, now: datetime, counts: Optional[Dict[str, int]] = None) -> Dict[str, int]:
+    """Finalize expired predictions using stored evidence only, before any network work."""
+    if counts is None:
+        counts = {"settled": 0, "pending": 0, "void": 0, "errors": 0}
+    fixtures = set()
+    for r in db.pending_picks(before_utc=iso(now)):
+        start = parse_iso(r["start_utc"])
+        if start is None or now < settlement_deadline(start, r["sport"]):
+            continue
+        try:
+            result = stored_result(r, db)
+            if result is not None:
+                settle_result(r, result, db, Elo(db), now, counts)
+            _void_expired(r, db, now, counts)
+            fixtures.add((r["pick_date"], r["fixture_key"]))
+        except PICK_ERRORS:
+            log.exception("expired prediction finalization failed for pick %s", r["id"])
+            counts["errors"] += 1
+            # Bad stored evidence must not keep a valid, expired fixture retryable.
+            _void_expired(r, db, now, counts)
+    for day, fixture in fixtures:
+        rows = db.picks_where("p.pick_date=? AND p.fixture_key=?", (day, fixture))
+        if rows and all(r["status"] != PENDING for r in rows):
+            db.complete_live_settlement(day, fixture)
+            state = db.live_state(day, fixture)
+            # A saved final can still deliver/retry its real Match Ended notification.
+            if not state or state["status"] != "final" or all(r["status"] == VOID for r in rows):
+                db.complete_live_notifications(day, fixture)
+    return counts
+
+
 def _settle_row(r, resolver: ResultsResolver, db: Database, elo: Elo, now: datetime,
                 cache: Dict[str, MatchResult], counts: Dict[str, int],
                 needs: Optional[Dict[str, frozenset]] = None) -> None:
+    current = db.query("SELECT status FROM picks WHERE id=?", (r["id"],))
+    if not current or current[0]["status"] != PENDING:
+        return
+    now = max(now, utcnow())
     start = parse_iso(r["start_utc"])
     if start is None:
         log.error("invalid start time for pick %s: %s", r["id"], r["start_utc"])
         counts["errors"] += 1
         return
-    if start + timedelta(hours=DURATION_H.get(r["sport"], 3)) > now:
+    if expected_end(start, r["sport"]) > now:
         counts["pending"] += 1
+        return
+    result = stored_result(r, db)
+    if result is not None:
+        settle_result(r, result, db, elo, now, counts)
+        return
+    if now >= settlement_deadline(start, r["sport"]):
+        _void_expired(r, db, now, counts)
         return
     try:
         src = json.loads(r["sources"]) if r["sources"] else {}
@@ -83,11 +201,13 @@ def _settle_row(r, resolver: ResultsResolver, db: Database, elo: Elo, now: datet
         src = {}
     _, hints = _resolve_args(r, needs)
     res = resolver.resolve(r["provider"], r["provider_event_id"], r["sport"], r["home"], r["away"],
-                           start, alt_ids=src.get("_alt_ids") or {}, cache=cache, hints=hints)
+                           start, alt_ids=src.get("_alt_ids") or {}, cache=cache, hints=hints,
+                           lookup_allowed=lambda: lookup_allowed(r, db, max(now, utcnow())))
+    cache.setdefault(f"{r['provider']}:{r['provider_event_id']}", res)
+    now = max(now, utcnow())
     if res is None:
-        if start < now - timedelta(days=MAX_PENDING_DAYS):
-            db.settle_pick(r["id"], VOID, {"reason": "no result available"})
-            counts["void"] += 1
+        if now >= settlement_deadline(start, r["sport"]):
+            _void_expired(r, db, now, counts)
         else:
             counts["pending"] += 1
         return
@@ -135,13 +255,15 @@ def _apply_result(r, res, db, elo, now, counts, expire_missing):
     start = parse_iso(r["start_utc"])
     outcome = grade(_row_to_line(r), res, r["sport"])
     if outcome == PENDING:
-        if expire_missing and res.status == "final" and start < now - timedelta(days=MAX_PENDING_DAYS):
-            outcome = VOID
+        if expire_missing and start is not None and now >= settlement_deadline(start, r["sport"]):
+            _void_expired(r, db, now, counts)
+            return
         else:
             counts["pending"] += 1
             return
     db.settle_pick(r["id"], outcome, {"status": res.status, "scores": {k: list(v) for k, v in res.scores.items()},
-                                      "source": res.source})
+                                      "stats": [[stat, period, list(value)] for (stat, period), value in res.stats.items()],
+                                      "odd_scores": res.odd_scores, "source": res.source})
     counts["settled" if outcome != VOID else "void"] += 1
     # learn from the final score
     sc = res.score("full")
@@ -190,7 +312,7 @@ def _resolve_args(r, needs: Optional[Dict[str, frozenset]] = None):
 
 
 def _prefetch(resolver: ResultsResolver, rows, now: datetime, cache: Dict[str, MatchResult],
-              needs: Optional[Dict[str, frozenset]] = None) -> None:
+              needs: Optional[Dict[str, frozenset]] = None, *, db: Optional[Database] = None) -> None:
     """Look results up for every due pick BEFORE grading, one thread per first-choice source, so football-data.org's
     6.5 s pacing overlaps ESPN's and EuroLeague's instead of adding to them. Each source is asked by one thread at a
     time and its per-run caches are keyed by (competition, day), so N picks from one competition and day still cost
@@ -201,7 +323,9 @@ def _prefetch(resolver: ResultsResolver, rows, now: datetime, cache: Dict[str, M
     groups: Dict[str, list] = {}
     for r in rows:
         start = parse_iso(r["start_utc"])
-        if start is None or start + timedelta(hours=DURATION_H.get(r["sport"], 3)) > now:
+        if start is None or not expected_end(start, r["sport"]) <= now < settlement_deadline(start, r["sport"]):
+            continue
+        if db is not None and stored_result(r, db) is not None:
             continue
         alt_ids, hints = _resolve_args(r, needs)
         names = resolver.paths_for(r["provider"], r["sport"], alt_ids, hints)
@@ -213,8 +337,11 @@ def _prefetch(resolver: ResultsResolver, rows, now: datetime, cache: Dict[str, M
         for r, start, alt_ids, hints in items:
             ck = f"{r['provider']}:{r['provider_event_id']}"
             try:
+                allowed = (lambda r=r: lookup_allowed(r, db, max(now, utcnow()))) if db is not None else None
+                if allowed is not None and not allowed():
+                    continue
                 res = resolver.resolve(r["provider"], r["provider_event_id"], r["sport"], r["home"], r["away"], start,
-                                       alt_ids=alt_ids, cache=cache, hints=hints)
+                                       alt_ids=alt_ids, cache=cache, hints=hints, lookup_allowed=allowed)
             except PICK_ERRORS as e:
                 log.warning("result prefetch failed for pick %s: %s", r["id"], e)
                 res = None
@@ -301,13 +428,14 @@ def _run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]
     elo = Elo(db)
     counts = {"settled": 0, "pending": 0, "void": 0, "errors": 0}
     cache: Dict[str, MatchResult] = {}
+    expire_pending(db, now, counts)
     for provider in resolver.providers.values():
         begin = getattr(provider, "begin_run", None)      # per-run response caches (credits / rate limits)
         if callable(begin):
             begin()
     rows = db.pending_picks(before_utc=iso(now))
     needs = _needs_by_event(rows)
-    _prefetch(resolver, rows, now, cache, needs)
+    _prefetch(resolver, rows, now, cache, needs, db=db)
 
     for r in rows:
         try:

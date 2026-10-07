@@ -250,7 +250,8 @@ def test_no_early_or_stale_or_unknown_competition_polling(db, env):
     pick(db, start_utc=iso(NOW - timedelta(days=5)), provider_event_id="old")
     pick(db, league="Unknown League", sources={}, provider_event_id="unsupported")
     poll(db, env)
-    assert env[0].calls == 0 and not env[3].messages and len(db.pending_picks()) == 3
+    assert env[0].calls == 0 and not env[3].messages and len(db.pending_picks()) == 2
+    assert db.query("SELECT status FROM picks WHERE provider_event_id='old'")[0]["status"] == "void"
 
 
 def test_subscribers_never_multiply_result_calls(db, env):

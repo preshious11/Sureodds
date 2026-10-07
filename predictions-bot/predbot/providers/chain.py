@@ -13,7 +13,7 @@ import threading
 from collections import Counter
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from predbot.config import Config
 from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, apply_price_mode, consolidate_lines
@@ -333,7 +333,8 @@ class ResultsResolver:
     def resolve(self, provider: str, provider_event_id: str, sport: str, home: str, away: str,
                 start: datetime, alt_ids: Optional[Dict[str, str]] = None,
                 cache: Optional[Dict[str, MatchResult]] = None,
-                hints: Optional[Dict[str, str]] = None) -> Optional[MatchResult]:
+                hints: Optional[Dict[str, str]] = None,
+                lookup_allowed: Optional[Callable[[], bool]] = None) -> Optional[MatchResult]:
         """``hints`` carries what was stored with the pick: ``sport_key`` (Odds API),
         ``league_id`` and ``league`` (competition lookup), and optionally ``_needs`` (see ``_prioritise``)."""
         cache = cache if cache is not None else {}
@@ -349,7 +350,10 @@ class ResultsResolver:
                 # a free source was asked first and can still deliver: SGO is then only a stand-in, and the first thing
                 # the quota policy switches off as usage climbs
                 hints = {**hints, "_free_alt": True}
-            r = self._ask(name, provider, provider_event_id, alt_ids, sport, home, away, start, hints)
+            if lookup_allowed is not None and not lookup_allowed():
+                break
+            r = self._ask(name, provider, provider_event_id, alt_ids, sport, home, away, start, hints,
+                          lookup_allowed=lookup_allowed)
             if r is not None and r.status != "unknown":
                 result = r
                 break
@@ -360,15 +364,20 @@ class ResultsResolver:
         return result
 
     def _ask(self, name: str, provider: str, provider_event_id: str, alt_ids: Dict[str, str], sport: str,
-             home: str, away: str, start: datetime, hints: Dict[str, str]) -> Optional[MatchResult]:
+             home: str, away: str, start: datetime, hints: Dict[str, str], *,
+             lookup_allowed: Optional[Callable[[], bool]] = None) -> Optional[MatchResult]:
         prov = self.providers.get(name)
         if prov is None:
             return None
         with self._locks.setdefault(name, threading.RLock()):
-            return self._ask_locked(prov, name, provider, provider_event_id, alt_ids, sport, home, away, start, hints)
+            if lookup_allowed is not None and not lookup_allowed():
+                return None
+            return self._ask_locked(prov, name, provider, provider_event_id, alt_ids, sport, home, away, start, hints,
+                                    lookup_allowed=lookup_allowed)
 
     def _ask_locked(self, prov, name: str, provider: str, provider_event_id: str, alt_ids: Dict[str, str], sport: str,
-                    home: str, away: str, start: datetime, hints: Dict[str, str]) -> Optional[MatchResult]:
+                    home: str, away: str, start: datetime, hints: Dict[str, str], *,
+                    lookup_allowed: Optional[Callable[[], bool]] = None) -> Optional[MatchResult]:
         try:
             if name in ("football_data", "espn", "euroleague"):
                 return prov.find_result(sport, home, away, start, league_id=hints.get("league_id", ""),
@@ -381,6 +390,8 @@ class ResultsResolver:
                     r = prov.fetch_result(alt_ids["sportsgameodds"], event_hint=hints)
                 if r is not None and r.status != "unknown":
                     return r
+                if lookup_allowed is not None and not lookup_allowed():
+                    return None
                 return prov.find_result(sport, home, away, start, event_hint=hints)
             # The Odds API /scores: by the id of whichever record is an Odds API one
             event_id = provider_event_id if provider == name else alt_ids.get(name)

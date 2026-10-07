@@ -3,16 +3,18 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections import defaultdict
 from datetime import timedelta
 
 from predbot.bot.broadcast import deliver_community_live, deliver_live
 from predbot.jobs import settle
 from predbot.markets.competitions import lookup
-from predbot.markets.settlement import PENDING, grade
+from predbot.markets.settlement import PENDING, VOID, grade
 from predbot.model.calibration import Calibrator
 from predbot.model.elo import Elo
 from predbot.providers.base import MatchResult
+from predbot.util.duration import DURATION_H, LIVE_GRACE_H, live_cutoff
 from predbot.util.names import same_team
 from predbot.util.timeutil import iso, parse_iso, utcnow
 
@@ -51,12 +53,14 @@ def _context(rows):
     return alt_ids, hints
 
 
-def _ask(resolver, name, row, alt_ids, hints):
+def _ask(resolver, name, row, alt_ids, hints, db, clock, *, live=True):
     return resolver._ask(name, row["provider"], row["provider_event_id"], alt_ids,
-                         row["sport"], row["home"], row["away"], parse_iso(row["start_utc"]), hints)
+                         row["sport"], row["home"], row["away"], parse_iso(row["start_utc"]), hints,
+                         lookup_allowed=lambda: settle.lookup_allowed(row, db, clock(), live=live,
+                                                                      confirmed_final=not live))
 
 
-def _live_result(resolver, rows, cache):
+def _live_result(resolver, rows, cache, db, clock):
     row = rows[0]
     alt_ids, hints = _context(rows)
     comp = lookup(hints.get("league_id", ""), hints.get("league", ""))
@@ -70,7 +74,7 @@ def _live_result(resolver, rows, cache):
             continue
         key = (row["fixture_key"], name)
         if key not in cache:
-            cache[key] = (row, _ask(resolver, name, row, alt_ids, hints))
+            cache[key] = (row, _ask(resolver, name, row, alt_ids, hints, db, clock))
         reference, result = cache[key]
         if result is None or result.status == "unknown":
             continue
@@ -81,9 +85,10 @@ def _live_result(resolver, rows, cache):
     return MatchResult("unknown")
 
 
-def _settle_fixture(resolver, db, rows, result, now, cache, begun):
+def _settle_fixture(resolver, db, rows, result, now, cache, begun, clock=None):
     """Try richer existing result paths once, only for ungradable confirmed finals."""
     reference = rows[0]
+    clock = clock or (lambda: now)
     alt_ids, hints = _context(rows)
     prepared = []
     for row in rows:
@@ -96,13 +101,16 @@ def _settle_fixture(resolver, db, rows, result, now, cache, begun):
                     continue
                 key = (row["fixture_key"], name)
                 if key not in cache:
+                    if not settle.lookup_allowed(row, db, clock(), confirmed_final=True):
+                        continue
                     provider = resolver.providers.get(name)
                     if provider is not None and name not in begun:
                         begin = getattr(provider, "begin_run", None)
                         if callable(begin):
                             begin()
                         begun.add(name)
-                    cache[key] = (reference, _ask(resolver, name, reference, alt_ids, hints))
+                    # Use this pending leg's eligibility even if the reference leg is already settled.
+                    cache[key] = (row, _ask(resolver, name, row, alt_ids, hints, db, clock, live=False))
                 source_row, richer = cache[key]
                 if richer is None or richer.status != "final":
                     continue
@@ -118,7 +126,7 @@ def _settle_fixture(resolver, db, rows, result, now, cache, begun):
     counts = {"settled": 0, "pending": 0, "void": 0, "errors": 0}
     with db.transaction():
         for row, candidate in prepared:
-            settle.settle_result(row, candidate, db, Elo(db), now, counts)
+            settle.settle_result(row, candidate, db, Elo(db), clock(), counts, expire_missing=True)
         if counts["settled"]:
             Calibrator(db).refit()
         db.complete_live_settlement(reference["pick_date"], reference["fixture_key"])
@@ -143,36 +151,62 @@ def _run(resolver, db, cfg, tg, now):
     # Subscriber pushes can be disabled independently of configured community
     # delivery. Result tracking and settlement are unchanged in either mode.
     notify = getattr(cfg, "subscriber_delivery_enabled", True)
-    rows = db.live_picks(iso(now - timedelta(days=settle.MAX_PENDING_DAYS)),
-                         iso(now + timedelta(minutes=10)))
+    started = time.monotonic()
+    # Honor an explicit run timestamp while advancing eligibility during slow provider requests.
+    clock = lambda: now + timedelta(seconds=time.monotonic() - started)
+    expired = settle.expire_pending(db, now)
+    if expired["settled"]:
+        Calibrator(db).refit()
+    # The SQL range is a broad candidate bound; each fixture uses its own sport cutoff below.
+    lookback = max(DURATION_H.values()) + max(LIVE_GRACE_H.values())
+    rows = db.live_picks(iso(now - timedelta(hours=lookback)), iso(now))
     groups = defaultdict(list)
     for row in rows:
         groups[(row["pick_date"], row["fixture_key"])].append(row)
     states = {key: db.live_state(*key) for key in groups}
     tracking = {key for (day, key), state in states.items()
-                if not state or state["status"] not in TERMINAL}
+                if (not state or state["status"] not in TERMINAL)
+                and any(row["status"] != VOID and (start := parse_iso(row["start_utc"])) is not None
+                        and start <= now < live_cutoff(start, row["sport"])
+                        for row in groups[(day, key)])}
     log.info("live: tracking %d fixtures", len(tracking))
     cache, begun = {}, set()
     for (pick_date, fixture_key), picks in groups.items():
         try:
             state = states[(pick_date, fixture_key)]
+            if all(row["status"] == VOID for row in picks):
+                db.complete_live_settlement(pick_date, fixture_key)
+                db.complete_live_notifications(pick_date, fixture_key)
+                continue
             if state and state["status"] in TERMINAL:
                 if state["settlement_done"] and state["notifications_done"]:
                     continue
                 result = _restore(state)
             else:
+                reference = next((row for row in picks if row["status"] != VOID), picks[0])
+                start = parse_iso(reference["start_utc"])
+                if start is None or not start <= clock() < live_cutoff(start, reference["sport"]):
+                    continue
+                # Do not let a VOID reference leg authorize a lookup for this fixture.
+                if reference is not picks[0]:
+                    original = picks
+                    picks = [reference] + [row for row in picks if row is not reference]
+                else:
+                    original = picks
                 for name in LIVE_SOURCES:
                     if name in resolver.providers and name not in begun:
                         resolver.providers[name].begin_run()
                         begun.add(name)
-                result = _live_result(resolver, picks, cache)
+                result = _live_result(resolver, picks, cache, db, clock)
+                result = orient_result(result, picks[0], original[0])
+                picks = original
                 old = state["status"] if state else None
                 db.save_live_result(pick_date, fixture_key, result, iso(now))
                 log.info("live: %s vs %s %s%s", picks[0]["home"], picks[0]["away"],
                          "-> " if old != result.status and result.status != "scheduled" else "", result.status)
             if result.status in TERMINAL:
                 if not state or not state["settlement_done"]:
-                    _settle_fixture(resolver, db, picks, result, now, cache, begun)
+                    _settle_fixture(resolver, db, picks, result, now, cache, begun, clock)
                 if result.status == "final":
                     fresh = db.picks_where("p.pick_date=? AND p.fixture_key=?", (pick_date, fixture_key))
                     complete = True
