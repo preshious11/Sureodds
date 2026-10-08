@@ -301,7 +301,7 @@ def test_exact_start_expires_and_uses_other_cached_options_without_reads(private
     forbidden.assert_not_called()
 
 
-def test_compatible_cached_replacement_serves_without_relaxation(private_bot, db, monkeypatch):
+def test_a_stale_option_is_never_silently_replaced_by_another_ticket(private_bot, db, monkeypatch):
     store(db, rows(('football',), start=NOW + timedelta(minutes=2)) + rows(('tennis',), start=NOW + timedelta(hours=2)))
     sent = request(private_bot, 'baseball picks')
     proven = [promise(private_bot, b) for b in buttons(sent)]
@@ -312,7 +312,13 @@ def test_compatible_cached_replacement_serves_without_relaxation(private_bot, db
     private_bot._custom_picks.recovery.ready[stale.token] = original
     monkeypatch.setattr(cp, 'utcnow', lambda: NOW + timedelta(minutes=2))
     private_bot._dispatch_callback(callback(CALLBACK_PREFIX + stale.token))
-    assert private_bot.tg.sends[-1]['text'] == cp.format_ticket(later_ticket.ticket, later_ticket.partial, ZONE)
+    # the tapped option is no longer valid: the user is told so and the surviving ticket is only OFFERED (its own
+    # button, its own truthful label) - never served in place of what was tapped
+    sent = private_bot.tg.sends[-1]
+    assert sent['text'] == COPY['expired']
+    assert cp.format_ticket(later_ticket.ticket, later_ticket.partial, ZONE) not in sent['text']
+    offered = [private_bot._custom_picks.recovery.ready[b['callback_data'][len(CALLBACK_PREFIX):]] for b in buttons(sent)]
+    assert later_ticket.token in {s.token for s in offered}
 
 
 def test_all_started_tap_is_helpful_and_never_returns_stale_ticket(private_bot, db, monkeypatch):

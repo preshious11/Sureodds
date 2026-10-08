@@ -191,6 +191,17 @@ def empty_copy(reason, request, available_count=0):
                               target_odds=f'{request.target_odds:g}' if request.target_odds else '')
 
 
+def claimed_count(request):
+    """The number of picks a recovery button's label promises, or None when it promises none. The all-sports
+    label always names a count ("🛡️ 3 Safe Picks · All Sports") - DEFAULT_COUNT when the request has no explicit
+    one - so that count must be exact, not "up to"."""
+    if request.pick_count:
+        return request.pick_count
+    if request.target_odds or sport_name(request.sports) or request.preference == 'best':
+        return None
+    return cp.DEFAULT_COUNT
+
+
 def label_for(request):
     icon = {'safe': '🛡️', 'strong': '⭐', 'best': '🔥'}[request.preference]
     prefix = request.preference.title()
@@ -350,6 +361,12 @@ class Recovery:
         odds_options = []
         searches = 0
         for option in alternatives(pool, request, reason, now, self.cfg.timezone):
+            # A label that names a count is a promise of EXACTLY that many picks: pin it on the request, so the
+            # search must find that many (a shorter ticket is never prepared) and every later validation - the tap
+            # included - checks it. An uncounted "up to 3" search under a "3 Safe Picks" label served 1 pick.
+            claimed = claimed_count(option)
+            if claimed and not option.pick_count:
+                option = replace(option, pick_count=claimed)
             if option in seen_requests:
                 continue
             seen_requests.add(option)
@@ -453,10 +470,8 @@ class Recovery:
                             self.current(s, now) and valid_ticket(s.ticket, s.request, now, self.cfg.timezone)]
             self.prune(now)
             if replacements:
-                # An automatic replacement may not silently relax the selected request.
-                compatible = next((s for s in replacements if suggestion and valid_ticket(s.ticket, request, now, self.cfg.timezone)), None)
-                if compatible:
-                    return Tap(Response(cp.format_ticket(compatible.ticket, compatible.partial, self.cfg.timezone), 'success'))
+                # A tapped option is served exactly as prepared or not at all: when it is no longer valid the user
+                # is told so and may choose another prepared option - none is ever substituted silently.
                 markup = {'inline_keyboard': [[{'text': s.label, 'callback_data': CALLBACK_PREFIX + s.token}]
                                                for s in replacements[-MAX_SUGGESTIONS:]]}
                 return Tap(Response(COPY['expired'], 'expired', markup))
