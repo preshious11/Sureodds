@@ -1,4 +1,4 @@
-"""Manual controls:  python cli.py picks [--dry-run] [--force] | settle | recap [--dry-run] | stats | accuracy | stats-card | test-post | budget | sgo-usage | reset-day [YYYY-MM-DD] [--yes] | history-status | history-import-csv FILE [competition] | history-backfill [--competitions PL,PD] [--seasons 2023,2024] [--yes] | history-elo"""
+"""Manual controls:  python cli.py picks [--dry-run] [--force] | settle | recap [--dry-run] | stats | accuracy | stats-card | test-post | budget | sgo-usage | reset-day [YYYY-MM-DD] [--yes] | history-status | history-import-csv FILE [competition] | history-backfill [--competitions PL,PD] [--seasons 2023,2024] [--yes] | history-elo | identity-repair [--apply --backup PATH]"""
 from __future__ import annotations
 
 import os
@@ -35,6 +35,26 @@ def reset_day(cfg, args):
     print(result)
     if result["dry_run"]:
         print("dry run only - nothing deleted. Re-run with --yes to apply.")
+
+
+def identity_repair(cfg, args):
+    """Report (default) or remove identity LOOKUP rows written by the old identity rules - see
+    predbot/storage/identity_repair.py. Never touches predictions, results or ratings; applying requires a backup
+    path, written and integrity-checked first. No provider or Telegram call."""
+    from predbot.storage.identity_repair import repair
+    apply = "--apply" in args
+    backup_path = args[args.index("--backup") + 1] if "--backup" in args and args.index("--backup") + 1 < len(args) else ""
+    if apply and not backup_path:
+        print("refused: --apply needs --backup PATH (a new file)")
+        return
+    try:
+        result = repair(Database(cfg.db_path), apply=apply, backup_path=backup_path)
+    except ValueError as exc:
+        print(f"refused: {exc}")
+        return
+    print(result)
+    if result["dry_run"]:
+        print("dry run only - nothing changed. Re-run with --apply --backup PATH to remove the listed lookup rows.")
 
 
 def history_command(cfg, cmd, args):
@@ -96,6 +116,8 @@ def main(argv):
         return reset_day(cfg, argv[2:])
     if len(argv) > 1 and argv[1].startswith("history-"):
         return history_command(cfg, argv[1], argv[2:])
+    if len(argv) > 1 and argv[1] == "identity-repair":
+        return identity_repair(cfg, argv[2:])
     setup_logging(cfg.log_level, cfg.log_file, secrets=[cfg.sgo_key, cfg.sharpapi_key, cfg.odds_api_key,
                                                          cfg.football_data_key, cfg.telegram_token])
     require_provider_keys(cfg)

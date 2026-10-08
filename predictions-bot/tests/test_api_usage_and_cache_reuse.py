@@ -90,8 +90,14 @@ def test_two_users_reading_today_after_one_generation_cause_exactly_one_collecti
     db.subscriber_add("2", timezone="America/New_York")
     tg = FakeTG()
 
-    handle_command("/top", "1", service=app, tg=tg, cfg=app.cfg, db=db)           # first reader generates
-    handle_command("/all", "2", service=app, tg=tg, cfg=app.cfg, db=db)           # second reader is a cache hit
+    # M4: a reader never generates; the scheduled job does, once, and every reader is served from it
+    handle_command("/top", "1", service=app, tg=tg, cfg=app.cfg, db=db)           # cold cache: "not generated yet"
+    assert app.api_batches == 0 and football.fetch_events.call_count == 0
+    assert "not been generated yet" in tg.sends[-1]["text"]
+    tg.sends.clear()
+    app.get_daily_snapshot(scheduled=True)                                        # the POST_TIME job
+    handle_command("/top", "1", service=app, tg=tg, cfg=app.cfg, db=db)
+    handle_command("/all", "2", service=app, tg=tg, cfg=app.cfg, db=db)
     handle_command("/daily", "2", service=app, tg=tg, cfg=app.cfg, db=db)
     handle_callback(_cb("pg|all|0"), service=app, tg=tg, db=db, cfg=app.cfg)
 

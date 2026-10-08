@@ -59,11 +59,11 @@ def test_empty_list_combined_odds_is_neutral():
     assert combined_odds([]) == 1.0
 
 
-def test_empty_pool_returns_empty_sections_and_placeholder_card():
+def test_empty_pool_returns_empty_sections_and_evaluated_empty_card():
     ps = select([], cfg(), dt())
     assert ps.top == [] and ps.daily == []
     card = picks_message([], [], DAY, "UTC")
-    assert "Predictions being analyzed" in card
+    assert "No selections qualified today." in card
     assert "Combined odds" not in card
 
 

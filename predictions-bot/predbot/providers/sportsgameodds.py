@@ -15,7 +15,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
-from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, norm_book
+from predbot.providers.base import SIDE_MARKETS, BaseProvider, Event, MarketLine, MatchResult, norm_book
 from predbot.providers.budget import Budget
 from predbot.providers.sgo_meter import SgoMeter
 from predbot.util.http import Http, ProviderError, RateLimiter
@@ -67,6 +67,10 @@ def _attempts(http) -> int:
     return n if isinstance(n, int) and n >= 1 else 1
 
 
+#: body cap for SGO pages (an event carries ~1,000 odds objects; a page holds up to 100 events)
+SGO_MAX_BODY_BYTES = 200 * 1024 * 1024
+
+
 class SgoUnavailable(ProviderError):
     """SGO is deliberately not being called (cool-down, exhausted quota, budget policy): no HTTP request was made."""
 
@@ -104,8 +108,9 @@ class SportsGameOddsProvider(BaseProvider):
         # refused). retries=0 + sleep_on_429=False: this class owns retry and cool-down policy (see _call), so a 429
         # is never silently retried by the HTTP layer and one logical call can never multiply into many requests.
         limiter = RateLimiter(min_interval)
+        # An SGO page carries ~1,000 odds objects per event, so its body cap is well above the shared default.
         self.http = Http("https://api.sportsgameodds.com/v2", headers={"X-Api-Key": api_key}, rate=limiter,
-                         retries=0, sleep_on_429=False)
+                         retries=0, sleep_on_429=False, max_bytes=SGO_MAX_BODY_BYTES)
         self._probe = Http("https://api.sportsgameodds.com/v2", headers={"X-Api-Key": api_key}, rate=limiter,
                            retries=0, timeout=15, sleep_on_429=False)
         self._probe_failed_at = 0.0
@@ -168,7 +173,24 @@ class SportsGameOddsProvider(BaseProvider):
     # ------------------------------------------------------------------ the ONE place that talks to SGO
     @staticmethod
     def _is_429(e: ProviderError) -> bool:
-        return getattr(e, "status", None) == 429 or "rate limited" in str(e).lower() or " 429" in str(e)
+        """A rate-limit / quota answer FROM SGO. Decided on the HTTP status; the message text is only consulted for an
+        error with no status that is not a transport failure (a timeout's text can contain anything, URL included)."""
+        status = getattr(e, "status", None)
+        if status is not None:
+            return status == 429
+        if getattr(e, "kind", "") in ("transport", "timeout"):
+            return False
+        return "rate limited" in str(e).lower() or " 429" in str(e)
+
+    @staticmethod
+    def _is_league_config_error(e: ProviderError) -> bool:
+        """SGO ANSWERED that the league request is not allowed for this key/tier (a 4xx whose body names leagueID,
+        e.g. "You must specify either a leagueID or an eventID at this subscription tier"). A connection error,
+        timeout, 429 or 5xx is not that, even though its message carries the request URL and so the word leagueID."""
+        status = getattr(e, "status", None)
+        if status is None or not 400 <= status < 500 or status == 429:
+            return False
+        return "leagueid" in (getattr(e, "body", "") or str(e)).lower()
 
     def _call(self, path: str, params: Optional[Dict], reason: str, *, sport: str = "", league: str = "",
               event_id: str = "", needs_sgo: bool = True) -> Dict:
@@ -317,9 +339,16 @@ class SportsGameOddsProvider(BaseProvider):
         leagues = list(self.leagues) if self.leagues else None
         if not leagues:
             avail = self.available_leagues()
-            if avail is not None and avail:
+            if avail:
                 leagues = sorted(avail)
                 log.info("SGO: auto-discovered %d leagues from provider catalog", len(leagues))
+            elif avail is None:
+                # the catalogue could not be read (network error, 5xx, cool-down): nothing is proven about the key,
+                # so this run is skipped and SGO stays eligible for the next one
+                self.last_fetch_complete = False
+                log.warning("SGO: no leagues configured and the league catalogue is unavailable right now - "
+                            "skipping this run")
+                return []
             else:
                 self.last_fetch_complete = False
                 self.budget.mark_exhausted(self.name, "no leagues available for this key")
@@ -418,7 +447,7 @@ class SportsGameOddsProvider(BaseProvider):
                 log.warning("SGO: %s - stopping this run", exc)
                 break                                  # the cool-down / budget applies to every remaining league too
             except ProviderError as exc:
-                if "leagueID" in str(exc):
+                if self._is_league_config_error(exc):
                     self.budget.mark_exhausted(self.name, "league access/configuration error")
                 rate_limited_in_a_row = rate_limited_in_a_row + 1 if self._is_429(exc) else 0
                 self.last_fetch_complete = False
@@ -626,8 +655,10 @@ class SportsGameOddsProvider(BaseProvider):
             self.parse_counts["UNKNOWN_MARKET"] += 1
             return None
 
+        if market == "btts" or market in SIDE_MARKETS:
+            entity = "all"      # SGO's statEntityID on a side market repeats the side, which is the selection
         ml = MarketLine(market=market, selection=selection, price=price, period=period, stat=stat,
-                        entity=entity if market != "btts" else "all", line=line, fair_price=fair,
+                        entity=entity, line=line, fair_price=fair,
                         bookmaker="consensus", n_books=n_books, provider_odd_id=odd_id,
                         label=market_name, market_name=market_name, is_player_prop=is_player,
                         book_prices=book_prices, book_quotes=book_quotes)
@@ -800,8 +831,10 @@ class SportsGameOddsProvider(BaseProvider):
                     res.scores.setdefault(p, (sides["home"], sides["away"]))
                 elif stat != "btts":
                     res.stats.setdefault((stat, p), (sides["home"], sides["away"]))
-        if "full" not in res.scores and "reg" in res.scores:
-            res.scores["full"] = res.scores["reg"]
+        # ``full`` (SGO "game") includes overtime, ``reg`` does not. With both, whether overtime changed anything
+        # is known; with only ``reg``, MatchResult.score derives ``full`` only when regulation was not level.
+        if "full" in res.scores and "reg" in res.scores:
+            res.overtime = res.scores["full"] != res.scores["reg"]
         if status == "final" and not res.scores:
             res.status = "unknown"
         return res

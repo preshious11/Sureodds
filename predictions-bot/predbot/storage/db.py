@@ -247,6 +247,7 @@ def _now() -> str:
 
 class Database:
     _prediction_locks = {}
+    _publication_locks = {}
     _prediction_locks_guard = threading.Lock()
 
     def __init__(self, path: str):
@@ -256,6 +257,7 @@ class Database:
         with self._prediction_locks_guard:
             key = os.path.normcase(os.path.abspath(path)) if path != ':memory:' else id(self)
             self.prediction_lock = self._prediction_locks.setdefault(key, threading.RLock())
+            self.publication_lock = self._publication_locks.setdefault(key, threading.RLock())
         self._transaction_depth = 0
         #: instrumentation: statements executed / commits issued (see tools/replay.py)
         self.stats = {"executes": 0, "commits": 0}
@@ -718,7 +720,7 @@ class Database:
         """Persist the complete result, including tuple-keyed stats, for crash recovery."""
         payload = {"status": result.status, "scores": result.scores, "source": result.source,
                    "stats": [[stat, period, list(value)] for (stat, period), value in result.stats.items()],
-                   "odd_scores": result.odd_scores}
+                   "odd_scores": result.odd_scores, "overtime": getattr(result, "overtime", None)}
         self.execute("""
             INSERT INTO live_fixture_state
                 (pick_date,fixture_key,status,started_at,final_at,last_checked_at,result_source,result_json,updated_at)

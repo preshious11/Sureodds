@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
 import math
@@ -20,11 +20,23 @@ INTRO = ("✨ Custom Picks\n\nTell me what you want.\n\n"
          "• 2 strong tennis picks\n• 6 odds from football and basketball")
 UNAVAILABLE = "👨‍🍳 Still cooking\n\nToday's picks aren't ready yet. Check back in a bit."
 TODAY_ONLY = "😅 I'm living in today for now\n\nCustom Picks currently works with today's games only."
-HELP = ('😅 I didn\'t quite catch that\n\nTry something like “safe 4 odds”, '
-        '“3 basketball picks” or “5 odds, no BTTS”.')
+HELP = '😅 I didn\'t quite catch that\n\nWhat odds or how many games would you like?'
 DEFAULT_COUNT, MAX_LEGS = 3, 8
 MAX_FIXTURES, ALTERNATIVES, BEAM_PER_COUNT, ODDS_BUCKETS = 60, 4, 48, 12
 MAX_EXPANSIONS = 100_000
+#: all searches one request may run together (the primary search plus every recovery search): a failing request
+#: used to be able to run 17 full searches; the primary search keeps its full MAX_EXPANSIONS, recovery shares the rest
+REQUEST_WORK_LIMIT = 400_000
+
+
+class WorkBudget:
+    """Expansions left for one request; every ``search`` given it draws from the same pool and stops when empty."""
+
+    def __init__(self, limit=REQUEST_WORK_LIMIT):
+        self.remaining = limit
+
+    def exhausted(self):
+        return self.remaining <= 0
 TOLERANCE = .10
 MIN_PROBABILITY = {'safe': .65, 'strong': .60, 'best': .50}
 SPORT_ALIASES = {'soccer': 'football', 'american football': 'american_football',
@@ -54,6 +66,13 @@ class Request:
     allowed_markets: frozenset[str] = frozenset()
     excluded_markets: frozenset[str] = frozenset()
     preference: str = 'best'
+    competitions: frozenset[str] = frozenset()
+    market_selection: str | None = None
+    market_line: float | None = None
+    time_intent: str | None = None
+    specified_fields: frozenset[str] = field(default=frozenset(), compare=False)
+    refinement: bool = field(default=False, compare=False)
+    quality_upgrade: bool = field(default=False, compare=False)
 
 
 def phrase_pattern(phrases):
@@ -61,70 +80,8 @@ def phrase_pattern(phrases):
 
 
 def parse_request(text, supported_sports=()):
-    """Small explicit grammar: unsupported wording requests clarification, never inferred constraints."""
-    text = ' '.join(str(text).lower().replace('’', "'").split())
-    text = re.sub(r'\bover\s*/\s*under\b', 'over/under', text)
-    if not text or len(text) > 512:
-        raise RequestError(HELP)
-    if re.search(r'\b(tomorrow|yesterday|next|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\b\d{4}-\d{2}-\d{2}\b', text):
-        raise RequestError(TODAY_ONLY, 'future_date')
-    aliases = {k.replace('_', ' '): k for k in set(SPORT_LABEL) | set(supported_sports)}
-    aliases.update({k: k for k in set(SPORT_LABEL) | set(supported_sports)})
-    aliases.update(SPORT_ALIASES)
-    sport_matches = list(re.finditer(phrase_pattern(aliases), text))
-    if any(re.search(r'\b(no|without|avoid)\s*$', text[:m.start()]) for m in sport_matches):
-        raise RequestError("Choose the sports you want to include. " + HELP)
-    sports = frozenset(aliases[m.group()] for m in sport_matches)
-    if re.search(r'\ball sports\b', text):
-        if sports:
-            raise RequestError(HELP, 'conflicting_constraints')
-        sports = frozenset()
-    allowed, excluded, spans = set(), set(), []
-    previous_end, negative = 0, False
-    for match in re.finditer(phrase_pattern(MARKET_ALIASES), text):
-        prefix = text[previous_end:match.start()]
-        negative = bool(re.search(r'\b(no|without|avoid)\s*$', prefix)) or (
-            negative and bool(re.fullmatch(r'\s+(?:and|or)\s+', prefix)))
-        (excluded if negative else allowed).add(MARKET_ALIASES[match.group()])
-        spans.append(match.span())
-        previous_end = match.end()
-    if allowed & excluded:
-        raise RequestError(HELP, 'conflicting_constraints')
-    number = r'([+-]?\d+(?:\.\d+)?)'
-    targets = []
-    for pattern in (r'(?<![\w.])' + number + r'\s*(?:combined\s+)?odds\b',
-                    r'\bodds\s*(?:(?:of|around|about|near)\s+|[:=]\s*)?' + number + r'(?![\w.])'):
-        for match in re.finditer(pattern, text):
-            targets.append(float(match.group(1)))
-            spans.append(match.span())
-    qualifiers = phrase_pattern(set(aliases) | {'safe', 'strong', 'best', 'and'})
-    counts = []
-    for match in re.finditer(r'(?<![\w.])' + number + r'\s+(?:' + qualifiers + r'\s+)*(?:picks?|games?|selections?)\b', text):
-        counts.append(float(match.group(1)))
-        spans.append(match.span())
-    if len(set(targets)) > 1 or len(set(counts)) > 1:
-        raise RequestError(HELP, 'conflicting_constraints')
-    target, count = (targets[0] if targets else None), (counts[0] if counts else None)
-    if target is not None and (not math.isfinite(target) or target <= 1):
-        raise RequestError("Combined decimal odds must be greater than 1.00.")
-    if count is not None and (not count.is_integer() or not 1 <= count <= MAX_LEGS):
-        raise RequestError(f"I can build tickets with 1–{MAX_LEGS} distinct games. Try a smaller count.")
-    preference = next((p for p in ('safe', 'strong', 'best') if re.search(r'\b' + p + r'\b', text)), 'best')
-    remainder = list(text)
-    for start, end in spans:
-        remainder[start:end] = ' ' * (end - start)
-    remainder = re.sub(phrase_pattern(aliases), ' ', ''.join(remainder))
-    remainder = re.sub(r"\btoday(?:'s|s)?\b", ' ', remainder)
-    fillers = {'give', 'me', 'i', 'need', 'want', 'please', 'the', 'some', 'safe', 'strong', 'best',
-               'picks', 'pick', 'games', 'game', 'selections', 'selection', 'around', 'about', 'near',
-               'for', 'from', 'and', 'or', 'only', 'no', 'without', 'avoid', 'across', 'all', 'sports',
-               'make', 'it', 'of', 'a', 'ticket'}
-    remainder = re.sub(phrase_pattern(fillers), ' ', remainder)
-    if re.sub(r'[\s,.;:!?/\-]', '', remainder) or not (targets or counts or sports or allowed or excluded or
-                                                       re.search(r'\b(safe|strong|best|picks|games|selections)\b', text)):
-        raise RequestError(HELP)
-    return Request(target, int(count) if count is not None else None, sports,
-                   frozenset(allowed), frozenset(excluded), preference)
+    from predbot.custom_intent import parse
+    return parse(text, supported_sports)
 
 
 def aware_time(value):
@@ -159,6 +116,13 @@ class Candidate:
     books: float
     reference_ev: float
     evaluated_at: datetime | None = None
+    competition: str | None = None
+    competition_label: str | None = None
+    line: float | None = None
+    period: str = 'full'
+    stat: str = 'points'
+    entity: str = 'all'
+    fixture_identity: tuple = ()
 
     def rank(self):
         return (-self.probability, -self.agreement, -self.liquidity, -self.books,
@@ -179,6 +143,14 @@ def valid_selection(market, selection):
 def normalize(row, day, zone, now, pool_time, supported_sports, *, include_started=False):
     """Validate archived fields without altering the stored evaluation."""
     if not isinstance(row, dict) or row.get('prediction_date') != day or row.get('timezone') != zone:
+        return None
+    extra = row.get('extra') if isinstance(row.get('extra'), dict) else {}
+    statuses = [str(source.get(key, '')).lower() for source in (row, extra)
+                for key in ('status', 'event_status', 'fixture_status')]
+    if any(s in {'cancelled', 'canceled', 'postponed', 'abandoned', 'final', 'finished',
+                 'completed', 'live', 'in_progress', 'suspended'} for s in statuses) or any(
+            source.get(key) is True for source in (row, extra)
+            for key in ('cancelled', 'canceled', 'postponed', 'started', 'finished', 'is_live')):
         return None
     start, evaluated = aware_time(row.get('start_utc')), aware_time(row.get('generated_at'))
     if start is None or (start <= now and not include_started) or evaluated is None or evaluated > pool_time or evaluated > now:
@@ -205,25 +177,38 @@ def normalize(row, day, zone, now, pool_time, supported_sports, *, include_start
         return None
     ml = MarketLine(market, selection, price, period=period, stat=stat, entity=entity, line=line)
     outcome = selection_label(ml, home, away, sport)
+    if market == 'total' and entity == 'all':
+        outcome = outcome.replace(' Total ', ' ', 1)
     if market == 'result3' and selection == 'draw':
         outcome = 'Match Result: ' + outcome
-    if market == 'result2':
-        outcome = outcome.replace(' to Win', ' Moneyline', 1)
     if market == 'dc':
         outcome = 'Double Chance: ' + {'home_draw': '1X', 'away_draw': 'X2', 'home_away': '12'}[selection]
         if stat != 'points':
             outcome += f' ({readable_stat(stat)})'
         if period not in ('full', 'reg'):
             outcome += f' ({PERIOD_NAMES.get(period, period)})'
+    if market == 'btts':
+        outcome = outcome.replace('BTTS ', 'BTTS: ', 1)
+    if market == 'handicap':
+        outcome = 'Handicap: ' + outcome
     outcome = outcome_label(outcome, ml, home, away, sport)
     if not outcome:
         return None
     key = repr((market, period, stat, entity, line, selection))
+    from predbot.custom_intent import competition_id
+    competition = competition_id(row.get('canonical_competition_id'), row.get('league_id'), row.get('league'))
+    label = row.get('league')
+    label = label.strip() if isinstance(label, str) and label.strip() else None
+    if label and ('_' in label or ':' in label or label.lower() == row.get('league_id')):
+        label = None  # A provider identifier is not a competition display name.
+    identity = (sport, competition, start, *sorted((row['home_id'], row['away_id']))) if all(
+        isinstance(row.get(k), str) and row[k].strip() for k in ('home_id', 'away_id')) else ()
     return Candidate(fixture.strip(), key, sport, market, selection, price, probability, start, home, away, outcome,
                      max(0, min(1, finite(row.get('agreement'), 0))),
                      max(0, min(1, finite(row.get('liquidity'), 0))),
                      max(0, min(10, finite(row.get('bookmaker_count'), 0))),
-                     max(-.1, min(.1, finite(row.get('edge_ev'), -.1))), evaluated)
+                     max(-.1, min(.1, finite(row.get('edge_ev'), -.1))), evaluated,
+                     competition, label, line, period, stat, entity, identity)
 
 
 @dataclass(frozen=True)
@@ -242,7 +227,12 @@ def strength(state, request):
 
 def state_rank(state, request):
     distance = abs(math.log(state.odds / request.target_odds)) if request.target_odds else 0
-    return (-strength(state, request), distance, len(state.picks),
+    # For odds requests, equally confident tickets prefer fewer fixtures before
+    # market variety or target distance. Never trade confidence for fewer legs.
+    quality = (sum(c.probability for c in state.picks) / len(state.picks)
+               if request.target_odds else strength(state, request))
+    return (-round(quality, 12), len(state.picks) if request.target_odds else distance,
+            distance if request.target_odds else len(state.picks),
             -sum(c.agreement for c in state.picks) / len(state.picks),
             -sum(c.liquidity for c in state.picks) / len(state.picks),
             -sum(c.books for c in state.picks) / len(state.picks),
@@ -250,11 +240,15 @@ def state_rank(state, request):
             tuple((c.fixture_id, c.key) for c in state.picks))
 
 
-def search(candidates, request):
-    """Bounded per-fixture beam; every branch processes a fixture at most once."""
+def search(candidates, request, budget=None):
+    """Bounded per-fixture beam; every branch processes a fixture at most once. ``budget`` (a WorkBudget) caps the
+    expansions further and is charged with what this search used; with nothing left the search returns None."""
+    cap = MAX_EXPANSIONS if budget is None else min(MAX_EXPANSIONS, budget.remaining)
+    if cap <= 0:
+        return None
     grouped = defaultdict(list)
     for candidate in sorted(candidates, key=Candidate.rank):
-        grouped[candidate.fixture_id].append(candidate)
+        grouped[candidate.fixture_identity or candidate.fixture_id].append(candidate)
     groups = sorted(grouped.values(), key=lambda rows: rows[0].rank())[:MAX_FIXTURES]
     limit = request.pick_count or (MAX_LEGS if request.target_odds else DEFAULT_COUNT)
     if len(groups) < (request.pick_count or 1):
@@ -278,14 +272,14 @@ def search(candidates, request):
             for state in states:
                 for candidate in options:
                     expansions += 1
-                    if expansions > MAX_EXPANSIONS:
+                    if expansions > cap:
                         break
                     odds = state.odds * candidate.price
                     if math.isfinite(odds) and odds <= upper:
                         updated.setdefault(count + 1, []).append(State(state.picks + (candidate,), odds))
-                if expansions > MAX_EXPANSIONS:
+                if expansions > cap:
                     break
-            if expansions > MAX_EXPANSIONS:
+            if expansions > cap:
                 break
         beams = {0: updated[0]}
         for count, states in updated.items():
@@ -301,8 +295,10 @@ def search(candidates, request):
             else:
                 retained = sorted(states, key=lambda s: state_rank(s, request))[:BEAM_PER_COUNT]
             beams[count] = retained
-        if expansions > MAX_EXPANSIONS:
+        if expansions > cap:
             break
+    if budget is not None:
+        budget.remaining -= min(expansions, cap)
     counts = [request.pick_count] if request.pick_count else (
         list(range(1, limit + 1)) if request.target_odds else [min(DEFAULT_COUNT, len(groups))])
     feasible = [state for count in counts for state in beams.get(count, []) if not request.target_odds or
@@ -322,16 +318,12 @@ def compact(value, limit):
 
 
 def format_ticket(state, partial, zone):
-    blocks = ['🔥 Custom Picks', 'Stronger available picks']
+    blocks = [f'🔥 {combined_odds(c.price for c in state.picks):.2f} ODDS']
     for pick in sorted(state.picks, key=lambda c: (c.start, c.fixture_id, c.key)):
-        when = to_local(pick.start, zone).strftime('%d %b %H:%M %Z')
+        league = compact(pick.competition_label, 80) + '\n' if pick.competition_label else ''
         blocks.append(f"{SPORT_ICON.get(pick.sport, '🎯')} {compact(pick.home, 60)} vs {compact(pick.away, 60)}\n"
-                      f"{compact(pick.outcome, 140)}\nOdds: {pick.price:.2f} · Confidence: {round(pick.probability * 100)}%\n"
-                      f"🕘 {esc(when)}")
-    blocks.append(f'Combined Odds: {combined_odds(c.price for c in state.picks):.2f}\n'
-                  f'{len(state.picks)} selection' + ('s' if len(state.picks) != 1 else ''))
-    if partial:
-        blocks.append("⚠️ Today's available prediction pool is partial.")
+                      f"{league}{compact(pick.outcome, 140)}\n"
+                      f"Odds: {pick.price:.2f} · Confidence: {round(pick.probability * 100)}%")
     return '\n\n'.join(blocks)
 
 
@@ -351,3 +343,6 @@ class CustomPicks:
 
     def select(self, callback, now=None):
         return self.recovery.select(callback, now or utcnow())
+
+    def leave(self, user_id, chat_id):
+        self.recovery.leave(str(user_id), str(chat_id))

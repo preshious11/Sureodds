@@ -1,6 +1,19 @@
-"""Small, explainable Top selector. A target is never a minimum ticket requirement."""
+"""Small, explainable Top selector. A target is never a minimum ticket requirement.
+
+Which ticket (among candidates that already passed every Top gate - nothing here makes a pick easier to qualify):
+
+1. the 1-3 leg combination of different fixtures, from the ``TOP_SEARCH_K`` best-ranked fixtures, whose combined odds
+   lie inside ``TOP_COMBINED_ODDS`` .. ``TOP_ODDS_MAX`` and whose JOINT evidence-adjusted confidence (the product of
+   the legs' ranking scores) is highest; then the one closest to the target; then the one with fewer legs. A single
+   exceptional leg is simply the best 1-leg combination;
+2. when no combination fits the band, the previous best-first build (it may end below the target - the target is
+   not a minimum) - but never above ``TOP_ODDS_MAX``, not even with its first leg;
+3. no candidates: no Top Picks today.
+"""
 import json
+import math
 from collections import Counter
+from itertools import combinations
 
 from predbot.selection.evidence import min_books
 
@@ -41,6 +54,44 @@ def promotion_reason(row, cfg, now_utc, top=False):
     return None
 
 
+#: how many of the best-ranked fixtures the combination search considers (C(12,1..3) = 298 combinations at most)
+TOP_SEARCH_K = 12
+
+
+def _event(row):
+    return row.get('canonical_event_id') or row['fixture_key']
+
+
+def _confidence(row):
+    """A leg's evidence-adjusted confidence: its ranking score (probability lower bound plus sharp edge), else its
+    probability; kept positive so a product of them orders tickets."""
+    score = row.get('rank_score') if row.get('rank_score') is not None else row['prob']
+    return min(1.0, max(1e-6, float(score)))
+
+
+def best_combination(pool, cfg):
+    """The best in-band 1..3 leg combination of ``pool`` (already ranked, best first), or None. Deterministic."""
+    legs_max = max(0, min(3, cfg.top_legs_max))
+    fixtures, seen = [], set()
+    for row in pool:
+        if _event(row) not in seen:
+            seen.add(_event(row))
+            fixtures.append(row)
+        if len(fixtures) == TOP_SEARCH_K:
+            break
+    best = None
+    for n in range(1, legs_max + 1):
+        for combo in combinations(fixtures, n):
+            odds = math.prod(r['price'] for r in combo)
+            if not cfg.top_odds_target <= odds <= cfg.top_odds_max:
+                continue
+            key = (-math.prod(_confidence(r) for r in combo), abs(odds - cfg.top_odds_target), n,
+                   tuple(fixtures.index(r) for r in combo))
+            if best is None or key < best[0]:
+                best = (key, list(combo), odds)
+    return (best[1], best[2]) if best else None
+
+
 def select_top(rows, cfg, now_utc):
     candidates, rejected = [], Counter()
     for row in rows:
@@ -60,11 +111,16 @@ def select_top(rows, cfg, now_utc):
         if eid in events:
             rejected['duplicate_event'] += 1
             continue
-        if selected and odds * row['price'] > cfg.top_odds_max:
-            continue
+        if odds * row['price'] > cfg.top_odds_max:
+            continue                      # TOP_ODDS_MAX is a hard ceiling, for the first leg too
         selected.append(row)
         events.add(eid)
         odds *= row['price']
-    return selected, {'candidates': len(candidates), 'selected': len(selected), 'combined_odds': odds,
-                      'target_reached': bool(selected) and odds >= cfg.top_odds_target,
-                      'rejections': dict(rejected)}
+    diagnostics = {'candidates': len(candidates), 'selected': len(selected), 'combined_odds': odds,
+                   'target_reached': bool(selected) and odds >= cfg.top_odds_target,
+                   'rejections': dict(rejected)}
+    found = best_combination(ranked(candidates), cfg)
+    if found and [r['id'] for r in found[0]] != [r['id'] for r in selected]:
+        selected, odds = found
+        diagnostics.update(selected=len(selected), combined_odds=odds, target_reached=True, search='combination')
+    return selected, diagnostics

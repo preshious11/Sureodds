@@ -69,7 +69,8 @@ class OddsApiProvider(BaseProvider):
                  regions: Optional[List[str]] = None, max_leagues_per_sport: int = 8,
                  monthly_limit: int = 500, max_credits_per_cycle: int = 15,
                  reserve_credits: int = 50, min_keys_per_sport: int = 1,
-                 league_allowlist: Optional[List[str]] = None, price_mode: str = "median"):
+                 league_allowlist: Optional[List[str]] = None, price_mode: str = "median",
+                 settlement_reserve_credits: int = 0):
         self.key = api_key
         self.price_mode = price_mode
         self.budget = budget
@@ -95,6 +96,9 @@ class OddsApiProvider(BaseProvider):
         # persisted so the gate survives restarts. The bot never spends below
         # reserve_credits of the remaining balance.
         self.reserve_credits = max(0, reserve_credits)
+        # Credits above the reserve that only settlement (/scores) may spend: generation stops this much earlier, so
+        # a tight month can still grade what it published. 0 = one shared floor (the previous behaviour).
+        self.settlement_reserve_credits = max(0, settlement_reserve_credits)
         self.requests_remaining: Optional[int] = None
         self.last_refusal: Optional[str] = None
         self.requests_used: Optional[int] = None
@@ -177,17 +181,21 @@ class OddsApiProvider(BaseProvider):
                     return None
         return self.requests_remaining
 
-    def can_spend_credits(self, n: int) -> bool:
+    def can_spend_credits(self, n: int, purpose: str = "generation") -> bool:
         """True when ``n`` credits may be spent without dipping below
         ODDSAPI_RESERVE_CREDITS of the remaining balance (or, before any
-        header has been seen, without breaking the local monthly limit)."""
+        header has been seen, without breaking the local monthly limit).
+        Generation must also leave ODDSAPI_SETTLEMENT_RESERVE_CREDITS for
+        ``purpose="settlement"``."""
         remaining = self._remaining_credits()
+        floor = self.reserve_credits + (self.settlement_reserve_credits if purpose != "settlement" else 0)
         if remaining is None:
-            return self.budget.can_spend(self.name, n, monthly_limit=self.monthly_limit)
-        if remaining - n < self.reserve_credits:
-            log.warning("OddsAPI: x-requests-remaining=%d, reserve=%d - refusing to spend %d credits",
-                        remaining, self.reserve_credits, n)
-            self.last_refusal = (f"x-requests-remaining={remaining}, reserve={self.reserve_credits} "
+            limit = self.monthly_limit - (self.settlement_reserve_credits if purpose != "settlement" else 0)
+            return self.budget.can_spend(self.name, n, monthly_limit=max(1, limit) if self.monthly_limit else 0)
+        if remaining - n < floor:
+            log.warning("OddsAPI: x-requests-remaining=%d, reserve=%d (%s) - refusing to spend %d credits",
+                        remaining, floor, purpose, n)
+            self.last_refusal = (f"x-requests-remaining={remaining}, reserve={floor} "
                                  f"- refused to spend {n} credits")
             return False
         return True
@@ -612,7 +620,7 @@ class OddsApiProvider(BaseProvider):
         if stored is not None:                          # a run earlier today already paid for it
             self._scores_cache[sport_key] = stored
             return stored
-        if not self.can_spend_credits(self.SCORES_COST):
+        if not self.can_spend_credits(self.SCORES_COST, purpose="settlement"):
             self._scores_cache[sport_key] = None
             return None
         try:

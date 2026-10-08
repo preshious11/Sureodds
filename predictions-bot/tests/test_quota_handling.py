@@ -19,7 +19,9 @@ class FakeHttp(Http):
     def get(self, path, params=None):
         self.calls.append((path, params))
         if self.error:
-            raise ProviderError(self.error)
+            # like the real Http: an answered request carries its status ("400 from <url>: <body>")
+            status = int(self.error[:3]) if self.error[:3].isdigit() else None
+            raise ProviderError(self.error, status=status, body=self.error.split(": ", 1)[-1] if status else "")
         return self.result
 
 

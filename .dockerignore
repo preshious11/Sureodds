@@ -1,0 +1,67 @@
+# Build context for the repo-root Dockerfile, which needs ONLY predictions-bot/requirements.txt and the application
+# code (main.py, cli.py, the predbot package, tools/ and top-level operator scripts). Everything below is local state,
+# credentials or development clutter that must never be baked into an image layer.
+
+# ---- version control / editors / agent tooling (mcp.json holds a deployment credential) ----
+.git
+.gitignore
+**/.vscode
+**/.idea
+**/.kilo
+**/.kilocode
+**/.claude
+**/.cline
+**/.codex
+**/.cursor
+
+# ---- credentials (the container reads its configuration from the host's environment, never from a file) ----
+**/.env
+**/.env.*
+**/*.env
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/credentials*.json
+**/secrets*.json
+**/mcp.json
+
+# ---- runtime state: databases (one holds subscriber names), WAL/SHM journals, logs ----
+**/data
+**/*.db
+**/*.db-journal
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.sqlite3
+**/*.sqlite3-*
+**/*.log
+
+# ---- Python environments and caches ----
+**/.venv
+**/venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage
+**/htmlcov
+
+# ---- scratch / diagnostic output and reports ----
+**/_*.txt
+**/_*.py
+!**/__init__.py
+**/_*.db*
+**/*_diagnostic*.json
+**/*_output.txt
+**/*_REPORT.md
+
+# ---- tests are not part of the image (their fixtures include a replay database) ----
+predictions-bot/tests
+
+# ---- legacy / alternative deployment files ----
+**/Procfile
+**/railway.json
+**/docker-compose*.yml

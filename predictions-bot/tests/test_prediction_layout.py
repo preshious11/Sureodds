@@ -25,7 +25,7 @@ def _before_kickoff(monkeypatch):
                         lambda: datetime(2030, 6, 1, 6, 0, tzinfo=timezone.utc))
 
 
-def snapshot():
+def snapshot(**_read_only):
     def pick(name, price, tier):
         return PickRecord(home=name, away='Chelsea', label='Over 1.5 Goals',
                           sport='football', league='Hidden League', prob=.84,

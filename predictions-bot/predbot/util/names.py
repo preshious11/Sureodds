@@ -78,25 +78,245 @@ def strip_abbreviation(name: str) -> str:
 GENERIC_TAILS = {"state", "university", "college", "tech", "institute", "polytechnic", "city", "county"}
 
 
-def canonical_team(name: str, sport: str = "") -> str:
-    """A spelling-independent token for a team, used to build fixture keys and participant identity. Football keeps
-    the normalised name; US-style sports reduce to the nickname (the last word, "red sox"/"white sox" keep two) -
-    but only when that last word IS a nickname. A name that ends in a generic institutional word ("Ohio State",
-    "Kent State", "Texas A&M") keeps its full normalised form, otherwise every "<place> State" would be one team."""
-    if sport not in NICKNAME_SPORTS:
-        return normalize(name)
+#: The professional franchises whose nickname is UNIQUE within its league, with the place names a provider puts in
+#: front of it. Inside that league "LA Dodgers", "Los Angeles Dodgers" and "Dodgers" are one team. A name is reduced
+#: only when it is the nickname alone or one of THAT franchise's places + the nickname, so "Penn State Nittany Lions"
+#: or "Louisville Cardinals" never become a professional franchise. A last word is never an identity on its own:
+#: college teams share mascots ("Kentucky Wildcats" / "Arizona Wildcats") and European clubs share cities
+#: ("Maccabi Tel Aviv" / "Hapoel Tel Aviv"); reducing those to one word merged different teams into one.
+_LA = ("los angeles", "la")
+PRO_FRANCHISES = {
+    "nba": {"hawks": ("atlanta",), "celtics": ("boston",), "nets": ("brooklyn", "new jersey"), "hornets": ("charlotte",),
+            "bulls": ("chicago",), "cavaliers": ("cleveland",), "mavericks": ("dallas",), "nuggets": ("denver",),
+            "pistons": ("detroit",), "warriors": ("golden state",), "rockets": ("houston",), "pacers": ("indiana",),
+            "clippers": _LA, "lakers": _LA, "grizzlies": ("memphis",), "heat": ("miami",), "bucks": ("milwaukee",),
+            "timberwolves": ("minnesota",), "pelicans": ("new orleans",), "knicks": ("new york",),
+            "thunder": ("oklahoma city", "oklahoma"), "magic": ("orlando",), "76ers": ("philadelphia",),
+            "suns": ("phoenix",), "trail blazers": ("portland",), "blazers": ("portland",), "kings": ("sacramento",),
+            "spurs": ("san antonio",), "raptors": ("toronto",), "jazz": ("utah",), "wizards": ("washington",)},
+    "mlb": {"diamondbacks": ("arizona",), "braves": ("atlanta",), "orioles": ("baltimore",), "red sox": ("boston",),
+            "cubs": ("chicago",), "white sox": ("chicago",), "reds": ("cincinnati",), "guardians": ("cleveland",),
+            "rockies": ("colorado",), "tigers": ("detroit",), "astros": ("houston",), "royals": ("kansas city",),
+            "angels": _LA + ("anaheim", "los angeles anaheim"), "dodgers": _LA, "marlins": ("miami", "florida"),
+            "brewers": ("milwaukee",), "twins": ("minnesota",), "mets": ("new york",), "yankees": ("new york",),
+            "athletics": ("oakland", "sacramento", "las vegas"), "phillies": ("philadelphia",),
+            "pirates": ("pittsburgh",), "padres": ("san diego",), "giants": ("san francisco",),
+            "mariners": ("seattle",), "cardinals": ("st louis", "saint louis"), "rays": ("tampa bay", "tampa"),
+            "rangers": ("texas",), "blue jays": ("toronto",), "nationals": ("washington",)},
+    "nfl": {"cardinals": ("arizona",), "falcons": ("atlanta",), "ravens": ("baltimore",), "bills": ("buffalo",),
+            "panthers": ("carolina",), "bears": ("chicago",), "bengals": ("cincinnati",), "browns": ("cleveland",),
+            "cowboys": ("dallas",), "broncos": ("denver",), "lions": ("detroit",), "packers": ("green bay",),
+            "texans": ("houston",), "colts": ("indianapolis",), "jaguars": ("jacksonville",), "chiefs": ("kansas city",),
+            "raiders": ("las vegas", "oakland"), "chargers": _LA, "rams": _LA, "dolphins": ("miami",),
+            "vikings": ("minnesota",), "patriots": ("new england",), "saints": ("new orleans",), "giants": ("new york",),
+            "jets": ("new york",), "eagles": ("philadelphia",), "steelers": ("pittsburgh",), "49ers": ("san francisco",),
+            "seahawks": ("seattle",), "buccaneers": ("tampa bay",), "titans": ("tennessee",),
+            "commanders": ("washington",)},
+}
+PRO_NICKNAMES = {league: set(teams) for league, teams in PRO_FRANCHISES.items()}
+PRO_LEAGUE_OF_SPORT = {"basketball": "nba", "baseball": "mlb", "american_football": "nfl"}
+
+#: Tokens that never distinguish one club from another within a sport's naming ("Valencia Basket" is "Valencia"
+#: in basketball, "Bayer 04 Leverkusen" is "Bayer Leverkusen"). Digits are treated the same way.
+_AFFIX_NOISE = {"calcio", "football", "futbol", "fussball", "basket", "basketball", "baloncesto", "basquet",
+                "bc", "kk", "bk", "hc", "bb", "pallacanestro", "team"}
+
+#: Tokens that qualify a SCHOOL rather than name a mascot: "Michigan" and "Michigan State", "Texas" and "Texas A&M",
+#: "Kentucky" and "Western Kentucky" are different schools.
+_SCHOOL_QUALIFIERS = GENERIC_TAILS | {"north", "south", "east", "west", "northern", "southern", "eastern",
+                                     "western", "central", "upstate", "international", "christian", "saint", "st"}
+
+
+def _pro_league(sport: str, competition: str):
+    """The professional league whose curated nicknames apply: the event's competition when known (``None`` for
+    any other competition), else the sport's single professional league."""
+    if competition:
+        return competition if competition in PRO_NICKNAMES and PRO_LEAGUE_OF_SPORT.get(sport) == competition else None
+    return PRO_LEAGUE_OF_SPORT.get(sport)
+
+
+def _franchise(name: str, league: str) -> str:
+    """The franchise key when ``name`` is a curated franchise of ``league`` - the nickname alone, or one of that
+    franchise's places (a leading city code is dropped first: "LA", "BOS") followed by it - else "". The key keeps
+    the form earlier releases stored (participant ids and fixture keys derive from it): the last word, except
+    "red sox" / "white sox" which need both."""
     tokens = normalize(strip_abbreviation(name)).split()
-    if not tokens:
-        return normalize(name)
-    if len(tokens) > 1 and (tokens[-1] in GENERIC_TAILS or len(tokens[-1]) == 1):
-        return " ".join(tokens)
-    return " ".join(tokens[-2:]) if tokens[-1] == "sox" and len(tokens) > 1 else tokens[-1]
+    franchises = PRO_FRANCHISES[league]
+    for width in (2, 1):
+        nickname = " ".join(tokens[-width:]) if len(tokens) >= width else ""
+        if nickname in franchises:
+            place = " ".join(tokens[:-width])
+            if place and place not in franchises[nickname]:
+                return ""
+            return " ".join(tokens[-2:]) if tokens[-1] == "sox" else tokens[-1]
+    return ""
+
+
+def canonical_team(name: str, sport: str = "", competition: str = "") -> str:
+    """A spelling-independent identity token for a team, used for fixture keys and participant identity.
+
+    The normalised full name everywhere, except a curated professional franchise nickname (NBA/MLB/NFL, unique
+    within the league): "BOS Red Sox" and "Boston Red Sox" are "red sox". ``competition`` (a canonical competition
+    id) scopes that: inside NCAA or EuroLeague nothing is reduced, so "LSU Tigers" never becomes MLB's "tigers".
+    Without a competition the sport's professional league is assumed."""
+    if sport in NICKNAME_SPORTS:
+        league = _pro_league(sport, competition)
+        if league:
+            nickname = _franchise(name, league)
+            if nickname:
+                return nickname
+    return normalize(name)
+
+
+def _osa(a: str, b: str) -> int:
+    """Optimal-string-alignment edit distance (adjacent transpositions count once)."""
+    d = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
+    for i in range(len(a) + 1):
+        d[i][0] = i
+    for j in range(len(b) + 1):
+        d[0][j] = j
+    for i in range(1, len(a) + 1):
+        for j in range(1, len(b) + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1)
+    return d[len(a)][len(b)]
+
+
+def _is_subsequence(short: str, long_: str) -> bool:
+    it = iter(long_)
+    return all(ch in it for ch in short)
+
+
+def _token_match(x: str, y: str):
+    """'exact', 'typo' (one edit in a long word: "olympiakos"/"olympiacos"), 'abbr' ("utd"/"united", "k"/"karolina")
+    or None. "niger"/"nigeria" and "austria"/"australia" are two edits apart, so different words."""
+    if x == y:
+        return "exact"
+    if len(x) >= 6 and len(y) >= 6 and _osa(x, y) <= 1:
+        return "typo"
+    short, long_ = sorted((x, y), key=len)
+    if len(short) <= 4 and len(long_) >= len(short) + 2 and short[0] == long_[0] and _is_subsequence(short, long_):
+        return "abbr"
+    return None
+
+
+def _aligned(ta, tb) -> bool:
+    """Every word pairs with a word of the other name, at least one pair is exact, and an abbreviation is only
+    trusted alongside another word (a lone "man" is not "manchester")."""
+    kinds = [_token_match(x, y) for x, y in zip(ta, tb)]
+    if any(k is None for k in kinds) or "exact" not in kinds and "typo" not in kinds:
+        return False
+    return "abbr" not in kinds or len(kinds) >= 2
+
+
+def _mascot(token: str) -> bool:
+    return len(token) >= 3 and not token.isdigit() and token not in _SCHOOL_QUALIFIERS and token not in _RESERVE_SUFFIXES
+
+
+def same_participant(a: str, b: str, sport: str = "", competition: str = "") -> bool:
+    """Strict identity test: do two spellings name the SAME participant? Used for identity and fixture merging,
+    where a wrong "yes" creates a fixture that does not exist, so plausible-but-different names are NO:
+    Nigeria/Niger, Austria/Australia, Real Madrid/Real Madrid Castilla, Kentucky/Western Kentucky,
+    Maccabi Tel Aviv/Hapoel Tel Aviv, Karolina/Kristyna Pliskova.
+
+    Yes for: the same canonical key (incl. a curated pro franchise), word order ("Pliskova K." / "Karolina
+    Pliskova"), generic affixes and digits ("Bayer 04 Leverkusen"), one typo in a long word, abbreviations beside
+    an exact word ("Sheffield Weds"), and - in US-style sports, outside the pro leagues - a school name plus its
+    mascot ("Ohio State" / "Ohio State Buckeyes"), never a school qualifier ("Michigan" / "Michigan State")."""
+    ka, kb = canonical_team(a, sport, competition), canonical_team(b, sport, competition)
+    if not ka or not kb:
+        return False
+    if ka == kb:
+        return True
+    ta, tb = ka.split(), kb.split()
+    diff = set(ta) ^ set(tb)
+    if diff and diff <= _RESERVE_SUFFIXES:
+        return False
+    if (set(ta) & _RESERVE_SUFFIXES) != (set(tb) & _RESERVE_SUFFIXES):
+        return False
+    fa = [t for t in ta if t not in _AFFIX_NOISE and not t.isdigit()]
+    fb = [t for t in tb if t not in _AFFIX_NOISE and not t.isdigit()]
+    if not fa or not fb:
+        return False
+    if sorted(fa) == sorted(fb):
+        return True
+    if sport in NICKNAME_SPORTS and len(fa) != len(fb):
+        short, long_ = (fa, fb) if len(fa) < len(fb) else (fb, fa)
+        if long_[:len(short)] == short and all(_mascot(t) for t in long_[len(short):]):
+            return True
+    if len(fa) != len(fb):
+        return False
+    return _aligned(fa, fb) or _aligned(sorted(fa), sorted(fb))
+
+
+def _significant(name: str):
+    return {t for t in normalize(name).split() if len(t) >= 4 and t not in _AFFIX_NOISE
+            and t not in _SCHOOL_QUALIFIERS and not t.isdigit()}
+
+
+def related_names(a: str, b: str, sport: str = "", competition: str = "") -> bool:
+    """The minimum NAME evidence before a spelling may be learned as an alias from fixture context (same
+    competition, same known opponent, same kickoff): a strict match, a shared significant word ("Troyes" /
+    "ESTAC Troyes"), a shared stem ("Lyon" / "Olympique Lyonnais") or close spelling. Context alone - an unknown
+    name playing a known club's opponent - is never enough: "Valencia Basket" is not "Milano"."""
+    if same_participant(a, b, sport, competition):
+        return True
+    sa, sb = _significant(a), _significant(b)
+    if sa & sb:
+        return True
+    for x in sa:
+        for y in sb:
+            n = len(x) if x == y else next((i for i, (p, q) in enumerate(zip(x, y)) if p != q), min(len(x), len(y)))
+            if n >= 4 and n >= 0.6 * min(len(x), len(y)):
+                return True
+    return similarity(a, b) >= 0.6
+
+
+#: Words that make a different team of the same base name: reserve / youth / women's sides. Kept apart from
+#: _RESERVE_SUFFIXES (used by participant identity) so this veto cannot change identity keys.
+_DISTINCT_SIDES = _RESERVE_SUFFIXES | {"castilla", "promesas", "women", "womens", "w", "ladies", "femenino",
+                                       "feminin", "femminile", "frauen", "u17", "u16"}
+#: School qualifiers that make a different college ("Western Kentucky", "Michigan State", "Texas Tech"). "city" and
+#: "county" are left out on purpose: "Leicester" and "Leicester City" are one club.
+_DISTINCT_QUALIFIERS = (_SCHOOL_QUALIFIERS - {"city", "county", "saint", "st"}) | {"a", "m"}
+
+
+def _side_tokens(name: str) -> List[str]:
+    tokens = ["saint" if t == "st" else t for t in normalize(name).split()]
+    return [t for t in tokens if t not in _AFFIX_NOISE and not t.isdigit()]
+
+
+def distinct_participants(a: str, b: str, sport: str = "") -> bool:
+    """True when two names provably belong to DIFFERENT teams even though a fuzzy matcher may find them alike:
+    a reserve / women's side of the same club ("Real Madrid" / "Real Madrid Castilla"), a different school
+    ("Kentucky" / "Western Kentucky", "Michigan" / "Michigan State", "Texas" / "Texas A&M"), or two different
+    single words that are not a one-letter typo of each other ("Nigeria" / "Niger", "Austria" / "Australia")."""
+    if same_participant(a, b, sport):
+        return False
+    ta, tb = _side_tokens(a), _side_tokens(b)
+    if not ta or not tb:
+        return False
+    diff = set(ta) ^ set(tb)
+    if diff & _DISTINCT_SIDES or diff & _DISTINCT_QUALIFIERS:
+        return True
+    if len(ta) == 1 and len(tb) == 1:
+        return _token_match(ta[0], tb[0]) not in ("exact", "typo")
+    return False
 
 
 def same_team(a: str, b: str, threshold: float = 0.82, sport: str = "") -> bool:
-    """Fuzzy same-club test. ``sport`` (optional) switches on the US-sports rules: city abbreviations are
-    stripped, and when one name's words are the END of the other's ("Rangers" / "Texas Rangers",
-    "Athletics" / "Oakland Athletics") they are the same team. The threshold is never lowered."""
+    """Lenient same-club test for matching RESULT feeds to a known fixture (settlement, live orientation): the
+    strict ``same_participant`` first, then fuzzy spelling. ``sport`` (optional) switches on the US-sports rules:
+    city abbreviations are stripped, and when one name's words are the END of the other's ("Rangers" / "Texas
+    Rangers", "Athletics" / "Oakland Athletics") they are the same team. The threshold is never lowered, and no
+    fuzzy rule may match two names that ``distinct_participants`` proves different (Nigeria/Niger,
+    Kentucky/Western Kentucky, Real Madrid/Castilla)."""
+    if same_participant(a, b, sport):
+        return True
+    if distinct_participants(a, b, sport):
+        return False
     if similarity(a, b, threshold) >= threshold:
         return True
     if sport in NICKNAME_SPORTS:

@@ -231,13 +231,15 @@ def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram],
         dry_run: bool = False, service=None):
     from predbot.cache.fetcher import UnifiedFetcher
     from predbot.bot.broadcast import picks_messages, picks_text
+    from predbot.bot import callbacks, pagination
     service = service or UnifiedFetcher(chain, db, cfg)
     # dry_run must be genuinely read-only: it used to skip only the Telegram send
     # while still writing the snapshot and picks that /daily serves.
     snapshot = service.get_daily_snapshot(force_refresh=force, persist=not dry_run, scheduled=True)
-    if not snapshot.total_picks():
+    evaluated = pagination.predictions_evaluated(snapshot)
+    if not snapshot.total_picks() and not evaluated:
         return snapshot
-    messages = picks_messages(snapshot, cfg.timezone)
+    messages = picks_messages(snapshot, cfg.timezone, include_empty=evaluated)
     if not messages:
         return snapshot
     if dry_run:
@@ -249,16 +251,32 @@ def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram],
         # ``force`` only refreshes the snapshot (regeneration/recovery); it never reposts a card that is
         # already recorded in ``posts`` - regeneration and reposting are separate concepts and there is
         # deliberately no repost path here.
-        for kind, text, _markup in messages:
-            if db.post_done(kind, snapshot.date):
-                continue
-            mid = tg.send(text)
-            if not mid:
-                break
-            with db.transaction():
-                db.mark_post(kind, snapshot.date, mid)
-                # Keep the existing publication/freeze marker and also record
-                # which destination actually received this collection. Legacy
-                # posts have no destination; never infer one or force a repost.
-                db.mark_delivery(f"community_{kind}", snapshot.date, str(tg.chat_id))
+        # Shared across services/DB handles for this file. Receipt check, send and
+        # receipt commit are serialized, without holding the generation lock.
+        with db.publication_lock:
+            destination = str(tg.chat_id)
+            for kind, text, _markup in messages:
+                community_done = db.delivery_done(f"community_{kind}", snapshot.date, destination)
+                legacy_done = db.post_done(kind, snapshot.date)
+                log.info('Community publication check | day=%s | kind=%s | destination=%s | '
+                         'community_receipt=%s | legacy_receipt=%s | db=%s',
+                         snapshot.date, kind, destination, community_done, legacy_done, os.path.abspath(db.path))
+                if community_done or legacy_done:
+                    continue
+                markup = None
+                if kind == 'picks_top' and text == pagination.empty_view_message(snapshot, 'top', cfg.timezone):
+                    username = tg.get_bot_username()
+                    if not username:
+                        log.warning('Community empty Top publication deferred: bot username unavailable')
+                        break  # never publish a dead-end empty card; leave it retryable
+                    markup = callbacks.top_empty_markup(username)
+                mid = tg.send(text, reply_markup=markup) if markup else tg.send(text)
+                if not mid:
+                    log.warning('Community publication failed | day=%s | kind=%s; remains retryable', snapshot.date, kind)
+                    break
+                with db.transaction():
+                    db.mark_post(kind, snapshot.date, mid)
+                    db.mark_delivery(f"community_{kind}", snapshot.date, destination)
+                log.info('Community publication recorded | day=%s | kind=%s | destination=%s | message_id=%s',
+                         snapshot.date, kind, destination, mid)
     return snapshot

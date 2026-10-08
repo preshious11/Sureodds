@@ -95,10 +95,10 @@ def test_picks_are_listed_earliest_kickoff_first():
     assert card.index("Early") < card.index("Mid") < card.index("Late")
 
 
-def test_empty_day_has_a_placeholder_and_no_combined_odds():
+def test_evaluated_empty_day_has_honest_copy_and_no_combined_odds():
     card = picks_message([], [], DAY, WAT)
 
-    assert "Predictions being analyzed" in card
+    assert "No selections qualified today." in card
     assert "Combined odds" not in card
 
 

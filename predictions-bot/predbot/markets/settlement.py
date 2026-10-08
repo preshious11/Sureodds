@@ -1,7 +1,25 @@
 """Grade a pick against a final result.
 
 Outcomes: won | lost | push | half_won | half_lost | void | pending
-`pending` means the data needed is not available yet (e.g. corner counts).
+`pending` means the data needed is not available yet (e.g. corner counts). A pick still pending at its settlement
+deadline is stored as VOID with reason "settlement deadline expired" and reported as UNRESOLVED (jobs/stats.py).
+
+Quarter lines (x.25 / x.75, totals, handicaps and the total leg of result & total) split into two half bets, so the
+outcome can be half_won / half_lost; stats count a half as its side for the hit rate and pay half the stake in ROI.
+
+Regulation vs overtime. ``full`` includes overtime / extra innings in every sport that has it; ``reg`` (a
+regulation-only market) is graded only on a score known to be regulation (``MatchResult.score``):
+
+* ESPN: ``full`` includes OT; ``reg`` and the overtime flag come from the period linescores (4 quarters, 2 halves in
+  NCAAB, 9 innings). Without complete linescores regulation is unknown.
+* EuroLeague: ``full`` includes OT; ``reg`` is the sum of the four quarters.
+* SportsGameOdds: reports ``reg`` and ``game`` separately; ``full`` is derived from ``reg`` only when regulation did
+  not end level (overtime only follows a tie).
+* The Odds API ``/scores``: final score only - a regulation-only market cannot be graded from it.
+* football-data.org / history: football only, where ``full`` is the 90 minutes and ``reg`` is graded on it.
+
+A regulation market without a regulation score stays pending and, at its deadline, is reported unresolved - never
+graded on an overtime-inclusive score.
 """
 from __future__ import annotations
 
@@ -173,11 +191,11 @@ def grade(ml: MarketLine, res: MatchResult, sport: str = "football") -> str:
         t, ou = ml.selection.split("_", 1)
         if ml.line is None:
             return VOID
-        r_ok = _result_of(h, a) == t
-        t_res = _cmp_line(h + a, ml.line, ou)
-        if not r_ok or t_res == LOST:
+        if _result_of(h, a) != t:
             return LOST
-        return t_res if t_res in (WON, PUSH) else LOST
+        # the result leg is won: the bet is exactly the total leg - including a quarter line's half win / half
+        # loss (it used to be flattened to a full LOSS) and a whole line's push
+        return _cmp_line(h + a, ml.line, ou)
     if m == "result_btts":
         t, yn = ml.selection.split("_", 1)
         both = h > 0 and a > 0

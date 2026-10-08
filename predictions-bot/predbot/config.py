@@ -20,11 +20,15 @@ KNOWN_KEYS: Dict[str, Tuple[Any, Any]] = {}
 #: Providers that can appear in PROVIDER_ORDER (football_data is results-only).
 KNOWN_PROVIDERS = frozenset({"oddsapi", "sharpapi", "sportsgameodds"})
 
-_SECRET_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "URL", "DSN")
+_SECRET_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "URL", "DSN", "IDENTITY", "CREDENTIAL", "AUTH")
+#: account identifiers are not credentials, but they say who runs the bot and where it posts: never logged either
+#: (TELEGRAM_CHAT_ID, TELEGRAM_ADMIN_IDS, ...). Matched as name suffixes so PROVIDER_ORDER-style names stay visible.
+_IDENTIFIER_SUFFIXES = ("_ID", "_IDS", "_CHAT", "_EMAIL", "_PHONE")
 
 
 def is_secret(name: str) -> bool:
-    return any(m in name.upper() for m in _SECRET_MARKERS)
+    upper = name.upper()
+    return any(m in upper for m in _SECRET_MARKERS) or upper.endswith(_IDENTIFIER_SUFFIXES)
 
 
 def mask(name: str, value: Any) -> str:
@@ -172,6 +176,10 @@ class Config:
     #: Odds API's x-requests-remaining response header (the authoritative
     #: quota signal), so a handful of picks never eats the whole month.
     oddsapi_reserve_credits: int = field(default_factory=lambda: _int("ODDSAPI_RESERVE_CREDITS", 80))
+    #: Credits ABOVE that reserve kept for settlement's /scores calls only: generation stops this much earlier.
+    #: 0 (default) keeps one shared floor, i.e. generation behaves exactly as before.
+    oddsapi_settlement_reserve_credits: int = field(
+        default_factory=lambda: _int("ODDSAPI_SETTLEMENT_RESERVE_CREDITS", 0))
     #: Each allowed Odds API sport (football, tennis) that has >= 1 event in the
     #: window is guaranteed this many odds keys per cycle before the remaining
     #: credits are ranked by event count, so one busy sport can't starve another.
@@ -340,9 +348,9 @@ class Config:
     max_player_props: int = field(default_factory=lambda: _int("MAX_PLAYER_PROPS", 0))
     #: Daily-list diversity quotas, so one market (e.g. corners totals), one
     #: sport or one league can never take over the single daily ticket. Shares
-    #: are of daily_target. The market / sport / league shares are relaxed only when the qualifying pool cannot
-    #: otherwise reach DAILY_COMBINED_MIN_ODDS (and that is recorded in the selection diagnostics); the stat and
-    #: period shares never are. No QUALITY gate (probability floor, book coverage, edge) is ever relaxed.
+    #: are of daily_target. They are never relaxed - not even when the qualifying pool then cannot reach
+    #: DAILY_COMBINED_MIN_ODDS (the ticket is posted below the target instead) - and no QUALITY gate
+    #: (probability floor, book coverage, edge) is ever relaxed either. See predbot/selection/daily.py.
     daily_max_market_share: float = field(default_factory=lambda: _float("DAILY_MAX_MARKET_SHARE", 0.25))
     #: Cross-market cap on one stat ("corners" can appear as totals AND 1X2
     #: result3 lines; the (market, stat) cap above sees them as two markets).

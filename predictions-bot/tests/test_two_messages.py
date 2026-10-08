@@ -84,7 +84,7 @@ def test_an_empty_top_says_so_and_the_daily_still_goes_out(db):
     tg = FakeTG()
     broadcast.deliver_picks(db, CFG, tg, snap, now=NOW)
     assert len(tg.sends) == 2
-    assert tg.sends[0]["text"] == f"🔥 TOP PICKS · Sat 1 Jun\n{no_selection_message('UTC')}"
+    assert tg.sends[0]["text"] == "🔥 TOP PICKS · Sat 1 Jun\nNo Top Picks for today.\n\nSee other picks:"
     assert tg.sends[1]["text"].startswith("📋 DAILY PICKS") and "3 picks" in tg.sends[1]["text"]
 
 

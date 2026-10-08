@@ -1,0 +1,176 @@
+{
+  "_provenance": "Sanitized reconstruction of the first real SportyBet share-code response (2026-10-08, 1 live GET, HTTP 200 JSON, 4 legs). The diagnostic stores no raw payload, so this rebuilds the envelope the adapter parsed successfully. Leg 4 (Plzen U19 2nd Half Over 1.5 @ 1.54, total=1.5) and the leg-1 participants/outcome (Werner, Caroline vs Blinkova, Anna; Winner; Home) are from the run. Market/outcome ids, kickoffs, odds and the names for legs 2-3, the leg-1 competition and the contents of the ticket object (only its presence was observed) are placeholders. No share code, user or account data.",
+  "bizCode": 10000,
+  "isAvailable": true,
+  "message": "0#0",
+  "data": {
+    "shareCode": "REDACTED",
+    "deadline": 1906570800000,
+    "outcomes": [
+      {
+        "eventId": "sr:match:100000001",
+        "estimateStartTime": 1906556400000,
+        "homeTeamName": "Werner, Caroline",
+        "awayTeamName": "Blinkova, Anna",
+        "sport": {
+          "id": "sr:sport:5",
+          "name": "Tennis",
+          "category": {
+            "id": "sr:category:6",
+            "name": "WTA",
+            "tournament": {
+              "id": "sr:tournament:1",
+              "name": "WTA Placeholder Open, Women Singles"
+            }
+          }
+        },
+        "markets": [
+          {
+            "id": "186",
+            "specifier": "",
+            "desc": "Winner",
+            "status": 0,
+            "outcomes": [
+              {
+                "id": "4",
+                "odds": "1.80",
+                "desc": "Home",
+                "isActive": 1
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "eventId": "sr:match:100000002",
+        "estimateStartTime": 1906560000000,
+        "homeTeamName": "Placeholder FC",
+        "awayTeamName": "Example United",
+        "sport": {
+          "id": "sr:sport:1",
+          "name": "Football",
+          "category": {
+            "id": "sr:category:1",
+            "name": "England",
+            "tournament": {
+              "id": "sr:tournament:2",
+              "name": "Premier League"
+            }
+          }
+        },
+        "markets": [
+          {
+            "id": "1",
+            "specifier": "",
+            "desc": "1X2",
+            "status": 0,
+            "outcomes": [
+              {
+                "id": "1",
+                "odds": "2.05",
+                "desc": "Home",
+                "isActive": 1
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "eventId": "sr:match:100000003",
+        "estimateStartTime": 1906563600000,
+        "homeTeamName": "Sample Player",
+        "awayTeamName": "Test Opponent",
+        "sport": {
+          "id": "sr:sport:5",
+          "name": "Tennis",
+          "category": {
+            "id": "sr:category:3",
+            "name": "ATP",
+            "tournament": {
+              "id": "sr:tournament:3",
+              "name": "ATP Placeholder, Men Singles"
+            }
+          }
+        },
+        "markets": [
+          {
+            "id": "186",
+            "specifier": "",
+            "desc": "Winner",
+            "status": 0,
+            "outcomes": [
+              {
+                "id": "5",
+                "odds": "1.65",
+                "desc": "Away",
+                "isActive": 1
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "eventId": "sr:match:100000004",
+        "estimateStartTime": 1906567200000,
+        "homeTeamName": "FC Viktoria Plzen",
+        "awayTeamName": "Dukla Prague",
+        "sport": {
+          "id": "sr:sport:1",
+          "name": "Football",
+          "category": {
+            "id": "sr:category:18",
+            "name": "Czech Republic",
+            "tournament": {
+              "id": "sr:tournament:4",
+              "name": "U19 1. Liga"
+            }
+          }
+        },
+        "markets": [
+          {
+            "id": "90",
+            "specifier": "total=1.5",
+            "desc": "2nd Half - Over/Under",
+            "status": 0,
+            "outcomes": [
+              {
+                "id": "12",
+                "odds": "1.54",
+                "desc": "Over 1.5",
+                "isActive": 1
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "ticket": {
+      "selections": [
+        {
+          "eventId": "sr:match:100000001",
+          "marketId": "186",
+          "specifier": "",
+          "outcomeId": "4"
+        },
+        {
+          "eventId": "sr:match:100000002",
+          "marketId": "1",
+          "specifier": "",
+          "outcomeId": "1"
+        },
+        {
+          "eventId": "sr:match:100000003",
+          "marketId": "186",
+          "specifier": "",
+          "outcomeId": "5"
+        },
+        {
+          "eventId": "sr:match:100000004",
+          "marketId": "90",
+          "specifier": "total=1.5",
+          "outcomeId": "12"
+        }
+      ]
+    }
+  }
+}

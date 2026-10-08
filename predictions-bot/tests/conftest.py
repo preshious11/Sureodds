@@ -57,3 +57,12 @@ def _sgo_origin_is_scheduled(monkeypatch):
     """cli.main() / the diagnose scripts tag SGO requests via PREDBOT_SGO_ORIGIN; a test that runs one must not leave
     that behind for the next test (manual/diagnostic origins are throttled earlier by the quota policy)."""
     monkeypatch.delenv("PREDBOT_SGO_ORIGIN", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _worker_is_running():
+    """main.main() requests a process-wide shutdown on exit; every test starts with a running worker."""
+    from predbot.util import lifecycle
+    lifecycle.reset()
+    yield
+    lifecycle.reset()

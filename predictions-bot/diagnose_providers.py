@@ -1,6 +1,9 @@
 """Provider diagnostic tool for the prediction system.
 
-READ CACHE ONLY by default: ``python diagnose_providers.py --today``.
+READ CACHE ONLY by default: ``python diagnose_providers.py --today`` makes ZERO provider requests - catalogues and
+league lists come from what the bot already stored in SQLite (they are billed: SGO charges one object per league
+listed). Only ``--live`` builds the provider clients and may ask a provider (bounded for cost, attributed to the
+diagnostic budget, which SGO switches off at 50% usage).
 
 For each active API provider, shows:
   - status (SUCCESS/EMPTY/PARTIAL/FAILED per sport)
@@ -56,8 +59,55 @@ def _load_db(cfg):
 # ----------------------------------------------------------------------------
 # Provider capability discovery
 # ----------------------------------------------------------------------------
-def get_provider_info(cfg: Config, db) -> List[Dict]:
-    """Gather provider capability and cache status for all enabled providers."""
+#: config attribute holding each provider's key (a configured key = "enabled", decided without building a client)
+PROVIDER_KEYS = {"oddsapi": "odds_api_key", "sharpapi": "sharpapi_key", "sportsgameodds": "sgo_key"}
+
+
+def _cached_access(name: str, db) -> Dict:
+    """What the bot last learned about this key's reach, from SQLite only (no request)."""
+    if db is None:
+        return {"sports_accessible": []}
+    if name == "sportsgameodds":
+        try:
+            doc = json.loads(db.get_kv("sgo:leagues") or "{}")
+        except ValueError:
+            doc = {}
+        return {"sports_accessible": sorted(doc.get("ids", [])), "catalog_fetched_at": doc.get("at", ""),
+                "catalog_source": "cached" if doc else "not cached (use --live to fetch)"}
+    try:
+        raw = db.get_kv(CAPABILITY_KEY_PREFIX + name)
+        catalog = json.loads(raw) if raw else None
+    except ValueError:
+        catalog = None
+    if not catalog:
+        return {"sports_accessible": [], "catalog_source": "not cached (use --live to fetch)"}
+    try:
+        from predbot.providers.capabilities import supported_sports, unavailable_sports
+        return {"sports_accessible": [s["key"] for s in supported_sports(catalog)],
+                "discovered_unsupported": [{"sport": k, "events": v} for k, v in unavailable_sports(catalog).items()],
+                "catalog_fetched_at": catalog.get("fetched_at", ""), "catalog_source": "cached"}
+    except Exception as e:  # noqa: BLE001 - a malformed cache row is reported, not fatal
+        return {"sports_accessible": [], "catalog_error": type(e).__name__, "catalog_source": "cached (unreadable)"}
+
+
+def get_provider_info(cfg: Config, db, live: bool = False) -> List[Dict]:
+    """Gather provider capability and cache status for all enabled providers.
+
+    Default: SQLite only - no provider client is built and nothing is requested. ``live``: the clients are built and
+    a catalogue the bot has not cached may be fetched (billed)."""
+    if not live:
+        info = []
+        for name in cfg.provider_order:
+            if not getattr(cfg, PROVIDER_KEYS.get(name, ""), ""):
+                info.append({"provider": name, "api_key_enabled": False, "sports_accessible": [],
+                             "cache_status": "no_api_key", "events": 0, "markets": 0, "outcomes": 0,
+                             "predictions": 0})
+                continue
+            entry = _provider_cache_status(name, db)
+            entry.update(_cached_access(name, db))
+            entry.update(provider=name, api_key_enabled=True, key_configured=True)
+            info.append(entry)
+        return info
     from predbot.providers.chain import build_providers
     providers = build_providers(cfg, db) if db else {}
     info = []
@@ -356,6 +406,7 @@ def show_trace(cfg: Config, db):
     if db is None:
         print("  No database available.")
         return
+    from predbot.util.timeutil import to_local, utcnow
     cache_key = f"daily_predictions:{cfg.timezone}:{to_local(utcnow(), cfg.timezone).date().isoformat()}"
     rows = db.query("SELECT * FROM prediction_cache WHERE cache_key=?", (cache_key,))
     if not rows:
@@ -415,13 +466,13 @@ def show_trace(cfg: Config, db):
 # ----------------------------------------------------------------------------
 # Final report
 # ----------------------------------------------------------------------------
-def final_report(cfg: Config, db):
+def final_report(cfg: Config, db, live: bool = False, providers: Optional[List[Dict]] = None):
     """Generate the complete final report."""
     print("\n" + "=" * 80)
     print("FINAL REPORT")
     print("=" * 80)
 
-    providers = get_provider_info(cfg, db)
+    providers = providers if providers is not None else get_provider_info(cfg, db, live=live)
 
     print("\n--- ACTIVE PROVIDERS ---")
     for info in providers:
@@ -497,7 +548,7 @@ def final_report(cfg: Config, db):
 # ----------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------
-def main():
+def main(argv: Optional[List[str]] = None):
     parser = argparse.ArgumentParser(description="Provider diagnostic tool for the prediction system")
     parser.add_argument("--today", action="store_true", default=True,
                         help="Show cached data for today (read cache only, no API calls)")
@@ -507,7 +558,7 @@ def main():
                         help="Show full data trace per sport")
     parser.add_argument("--report", action="store_true",
                         help="Show full final report")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     cfg = _load_config()
@@ -520,14 +571,16 @@ def main():
     print(f"API keys: SGO={'YES' if cfg.sgo_key else 'NO'}, SharpAPI={'YES' if cfg.sharpapi_key else 'NO'}, "
           f"OddsAPI={'YES' if cfg.odds_api_key else 'NO'}")
 
-    providers = get_provider_info(cfg, db)
+    print("Mode: " + ("LIVE - provider requests allowed (bounded, attributed to diagnostics)" if args.live
+                      else "read-only - local SQLite only, zero provider requests (pass --live to query providers)"))
+    providers = get_provider_info(cfg, db, live=args.live)
     print(f"\nEnabled providers: {[p['provider'] for p in providers if p.get('api_key_enabled')]}")
 
     if args.trace or args.report:
         show_trace(cfg, db)
 
     if args.report or args.today:
-        final_report(cfg, db)
+        final_report(cfg, db, live=args.live, providers=providers)
     else:
         show_today_cache(cfg, db)
         show_purpose_matrix()

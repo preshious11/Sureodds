@@ -160,11 +160,23 @@ def _retry_until(snapshot: DailySnapshot) -> str:
     return f" until {until}" if until else ""
 
 
+def predictions_evaluated(snapshot: DailySnapshot) -> bool:
+    """A completed evaluation can have partial provider coverage and zero Top picks."""
+    generation = snapshot.generation or {}
+    if generation.get('reason') in ('before_post_time', 'generating', 'awaiting scheduled fetch'):
+        return False
+    return snapshot.status == 'COMPLETE' or bool(snapshot.total_picks()) or 'top' in generation
+
+
 def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> str:
     if (snapshot.generation or {}).get("reason") == "before_post_time":
         return f"📋 Today's picks are ready at {snapshot.generation.get('ready_at', 'the scheduled time')}."
     if (snapshot.generation or {}).get("reason") == "generating":
         return "📋 Today's picks are being generated — try again in a minute."
+    if (snapshot.generation or {}).get('reason') == 'awaiting scheduled fetch':
+        return "📋 Today's predictions have not been generated yet."
+    if view == VIEW_TOP and predictions_evaluated(snapshot):
+        return picks_card([], snapshot.date, TOP_TITLE)
     if snapshot.all_predictions and view != VIEW_ALL:
         if view == VIEW_TOP:
             return f'There are no top picks for today. {len(snapshot.all_predictions)} All Predictions are available in /all.'

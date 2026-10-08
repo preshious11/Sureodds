@@ -83,7 +83,7 @@ def _decode_result(payload):
         return None
     return MatchResult(data["status"], {k: tuple(v) for k, v in data.get("scores", {}).items()},
                        {(stat, period): tuple(value) for stat, period, value in data.get("stats", [])},
-                       data.get("odd_scores", {}), data.get("source", ""))
+                       data.get("odd_scores", {}), data.get("source", ""), data.get("overtime"))
 
 
 def stored_result(r, db: Database) -> Optional[MatchResult]:
@@ -117,7 +117,9 @@ def stored_result(r, db: Database) -> Optional[MatchResult]:
             h = history[0]
             scores = {"full": (h["home_goals"], h["away_goals"])}
             if h["home_ht"] is not None and h["away_ht"] is not None:
-                scores["half1"] = (h["home_ht"], h["away_ht"])
+                # the grader's period names: "1h" is the half-time score, "2h" the second half alone
+                scores["1h"] = (h["home_ht"], h["away_ht"])
+                scores["2h"] = (h["home_goals"] - h["home_ht"], h["away_goals"] - h["away_ht"])
             if h["home_id"] != r["home_id"]:
                 scores = {key: (value[1], value[0]) for key, value in scores.items()}
             result = MatchResult("final", scores, source=h["source"])
@@ -235,6 +237,29 @@ def _pid(row, column: str) -> str:
         return ""
 
 
+def result_keys(sport: str, home: str, away: str, when: datetime, home_id: str = "", away_id: str = ""):
+    """The ``results_seen`` keys of one real match: the legacy name key (as each source spells the teams) and, when
+    both canonical participants are known, a CANONICAL key - the same for every source, spelling and orientation.
+    One day per key: a same-day rematch of the same pair (a doubleheader) is learned once, never twice."""
+    day = when.strftime("%Y%m%d")
+    keys = [f"{sport}|{home}|{away}|{day}"]
+    if home_id and away_id and home_id != away_id:
+        low, high = sorted((home_id, away_id))
+        keys.append(f"elo|{sport}|{low}|{high}|{day}")
+    return keys
+
+
+def first_sighting(db: Database, keys, score) -> bool:
+    """Atomically: True (and every key recorded) when none of ``keys`` was seen before - the one time a result may
+    teach Elo. A result seen under ANY of its keys (another source, another spelling, a retry, a restart) is not
+    learned again; its other keys are recorded so the next sighting is caught by them too."""
+    with db.transaction():
+        seen = any(db.result_seen(k) for k in keys)
+        for k in keys:
+            db.mark_result_seen(k, score[0], score[1])
+    return not seen
+
+
 def _learn(db, elo, sport, home, away, score, when, home_id, away_id, competition_id, source, source_id) -> None:
     """Teach the ratings one final result, keyed by canonical participant ids.
 
@@ -263,7 +288,8 @@ def _apply_result(r, res, db, elo, now, counts, expire_missing):
             return
     db.settle_pick(r["id"], outcome, {"status": res.status, "scores": {k: list(v) for k, v in res.scores.items()},
                                       "stats": [[stat, period, list(value)] for (stat, period), value in res.stats.items()],
-                                      "odd_scores": res.odd_scores, "source": res.source})
+                                      "odd_scores": res.odd_scores, "source": res.source,
+                                      "overtime": res.overtime})
     counts["settled" if outcome != VOID else "void"] += 1
     # learn from the final score
     sc = res.score("full")
@@ -274,15 +300,19 @@ def _apply_result(r, res, db, elo, now, counts, expire_missing):
         canonical = db.query("SELECT * FROM picks WHERE fixture_key=? ORDER BY id LIMIT 1",
                              (r["fixture_key"],))
         if canonical:
-            from predbot.util.names import same_team
+            from predbot.jobs.live_results import same_orientation
             first = canonical[0]
-            if not same_team(r["home"], first["home"], sport=r["sport"]):
+            same = same_orientation(first, r)
+            if same is None:
+                log.warning("settlement: orientation of pick %s against its fixture is unproven; Elo not updated",
+                            r["id"])
+                return
+            if not same:
                 sc = (sc[1], sc[0])
             r = first
             start = parse_iso(r["start_utc"])
-        key = f"{r['sport']}|{r['home']}|{r['away']}|{start.strftime('%Y%m%d')}"
-        if not db.result_seen(key):
-            db.mark_result_seen(key, sc[0], sc[1])
+        keys = result_keys(r["sport"], r["home"], r["away"], start, _pid(r, "home_id"), _pid(r, "away_id"))
+        if first_sighting(db, keys, sc):
             _learn(db, elo, r["sport"], r["home"], r["away"], sc, start, _pid(r, "home_id"), _pid(r, "away_id"),
                    _pid(r, "canonical_competition_id"), source="settlement", source_id=str(r["fixture_key"]))
 
@@ -400,17 +430,17 @@ def _harvest_elo_from_espn(resolver: "ResultsResolver", db: Database, elo: Elo) 
                 when = parse_iso(when_str)
                 if when is None:
                     continue
-                key = f"{comp.sport}|{h_name}|{a_name}|{when.strftime('%Y%m%d')}"
-                if not db.result_seen(key):
-                    db.mark_result_seen(key, hs, as_)
-                    reg = registry
-                    try:
-                        hid = reg.participant("espn", comp.sport, h_name)
-                        aid = reg.participant("espn", comp.sport, a_name)
-                    except ValueError:
-                        continue
+                if db.result_seen(f"{comp.sport}|{h_name}|{a_name}|{when.strftime('%Y%m%d')}"):
+                    continue
+                try:
+                    hid = registry.participant("espn", comp.sport, h_name, competition=comp.id)
+                    aid = registry.participant("espn", comp.sport, a_name, competition=comp.id)
+                except ValueError:
+                    continue
+                # canonical ids make the key the same as settlement's for this match, whatever each source calls it
+                if first_sighting(db, result_keys(comp.sport, h_name, a_name, when, hid, aid), (hs, as_)):
                     _learn(db, elo, comp.sport, h_name, a_name, (hs, as_), when, hid, aid, comp.id,
-                           source="espn", source_id=f"{comp.espn}:{c.get('id') or key}")
+                           source="espn", source_id=f"{comp.espn}:{c.get('id') or (h_name + '|' + a_name + '|' + when_str)}")
                     learned += 1
     return learned
 

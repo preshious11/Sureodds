@@ -1,4 +1,4 @@
-"""H12/H15: delivery renders once per zone, sends through a small paced pool, records in batched transactions,
+"""H12/H15: delivery renders once per zone, sends through a small paced pool, records each accepted send at once,
 and keeps "once per subscriber per day" and "joined before the target" exactly."""
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def _subs(db, n, joined="2026-09-01T00:00:00Z"):
 NOW = datetime(2026, 9, 19, 8, 31, tzinfo=timezone.utc)      # 09:31 in Lagos
 
 
-def test_a_large_delivery_renders_once_per_zone_sends_in_a_pool_and_records_in_batches(db, snap, monkeypatch):
+def test_a_large_delivery_renders_once_per_zone_sends_in_a_pool_and_records_each_send(db, snap, monkeypatch):
     monkeypatch.setattr(broadcast, "SENDS_PER_SECOND", 1e9)
     _subs(db, 60)
     tg = Tg()
@@ -58,7 +58,8 @@ def test_a_large_delivery_renders_once_per_zone_sends_in_a_pool_and_records_in_b
     assert sent == 60 and sorted(set(tg.sent)) == sorted(str(100 + i) for i in range(60)) and len(tg.sent) == 120   # two messages each
     assert sorted(snap.render_calls) == ["Africa/Lagos", "Asia/Tokyo", "Europe/London"]      # 3 renders, not 60
     assert len(tg.threads) > 1                                                                # a pool, not one thread
-    assert db.stats["commits"] <= 60 // broadcast.RECORD_BATCH + 2                            # batched, not one per send
+    # H5: each receipt is committed as its message is accepted (a crash mid-run can no longer resend a whole batch)
+    assert db.stats["commits"] == 120
     assert len(db.deliveries_done("picks_top", "2026-09-19")) == len(db.deliveries_done("picks_daily", "2026-09-19")) == 60
     assert deliver_picks(db, Config(), Tg(), snap, now=NOW) == 0                              # once per subscriber per day
 

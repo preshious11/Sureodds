@@ -23,3 +23,30 @@ _*.py
 *_diagnostic*.json
 !__init__.py
 
+
+# ---- Editor / agent workspaces: may hold deployment credentials (.vscode/mcp.json held one) ----
+.vscode/
+.idea/
+.kilo/
+.kilocode/
+.cline/
+.codex/
+.cursor/
+.claude/settings.local.json
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+mcp.json
+
+# ---- More credential-bearing / local files ----
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+.venv/
+venv/
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*_output.txt

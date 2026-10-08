@@ -111,7 +111,10 @@ The **collection selectors** (Top and Daily, reading stored predictions) then ap
   evidence-adjusted joint confidence inside `TOP_COMBINED_ODDS` (~2.00) – `TOP_ODDS_MAX` is chosen.
 - **Daily picks** are sized on their own: the Daily ticket alone aims for `DAILY_COMBINED_MIN_ODDS` (10) and never
   exceeds `DAILY_COMBINED_MAX_ODDS` (12). The builder takes the best-evidenced legs first and **stops as soon as 10
-  is reached**; it never pads: if the qualifying legs only make 6.4, 6.4 is posted. A leg needs
+  is reached**; when that build ends short because every remaining leg would overshoot 12, a bounded end-game search
+  swaps at most its last three legs for already-qualified ones that land the ticket inside 10–12, keeping the
+  best-ranked legs. It never pads and never relaxes a quality gate or a diversity quota: if the qualifying legs only
+  make 6.4, 6.4 is posted. A leg needs
   `DAILY_MIN_PROB` (0.55, the single probability floor), `DAILY_MIN_BOOKS` distinct books (2 for main markets, 3 for
   secondary, 4 for restricted ones), books that agree (`MAX_BOOK_DISPERSION`), a lower confidence bound above
   `DAILY_MIN_LCB`, and no clearly negative edge against a sharp reference. `DAILY_PICKS_TARGET` is just a safety cap.
@@ -316,9 +319,9 @@ and cache-first reads; opening the menu itself never reads or generates predicti
 Custom Picks opens the same bot privately using
 `https://t.me/<bot_username>?start=custom_picks`. The username comes from Telegram
 `getMe` and is cached for the running client; no username setting is needed.
-`/start custom_picks` has a separate private handler that currently replies
-“✨ Custom Picks” / “Custom Picks is coming soon.” It does not register subscribers
-or implement predictions or payments. Ordinary `/start` and other private flows
+`/start custom_picks` has a separate private conversation described in the Phase
+2A sections below. It does not register subscribers or implement payments.
+Ticket Audit is temporarily hidden and disabled. Ordinary `/start` and other private flows
 retain their existing behavior. Privacy mode and polling configuration need no changes.
 
 `/menu` returns and logs the posted message ID without adding subscribers or
@@ -357,13 +360,18 @@ try again in a minute." (or the already-published card).
 
 1. Build from the repo-root `Dockerfile` (`CMD python main.py`, `DB_PATH=/data/predbot.db`).
    It is a worker — there is no web port. Production MUST run **exactly ONE
-   worker/replica per Telegram token against each database**. This is enforced by
-   the hosting platform (replica count = 1), not by the application: the polling
-   lease (`predbot/bot/runtime.py::PollingLease`) only arbitrates processes on the
-   same host and is not a distributed lock. A second worker would duplicate
-   scheduler runs, duplicate channel posts, double provider/API spend, cause
-   Telegram 409 polling conflicts, and risk SQLite corruption from concurrent
-   writers. Never scale this service horizontally.
+   worker/replica per Telegram token**. Against ONE database the application
+   enforces it: `main.py` takes the database leader lease
+   (`predbot/storage/lease.py`, table `leader_lease`) before it starts the
+   scheduler or Telegram polling. A second process on the same database logs
+   `STANDBY` and does nothing until the holder stops (a clean stop releases at
+   once) or stops renewing (TTL 120 s, renewed every 30 s; the holder fences
+   itself after 80 s without a renewal, so the two never overlap). A holder that
+   loses the lease stops polling and scheduling and exits with status 3. Two
+   workers on DIFFERENT databases (another host with its own `DB_PATH`) are not
+   covered and would still duplicate posts, provider spend and Telegram 409
+   conflicts - the hosting platform's replica count must stay 1. Never scale
+   this service horizontally.
 2. **Mount a persistent volume at `/data`.** The SQLite database holds your record,
    budget counters, Elo ratings and calibration; without a volume every redeploy
    starts empty. `DB_PATH` must point inside that volume (e.g. `/data/predbot.db`).
@@ -373,6 +381,8 @@ try again in a minute." (or the already-published card).
    snapshot, memberships or budget counters out from under the scheduler. Manual
    commands against production are for reads (`stats`, `budget`, `sgo-usage`,
    `picks --dry-run`, which writes nothing) or for a stopped worker only.
+   `python diagnose_providers.py` reads SQLite only; `--live` is required before
+   it may ask a provider anything (billed).
 3. Set the variables from `.env.example` in the host's dashboard. **Dashboard values
    override the code defaults**, so delete any variable you no longer want to pin
    (a `PROVIDER_ORDER` that still names a removed provider only produces a startup warning).
@@ -598,186 +608,88 @@ below reads this archive without creating prediction records. No new environment
 restart/redeploy normally with the existing persistent SQLite volume. Previously
 generated days are not backfilled; candidates appear on the next normal generation.
 
-## Conversational Custom Picks (Phase 2A.2)
+## Conversational Custom Picks
 
-The existing community Custom Picks button still opens this same bot privately
-with `/start custom_picks`. It activates an in-memory mode keyed by Telegram user
-and private chat, then shows five short examples. Ordinary text is handled only
-for that active user/chat with an explicit `private` chat type. Ordinary `/start`
-returns to the existing welcome/menu/subscription flow; `/stop` exits the mode
-while retaining its existing unsubscribe behavior. Other existing commands remain
-available and do not exit Custom Picks. Restarting the command loop clears mode;
-users reopen Custom Picks to resume. Every text is a complete new request, without
-previous-ticket editing or conversation history. Group/channel text is ignored.
+The community Custom Picks button opens this same bot privately with
+`/start custom_picks`. Ordinary text is interpreted only for an active user/private
+chat. Normal `/start` and `/stop` exit and clear that user's temporary conversation
+and buttons; their existing subscription behavior is retained. Other commands and
+community prediction views keep working. Old buttons after exit/restart ask users
+to reopen Custom Picks, rather than restarting it silently.
 
-`Request` is an immutable local object with `target_odds`, `pick_count`, `sports`,
-`allowed_markets`, `excluded_markets`, and `preference` (`best` by default). Empty
-sport/market sets mean unrestricted. Prediction date is resolved from current time
-and `cfg.timezone`; users cannot select other dates. The deterministic parser makes
-no LLM/API calls. It supports:
+`predbot/custom_intent.py` extracts reusable concepts, never whole-message matches:
+contextual decimal odds, exact counts, sports, known competition aliases, market
+inclusions/exclusions, over/under lines, quality preference and today/tonight.
+Safe/sure/safest map to safe, strong/strongest to strong; these are preferences,
+not winning guarantees. Noise, common misspellings and single-token conservative
+corrections are tolerated. Unlabelled numbers, conflicting constraints, unknown
+league wording and unintelligible messages receive short clarifications.
 
-- Decimal targets (`4 odds`, `around 3.5 odds`, `odds of 5`), counts (`3 picks`,
-  `2 games`, `4 selections`), and both (`3 picks around 5 odds`).
-- Canonical supported sports and display names; soccer maps to football, NBA/WNBA
-  to basketball, ATP/WTA to tennis, NFL/American football to american_football,
-  MLB to baseball, UFC to MMA. All current application sports are supported:
-  football, basketball, tennis, baseball, american_football, mma, other. Registered
-  configured sport names extend the parser. Multiple named sports mean an allowed
-  set, not a requirement to include a selection from every named sport.
-- Market inclusion: DC/double chance → `dc`; DNB/draw no bet → `dnb`;
-  moneyline/money line/ML → `result2`; totals/over under/over-under/over/under →
-  `total`; BTTS/both teams to score → `btts`; handicap/spread → `handicap`;
-  1X2/match result → `result3`. Other modelable catalog keys/names are recognized.
-  `no`, `without`, and `avoid` exclude markets; connected exclusions such as
-  `no BTTS and handicap` exclude both. Markets are never reinterpreted by sport.
-- `safe`, `strong`, `best` are preferences. Unrecognized restrictions, conflicting
-  targets/counts, sport exclusions, historical/future requests, league/line-specific
-  constraints and ticket-edit/audit requests receive clarification instead of
-  silently discarding those constraints. `make it football only` is a fresh request
-  using the default count, not an edit of an earlier ticket.
+Examples: `research today's games give me sure 18 odds`, `abeg check today matches
+I need like 5 odds something safe`, `5 picks around 10 odds`, `EPL 4 odds`,
+`over 1.5 around 4 odds`, `best three`, `football and basketball 8 odds`.
+Odds, counts and market lines stay separate; `total odds` never means a totals
+market. NBA/NFL/ATP shorthand preserves the established sport-alias behavior;
+explicit `NBA league` selects the competition.
 
-**Ranking policy:** minimum archived model probability is 0.65 for safe, 0.60 for
-strong, 0.50 for best/default. These are selection policy thresholds, not calibrated
-safety guarantees. Candidates rank by probability descending, then agreement,
-liquidity, bookmaker count (capped at 10), reference EV (clipped to [-0.1, 0.1],
-missing = -0.1), lower price, kickoff and deterministic fixture/market coordinates.
-No representative-only rank, uncertainty or lower-confidence-bound values are
-created or consulted. High EV cannot override low model probability.
+Follow-ups (`make it 6 odds`, `football only`, `give me safer ones`) update only
+explicit constraints, retaining earlier markets, exclusions and preferences.
+Standalone requests such as `3 basketball picks` start fresh. Changing the sport
+retains compatible leagues and clears incompatible ones; changing the market
+clears an earlier specific line. A request for stronger picks never lowers an
+earlier safe preference.
+An alternative button becomes the new conversational request when selected.
+Contexts expire after ten minutes or local midnight and are capped at 512;
+prepared recovery tickets are capped at 1536. Restart loses all temporary state.
 
-Tickets rank by mean model probability minus
-`0.02 * (legs - distinct_market_families) / legs`, then logarithmic distance to
-target, fewer legs, mean agreement/liquidity/books/reference EV and deterministic
-identity. The small repetition penalty allows comparably strong market diversity;
-it is disabled for explicit market inclusions. There is no forced sport diversity.
-All explicit count, sport and market constraints remain hard constraints.
+**Local data only:** Custom Picks reads the current day's evaluated SQLite archive
+through `get_custom_pick_pool` / `get_custom_pick_candidates`. There is no existing
+approved scoped-fetch adapter in this repository, and this pass adds no provider
+requests, refreshes, quotas, model calls, dependencies, migrations or environment
+variables. Missing scope fails honestly with proven alternatives if available.
+Same-day archived odds are generation-time quotes, not refreshed prices. Explicit
+`today` requires today's local fixture date; `tonight` additionally requires a
+local start at/after 18:00. Without an explicit time constraint the current
+prediction-date archive retains its existing fixture-date behavior.
 
-**Eligibility/freshness:** only the current prediction date/timezone is read through
-the two existing SQLite-only archive APIs. COMPLETE and PARTIAL pools are usable;
-partial tickets carry a short coverage notice. Pool/row evaluation timestamps must
-be parseable, timezone-aware, from this prediction date and no later than now;
-rows newer than the read pool metadata are skipped. There is no intraday age cutoff:
-older same-day evaluations may remain usable, and these are generation-time odds,
-not refreshed executable quotes. Started fixtures (`start <= now`), malformed or
-naive start times, invalid identities/markets/selections, nonfinite odds/probabilities
-and missing line coordinates are excluded locally. Missing data never triggers
-generation or providers. Read failures return unavailable without fallback.
+Existing confidence floors remain safe 0.65, strong 0.60, best/default 0.50.
+The bounded search still processes at most 60 fixtures, four alternatives per
+fixture, eight legs, 48 states per count, 12 odds buckets and 100,000 expansions.
+Exact counts and odds tolerance (+/-10%, unrounded products) remain hard constraints.
+Odds tickets prefer higher mean model probability, then fewer legs, then target
+distance and existing evidence tie-breaks. Thus an equally confident one/two-leg
+ticket beats a longer one; weaker picks never win just for a shorter ticket.
+Count-only tickets retain the established market-diversity ranking policy.
+Bounded search can still miss combinations outside its retained states.
 
-**Search:** a dedicated deterministic per-fixture beam processes at most 60 fixtures
-and four strong alternatives per fixture (prefer available market-family coverage).
-There are at most eight legs, 48 states per leg count, and 100,000 candidate
-expansions. Target searches divide states across 12 logarithmic odds buckets to
-retain different prices. Processing a fixture once enforces one selection per
-canonical event (legacy fixture-key fallback when needed). Products must remain
-finite. Selection work is bounded roughly by `fixtures * legs * beam * alternatives`,
-plus sorting retained expansions; it is not exhaustive combination enumeration.
-Large-pool loading/normalization remains linear in archived row count.
+Eligibility rejects started fixtures, known cancelled/postponed/live/final states,
+malformed/stale-date evaluations, invalid odds/markets and conflicting canonical
+fixture identities. Canonical IDs enforce one pick per fixture; trusted canonical
+participant IDs, competition, sport and kickoff also identify duplicate provider
+representations. Names alone are never fuzzy-matched. League and exact full-match
+line constraints are checked locally against canonical archived fields.
 
-Target tolerance is **±10%**, inclusive, using unrounded decimal-odds products.
-Targets outside that band fail with a lower-target/fewer-restrictions suggestion;
-the bot does not quietly return an out-of-band ticket. Counts are exact when
-explicitly requested (1–8). Both constraints must hold when both are requested.
-With neither target nor count, the default is three distinct fixtures, or fewer
-when fewer eligible fixtures remain. Bounded search can miss a feasible combination
-outside its retained pool/beam; its failure is not a proof of global infeasibility.
+Valid requests first display a loading message, then edit it into the final result;
+Telegram edit failures fall back to a normal reply. Clarifications do not show a
+loading/search state. Results have one `ODDS` header, natural canonical outcomes,
+the actual stored competition when available, individual odds and confidence.
+No repeated combined odds, selection count, cache notices or internal market IDs
+are shown. Competition names are omitted if missing or only an internal identifier.
 
-Replies contain sport icons, fixtures, explicit outcomes, archived odds/model
-confidence, local kickoff and actual combined odds/count. Text is escaped and
-bounded for Telegram. Tickets are private and ephemeral: no inserts, settlements,
-live watches, stats, recaps or subscriber/community broadcasts. Minimal logs record
-request parameters, candidate counts and result without full message text.
+Recovery uses **Try these instead:** and at most three private buttons, each backed
+by an independently validated prepared result. It preserves original quality
+floors and exclusions. Changed sports/markets are explicit in button labels.
+At most 16 extra local searches prepare options; odds alternatives use the existing
+bounded ladder and require distinct tickets. A tap rechecks private ownership,
+exact request, confidence, fixture uniqueness and upcoming starts. Valid taps use
+stored tickets without database reads/search/provider requests. Expired buttons
+reuse compatible prepared alternatives or reread only the same archive.
+Expiry is the earliest of ten minutes, local midnight or a fixture start.
 
-No environment variables, dependencies, provider/model calls or schema changes are
-added in Phase 2A.2. Deploy/restart normally using the Phase 2A.1 database. No ticket
-auditing, betting-code lookup, payments or subscriptions are implemented.
-
-### Phase 2A.3: private recovery UX
-
-Active private Custom Picks conversations receive a ticket or a helpful empty
-state, including unexpected local failures. Prediction generation, archive
-publication, scoring and the existing bounded ticket search are unchanged.
-Started rows may be validated for explaining an empty state; they are always
-excluded from both normal and recovery tickets.
-
-Empty-state reason codes and final copy (the paragraph after the title is separated
-by a blank line in Telegram):
-
-| Reason | Title | Body |
-| --- | --- | --- |
-| `archive_unavailable` | 👨‍🍳 Still cooking | Today's picks aren't ready yet. Check back in a bit. |
-| `sport_unavailable` — football | ⚽ No football picks made the cut today | Try another sport or one of the ready options below. |
-| `sport_unavailable` — basketball | 🏀 No basketball on the menu today | I couldn't find any basketball picks worth serving right now. |
-| `sport_unavailable` — tennis | 🎾 The court is quiet today | No tennis picks made the cut right now. |
-| `sport_unavailable` — other/multiple | 👀 Nothing cooking for {sport} today | I don't have usable {sport} picks right now. |
-| `market_unavailable` | 😅 That market is a little dry today | I couldn't find enough {market} picks that meet the mark. |
-| `sport_market_unavailable` | 👀 That combo isn't on the board today | I couldn't find usable {market} picks for {sport}. |
-| `insufficient_count` | 😅 We're a few games short | You asked for {requested_count}, but I only found {available_count} that made the cut. |
-| `target_unreachable` | 😅 Couldn't stretch it to {target_odds} odds | I won't force weaker picks just to hit the number. |
-| `target_too_low` | 👀 That's a tight squeeze | I couldn't build a solid ticket close to {target_odds} odds from what's available. |
-| `conflicting_constraints` | 😂 You boxed me in there | Nothing available matches all those filters. |
-| `all_started` | ⏰ We missed the window | The matching games have already started. |
-| `partial_insufficient` | 👀 Slim pickings right now | Today's pool is still filling up and nothing available matches your request yet. |
-| `invalid_request` | 😅 I didn't quite catch that | Try something like “safe 4 odds”, “3 basketball picks” or “5 odds, no BTTS”. |
-| `future_date` | 😅 I'm living in today for now | Custom Picks currently works with today's games only. |
-| `search_failed` | 😅 Almost, but I won't force it | I couldn't build a solid ticket around that request from today's available picks. |
-| `below_quality_floor` | ✂️ Nothing made the cut today | I'd rather give you nothing than force weak picks. |
-| `expired` — options available | ⏰ That option has expired | A few games have moved on. Here are the options that are still ready: |
-| `expired` — none available | ⏰ That option has expired | There aren't enough upcoming picks left to rebuild it right now. |
-
-When ready alternatives exist, the original empty state adds **These are ready
-instead:** and at most three inline buttons. Every button is backed by an already
-prepared ticket from the same loaded, validated SQLite snapshot. Empty archives
-have no ticket buttons. Suggestions propose clearly named different requests;
-the original request's constraints and quality floor are never silently relaxed.
-
-Discovery runs at most 16 additional local searches. Relevance order favors a
-smaller satisfiable count with the original filters, the original sport with
-available markets (including Moneyline when present), achievable odds alternatives,
-an all-sports ticket and other actually available sports. Sports favor more usable
-fixtures, with canonical-name ties. Failed alternatives never become buttons.
-Target requests test the bounded ladder `20, 15, 12, 10, 8, 6, 5, 4, 3, 2`, moving
-downward for high targets and upward for impractically low targets. There are at
-most two odds suggestions, with actual products differing by at least a 1.35
-ratio, and no two displayed tickets use the identical fixture set. Every prepared
-result independently rechecks exact count, target tolerance, probability floor,
-sport/market filters, one pick per fixture, finite product and upcoming starts.
-
-`RecoverySuggestion` stores the random token, user ID, private chat ID, label,
-structured request, immutable ticket, creation time, prediction date, pool
-generation time, each selection's evaluation time, fixture start times, expiry
-and partial-pool flag. This is **memory-only UI state**, never a prediction record.
-Tokens are 96 random bits encoded in a 16-character URL-safe ID; callback data is
-`cp|<token>` (19 ASCII bytes). The route runs independently of the normal view
-service and requires an explicit private chat plus matching user/chat ownership.
-Wrong-owner/group/channel taps receive a safe callback acknowledgement and no
-ticket. Callback acknowledgement failure does not suppress the private reply.
-
-Expiry is the earliest of **10 minutes after preparation, local prediction-date
-midnight, or any fixture's start**. Every tap checks time/date and starts locally.
-A valid tap immediately sends its stored ticket privately, without posting a
-prompt, rerunning search or rereading SQLite. Expired/stale taps first reuse a
-still-valid cached option for that user/chat: it is served automatically only if
-it also meets the selected request, otherwise valid alternatives are shown for
-the user to choose. If none remain, recovery rereads only the two archive tables
-and prepares new proven buttons or returns the expired empty state. Restart or
-missing tokens use the same graceful recovery. Expired records are pruned on each
-interaction; follow-up requests do not invalidate still-current tokens. There are
-no per-user usage quotas, cache persistence or additional background jobs.
-
-Normal tickets, preparations and tapped tickets remain permanently **untracked**.
-Only `custom_pick_candidates` and `custom_pick_pools` are read; no prediction,
-membership, watch, settlement, calibration, stats, ROI, recap, subscriber or
-community-result state is written. Regression tests prohibit provider HTTP,
-collection, prediction generation, model evaluation and result jobs, compare full
-database dumps and normal collection/stats/recap/calibration/result-work inputs,
-and cover normal requests, repeated users, three prepared buttons, valid taps,
-expired recomputation and missing-token recovery.
-
-No new environment variables, dependencies or database migrations are required.
-Deploy and restart the existing bot normally. A restart loses recovery tokens and
-the existing in-memory conversational mode; `/start custom_picks` re-enters the
-conversation, and old button taps still receive helpful local recovery. Successful
-ticket follow-up buttons, auditing, betting codes, subscriptions and payments are
-intentionally deferred.
+All tickets remain private, ephemeral and untracked. No prediction/history,
+settlement/live watch, stats, recap, subscriber or community publication state
+is written. Tests compare all database tables and forbid provider/model/job calls.
+Ticket Audit remains disabled. Restart the existing bot to load these changes.
 
 ## Tests
 
@@ -823,3 +735,73 @@ subscriber's own zone only changes how kick-off times are displayed. Someone who
 subscribes after `DELIVERY_TIME` starts with the next day's card. Legs that have
 already started or finished when a card is read are marked. Dashboard variables
 override code defaults, so set/delete them there and redeploy.
+
+### Private Ticket Audit V1 (Phase 2C.3)
+
+**Temporarily paused:** `predbot/ticket_audit_switch.py` sets `ENABLED = False`.
+Existing environment flags cannot override this pause. No controller/backend is
+constructed by the bot, menus/help omit the feature, and old links/buttons cannot
+start it. Its own API transports and structural diagnostics are also blocked.
+The implementation and tests below are retained for a future restoration.
+
+The community **🔍 Ticket Audit** button opens this bot privately with
+`/start ticket_audit`. Paste a ticket or send a PNG/JPEG screenshot (up to 5 MB).
+The bot asks for missing fixture/market details, shows extracted selections for
+review, and waits for **Audit Ticket** before looking up evidence. **Send Again**
+discards the extraction; **Cancel** exits. There is no product selection-count
+limit. Booking-code intake is available when explicitly enabled; PDFs, voice/video,
+conversion and payments are unsupported.
+
+Structured booking tickets retain every decoded selection in its original order,
+including unsupported selections. Local processing uses payload-sized batches;
+Gemini analysis packs prompts/output within safe budgets and attempts at most three
+batches per audit. Research still permits at most three uncached operations,
+reusing cached fixture and downloaded dataset evidence. Missing evidence returns
+Insufficient Evidence; a failed model batch preserves independent evidence-only
+assessments and does not discard other batches or retry the ticket.
+
+Review and result messages pack complete selection blocks within 3,500 characters.
+Confirmation buttons appear only on the final review message. Technical bounds
+remain: 512,000-byte booking responses, 1,000,000-byte normalized payloads,
+16-level/100,000-node JSON traversal, 8,000-character pasted input and 5 MB images.
+Extraction uses one request capped at 8,192 output tokens; token exhaustion or a
+reported cropped/incomplete input produces an explicit incomplete-extraction
+response instead of a partial review. The structured booking-code path is best
+for large tickets. Existing request quotas, timeouts and concurrency remain.
+
+Evidence uses the existing read-only local resolver, research cache and reviewed
+free sources. Public research currently has partial EPL/OpenFootball coverage;
+other fixtures without sufficient exact local evidence return Insufficient
+Evidence. Local percentages are shown only from actual stored model metrics;
+research does not create probabilities or safer alternatives. Results stay
+private and are not saved as predictions, live watches or settlement records.
+Screenshots are held in memory only. Leave personal/account details out of
+submitted text/images, which are sent to Gemini for extraction.
+
+Configure manually on a confirmed free-tier Gemini project with billing disabled:
+
+```dotenv
+GEMINI_API_KEY=<existing secret>
+GEMINI_AUDIT_MODEL=gemini-3.5-flash-lite
+AUDIT_GEMINI_ENABLED=true
+AUDIT_GEMINI_FREE_TIER_CONFIRMED=true
+AUDIT_GEMINI_MAX_REQUESTS_PER_DAY=20
+```
+
+Keep the `DB_PATH` parent directory writable/persistent. Separate
+`ticket_audit_usage.sqlite3` and `ticket_audit_sources.sqlite3` ledgers preserve
+request limits across restarts. A complete ticket can consume extraction plus
+analysis reservations. No additional variables, paid Search or sports-provider
+fallback. Restart after configuration changes; sessions expire after 15 minutes
+and are invalidated by restart. At most two workers run concurrently, with five
+extractions per user/chat per rolling hour.
+
+`/start custom_picks` exits Audit mode; ordinary `/start` clears feature modes and
+keeps its existing welcome/subscription behavior. Existing views and automatic
+prediction delivery are unchanged. As admin, run `/menu` after deployment,
+identify the returned message ID and manually replace/pin the community menu;
+existing pinned markup is not edited or automatically repinned.
+
+The overall/weakest rules, security guarantees, regression results, limitations
+and 12-step Telegram acceptance plan are documented in
+[the Phase 2C.3 report](TICKET_AUDIT_FOUNDATION_REPORT.md#29-phase-2c3--private-telegram-ticket-audit-v1).

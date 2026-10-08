@@ -287,14 +287,8 @@ DAILY_TITLE = "📋 DAILY PICKS"
 
 
 def no_selection_message(zone: str = "") -> str:
-    """Friendly placeholder shown while no pick has cleared the quality bar yet
-    (before the scheduled post, or a slow provider day). ``zone`` is the
-    reader's own zone abbreviation, e.g. "WAT" - falls back to UTC."""
-    tz_label = zone or "UTC"
-    return ("🕘 <i>Predictions being analyzed...</i>\n\n"
-            "Our model is carefully reviewing today's fixtures to find the best value selections. "
-            "We only recommend picks that meet our strict quality standards.\n\n"
-            f"✅ Check back soon! Predictions typically available by 09:00 AM {tz_label}.")
+    """Post-evaluation empty card; pre-generation placeholders belong to the view."""
+    return "No selections qualified today."
 
 
 def n_picks(n: int) -> str:
@@ -323,7 +317,8 @@ def picks_card(picks: List[PickLine], day: str, title: str = DAILY_TITLE,
     prices = list(total_prices) if total_prices is not None else [p.price for p in picks]
     lines = card_header(title, day, prices if picks else [], zone)
     if not picks:
-        lines.append(no_selection_message(zone))
+        lines.append("No Top Picks for today.\n\nSee other picks:" if title == TOP_TITLE
+                     else no_selection_message(zone))
     for p in picks:
         lines += ["", *pick_lines(p)]
     if pages and pages > 1 and page:
@@ -393,7 +388,7 @@ def sport_name(sport: str) -> str:
 
 # ------------------------------------------------------------------ results cards (stats, recap, /yesterday)
 #: The settled outcome marks. An unsettled pick has none.
-MARK = {"won": "✅", "lost": "❌", "void": "➖", "push": "↩️"}
+MARK = {"won": "✅", "lost": "❌", "void": "➖", "push": "↩️", "unresolved": "❔"}
 NO_RESULTS_YET = "📊 No results yet — the first recap arrives the morning after the first slate."
 
 
@@ -403,6 +398,8 @@ def counts_line(b: Dict, sep: str = "  ") -> str:
     parts = [f"{MARK['won']} {b.get('won', 0)}", f"{MARK['lost']} {b.get('lost', 0)}", f"{MARK['void']} {b.get('void', 0)}"]
     if b.get("push"):
         parts.append(f"{MARK['push']} {b['push']}")
+    if b.get("unresolved"):
+        parts.append(f"{MARK['unresolved']} {b['unresolved']} unresolved")
     return sep.join(parts)
 
 
@@ -410,7 +407,7 @@ def _norm(s: Dict) -> Dict:
     """A stats dict from an older writer (a cached snapshot's ``StatsSummary.to_raw()``) has no issued/final/strip:
     read it as a fully settled day with no per-sport split, so nothing invents a completeness claim."""
     y = dict(s.get("yesterday") or {})
-    settled = sum(int(y.get(k, 0) or 0) for k in ("won", "lost", "void", "push"))
+    settled = sum(int(y.get(k, 0) or 0) for k in ("won", "lost", "void", "push", "unresolved"))
     y["unknown"] = "issued" not in y and not settled            # nothing recorded: say nothing, not "no picks were issued"
     y.setdefault("issued", settled)
     y.setdefault("settled", settled)

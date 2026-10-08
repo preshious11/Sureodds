@@ -1,7 +1,13 @@
-"""Railway worker entrypoint: schedules recap -> picks -> settlement forever."""
+"""Worker entrypoint (the Docker image's CMD): schedules recap -> picks -> settlement forever.
+
+Exactly one worker per database runs the scheduler and Telegram polling: the database leader lease
+(``predbot.storage.lease``) is taken before either starts. A second process against the same database waits in
+standby and takes over only when the holder stops or stops renewing; a holder that loses the lease stops both and
+exits (code 3) so its supervisor restarts it into standby."""
 from __future__ import annotations
 
 import logging
+import threading
 
 from predbot.bot import broadcast
 from predbot.bot.commands import CommandLoop
@@ -10,21 +16,52 @@ from predbot.bot.telegram import Telegram
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import load_config
 from predbot.jobs import daily_picks, live_results, recap, settle
-from predbot.jobs.scheduler import DailyJob, DynamicJob, IntervalJob, loop
+from predbot.jobs.scheduler import DailyJob, DynamicJob, IntervalJob, drain, loop
 from predbot.log import setup_logging
 from predbot.config import require_provider_keys, startup_lines
 from predbot.markets.settlement import log_coverage
 from predbot.providers.chain import ProviderChain, ResultsResolver, build_providers
 from predbot.storage.db import Database
+from predbot.storage.lease import LeaderLease, wait_for_leadership
+from predbot.util import lifecycle
 from predbot.util.timeutil import to_local, utcnow
 
 log = logging.getLogger("main")
 
 #: Retry subscriber delivery after the shared daily publication time.
 DELIVERY_POLL_MINUTES = 5
+#: exit status when the leader lease is lost mid-run (the process must not keep working)
+EXIT_LEASE_LOST = 3
+#: on shutdown, how long runs in progress may finish (Docker's default stop grace is 10 s)
+SHUTDOWN_DRAIN_SECONDS = 6.0
+#: then how long the Telegram poller may take to leave its long poll (it is abandoned after this)
+POLLER_JOIN_SECONDS = 2.0
+
+
+def _standby_until_leader(lease: LeaderLease) -> bool:
+    """Block until this process holds the worker lease. SIGTERM/SIGINT while waiting ends the wait (False)."""
+    import signal
+    stop = threading.Event()
+    previous = {}
+
+    def handle(signum, frame):
+        log.info("received signal %d while in standby; exiting", signum)
+        stop.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            previous[sig] = signal.signal(sig, handle)
+        except ValueError:                         # not the main thread (tests): keep the default handlers
+            pass
+    try:
+        return wait_for_leadership(lease, stop)
+    finally:
+        for sig, old in previous.items():
+            signal.signal(sig, old)
 
 
 def main() -> None:
+    lifecycle.reset()
     cfg = load_config()
     setup_logging(cfg.log_level, cfg.log_file, secrets=[cfg.sgo_key, cfg.sharpapi_key, cfg.odds_api_key,
                                                          cfg.football_data_key, cfg.telegram_token])
@@ -37,16 +74,22 @@ def main() -> None:
     chain = ProviderChain(providers, cfg.provider_order)
     resolver = ResultsResolver(providers)
     tg = Telegram(cfg.telegram_token, cfg.telegram_chat_id)
+    # a subscriber Telegram definitively refuses (blocked the bot, deleted the account) stops being retried
+    tg.on_permanent_failure = broadcast.deactivate_unreachable(db)
     service = UnifiedFetcher(chain, db, cfg)
     log.info("providers: %s | timezone %s | picks at %s local | recap at %s | "
              "subscriber delivery: %s local, checked every %dm | cache: %s",
              ", ".join(chain.order) or "none", cfg.timezone, cfg.post_time, cfg.recap_time,
              cfg.post_time, DELIVERY_POLL_MINUTES, "sqlite")
-    log.info("single-instance: run exactly ONE worker per Telegram token against this database "
-             "(DB_PATH=%s); a second local or remote worker would duplicate scheduler runs, channel "
-             "posts and provider spend, and concurrent SQLite writers risk corruption. See README "
-             "'Deploy' for the persistent-volume and no-concurrent-manual-generation rules.",
-             cfg.db_path)
+    lease = LeaderLease(db)
+    if not _standby_until_leader(lease):
+        return
+    log.info("leader lease acquired | owner=%s | ttl=%.0fs | renew every %.0fs - this process runs the scheduler "
+             "and Telegram polling for this database. A worker on ANOTHER database (another host with its own "
+             "DB_PATH) is not covered: still run exactly one deployment per Telegram token.",
+             lease.owner, lease.ttl, lease.renew_every)
+    lost = threading.Event()
+    lease.start_heartbeat(on_lost=lost.set)
 
     def job_settle():
         settle.run(resolver, db, cfg)
@@ -122,6 +165,7 @@ def main() -> None:
         def start_commands():
             loop_thread = CommandLoop(tg, db, cfg, actions, service=service,
                                       page_size=cfg.page_size)
+            loop_thread.leader_check = lease.held
             loop_thread.start()
             return loop_thread
 
@@ -139,10 +183,22 @@ def main() -> None:
             supervisor.ensure()
 
     try:
-        loop(jobs, health_check=check_commands)
+        loop(jobs, health_check=check_commands, leader_check=lease.held, stop_event=lost)
     finally:
+        # Ordered, bounded shutdown: no new scheduled work (the loop has returned) and no new updates (the poller
+        # is told to stop), runs in progress get a short drain and stop between sends, then the lease is released
+        # so a successor starts at once. Nothing here can wait indefinitely.
+        lifecycle.request_shutdown()
         if supervisor is not None:
-            supervisor.stop()
+            supervisor.stop(join_timeout=0)
+        drain(jobs, SHUTDOWN_DRAIN_SECONDS)
+        if supervisor is not None:
+            supervisor.stop(join_timeout=POLLER_JOIN_SECONDS)
+        lease.release()
+        log.info("worker stopped")
+    if lease.lost:
+        log.critical("exiting: the leader lease was lost; restart this process to rejoin as standby")
+        raise SystemExit(EXIT_LEASE_LOST)
 
 
 if __name__ == "__main__":

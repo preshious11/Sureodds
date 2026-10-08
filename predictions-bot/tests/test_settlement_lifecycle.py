@@ -214,16 +214,17 @@ def test_void_excluded_from_win_loss_roi_and_learning_and_visible_in_history(db,
     rows = db.picks_for_date("2030-06-01", published_only=True)
     block = stats.day_block(rows)
     assert block["won"] == block["lost"] == block["n"] == 0
-    assert block["void"] == 1 and block["final"] and block["profit"] == 0
+    # M8: an expired, never-graded pick is reported as UNRESOLVED (not as a genuine void), still outside win/loss/ROI
+    assert block["void"] == 0 and block["unresolved"] == 1 and block["final"] and block["profit"] == 0
     assert block["roi"] is None and block["hit_rate"] is None
     assert db.all_settled_for_calibration() == [] and db.query("SELECT * FROM results_seen") == []
     assert Elo(db).get("football", "Chelsea")[1] == 0
     raw = stats.compute(db, START + timedelta(days=1))
-    assert raw["yesterday"]["void"] == 1 and raw["last7"]["won"] == raw["last7"]["lost"] == 0
+    assert raw["yesterday"]["unresolved"] == 1 and raw["last7"]["won"] == raw["last7"]["lost"] == 0
     for text in (recap_message(raw), stats_message(raw),
                  pagination.render_yesterday(db, day="2030-06-01")[0],
                  pagination.render_collection_results(db, "top", 0, 5, "2030-06-01")[0]):
-        assert "➖" in text  # the existing VOID result mark, retained in all history views
+        assert "❔" in text  # M8: visible as unresolved in every history view, never silently a void
     assert status(db, pid) == "void" and len(rows) == 1
 
 

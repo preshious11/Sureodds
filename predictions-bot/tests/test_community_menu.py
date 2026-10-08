@@ -244,7 +244,7 @@ def test_getme_resolves_same_bot_username_and_caches_success():
     assert tg.get_bot_username() == BOT_USERNAME
     assert tg.get_bot_username() == BOT_USERNAME
     tg.session.get.assert_called_once_with("https://api.telegram.org/bottest-token/getMe", timeout=10)
-    button = callbacks.community_menu_markup(tg.get_bot_username())["inline_keyboard"][-1][0]
+    button = callbacks.community_menu_markup(tg.get_bot_username())["inline_keyboard"][3][0]
     assert button["url"] == f"https://t.me/{BOT_USERNAME}?start=custom_picks"
 
 

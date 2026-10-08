@@ -123,6 +123,9 @@ class EuroLeagueProvider(BaseProvider):
         result.scores["full"] = (hs, as_)
         hq, aq = self._quarters(home), self._quarters(away)
         if hq and aq:
+            reg = (sum(hq), sum(aq))
+            result.overtime = reg != (hs, as_)                       # the extra periods are what is left over
+            result.scores["reg"] = reg
             for i in range(4):
                 result.scores[f"{i + 1}q"] = (hq[i], aq[i])
             h1, a1 = hq[0] + hq[1], aq[0] + aq[1]

@@ -11,11 +11,23 @@ their card. Only people whose subscription already existed at that moment get it
 joining, /start or re-subscribing after it is never itself a reason to be sent today's
 card, which arrives with the next scheduled broadcast instead.
 Onboarding is therefore menu-only - it never triggers a prediction send.
+
+Duplicate prevention (picks and recap DMs):
+
+* one delivery run per (database, kind) at a time in a process: a run that is still going makes the next scheduler
+  tick (or an overlapping manual call) return at once instead of starting a second full pass;
+* each message's receipt is written the moment Telegram accepts it - not at the end of a batch - and is re-checked
+  right before each chat is sent to, so a crash or redeploy mid-run can duplicate at most the one message that was
+  in flight (Telegram has no idempotency key);
+* a receipt is never written before Telegram accepted the message: a failed or interrupted send stays retryable;
+* a shutdown request stops a run between chats (``predbot.util.lifecycle``); the next leader sends what is missing.
 """
 from __future__ import annotations
 
 import logging
 import hashlib
+import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -26,9 +38,35 @@ from predbot.bot.format import (DAILY_TITLE, TOP_TITLE, pick_line_from_record, p
 from predbot.bot.telegram import Telegram
 from predbot.cache.models import DailySnapshot
 from predbot.storage.db import Database
+from predbot.util.lifecycle import shutting_down
 from predbot.util.timeutil import parse_hhmm, resolve_timezone, local_reached, parse_iso, to_local, utcnow
 
 log = logging.getLogger(__name__)
+
+_RUN_LOCKS: Dict[Tuple[str, str], threading.Lock] = {}
+_RUN_LOCKS_GUARD = threading.Lock()
+
+
+def run_lock(db: Database, name: str) -> threading.Lock:
+    """The one lock per (database file, delivery kind) that keeps two delivery runs from overlapping."""
+    path = getattr(db, "path", "") or ""
+    key = (os.path.normcase(os.path.abspath(path)) if path and path != ":memory:" else str(id(db)), name)
+    with _RUN_LOCKS_GUARD:
+        return _RUN_LOCKS.setdefault(key, threading.Lock())
+
+
+def deactivate_unreachable(db: Database) -> Callable[[str, str], None]:
+    """``Telegram.on_permanent_failure`` for the worker: a private chat Telegram definitively refuses (the user
+    blocked the bot, deleted their account, never started it) stops receiving automatic deliveries. /start
+    re-subscribes. Groups and channels are never touched (their failures are configuration, not a subscriber)."""
+    def hook(chat_id: str, reason: str) -> None:
+        chat = str(chat_id)
+        if not chat.isdigit():
+            return
+        if db.query("SELECT 1 FROM subscribers WHERE chat_id=? AND active=1", (chat,)):
+            db.subscriber_remove(chat)
+            log.warning("subscriber deactivated: Telegram refuses delivery permanently (%s)", reason.split(":")[0])
+    return hook
 
 
 def live_delivery_kind(fixture_key: str, ended: bool) -> str:
@@ -62,6 +100,8 @@ def deliver_live(db: Database, tg: Telegram, pick_date: str, fixture_key: str,
             continue
         if not tg.token:
             continue
+        if shutting_down():
+            break                     # receipts so far are recorded; the rest is retried by the next run
         text = live_match_message(relevant, orient_result(result, rows[0], relevant[0]), ended)
         try:
             success = tg.send(text, chat_id=chat_id)
@@ -169,7 +209,8 @@ def _joined_before_target(row, date_str: str, hour: int, minute: int, user_tz: s
 PICKS_KINDS = ("picks_top", "picks_daily")
 
 
-def picks_messages(snapshot: DailySnapshot, tz: str, now: Optional[datetime] = None) -> List[Tuple[str, str, Dict]]:
+def picks_messages(snapshot: DailySnapshot, tz: str, now: Optional[datetime] = None,
+                   include_empty: bool = False) -> List[Tuple[str, str, Dict]]:
     """THE subscriber cards: ``[(kind, text, keyboard)]`` - the Top card, then the Daily card, each its own message
     with the four-button keyboard. An empty tier still gets its message (the card says no selection cleared the
     bar); both tiers empty -> ``[]``.
@@ -179,7 +220,7 @@ def picks_messages(snapshot: DailySnapshot, tz: str, now: Optional[datetime] = N
     from predbot.bot.pagination import build_keyboard
     top = [p for p in (pick_line_from_record(r, tz, None, now) for r in snapshot.top_picks) if p.outcome]
     daily = [p for p in (pick_line_from_record(r, tz, None, now) for r in snapshot.daily_picks) if p.outcome]
-    if not top and not daily:
+    if not top and not daily and not include_empty:
         return []
     zone = zone_label(tz, snapshot.date)
     top_text = summary_card(top, [], snapshot.date, zone) if top else picks_card([], snapshot.date, TOP_TITLE, zone=zone)
@@ -217,8 +258,15 @@ def deliver_picks(db: Database, cfg, tg: Telegram,
     if snapshot is None or not (snapshot.top_picks or snapshot.daily_picks):
         return 0
     hour, minute = parse_hhmm(cfg.delivery_time, "09:30")
-    return _deliver_per_user_at_time(db, cfg, tg, "picks", snapshot.date, snapshot,
-                                     hour, minute, "daily picks", now=now)
+    lock = run_lock(db, "picks")
+    if not lock.acquire(blocking=False):
+        log.info("broadcast: a picks delivery run is still in progress - not starting another")
+        return 0
+    try:
+        return _deliver_per_user_at_time(db, cfg, tg, "picks", snapshot.date, snapshot,
+                                         hour, minute, "daily picks", now=now)
+    finally:
+        lock.release()
 
 
 def deliver_recap(db: Database, cfg, tg: Telegram, text: Optional[str]) -> int:
@@ -232,7 +280,14 @@ def deliver_recap(db: Database, cfg, tg: Telegram, text: Optional[str]) -> int:
     if not text:
         return 0
     yesterday = (to_local(utcnow(), cfg.timezone) - timedelta(days=1)).strftime("%Y-%m-%d")
-    return _deliver_recap_after_fixtures(db, cfg, tg, "recap", yesterday, text, "recap")
+    lock = run_lock(db, "recap")
+    if not lock.acquire(blocking=False):
+        log.info("broadcast: a recap delivery run is still in progress - not starting another")
+        return 0
+    try:
+        return _deliver_recap_after_fixtures(db, cfg, tg, "recap", yesterday, text, "recap")
+    finally:
+        lock.release()
 
 
 def _deliver_per_user_at_time(db: Database, cfg, tg: Telegram, kind: str, date_str: str,
@@ -287,62 +342,59 @@ PARALLEL_MIN = 8
 #: Telegram allows ~30 messages/s to different chats; stay well under it.
 SENDS_PER_SECOND = 20.0
 SEND_WORKERS = 8
-RECORD_BATCH = 20                         # deliveries recorded in one transaction per this many sends
 
 
-def _send_chat(tg: Telegram, chat_id: str, messages: List[Tuple[str, str, Dict]]) -> List[str]:
+def _send_chat(tg: Telegram, chat_id: str, messages: List[Tuple[str, str, Dict]],
+               db: Optional[Database] = None, date_str: str = "") -> List[str]:
     """One chat's messages, in order. Stops at the first failure (a Daily must never arrive before its Top), and
-    returns the kinds that went out - a retry sends only what is missing."""
+    returns the kinds that went out - a retry sends only what is missing.
+
+    With ``db``: each kind is re-checked against its receipt just before sending and its receipt is written as soon
+    as Telegram accepts it, so an interruption anywhere leaves exactly the accepted messages recorded."""
     ok: List[str] = []
     for kind, text, markup in messages:
+        if db is not None and db.delivery_done(kind, date_str, chat_id):
+            continue                                   # already delivered (another run, or before a restart)
         if not tg.send(text, chat_id=chat_id, reply_markup=markup):
             break
+        if db is not None:
+            db.mark_delivery(kind, date_str, chat_id)
         ok.append(kind)
     return ok
 
 
 def _send_all(db: Database, tg: Telegram, date_str: str,
               pending: List[Tuple[str, List[Tuple[str, str, Dict]]]]) -> int:
-    """Send each chat its missing messages; record every success per kind in ``deliveries``. Returns how many chats
-    received at least one message. The 20 msg/s cap counts every message, both cards of a chat included."""
+    """Send each chat its missing messages, recording every success the moment it is accepted. Returns how many
+    chats received at least one message. The 20 msg/s cap counts every message, both cards of a chat included. A
+    shutdown request stops submitting new chats; sends already started finish and are recorded."""
     if len(pending) < PARALLEL_MIN:
         served = 0
         for chat_id, messages in pending:
-            ok = _send_chat(tg, chat_id, messages)
-            for kind in ok:
-                db.mark_delivery(kind, date_str, chat_id)
-            served += bool(ok)
+            if shutting_down():
+                log.info("broadcast: shutdown requested - stopping; the rest is sent by the next run")
+                break
+            served += bool(_send_chat(tg, chat_id, messages, db, date_str))
         return served
     served = 0
     interval = 1.0 / SENDS_PER_SECOND
     with ThreadPoolExecutor(max_workers=SEND_WORKERS, thread_name_prefix="deliver") as pool:
         futures, next_slot = [], time.monotonic()
         for chat_id, messages in pending:
+            if shutting_down():
+                log.info("broadcast: shutdown requested - stopping; the rest is sent by the next run")
+                break
             wait = next_slot - time.monotonic()
             if wait > 0:
                 time.sleep(wait)                                  # <= SENDS_PER_SECOND messages per second
             next_slot = max(next_slot, time.monotonic()) + interval * len(messages)
-            futures.append((chat_id, pool.submit(_send_chat, tg, chat_id, messages)))
-        ok: List[Tuple[str, str]] = []
+            futures.append((chat_id, pool.submit(_send_chat, tg, chat_id, messages, db, date_str)))
         for chat_id, fut in futures:
             try:
-                kinds = fut.result()
-                ok.extend((kind, chat_id) for kind in kinds)
-                served += bool(kinds)
+                served += bool(fut.result())
             except Exception:  # noqa: BLE001 - one failed send never stops the rest; it is retried on the next poll
-                log.exception("broadcast: send to %s raised", chat_id)
-            if len(ok) >= RECORD_BATCH * len(PICKS_KINDS):        # RECORD_BATCH chats' worth of messages
-                _record(db, date_str, ok)
-                ok = []
-        _record(db, date_str, ok)
+                log.exception("broadcast: a subscriber send raised")
     return served
-
-
-def _record(db: Database, date_str: str, sent: List[Tuple[str, str]]) -> None:
-    if sent:
-        with db.transaction():
-            for kind, chat_id in sent:
-                db.mark_delivery(kind, date_str, chat_id)
 
 
 def _get_last_fixture_end_time(db: Database, pick_date: str) -> Optional[datetime]:
@@ -361,34 +413,48 @@ def _get_last_fixture_end_time(db: Database, pick_date: str) -> Optional[datetim
     return latest_kickoff + timedelta(hours=4)  # buffer for match duration + results processing
 
 
+def recap_text_for(db: Database, cfg, date_str: str) -> str:
+    """The recap of ``date_str`` (a card date in ``cfg.timezone``): computed ONCE for every reader.
+
+    Picks are stored under the card date of TIMEZONE, so the recap must be built for that date explicitly - not
+    for "yesterday" in each subscriber's own zone, which is a different date for part of the day (the receipt said
+    one date while the content described another)."""
+    from predbot.bot.format import recap_message
+    from predbot.jobs import stats as stats_mod
+    from zoneinfo import ZoneInfo
+    day = datetime.strptime(date_str, "%Y-%m-%d") + timedelta(days=1, hours=12)
+    return recap_message(stats_mod.compute(db, day.replace(tzinfo=ZoneInfo(resolve_timezone("", cfg.timezone)))))
+
+
 def _deliver_recap_after_fixtures(db: Database, cfg, tg: Telegram, kind: str, date_str: str,
                                    text: str, label: str) -> int:
-    """Send recap to each subscriber after last fixture ends in their timezone, personalized per timezone."""
+    """Send the recap of ``date_str`` to each subscriber once that day's last fixture has ended.
+
+    The end is one instant for everybody; a subscriber's zone does not change it. The card is computed once per
+    run, the receipt is written as each send is accepted, and a shutdown request stops the run between chats."""
     if not tg.token or not text:
         return 0
     last_fixture_end = _get_last_fixture_end_time(db, date_str)
     if not last_fixture_end:
         log.warning("recap: no fixtures found for %s", date_str)
         return 0
-
-    from predbot.bot.format import recap_message
-    from predbot.jobs import stats as stats_mod
-
     now = utcnow()
+    if now < last_fixture_end:
+        return 0
+    card: Optional[str] = None
     sent = 0
     for row in db.subscribers_active():
         chat_id = str(row["chat_id"])
         if db.delivery_done(kind, date_str, chat_id):
             continue
-        user_tz = subscriber_tz(row, cfg.timezone)
-        local = to_local(now, user_tz)
-        fixture_end_local = to_local(last_fixture_end, user_tz)
-
-        if local >= fixture_end_local:
-            personalized_text = recap_message(stats_mod.compute(db, local))
-            if tg.send(personalized_text, chat_id=chat_id):
-                db.mark_delivery(kind, date_str, chat_id)
-                sent += 1
+        if shutting_down():
+            log.info("recap: shutdown requested - stopping; the rest is sent by the next run")
+            break
+        if card is None:
+            card = recap_text_for(db, cfg, date_str)
+        if tg.send(card, chat_id=chat_id):
+            db.mark_delivery(kind, date_str, chat_id)
+            sent += 1
     if sent:
         log.info("broadcast: %s delivered to %d subscriber(s) after last fixture ended", label, sent)
     return sent

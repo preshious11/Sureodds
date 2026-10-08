@@ -144,8 +144,14 @@ def test_after_post_time_the_same_command_shows_the_picks(world):
     tg = FakeTG()
 
     callbacks.handle_command("/top", "42", service=fetcher, tg=tg, cfg=cfg, db=db)
+    # M4: after POST_TIME a reader still never generates; it is told the picks are not generated yet
+    assert "TOP PICKS" not in tg.sends[0]["text"] and "not been generated yet" in tg.sends[0]["text"]
+    built.assert_not_called()
 
-    assert "ready at" not in tg.sends[0]["text"] and "TOP PICKS" in tg.sends[0]["text"]
+    fetcher.get_daily_snapshot(scheduled=True)              # the scheduled job generates
+    callbacks.handle_command("/top", "42", service=fetcher, tg=tg, cfg=cfg, db=db)
+    assert "ready at" not in tg.sends[1]["text"] and "TOP PICKS" in tg.sends[1]["text"]
+    built.assert_called_once()
 
 
 def test_stats_still_works_before_post_time(world):

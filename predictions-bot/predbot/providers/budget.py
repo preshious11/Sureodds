@@ -49,14 +49,21 @@ class Budget:
         return True
 
     def monthly_daily_allowance(self, provider: str, monthly_limit: int, reserve_frac: float = 0.25) -> int:
-        """How many objects we may spend today to stay within a monthly quota,
-        keeping `reserve_frac` of the month's remaining quota for settlement."""
+        """How many objects we may STILL spend today to stay within a monthly quota,
+        keeping `reserve_frac` of the month's remaining quota for settlement.
+
+        Today's share is fixed from where the day STARTED (so spending it does not
+        shrink it a second time), and everything already spent today is then taken
+        off it: a partial-slate retry or a manual /run on the same day gets what is
+        left of today's share, not a fresh one."""
         now = datetime.now(timezone.utc)
         import calendar
         days_in_month = calendar.monthrange(now.year, now.month)[1]
         days_left = days_in_month - now.day + 1
-        remaining = max(0, monthly_limit - self.used_month(provider))
-        return int(remaining * (1 - reserve_frac) / max(1, days_left))
+        today = self.used_today(provider)
+        remaining_at_day_start = max(0, monthly_limit - (self.used_month(provider) - today))
+        share = int(remaining_at_day_start * (1 - reserve_frac) / max(1, days_left))
+        return max(0, share - today)
 
     # ---- exhaustion marks (persisted per UTC day, so restarts don't re-burn quota)
     def mark_exhausted(self, provider: str, reason: str = "") -> None:

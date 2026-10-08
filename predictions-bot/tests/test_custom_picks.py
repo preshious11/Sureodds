@@ -29,6 +29,11 @@ from tests.test_custom_pick_candidates import alternatives, prepared
 NOW, DAY, ZONE = dt(hh=12), '2030-06-01', 'Africa/Lagos'
 
 
+def last_reply(tg):
+    # Telegram edits the loading message rather than sending a second result.
+    return tg.edits[-1] if tg.sends[-1]['text'] == '\U0001f50e Finding your strongest picks...' and tg.edits else tg.sends[-1]
+
+
 @pytest.mark.parametrize('text,target,count,sports,included,excluded,preference', [
     ('safe 4 odds', 4, None, set(), set(), set(), 'safe'),
     ('5 odds', 5, None, set(), set(), set(), 'best'),
@@ -56,7 +61,7 @@ NOW, DAY, ZONE = dt(hh=12), '2030-06-01', 'Africa/Lagos'
 ])
 def test_request_schema(text, target, count, sports, included, excluded, preference):
     request = parse_request(text)
-    assert request == Request(target, count, frozenset(sports), frozenset(included), frozenset(excluded), preference)
+    assert request == Request(target, count, frozenset(sports), frozenset(included), frozenset(excluded), preference, time_intent='today' if 'today' in text else None)
 
 
 @pytest.mark.parametrize('alias,market', [
@@ -88,8 +93,7 @@ def test_other_dates_are_rejected(text):
 
 @pytest.mark.parametrize('text', ['0 picks', '9 picks', '2.5 picks', '-4 odds', '1 odds', '0 odds',
                                 '4 odds 5 odds', '2 picks 3 picks', 'DC only no DC', 'hello',
-                                '3 hockey picks', 'audit this ticket', 'replace Arsenal', '4 odds EPL only',
-                                '4 odds over 1.5 only', '5' * 513, 'football only across all sports',
+                                '3 hockey picks', 'audit this ticket', 'replace Arsenal', '5' * 513, 'football only across all sports',
                                 '3 picks no basketball'])
 def test_unsupported_or_conflicting_constraints_are_not_silently_ignored(text):
     with pytest.raises(RequestError):
@@ -208,9 +212,9 @@ def test_diversity_prefers_comparable_markets_but_explicit_market_request_wins()
 def test_nonfootball_tickets(db, sport, count):
     store(db, [r for i in range(1, 5) for r in rows_for(i, sport=sport)])
     reply = CustomPicks(db, Config(timezone=ZONE)).reply(f'{count} {sport} picks', '42', NOW)
-    assert '🔥 Custom Picks' in reply and f'{count} selections' in reply
+    assert reply.startswith('\U0001f525 ') and 'selections' not in reply
     assert reply.count('Confidence: 75%') == count
-    assert 'Moneyline' in reply
+    assert ' to Win' in reply and 'Moneyline' not in reply
 
 
 def test_multisport_search_and_no_forced_football(db):
@@ -218,7 +222,7 @@ def test_multisport_search_and_no_forced_football(db):
     custom = CustomPicks(db, Config(timezone=ZONE))
     reply = custom.reply('best 3 picks across all sports', '42', NOW)
     assert all(icon in reply for icon in ('⚽', '🏀', '🎾'))
-    assert 'Combined Odds: 4.10' in reply
+    assert reply.startswith('\U0001f525 4.10 ODDS') and 'Combined Odds' not in reply
     reply = custom.reply('2 picks football and basketball', '42', NOW)
     assert '⚽' in reply and '🏀' in reply and '🎾' not in reply
 
@@ -232,29 +236,29 @@ def test_market_filters_are_hard_constraints(db):
     dc = custom.reply('3 picks double chance only', '42', NOW)
     assert dc.count('Double Chance:') == 3 and 'BTTS' not in dc
     totals = custom.reply('2 picks over under only', '42', NOW)
-    assert totals.count('Total Goals') == 2
+    assert totals.count('Goals') == 2 and 'Total Goals' not in totals
     no_btts = custom.reply('3 picks no BTTS', '42', NOW)
-    assert '🔥 Custom Picks' in no_btts and 'BTTS' not in no_btts
+    assert '🔥 ' in no_btts and 'BTTS' not in no_btts
     assert 'No basketball on the menu' in custom.reply('basketball double chance only', '42', NOW)
 
 
 def test_sport_specific_missing_market_is_not_reinterpreted(db):
     store(db, rows_for(1, 'basketball') + rows_for(2, 'basketball'))
     reply = CustomPicks(db, Config(timezone=ZONE)).reply('basketball double chance only', '42', NOW)
-    assert "That combo isn't on the board" in reply and '🔥 Custom Picks' not in reply
+    assert "That combo isn't on the board" in reply and '🔥 ' not in reply
 
 
 def test_exact_count_and_odds_constraints_fail_together_instead_of_relaxing(db):
     store(db, rows_for(1, price=1.2) + rows_for(2, price=1.2) + rows_for(3, price=1.2))
     reply = CustomPicks(db, Config(timezone=ZONE)).reply('3 picks around 5 odds', '42', NOW)
-    assert "Couldn't stretch it" in reply and '🔥 Custom Picks' not in reply
+    assert "Couldn't stretch it" in reply and '🔥 ' not in reply
 
 
 @pytest.mark.parametrize('preference,floor', list(MIN_PROBABILITY.items()))
 def test_preferences_use_documented_probability_floor(db, preference, floor):
     store(db, rows_for(1, probability=floor - .001))
     reply = CustomPicks(db, Config(timezone=ZONE)).reply(f'1 {preference} pick', '42', NOW)
-    assert '🔥 Custom Picks' not in reply
+    assert '🔥 ' not in reply
 
 
 def test_unavailable_partial_insufficient_and_general_requests(db):
@@ -264,7 +268,7 @@ def test_unavailable_partial_insufficient_and_general_requests(db):
     assert custom.reply('3 picks', '42', NOW) == UNAVAILABLE
     store(db, rows_for(1) + rows_for(2) + rows_for(3), partial=True)
     general = custom.reply('give me best picks', '42', NOW)
-    assert '3 selections' in general and 'pool is partial' in general
+    assert general.count('Confidence:') == 3 and 'pool' not in general and 'selections' not in general
     assert 'Slim pickings right now' in custom.reply('5 picks', '42', NOW)
     assert 'Slim pickings right now' in custom.reply('100 odds', '42', NOW)
     assert 'Slim pickings right now' in custom.reply('2 tennis picks', '42', NOW)
@@ -281,7 +285,7 @@ def test_current_date_and_evaluation_freshness(db):
     midnight = dt(hh=23, mm=30)
     assert custom.reply('1 pick', '42', midnight) == UNAVAILABLE
     store(db, rows_for(2, start=dt(d=2, hh=2)), day='2030-06-02', at=midnight)
-    assert '🔥 Custom Picks' in custom.reply('1 pick', '42', midnight)
+    assert '🔥 ' in custom.reply('1 pick', '42', midnight)
 
 
 def test_started_fixtures_are_not_recommended_and_no_fallback_runs(db):
@@ -306,15 +310,15 @@ def test_private_entry_text_exit_and_normal_start(private_bot, db):
     assert loop.tg.sends == []
     before = list(db.conn.iterdump())
     loop._handle_update(message_update('/start custom_picks', user_id='42'))
-    assert loop.tg.sends[-1]['text'] == INTRO
+    assert last_reply(loop.tg)['text'] == INTRO
     assert list(db.conn.iterdump()) == before
     loop._handle_update(message_update('3 picks', user_id='42'))
-    assert loop.tg.sends[-1]['text'].startswith('🔥 Custom Picks')
+    assert last_reply(loop.tg)['text'].startswith('🔥 ')
     assert all(message['chat_id'] == '42' for message in loop.tg.sends)
     assert list(db.conn.iterdump()) == before
     loop._handle_update(message_update('/start', user_id='42'))
     assert ('42', '42') not in loop._custom_users
-    assert loop.tg.sends[-1]['text'] == callbacks.welcome_message('Ada')
+    assert last_reply(loop.tg)['text'] == callbacks.welcome_message('Ada')
     assert db.subscribers_active()[0]['chat_id'] == '42'
     sends = len(loop.tg.sends)
     loop._handle_update(message_update('3 picks', user_id='42'))
@@ -371,11 +375,11 @@ def test_request_path_has_zero_provider_calls_and_zero_persistence(private_bot, 
             private_bot._handle_update(message_update('/start custom_picks', str(user), 'private', str(user)))
             for _ in range(requests_per_user):
                 private_bot._handle_update(message_update('3 picks around 4 odds', str(user), 'private', str(user)))
-                assert private_bot.tg.sends[-1]['chat_id'] == str(user)
+                assert last_reply(private_bot.tg)['chat_id'] == str(user)
                 if has_archive:
-                    assert private_bot.tg.sends[-1]['text'].startswith('🔥 Custom Picks')
+                    assert last_reply(private_bot.tg)['text'].startswith('🔥 ')
                 else:
-                    assert private_bot.tg.sends[-1]['text'] == UNAVAILABLE
+                    assert last_reply(private_bot.tg)['text'] == UNAVAILABLE
     finally:
         db.conn.set_trace_callback(None)
     assert statements and all(sql.lstrip().upper().startswith('SELECT') for sql in statements)
@@ -406,7 +410,8 @@ def test_operational_logs_do_not_include_conversation(db, caplog):
     store(db, rows_for(1) + rows_for(2) + rows_for(3))
     with caplog.at_level(logging.INFO):
         CustomPicks(db, Config(timezone=ZONE)).reply('give me safe 4 odds', '42', NOW)
-    assert 'Custom Picks request | user=42 | target=4.0' in caplog.text
+    assert 'Custom Picks request | user=u' in caplog.text and 'target=4.0' in caplog.text
+    assert 'user=42' not in caplog.text                     # pseudonymous: never the raw Telegram id
     assert 'give me safe' not in caplog.text
 
 

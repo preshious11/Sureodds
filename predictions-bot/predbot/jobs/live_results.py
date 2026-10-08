@@ -23,20 +23,53 @@ TERMINAL = {"final", "postponed", "cancelled"}
 LIVE_SOURCES = ("espn", "football_data", "euroleague")
 
 
+def _field(row, key) -> str:
+    try:
+        return str(row[key] or "")
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
+def same_orientation(reference, row):
+    """Does ``row`` list home and away the same way as ``reference`` (another leg / record of the same fixture)?
+    True / False, or None when it cannot be proven. Canonical participant ids decide first; names only when ids are
+    missing, and a name must match one side WITHOUT matching the other."""
+    rh, ra, h, a = (_field(reference, "home_id"), _field(reference, "away_id"),
+                    _field(row, "home_id"), _field(row, "away_id"))
+    if rh and ra and h and a:
+        if (rh, ra) == (h, a):
+            return True
+        if (rh, ra) == (a, h):
+            return False
+    sport = _field(row, "sport")
+    ref_home, ref_away, home, away = (_field(reference, "home"), _field(reference, "away"),
+                                      _field(row, "home"), _field(row, "away"))
+    for ours, theirs, flip in ((ref_home, home, away), (ref_away, away, home)):
+        same, crossed = same_team(ours, theirs, sport=sport), same_team(ours, flip, sport=sport)
+        if same != crossed:
+            return same
+    return None
+
+
 def orient_result(result, reference, row):
-    """Fixture keys ignore home/away order; scores must follow each stored leg."""
-    if same_team(reference["home"], row["home"], sport=row["sport"]):
+    """Fixture keys ignore home/away order; scores must follow each stored leg. When the orientation cannot be
+    proven the result is returned as UNKNOWN (the leg stays unresolved) instead of being graded on a guess."""
+    same = same_orientation(reference, row)
+    if same is None:
+        log.warning("result orientation could not be proven for a leg; leaving it unresolved")
+        return MatchResult("unknown", source=result.source)
+    if same:
         return result
     return MatchResult(result.status, {k: (v[1], v[0]) for k, v in result.scores.items()},
                        {k: (v[1], v[0]) for k, v in result.stats.items()},
-                       dict(result.odd_scores), result.source)
+                       dict(result.odd_scores), result.source, result.overtime)
 
 
 def _restore(state):
     data = json.loads(state["result_json"])
     return MatchResult(data["status"], {k: tuple(v) for k, v in data["scores"].items()},
                        {(stat, period): tuple(value) for stat, period, value in data["stats"]},
-                       data["odd_scores"], data["source"])
+                       data["odd_scores"], data["source"], data.get("overtime"))
 
 
 def _context(rows):
@@ -119,7 +152,8 @@ def _settle_fixture(resolver, db, rows, result, now, cache, begun, clock=None):
                 # (including the full score used for Elo learning).
                 candidate = MatchResult("final", {**candidate.scores, **richer.scores},
                                         {**candidate.stats, **richer.stats},
-                                        {**candidate.odd_scores, **richer.odd_scores}, richer.source)
+                                        {**candidate.odd_scores, **richer.odd_scores}, richer.source,
+                                        richer.overtime if richer.overtime is not None else candidate.overtime)
                 if grade(settle._row_to_line(row), candidate, row["sport"]) != PENDING:
                     break
         prepared.append((row, candidate))

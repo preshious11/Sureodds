@@ -1,7 +1,8 @@
 """Never let a credential or an account identifier reach a log line, a report or a terminal.
 
 ``redact`` masks, in any text: API keys in query strings / headers (``apiKey=…``, ``x-api-key: …``,
-``Authorization: Bearer …``), Telegram bot tokens (inside ``…/bot<id>:<secret>/…`` URLs and bare), e-mail addresses,
+``X-Auth-Token``, ``X-User-Identity``, cookies, ``Authorization: Bearer …``, in text or dict form), Telegram chat /
+admin ids written as ``chat_id=…``, Telegram bot tokens (inside ``…/bot<id>:<secret>/…`` URLs and bare), e-mail addresses,
 and long hexadecimal identifiers (SGO's ``keyID`` is a 64-character hex string). ``known_secrets`` adds exact values
 (the configured keys) so a key that appears in an unexpected shape is still removed.
 
@@ -19,9 +20,14 @@ _PATTERNS = [
     # key=value in query strings / dict-ish text
     (re.compile(r"(?i)\b(api[_-]?key|apikey|token|secret|password|access[_-]?token|key)(=|\":\s*\"|':\s*')([^&\s\"',)]+)"),
      lambda m: f"{m.group(1)}{m.group(2)}{MASK}"),
-    # HTTP headers
-    (re.compile(r"(?i)\b(x-api-key|x-apikey|authorization|api-key)(\s*[:=]\s*)(bearer\s+)?([^\s,;\"']+)"),
+    # HTTP headers, as text (``X-Auth-Token: abc``) or as a dict repr (``'X-User-Identity': 'abc'``)
+    (re.compile(r"(?i)\b(x-api-key|x-apikey|x-auth-token|x-user-identity|x-access-token|authorization|"
+                r"proxy-authorization|api-key|cookie|set-cookie)([\"']?\s*[:=]\s*[\"']?)(bearer\s+|basic\s+)?"
+                r"([^\s,;\"'}]+)"),
      lambda m: f"{m.group(1)}{m.group(2)}{(m.group(3) or '')}{MASK}"),
+    # Telegram chat / admin / user ids in key=value or JSON form (chat_id=123, "chat_id": -100123, admin_ids=[1, 2])
+    (re.compile(r"(?i)\b(chat_id|admin_ids?|telegram_chat_id|telegram_admin_ids)(=|\"?\s*:\s*)(\[[^\]]*\]|-?\d+)"),
+     lambda m: f"{m.group(1)}{m.group(2)}{MASK}"),
     # Telegram: https://api.telegram.org/bot123456:ABC-DEF/...  and a bare 123456:AA… token
     (re.compile(r"(/bot)\d{5,}:[A-Za-z0-9_-]{20,}"), lambda m: f"{m.group(1)}{MASK}"),
     (re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b"), lambda m: MASK),

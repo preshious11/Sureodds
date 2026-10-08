@@ -1,6 +1,22 @@
-"""Win/loss/ROI statistics from the picks table (flat 1-unit stakes)."""
+"""Win/loss/ROI statistics from the picks table (flat 1-unit stakes).
+
+Outcomes are counted apart, never folded into each other:
+
+* won / lost (a half win or half loss counts as its side for the hit rate, at half stake for ROI);
+* push - stake returned;
+* void - the bet itself was void (match cancelled or postponed, a void market): stake returned;
+* unresolved - stored as VOID by the bounded settlement lifecycle because no result could be confirmed before the
+  settlement deadline (``settle._void_expired``). It is NOT a win, NOT a loss and NOT a genuine void: it is shown as
+  its own count (❔) so a gap in grading is visible instead of quietly shrinking the sample;
+* pending - not settled yet.
+
+Hit rate = won / (won + lost). ROI = profit / stakes on won, lost and push. Void and unresolved legs are in neither.
+A ticket day with an unresolved leg cannot be called a hit or a miss and is left out of ticket hit rates (reported
+as ``unresolved_days``).
+"""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -15,8 +31,29 @@ PROFIT = {
 }
 
 
+#: ``result_json`` reasons of a VOID that means "never graded", not "the bet was void"
+UNRESOLVED_REASONS = frozenset({"settlement deadline expired"})
+
+
+def is_unresolved(row) -> bool:
+    """A VOID stored because no result could be confirmed in time (see the module docstring)."""
+    try:
+        if str(row["status"]) != "void":
+            return False
+        payload = row["result_json"]
+    except (KeyError, IndexError, TypeError):
+        return False
+    if not payload:
+        return False
+    try:
+        data = json.loads(payload) if isinstance(payload, str) else payload
+    except (TypeError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("reason") in UNRESOLVED_REASONS
+
+
 def _block(rows: List) -> Dict:
-    won = lost = push = void = 0
+    won = lost = push = void = unresolved = 0
     profit = 0.0
     staked = 0
     best: Optional[Dict] = None
@@ -24,7 +61,10 @@ def _block(rows: List) -> Dict:
         st = r["status"]
         if st in ("pending", "void"):
             if st == "void":
-                void += 1
+                if is_unresolved(r):
+                    unresolved += 1
+                else:
+                    void += 1
             continue
         staked += 1
         profit += PROFIT[st](float(r["price"]))
@@ -36,7 +76,7 @@ def _block(rows: List) -> Dict:
             lost += 1
         else:
             push += 1
-    return {"won": won, "lost": lost, "push": push, "void": void, "n": staked,
+    return {"won": won, "lost": lost, "push": push, "void": void, "unresolved": unresolved, "n": staked,
             "roi": (100.0 * profit / staked) if staked else 0.0, "profit": round(profit, 2), "best_win": best}
 
 
@@ -79,8 +119,21 @@ OUTCOME = {"won": "won", "half_won": "won", "lost": "lost", "half_lost": "lost",
 
 
 def outcome(row) -> Optional[str]:
-    """won | lost | void | push, or None while the pick is unsettled."""
-    return OUTCOME.get(str(row["status"]))
+    """won | lost | void | push | unresolved, or None while the pick is unsettled."""
+    kind = OUTCOME.get(str(row["status"]))
+    return "unresolved" if kind == "void" and is_unresolved(row) else kind
+
+
+def in_collection(row, tier: str) -> bool:
+    """Whether a prediction belongs to ``tier`` (top / daily): its memberships when the row carries them (one
+    prediction may be in several collections), else the legacy ``tier`` column."""
+    try:
+        cols = row["collections"]
+    except (KeyError, IndexError, TypeError):
+        cols = None
+    if cols:
+        return tier in cols
+    return str(row["tier"]) == tier
 
 
 def ordered(rows) -> List:
@@ -95,14 +148,14 @@ def day_block(rows: List) -> Dict:
     A day is ``final`` once every pick issued that day is settled; hit rate and ROI (level stakes) exist only
     then, so a half-settled day can never advertise a flattering percentage. ``best_win`` is the won pick with
     the highest price (tie: the higher model probability)."""
-    counts = {"won": 0, "lost": 0, "void": 0, "push": 0}
+    counts = {"won": 0, "lost": 0, "void": 0, "push": 0, "unresolved": 0}
     profit, staked, best = 0.0, 0, None
     for r in rows:
         kind = outcome(r)
         if kind is None:
             continue
         counts[kind] += 1
-        if kind != "void":
+        if kind not in ("void", "unresolved"):
             staked += 1
             profit += PROFIT[str(r["status"])](float(r["price"]))
         if str(r["status"]) == "won":
@@ -148,16 +201,19 @@ def top_ticket(rows: List) -> Dict:
     lost and at least one won (a void or pushed leg drops out, as on any accumulator)."""
     by_day: Dict[str, List] = {}
     for r in rows:
-        if r["tier"] == "top":
+        if in_collection(r, "top"):
             by_day.setdefault(str(r["pick_date"]), []).append(r)
-    hit = days = 0
+    hit = days = unresolved_days = 0
     for legs in by_day.values():
         kinds = [outcome(r) for r in legs]
         if None in kinds:
             continue
+        if "unresolved" in kinds:
+            unresolved_days += 1                 # cannot be called a hit or a miss
+            continue
         days += 1
         hit += "lost" not in kinds and "won" in kinds
-    return {"hit": hit, "days": days}
+    return {"hit": hit, "days": days, "unresolved_days": unresolved_days}
 
 
 def _streak_of(rows: List) -> str:
@@ -291,7 +347,7 @@ def _num(row, key):
 def _leg_block(rows: List) -> Dict:
     """Counts and calibration of individual legs. ``hit_rate`` is won / (won + lost) in percent with a half result
     counted as the side it landed on (as everywhere else in the bot); pushes and voids are in neither."""
-    cnt = {k: 0 for k in ("won", "lost", "half_won", "half_lost", "push", "void")}
+    cnt = {k: 0 for k in ("won", "lost", "half_won", "half_lost", "push", "void", "unresolved")}
     probs: List[float] = []
     pm: List[float] = []
     ys: List[float] = []
@@ -300,7 +356,9 @@ def _leg_block(rows: List) -> Dict:
     books: List[float] = []
     for r in rows:
         st = str(r["status"])
-        if st in cnt:
+        if st == "void" and is_unresolved(r):
+            cnt["unresolved"] += 1
+        elif st in cnt:
             cnt[st] += 1
         if st not in SETTLED:
             continue
@@ -347,13 +405,16 @@ def ticket_results(rows: List, tier: str) -> Dict:
     model; ``avg_legs`` / ``avg_legs_won`` show the per-leg picture behind the ticket result."""
     by_day: Dict[str, List] = {}
     for r in rows:
-        if r["tier"] == tier:
+        if in_collection(r, tier):
             by_day.setdefault(str(r["pick_date"]), []).append(r)
-    days = hit = one_short = 0
+    days = hit = one_short = unresolved_days = 0
     legs = won_legs = 0
     for day_rows in by_day.values():
         kinds = [outcome(r) for r in day_rows]
         if None in kinds:
+            continue
+        if "unresolved" in kinds:
+            unresolved_days += 1
             continue
         days += 1
         lost = kinds.count("lost")
@@ -362,6 +423,7 @@ def ticket_results(rows: List, tier: str) -> Dict:
         legs += len(kinds)
         won_legs += kinds.count("won")
     return {"days": days, "hit": hit, "hit_rate": (100.0 * hit / days) if days else None, "one_leg_short": one_short,
+            "unresolved_days": unresolved_days,
             "avg_legs": (legs / days) if days else None, "avg_legs_won": (won_legs / days) if days else None}
 
 
@@ -389,7 +451,7 @@ def accuracy(rows: List) -> Dict:
 
     return {
         "legs": _leg_block(settled),
-        "by_tier": {t: _leg_block([r for r in settled if r["tier"] == t]) for t in ("top", "daily")},
+        "by_tier": {t: _leg_block([r for r in settled if in_collection(r, t)]) for t in ("top", "daily")},
         "tickets": {t: ticket_results(rows, t) for t in ("top", "daily")},
         "by_sport": _grouped(settled, lambda r: str(r["sport"])),
         "by_market": _grouped(settled, lambda r: f"{r['market']}/{r['stat']}"),
@@ -401,7 +463,9 @@ def accuracy(rows: List) -> Dict:
 
 
 def accuracy_report(db: Database) -> Dict:
-    return accuracy([dict(r) for r in db.query("SELECT * FROM picks WHERE status NOT IN ('pending')")])
+    """Every settled prediction, with its Top / Daily MEMBERSHIPS (the stored ``tier`` column is 'all' for every
+    prediction written since collections exist, so reading it reported no Top or Daily at all)."""
+    return accuracy(db.picks_where("p.status NOT IN ('pending')"))
 
 
 def accuracy_summary(rep: Dict) -> Dict:
@@ -425,7 +489,7 @@ def accuracy_text(rep: Dict) -> str:
     legs = rep["legs"]
     lines = ["PREDICTION ACCURACY (individual selections, flat stakes; ticket results are separate)",
              f"  settled legs: {legs['decided']} decided ({legs['wins']} won / {legs['losses']} lost), "
-             f"{legs['push']} push, {legs['void']} void",
+             f"{legs['push']} push, {legs['void']} void, {legs['unresolved']} unresolved (no result confirmed in time)",
              f"  per-leg hit rate: {_pct(legs['hit_rate'])}   average predicted probability: {_pct(legs['avg_predicted_prob'])}"]
     if legs["brier"] is None:
         lines.append(f"  Brier: not reported until {MIN_BRIER_SAMPLES} legs have settled")
@@ -437,7 +501,8 @@ def accuracy_text(rep: Dict) -> str:
     for tier in ("top", "daily"):
         t, b = rep["tickets"][tier], rep["by_tier"][tier]
         lines.append(f"  {tier}: legs {b['wins']}/{b['decided']} ({_pct(b['hit_rate'])}) | tickets {t['hit']}/{t['days']} "
-                     f"({_pct(t['hit_rate'])}), {t['one_leg_short']} lost by exactly one leg")
+                     f"({_pct(t['hit_rate'])}), {t['one_leg_short']} lost by exactly one leg"
+                     + (f", {t['unresolved_days']} day(s) not countable (unresolved leg)" if t["unresolved_days"] else ""))
     for title, key in (("by sport", "by_sport"), ("by market", "by_market"), ("by quality", "by_quality"),
                        ("by confidence", "by_confidence"), ("by books", "by_books")):
         if rep[key]:

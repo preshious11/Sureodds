@@ -83,14 +83,14 @@ def test_delivered_card_has_both_tickets_each_with_its_own_numbers():
     assert "Generated" not in text and "odds as of" not in text and "TODAY'S RESULTS" not in text
 
 
-def test_empty_states_keep_their_wording_and_gain_the_lead_emoji():
+def test_empty_states_distinguish_generation_from_evaluated_empty_top():
     def view(generation, status="COMPLETE", view_="top", **kw):
         snap = DailySnapshot(date=DAY, status=status, generation=generation, **kw)
         return pagination.render_page(snap, view_, 0, 5, LAGOS)[0]
 
     assert view({"reason": "before_post_time", "ready_at": "09:00 WAT"}) == "📋 Today's picks are ready at 09:00 WAT."
     assert view({"reason": "generating"}) == "📋 Today's picks are being generated — try again in a minute."
-    assert view({}) == 'No valid model predictions were generated today.'
+    assert view({}) == '🔥 TOP PICKS · Sat 1 Jun\nNo Top Picks for today.\n\nSee other picks:'
     assert view({}, view_="daily") == 'No valid model predictions were generated today.'
     assert view({}, "PARTIAL").startswith("📋 <b>Today's predictions are still being assembled</b>")
 

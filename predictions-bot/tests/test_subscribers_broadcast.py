@@ -24,6 +24,9 @@ class FakeTG:
         self.edits = []
         self.answers = []
 
+    def get_bot_username(self):
+        return 'PredictionsTestBot'
+
     def send(self, text, chat_id=None, reply_markup=None, parse_mode="HTML"):
         self.sends.append({"chat_id": chat_id, "text": text,
                            "reply_markup": reply_markup})

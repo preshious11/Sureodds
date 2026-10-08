@@ -27,6 +27,15 @@ from typing import Dict, List, Optional, Tuple
 
 _SIDE_SWAP = {"home": "away", "away": "home", "home_draw": "away_draw", "away_draw": "home_draw"}
 
+#: Markets whose selections ARE the sides of one bet (home/draw/away, a handicap's two teams). Their ``entity`` can
+#: only repeat the selected side - SportsGameOdds tags each side with its own team where other providers say
+#: "all" - and must not split one market into two: ``market_key`` groups every selection of a market for
+#: de-vigging, the sharp reference and the margin model, so a per-side entity left each side alone in its group.
+SIDE_MARKETS = frozenset({"result2", "result3", "dnb", "dc", "handicap"})
+#: Markets whose selection is "<side>_<rest>" (result & total, result & BTTS, a side's winning-margin band): mirroring
+#: swaps the side prefix and keeps the rest ("home_over" -> "away_over", "draw_yes" stays).
+_COMPOSITE_MARKETS = frozenset({"result_total", "result_btts", "winning_margin"})
+
 
 def norm_book(name: str) -> str:
     """One spelling per bookmaker across providers: ``"Betfair Exchange"`` / ``"betfair_exchange"`` agree."""
@@ -57,6 +66,12 @@ class MarketLine:
     #: Empty for lines parsed before this field existed (cached rows): consumers then fall back to ``n_books``.
     book_quotes: Dict[str, float] = field(default_factory=dict)
     providers: List[str] = field(default_factory=list)      # providers whose feed carried this line
+
+    def __post_init__(self):
+        # One canonical representation for side markets however a provider tags them (also for cached rows
+        # restored with MarketLine(**row)); the side itself is the ``selection``.
+        if self.market in SIDE_MARKETS and self.entity in ("home", "away"):
+            self.entity = "all"
 
     def distinct_books(self) -> int:
         """How many DIFFERENT bookmakers quote this line: ``book_quotes`` when the provider supplied them,
@@ -91,6 +106,11 @@ class MarketLine:
         if self.market == "correct_score" and re.fullmatch(r"\d+-\d+", sel or ""):
             a, b = sel.split("-")
             sel = f"{b}-{a}"
+        elif self.market == "ht_ft" and "/" in (sel or ""):
+            sel = "/".join(_SIDE_SWAP.get(part, part) for part in sel.split("/"))      # "home/draw" -> "away/draw"
+        elif self.market in _COMPOSITE_MARKETS and "_" in (sel or ""):
+            side, rest = sel.split("_", 1)                                               # "home_over" -> "away_over"
+            sel = f"{_SIDE_SWAP.get(side, side)}_{rest}"
         else:
             sel = _SIDE_SWAP.get(sel, sel)
         return replace(self, selection=sel, entity=_SIDE_SWAP.get(self.entity, self.entity))
@@ -173,22 +193,38 @@ class MatchResult:
     stats: Dict[Tuple[str, str], Tuple[float, float]] = field(default_factory=dict)  # (stat, period) -> (home, away)
     odd_scores: Dict[str, float] = field(default_factory=dict)   # provider odd id -> settled stat value
     source: str = ""
+    #: whether the game went beyond regulation (overtime / extra innings): True, False, or None = the source did
+    #: not say. ``full`` includes overtime in every sport that has it (football's ``full`` is the 90 minutes).
+    overtime: Optional[bool] = None
 
     def score(self, period: str = "full") -> Optional[Tuple[float, float]]:
+        """The score of ``period``. ``reg`` (regulation only) and ``full`` (overtime included) are only substituted
+        for each other when that is provably the same score - never guessed:
+
+        * ``reg`` from ``full`` only when the source says there was no overtime;
+        * ``full`` from ``reg`` when there was no overtime, or when regulation did not end level (overtime is only
+          ever played after a tie, so a decided regulation score IS the final score).
+
+        Otherwise None: a regulation-time bet is left unresolved rather than graded on an overtime-inclusive score.
+        (Football never reaches this: settlement grades its ``reg`` on ``full``, which is the 90 minutes.)"""
         if period in self.scores:
             return self.scores[period]
-        if period == "reg" and "full" in self.scores:
+        if period == "reg" and "full" in self.scores and self.overtime is False:
             return self.scores["full"]
         if period == "full" and "reg" in self.scores:
-            return self.scores["reg"]
+            reg = self.scores["reg"]
+            if self.overtime is False or (self.overtime is None and reg[0] != reg[1]):
+                return reg
         return None
 
     def stat(self, stat: str, period: str = "full") -> Optional[Tuple[float, float]]:
         if stat == "points":
             return self.score(period)
         v = self.stats.get((stat, period))
-        if v is None and period == "full":
+        if v is None and period == "full" and self.overtime is False:
             v = self.stats.get((stat, "reg"))
+        if v is None and period == "reg" and self.overtime is False:
+            v = self.stats.get((stat, "full"))
         return v
 
 

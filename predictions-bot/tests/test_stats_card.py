@@ -130,7 +130,7 @@ def test_streaks_of_wins_and_of_losses():
 
 
 def test_top_ticket_counts_only_fully_settled_days(final_db):
-    assert stats_mod.compute(final_db, TODAY)["top_ticket_7d"] == {"hit": 1, "days": 3}      # 05-30 hit; 05-31, 06-01 missed; 05-29 pending
+    assert stats_mod.compute(final_db, TODAY)["top_ticket_7d"] == {"hit": 1, "days": 3, "unresolved_days": 0}      # 05-30 hit; 05-31, 06-01 missed; 05-29 pending
 
 
 def test_top_ticket_that_hit_and_one_that_missed(db):
@@ -138,7 +138,7 @@ def test_top_ticket_that_hit_and_one_that_missed(db):
                               ("top", "football", "void", 1.5, .7, "Home Win B", "C", "D", 13)],       # a void leg drops out
                "2030-05-31": [("top", "football", "won", 1.5, .7, "Home Win C", "E", "F", 12),
                               ("top", "football", "lost", 1.5, .7, "Home Win D", "G", "H", 13)]})
-    assert stats_mod.top_ticket([dict(r) for r in db.query("SELECT * FROM picks")]) == {"hit": 1, "days": 2}
+    assert stats_mod.top_ticket([dict(r) for r in db.query("SELECT * FROM picks")]) == {"hit": 1, "days": 2, "unresolved_days": 0}
 
 
 # ------------------------------------------------------------------------------------------------ the card

@@ -39,7 +39,7 @@ def test_empty_top_does_not_fall_back_to_daily():
     tg = FakeTG()
     handle_command('/top', '42', service=SimpleNamespace(get_daily_snapshot=lambda **_kw: snapshot),
                    tg=tg, cfg=Config())
-    assert 'Predictions being analyzed' in tg.sends[0]['text']
+    assert 'No Top Picks for today.' in tg.sends[0]['text']
     assert 'DAILY ONLY' not in tg.sends[0]['text']
 
 
@@ -50,7 +50,7 @@ def test_partial_card_with_picks_says_quality_bar_not_outage():
     snapshot = DailySnapshot(date='2030-06-01', status='PARTIAL', daily_picks=[
         PickRecord(label='DAILY ONLY', price=2.0)])
     text, _ = render_page(snapshot, 'top', 0, 5, 'UTC')
-    assert 'Predictions being analyzed' in text
+    assert 'No Top Picks for today.' in text
     assert 'temporarily unavailable' not in text
     assert 'DAILY ONLY' not in text          # never a silent fallback to the daily tier
 

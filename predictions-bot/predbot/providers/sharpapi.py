@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections import defaultdict, Counter
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -182,8 +183,9 @@ class SharpApiProvider(BaseProvider):
         # retries=0, matching the other providers' discipline: a retried request is
         # still a real upstream call, and budget.spend() is only charged once
         # per logical fetch here - a silent retry would understate real usage.
+        # sleep_on_429=False: a 429 is handled by fetch_events (stop the walk, cool down), never slept through
         self.http = Http("https://api.sharpapi.io/api/v1", headers={"X-API-Key": api_key},
-                         rate=RateLimiter(min_interval), retries=0)
+                         rate=RateLimiter(min_interval), retries=0, sleep_on_429=False)
         self.sport_status: Dict[str, Dict] = {}    # per-canonical-sport fetch outcome
         self.skipped_no_results: List[str] = []    # configured leagues with no results path (not fetched)
         self.parse_counts: Counter = Counter()     # row -> MarketLine rejection reasons
@@ -243,6 +245,28 @@ class SharpApiProvider(BaseProvider):
             params["is_main_line"] = "true"
         return params
 
+    #: after a 429 SharpAPI is left alone at least this long (longer when its Retry-After says so), so the next
+    #: scheduled attempt - not the same walk - asks again; persisted, so a restart does not hammer it either
+    COOLDOWN_SECONDS = 120.0
+    COOLDOWN_KEY = "sharpapi:cooldown_until"
+
+    def _cooldown_left(self) -> float:
+        until = getattr(self, "_cooldown_until", 0.0)
+        if self.db is not None:
+            try:
+                until = max(until, float(self.db.get_kv(self.COOLDOWN_KEY) or 0))
+            except (TypeError, ValueError):
+                pass
+        return max(0.0, until - time.time())
+
+    def _start_cooldown(self, retry_after: Optional[float]) -> None:
+        seconds = max(self.COOLDOWN_SECONDS, float(retry_after or 0))
+        log.warning("SharpAPI: rate limited - stopping this walk and pausing SharpAPI for %.0fs "
+                    "(data already fetched is kept)", seconds)
+        self._cooldown_until = time.time() + seconds
+        if self.db is not None:
+            self.db.set_kv(self.COOLDOWN_KEY, str(self._cooldown_until))
+
     def fetch_events(self, start: datetime, end: datetime) -> List[Event]:
         self.last_fetch_complete = True
         self.fetch_counts = {}
@@ -255,6 +279,10 @@ class SharpApiProvider(BaseProvider):
         budget_left = self.request_budget()
         self.requests_budget = budget_left
         self.requests_spent = 0
+        rate_limited = self._cooldown_left() > 0
+        if rate_limited:
+            log.warning("SharpAPI: cooling down after a rate limit for %.0fs more - no request this run",
+                        self._cooldown_left())
         for index, target in enumerate(targets):
             label = target.get("league") or target.get("sport") or "all"
             sport = self._target_sport(target)
@@ -272,6 +300,11 @@ class SharpApiProvider(BaseProvider):
                 self.last_fetch_complete = False
                 target_status[sport].add("failed")
                 continue
+            if rate_limited:                  # one 429 stops the whole walk: no request per remaining league
+                counts.update(capped=True, stop_reason="rate_limited")
+                self.last_fetch_complete = False
+                target_status[sport].add("failed")
+                continue
             cursor = None
             pages = 0
             seen: set = set()
@@ -286,6 +319,11 @@ class SharpApiProvider(BaseProvider):
                 except ProviderError as e:
                     self.last_fetch_complete = False
                     target_status[sport].add("failed")
+                    if getattr(e, "status", None) == 429:
+                        rate_limited = True
+                        self._start_cooldown(getattr(e, "retry_after", None))
+                        stop = "rate_limited"
+                        break
                     log.warning("SharpAPI fetch failed (%s): %s", label, e)
                     stop = "error"
                     break

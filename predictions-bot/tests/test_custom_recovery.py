@@ -24,7 +24,7 @@ from predbot.providers.sportsgameodds import SportsGameOddsProvider
 from predbot.util.timeutil import day_bounds, iso, to_local
 from tests.test_community_menu import message_update
 from tests.test_custom_pick_candidates import alternatives, prepared
-from tests.test_custom_picks import NOW, DAY, ZONE, rows_for, store, private_bot
+from tests.test_custom_picks import last_reply, NOW, DAY, ZONE, rows_for, store, private_bot
 
 
 def rows(sports=('football', 'basketball', 'tennis'), count=3, **kwargs):
@@ -46,7 +46,7 @@ def callback(data, user='42', chat='42', kind='private'):
 def request(loop, text, user='42', chat='42'):
     loop._custom_users.add((user, chat))
     loop._handle_update(message_update(text, chat, 'private', user))
-    return loop.tg.sends[-1]
+    return last_reply(loop.tg)
 
 
 def promise(loop, button, now=NOW):
@@ -86,7 +86,7 @@ def promise(loop, button, now=NOW):
     ('5 picks', ('football',), {}, 'insufficient_count', "We're a few games short"),
     ('20 odds', ('football',), {}, 'target_unreachable', "Couldn't stretch it to 20 odds"),
     ('1.1 odds', ('football',), {}, 'target_too_low', "That's a tight squeeze"),
-    ('DC only no DC', ('football',), {}, 'conflicting_constraints', 'You boxed me in there'),
+    ('DC only no DC', ('football',), {}, 'conflicting_constraints', "I didn't quite catch that"),
     ('3 picks', ('football',), {'start': NOW}, 'all_started', 'We missed the window'),
     ('3 basketball picks', ('football',), {'partial': True}, 'partial_insufficient', 'Slim pickings right now'),
     ('hello', ('football',), {}, 'invalid_request', "I didn't quite catch that"),
@@ -104,7 +104,7 @@ def test_every_empty_reason_gets_a_private_response(private_bot, db, text, pool_
     assert structured.reason == reason
     sent = request(private_bot, text)
     assert sent['chat_id'] == '42' and headline in sent['text']
-    assert not sent['text'].startswith('🔥 Custom Picks')
+    assert not sent['text'].startswith('🔥 ')
     assert all(word not in sent['text'] for word in ('SQLite', 'provider', 'database', 'Traceback', 'beam', 'TARGET_ODDS'))
     for button in buttons(sent):
         promise(private_bot, button)
@@ -158,15 +158,15 @@ def test_moneyline_recovery_is_prevalidated_when_it_differs(private_bot, db):
     store(db, pool)
     sent = request(private_bot, 'basketball double chance only')
     proven = [promise(private_bot, b) for b in buttons(sent)]
-    assert any(s.request.allowed_markets == {'result2'} and 'Moneyline' in s.label for s in proven)
+    assert any(s.request.allowed_markets == {'result2'} and 'To Win' in s.label for s in proven)
 
 
 def test_odds_ladder_only_displays_successful_distinct_tickets(private_bot, db, monkeypatch):
     store(db, rows(('football', 'basketball', 'tennis'), count=2))
     original = cp.search
     searched = []
-    def recorded(pool, spec):
-        ticket = original(pool, spec)
+    def recorded(pool, spec, *budget):
+        ticket = original(pool, spec, *budget)
         searched.append((spec, ticket))
         return ticket
     monkeypatch.setattr(cp, 'search', recorded)
@@ -186,11 +186,11 @@ def test_odds_ladder_only_displays_successful_distinct_tickets(private_bot, db, 
 def test_original_quality_is_not_lowered_and_alternative_is_explicit(private_bot, db):
     store(db, rows(('basketball',), probability=.55))
     sent = request(private_bot, 'safe 3 basketball picks')
-    assert 'Nothing made the cut' in sent['text'] and not sent['text'].startswith('🔥 Custom Picks')
+    assert 'Nothing made the cut' in sent['text'] and not sent['text'].startswith('🔥 ')
     for button in buttons(sent):
         suggestion = promise(private_bot, button)
-        assert suggestion.request.preference == 'best'
-        assert 'Best' in suggestion.label or 'Basketball Picks' in suggestion.label
+        assert suggestion.request.preference == 'safe'
+    assert not buttons(sent)
 
 
 def test_bounded_search_failure_is_not_silent_or_speculative(private_bot, db, monkeypatch):
@@ -219,7 +219,7 @@ def test_malformed_row_does_not_hide_good_pool(private_bot, db, monkeypatch):
     store(db, rows())
     original = db.get_custom_pick_candidates
     monkeypatch.setattr(db, 'get_custom_pick_candidates', lambda *args: [None, {'sport': []}] + original(*args))
-    assert request(private_bot, '3 picks')['text'].startswith('🔥 Custom Picks')
+    assert request(private_bot, '3 picks')['text'].startswith('🔥 ')
 
 
 def test_discovery_uses_one_snapshot_and_valid_tap_needs_no_reads_or_search(private_bot, db, monkeypatch):
@@ -334,6 +334,7 @@ def test_missing_tokens_are_recoverable_with_proven_options(private_bot, db, mis
         private_bot._custom_picks.recovery.ready.clear()
     if missing == 'restart':
         private_bot = CommandLoop(private_bot.tg, db, private_bot.cfg, {}, service=None)
+        private_bot._handle_update(message_update('/start custom_picks', user_id='42'))
     private_bot._dispatch_callback(callback(button['callback_data']))
     sent = private_bot.tg.sends[-1]
     assert sent['chat_id'] == '42' and 'expired' in sent['text']
@@ -343,6 +344,7 @@ def test_missing_tokens_are_recoverable_with_proven_options(private_bot, db, mis
 
 
 def test_missing_token_no_archive_has_no_fake_buttons(private_bot):
+    private_bot._custom_users.add(('42', '42'))
     private_bot._dispatch_callback(callback(CALLBACK_PREFIX + 'unknown'))
     assert private_bot.tg.sends[-1]['text'] == COPY['expired_empty']
     assert not buttons(private_bot.tg.sends[-1])
@@ -367,7 +369,7 @@ def test_followups_do_not_invalidate_still_current_tokens(private_bot, db):
     for _ in range(10):
         request(private_bot, '3 picks')
     private_bot._dispatch_callback(callback(button['callback_data']))
-    assert private_bot.tg.sends[-1]['text'].startswith('🔥 Custom Picks')
+    assert private_bot.tg.sends[-1]['text'].startswith('🔥 ')
 
 
 def test_acknowledgement_failure_does_not_hide_private_ticket(private_bot, db, monkeypatch):
@@ -375,7 +377,7 @@ def test_acknowledgement_failure_does_not_hide_private_ticket(private_bot, db, m
     button = buttons(request(private_bot, 'baseball picks'))[0]
     monkeypatch.setattr(private_bot.tg, 'answer_callback_query', Mock(side_effect=RuntimeError('temporary Telegram failure')))
     private_bot._dispatch_callback(callback(button['callback_data']))
-    assert private_bot.tg.sends[-1]['text'].startswith('🔥 Custom Picks')
+    assert private_bot.tg.sends[-1]['text'].startswith('🔥 ')
 
 
 @pytest.mark.parametrize('view', ['top', 'daily', 'all', 'stats', 'yesterday'])
@@ -420,11 +422,11 @@ def test_normal_preparation_taps_expiry_are_read_only_untracked_zero_provider(pr
     try:
         for user in range(42, 42 + users):
             for _ in range(iterations):
-                assert request(private_bot, '3 picks', str(user), str(user))['text'].startswith('🔥 Custom Picks')
+                assert request(private_bot, '3 picks', str(user), str(user))['text'].startswith('🔥 ')
                 sent = request(private_bot, 'baseball picks', str(user), str(user))
                 assert len(buttons(sent)) == 3
                 private_bot._dispatch_callback(callback(buttons(sent)[0]['callback_data'], str(user), str(user)))
-                assert private_bot.tg.sends[-1]['text'].startswith('🔥 Custom Picks')
+                assert private_bot.tg.sends[-1]['text'].startswith('🔥 ')
                 monkeypatch.setattr(cp, 'utcnow', lambda: NOW + TTL)
                 private_bot._dispatch_callback(callback(buttons(sent)[0]['callback_data'], str(user), str(user)))
                 assert 'expired' in private_bot.tg.sends[-1]['text']
@@ -448,6 +450,7 @@ def test_aggregate_logs_have_reasons_labels_and_status_without_raw_text(private_
     with caplog.at_level(logging.INFO):
         sent = request(private_bot, 'please give me 3 baseball picks')
         private_bot._dispatch_callback(callback(buttons(sent)[0]['callback_data']))
+        private_bot._custom_users.add(('99', '42'))
         private_bot._dispatch_callback(callback(buttons(sent)[0]['callback_data'], user='99'))
         private_bot._dispatch_callback(callback(CALLBACK_PREFIX + 'malicious-raw-payload'))
     assert 'reason=sport_unavailable' in caplog.text and 'suggestions=3' in caplog.text

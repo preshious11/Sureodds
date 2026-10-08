@@ -89,7 +89,7 @@ class UnifiedFetcher:
                 self._count('hit', day)
             return cached
         log.info('Cache %s | date=%s', 'PARTIAL (force refresh)' if cached else 'MISS', day)
-        if not cached and not force_refresh and allow_api_call and not scheduled \
+        if not cached and not force_refresh and not scheduled \
                 and self._before_post_time(now):
             ready = self._ready_label(now)
             log.info('Not generating before POST_TIME | date=%s | ready at %s', day, ready)

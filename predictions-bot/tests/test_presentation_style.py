@@ -27,7 +27,8 @@ def test_the_emoji_vocabulary_is_frozen():
     named = ("top", "daily", "stats", "yesterday", "all")
     assert {v: pagination.VIEW_ICON[v] for v in named} == {"top": "🔥", "daily": "📋", "stats": "📊", "yesterday": "🗓", "all": "📚"}
     assert (fmt.TOP_TITLE, fmt.DAILY_TITLE) == ("🔥 TOP PICKS", "📋 DAILY PICKS")
-    assert fmt.MARK == {"won": "✅", "lost": "❌", "void": "➖", "push": "↩️"}
+    # M8 added the unresolved mark: a pick no result could be confirmed for is not a void
+    assert fmt.MARK == {"won": "✅", "lost": "❌", "void": "➖", "push": "↩️", "unresolved": "❔"}
     assert (fmt.STARTED_MARK, fmt.FINISHED_MARK) == (" 🔴", " · Finished")
     assert [fmt.SPORT_ICON[s] for s in ("football", "basketball", "baseball", "tennis")] == ["⚽", "🏀", "⚾", "🎾"]
     assert [pagination.view_button_label(v) for v in ("top", "daily", "stats", "yesterday", "all")] == \

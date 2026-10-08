@@ -8,9 +8,9 @@ Commands and buttons deliberately share ONE handler: tapping 🏆 /top and typin
 /top render the same snapshot slice with the same keyboard, so there is no
 second implementation to drift out of sync.
 
-Every read is cache-first (``UnifiedFetcher.get_daily_snapshot``); the only path
-that may reach the providers is a cold cache on a brand-new day (the documented
-write-once-per-day miss).
+Every read is a cache/database read (``UnifiedFetcher.get_daily_snapshot(allow_api_call=False)``):
+a user view NEVER generates and never reaches a provider. Before today's scheduled
+(or admin) generation has run, a view says the picks are not ready yet.
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ import logging
 from typing import Any, Dict, Optional, Tuple
 
 from predbot.bot import pagination
+from predbot import ticket_audit_switch
 from predbot.bot.pagination import (VIEW_COMMAND, VIEW_DESC, VIEW_ICON,
                                     view_button_label)
 from predbot.bot.telegram import Telegram, esc
@@ -28,6 +29,10 @@ from predbot.storage.db import Database
 from predbot.util.timeutil import resolve_timezone
 
 log = logging.getLogger(__name__)
+
+
+class TelegramBusy(RuntimeError):
+    """The view could not be delivered because Telegram rate-limited this chat (answered as 'busy')."""
 
 #: Telegram hands us the client's ``language_code`` on every update, so the
 #: subscriber's zone is inferred from it - nobody is asked to pick one.
@@ -161,17 +166,34 @@ def menu_markup() -> Dict[str, Any]:
 
 COMMUNITY_MENU_TEXT = "⚽ Predictions\n\nToday's picks, results and more."
 CUSTOM_PICKS_START_PARAMETER = "custom_picks"
+TICKET_AUDIT_START_PARAMETER = "ticket_audit"
+
+
+def custom_picks_button(bot_username: str) -> Dict[str, str]:
+    """The same private entry point for the community menu and empty Top card."""
+    return {"text": "✨ Custom Picks",
+            "url": f"https://t.me/{bot_username}?start={CUSTOM_PICKS_START_PARAMETER}"}
+
+
+def top_empty_markup(bot_username: str) -> Dict[str, Any]:
+    return {"inline_keyboard": [
+        [view_button(VIEW_DAILY), view_button(VIEW_ALL)],
+        [custom_picks_button(bot_username)],
+    ]}
 
 
 def community_menu_markup(bot_username: str) -> Dict[str, Any]:
     """Community entry points reuse the existing view callback payloads."""
-    return {"inline_keyboard": [
+    rows = [
         [view_button(VIEW_TOP), view_button(VIEW_DAILY)],
         [view_button(VIEW_ALL)],
         [view_button(VIEW_STATS), view_button(VIEW_YESTERDAY)],
-        [{"text": "✨ Custom Picks",
-          "url": f"https://t.me/{bot_username}?start={CUSTOM_PICKS_START_PARAMETER}"}],
-    ]}
+        [custom_picks_button(bot_username)],
+    ]
+    if ticket_audit_switch.ENABLED:
+        rows.append([{"text": "🔍 Ticket Audit",
+                      "url": f"https://t.me/{bot_username}?start={TICKET_AUDIT_START_PARAMETER}"}])
+    return {"inline_keyboard": rows}
 
 
 def handle_custom_picks_start(tg: Telegram, chat_id: str) -> None:
@@ -220,20 +242,27 @@ def open_view(view: str, *, service: UnifiedFetcher, tg: Telegram, cfg: Config,
     message it came from are given (VIEW_NAVIGATION=edit / edit_pages); both receive the same text and
     keyboard. ``day`` (page-turn buttons carry it) renders that day's picks instead of today's.
     """
-    # Page turns and statistics are storage-only, even when today's snapshot is missing.
-    read_only = (day is not None or view in (VIEW_STATS, VIEW_YESTERDAY)
-                 or view.startswith(('stats_', 'results_', SPORT_VIEW_PREFIX)))
-    snapshot = service.get_daily_snapshot(allow_api_call=False) if read_only else service.get_daily_snapshot()
+    # Every view is storage-only: a tap or a typed command never spends provider quota (M4).
+    snapshot = service.get_daily_snapshot(allow_api_call=False)
     if day and pagination.is_prediction_view(view) and day != snapshot.date and hasattr(service, "snapshot_for"):
         snapshot = service.snapshot_for(day)         # an old message keeps turning ITS day's pages
     timezone = resolve_timezone(db.subscriber_timezone(chat_id) if db is not None else "",
                                 cfg.timezone)
     text, markup = pagination.render_view(snapshot, view, page, page_size,
                                           timezone, db=db, day=day)
+    if (view == VIEW_TOP and pagination.predictions_evaluated(snapshot)
+            and text == pagination.empty_view_message(snapshot, VIEW_TOP, timezone)):
+        username = tg.get_bot_username()
+        if not username:
+            raise RuntimeError('bot_username_unavailable')
+        markup = top_empty_markup(username)
     if message_id and edit:
-        tg.edit_message_text(chat_id, int(message_id), text, reply_markup=markup)
+        delivered = tg.edit_message_text(chat_id, int(message_id), text, reply_markup=markup)
     else:
-        tg.send(text, chat_id=chat_id, reply_markup=markup)
+        delivered = tg.send(text, chat_id=chat_id, reply_markup=markup)
+    limited = getattr(tg, "rate_limited", None)
+    if not delivered and callable(limited) and limited(chat_id):
+        raise TelegramBusy("chat rate limited")
     return text, markup
 
 
@@ -250,6 +279,8 @@ def handle_command(cmd: str, chat_id: str, *, service: UnifiedFetcher, tg: Teleg
     try:
         open_view(view, service=service, tg=tg, cfg=cfg, chat_id=chat_id, db=db,
                   page_size=page_size)
+    except TelegramBusy:
+        log.warning("command %r not answered: the chat is rate limited", cmd)   # a reply would be refused too
     except Exception as exc:  # noqa: BLE001
         # Match the button path (handle_callback): one bad pick/price/network
         # blip must not crash the whole command loop for a typed command.
@@ -302,6 +333,9 @@ def handle_callback(cb: Dict[str, Any], *, service: UnifiedFetcher, tg: Telegram
         else:
             toast = _new_toast(view, page, page_turn, service, day, page_size)
         tg.answer_callback_query(cb_id, text=toast)
+    except TelegramBusy:
+        if cb_id:
+            tg.answer_callback_query(cb_id, text="Busy right now — try again in a few seconds.")
     except Exception as exc:  # noqa: BLE001
         log.exception("callback %r failed: %s", data, exc)
         if cb_id:

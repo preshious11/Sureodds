@@ -62,6 +62,7 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
                                          monthly_limit=cfg.odds_api_monthly_limit,
                                          max_credits_per_cycle=cfg.oddsapi_max_credits_per_cycle,
                                          reserve_credits=cfg.oddsapi_reserve_credits,
+                                         settlement_reserve_credits=cfg.oddsapi_settlement_reserve_credits,
                                          min_keys_per_sport=cfg.oddsapi_min_keys_per_sport,
                                          league_allowlist=cfg.odds_api_league_allowlist)
     if cfg.football_data_key:
@@ -224,9 +225,9 @@ def merge_events(pool: List[Event], new: List[Event], price_mode: str = "median"
     return out
 
 
-#: Markets whose ``entity`` only repeats the selected side: SportsGameOdds tags a moneyline / handicap on the home
-#: team ``entity="home"`` where SharpAPI says ``"all"``, yet it is one bet - so the pooling key ignores it.
-_SIDE_MARKETS = {"result2", "result3", "dnb", "dc", "handicap"}
+#: Markets whose ``entity`` only repeats the selected side (normalised to "all" by ``MarketLine`` itself; kept
+#: here so a line built some other way still pools as one bet).
+from predbot.providers.base import SIDE_MARKETS as _SIDE_MARKETS
 
 
 def _pool_key(ml: MarketLine) -> Tuple:

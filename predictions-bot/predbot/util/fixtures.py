@@ -12,9 +12,23 @@ from types import SimpleNamespace
 from typing import Optional
 
 from predbot.markets.competitions import competition_for_event
-from predbot.util.names import canonical_team, same_team
+from predbot.util.names import canonical_team, same_participant
 
 KICKOFF_WINDOW_SECONDS = 3 * 3600
+#: Sports where the same two teams can meet twice in one day (a baseball doubleheader's second game starts about
+#: three hours after the first): two providers' kickoffs for ONE game differ by minutes, so the tolerance there is
+#: kept well below the gap between two games.
+SPORT_KICKOFF_WINDOW_SECONDS = {"baseball": 2 * 3600}
+#: When one provider itself lists the same pairing more than once around that time (a doubleheader / series), a
+#: kickoff must match this closely to be the same game.
+SERIES_KICKOFF_WINDOW_SECONDS = 45 * 60
+
+
+def kickoff_window(sport: str, series: bool = False) -> int:
+    """Seconds two kickoffs of ONE real fixture may differ by across providers."""
+    if series:
+        return SERIES_KICKOFF_WINDOW_SECONDS
+    return SPORT_KICKOFF_WINDOW_SECONDS.get(sport, KICKOFF_WINDOW_SECONDS)
 
 
 def _competition_id(event) -> str:
@@ -26,21 +40,24 @@ def fixture_orientation(a, b, comp_a: Optional[str] = None, comp_b: Optional[str
     """``None`` when ``a`` and ``b`` are different matches, ``"same"`` when they are one match listed with
     the same home/away order, ``"swapped"`` when the two providers list the sides the other way round.
 
-    Same sport, kickoffs within 3 h, both teams matching (fuzzy ``same_team`` with the sport's rules). When
-    both events resolve to a known competition and it is not the same one, they are never linked (a
-    Premier League match cannot be a Championship one however alike the names)."""
+    Same sport, kickoffs within the sport's window (``kickoff_window``), both teams the same participant under
+    the STRICT identity test (``same_participant``, scoped to the competition) - a merely similar name is a
+    different team. When both events resolve to a known competition and it is not the same one, they are never
+    linked (a Premier League match cannot be a Championship one however alike the names)."""
     if a.sport != b.sport or not a.start or not b.start:
         return None
-    if abs((a.start - b.start).total_seconds()) > KICKOFF_WINDOW_SECONDS:
+    if abs((a.start - b.start).total_seconds()) > kickoff_window(a.sport):
         return None
     ca = _competition_id(a) if comp_a is None else comp_a
     cb = _competition_id(b) if comp_b is None else comp_b
     if ca and cb and ca != cb:
         return None
-    sport = a.sport
-    if same_team(a.home, b.home, sport=sport) and same_team(a.away, b.away, sport=sport):
+    sport, comp = a.sport, ca or cb or ""
+    def same(x, y):
+        return same_participant(x, y, sport, comp)
+    if same(a.home, b.home) and same(a.away, b.away):
         return "same"
-    if same_team(a.home, b.away, sport=sport) and same_team(a.away, b.home, sport=sport):
+    if same(a.home, b.away) and same(a.away, b.home):
         return "swapped"
     return None
 
@@ -50,7 +67,7 @@ def competition_id(event) -> str:
 
 
 def _key(sport: str, competition: str, home: str, away: str, start) -> str:
-    pair = sorted((canonical_team(home, sport), canonical_team(away, sport)))
+    pair = sorted((canonical_team(home, sport, competition), canonical_team(away, sport, competition)))
     stamp = (start + timedelta(minutes=30)).strftime("%Y%m%d%H") if start else ""     # nearest hour
     return f"{sport}|{competition}|{pair[0]}|{pair[1]}|{stamp}"
 

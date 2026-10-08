@@ -31,7 +31,10 @@ Tennis statuses seen: STATUS_FINAL, STATUS_RETIRED, STATUS_WALKOVER, STATUS_CANC
 STATUS_SCHEDULED, STATUS_IN_PROGRESS.
 
 Result contract: ``scores["full"]`` is the final score including overtime (basketball, NFL, cfb);
-tennis ``full`` is SETS won and ``stats[("games","full")]`` the total games per player.
+tennis ``full`` is SETS won and ``stats[("games","full")]`` the total games per player. When the per-period
+linescores are present, ``scores["reg"]`` is the regulation score (4 quarters; 2 halves in NCAAB; 9 innings) and
+``overtime`` says whether more periods were played; without them regulation is unknown and a regulation-time bet
+stays unresolved.
 """
 from __future__ import annotations
 
@@ -226,8 +229,23 @@ class ESPNProvider(BaseProvider):
         return [] if any(v is None for v in vals) else vals
 
     @staticmethod
+    def _add_regulation(result: MatchResult, comp: Competition, h: List[float], a: List[float]) -> None:
+        """Regulation score and the overtime flag, from the per-period linescores (only when they are complete)."""
+        if comp.sport in ("basketball", "american_football"):
+            n = 2 if comp.id == "ncaab" else 4
+        elif comp.sport == "baseball":
+            n = 9
+        else:
+            return
+        if len(h) != len(a) or len(h) < (n if comp.sport != "baseball" else 8):
+            return                                                   # incomplete: regulation unknown
+        result.overtime = len(h) > n
+        result.scores["reg"] = (sum(h[:n]), sum(a[:n])) if result.overtime else result.scores["full"]
+
+    @staticmethod
     def _add_periods(result: MatchResult, comp: Competition, h: List[float], a: List[float],
                      hs: float, as_: float) -> None:
+        ESPNProvider._add_regulation(result, comp, h, a)
         if len(h) < 2 or len(h) != len(a):
             return                                                   # no per-period scores: only `full`
         if comp.sport in ("basketball", "american_football") and len(h) >= 4 and comp.id != "ncaab":
