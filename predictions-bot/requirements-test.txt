@@ -1,0 +1,4 @@
+# Test-only dependencies. Production runtime stays on requirements.txt
+# (requests only) so the Docker image and Actions engine jobs remain lean;
+# CI jobs install both files into the same environment that runs pytest.
+pytest>=8,<9
