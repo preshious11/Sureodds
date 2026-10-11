@@ -1,0 +1,51 @@
+# Stage 3 benchmark: measures GitHub-hosted wall times with ZERO provider
+# consumption (offline fixtures only). MANUAL DISPATCH ONLY — no schedule.
+# Read billed minutes from the workflow run's billing page; the artifact
+# carries per-stage wall times for the monthly estimate.
+name: stage3-benchmark
+
+on:
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: predictions-bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install minimal runtime dep
+        run: pip install "requests>=2.31,<3"
+      - name: Offline engine benchmarks (no network)
+        run: |
+          python run_once.py generate --offline --report bench-generate.json
+          python run_once.py settle --offline --report bench-settle.json
+          python run_once.py recap --offline --report bench-recap.json
+      - name: Sync-tool benchmarks (throwaway DBs)
+        run: |
+          python -c "from predbot.storage.db import Database; Database('/tmp/bench.db').close()"
+          python ../workers/scripts/d1_sync.py push /tmp/bench.db --out /tmp/bench-push
+          python ../workers/scripts/d1_sync.py coalesce /tmp/bench-push --out /tmp/bench-coal
+          python ../workers/scripts/d1_sync.py snapshot /tmp/bench.db --out /tmp/bench-snap
+      - name: Offline regression subset
+        run: python -m pytest tests/test_stage2_runonce.py tests/test_stage3_sync.py tests/test_replay_golden.py -q
+      - name: Worker tests
+        run: node --test ../workers/tests/webhook.test.mjs ../workers/tests/views.test.mjs ../workers/tests/retry.test.mjs ../workers/tests/cron.test.mjs
+      - name: Upload benchmark reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage3-benchmark
+          path: |
+            predictions-bot/bench-generate.json
+            predictions-bot/bench-settle.json
+            predictions-bot/bench-recap.json

@@ -1,0 +1,291 @@
+"""Stage 3 sync-safety tests. All on throwaway DBs; never the live database.
+
+Proves: stale snapshots are refused, newer D1 receipts survive pushes, the
+roster is excluded from ongoing pushes, import chunks respect D1's 100KB
+per-statement cap, interrupted applies resume, and the compat guard covers
+all 24 synced tables.
+"""
+import json
+import os
+import sqlite3
+import subprocess
+import sys
+
+SYNC = os.path.join(os.path.dirname(__file__), "..", "..", "workers", "scripts", "d1_sync.py")
+COMPAT = os.path.join(os.path.dirname(__file__), "..", "..", "workers", "scripts",
+                      "check_schema_compat.py")
+MIGRATIONS = os.path.join(os.path.dirname(__file__), "..", "..", "workers", "migrations")
+
+
+def sync(*args):
+    return subprocess.run([sys.executable, SYNC, *args], capture_output=True, text=True)
+
+
+def make_db(path, jobs=True):
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT)")
+    con.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,"
+                " post_date TEXT NOT NULL, message_id TEXT, created_at TEXT NOT NULL,"
+                " UNIQUE(kind, post_date))")
+    con.execute("CREATE TABLE deliveries (kind TEXT NOT NULL, post_date TEXT NOT NULL,"
+                " chat_id TEXT NOT NULL, created_at TEXT NOT NULL,"
+                " UNIQUE(kind, post_date, chat_id))")
+    con.execute("CREATE TABLE subscribers (chat_id TEXT PRIMARY KEY, username TEXT,"
+                " first_name TEXT, timezone TEXT NOT NULL DEFAULT '',"
+                " subscribed_at TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)")
+    con.execute("CREATE TABLE sync_state (id INTEGER PRIMARY KEY CHECK(id = 1),"
+                " epoch INTEGER NOT NULL DEFAULT 0,"
+                " updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')))")
+    con.execute("INSERT INTO sync_state (id, epoch) VALUES (1, 0)")
+    if jobs:
+        con.execute("CREATE TABLE job_state (name TEXT PRIMARY KEY, due_at TEXT,"
+                    " lease_owner TEXT, lease_until TEXT, attempts INTEGER NOT NULL DEFAULT 0,"
+                    " last_run_at TEXT, last_result TEXT,"
+                    " updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')))")
+        con.execute("INSERT INTO job_state (name) VALUES ('generate')")
+    con.commit()
+    con.close()
+
+
+def test_stale_push_refused(tmp_path):
+    src = str(tmp_path / "src.db")
+    make_db(src)
+    out = str(tmp_path / "push")
+    proc = sync("push", src, "--out", out, "--expect-epoch", "7")
+    assert proc.returncode == 1
+    assert "stale snapshot" in proc.stderr
+
+
+def test_worker_tables_never_pushed(tmp_path):
+    src = str(tmp_path / "src.db")
+    make_db(src)
+    con = sqlite3.connect(src)
+    con.execute("CREATE TABLE telegram_updates (update_id INTEGER PRIMARY KEY)")
+    con.execute("INSERT INTO telegram_updates VALUES (1)")
+    con.commit()
+    con.close()
+    out = str(tmp_path / "push")
+    assert sync("push", src, "--out", out).returncode == 0
+    names = os.listdir(out)
+    assert not [n for n in names if n.startswith("telegram_updates")]
+    assert not [n for n in names if n.startswith("job_state")]
+    assert not [n for n in names if n.startswith("sync_state")]
+
+
+def test_newer_d1_receipts_survive_push(tmp_path):
+    src = str(tmp_path / "src.db")
+    tgt = str(tmp_path / "tgt.db")
+    make_db(src)
+    make_db(tgt)
+    stale = sqlite3.connect(src)
+    stale.execute("INSERT INTO deliveries VALUES ('picks','2026-10-11','1','t')")
+    stale.commit()
+    fresh = sqlite3.connect(tgt)
+    fresh.execute("INSERT INTO deliveries VALUES ('picks','2026-10-11','1','t')")
+    fresh.execute("INSERT INTO deliveries VALUES ('picks','2026-10-11','2','t')")
+    fresh.execute("INSERT INTO posts VALUES (1,'picks_top','2026-10-11','m1','t')")
+    fresh.commit()
+    out = str(tmp_path / "push")
+    assert sync("push", src, "--out", out).returncode == 0
+    assert sync("apply", tgt, out).returncode == 0
+    rows = fresh.execute("SELECT chat_id FROM deliveries ORDER BY chat_id").fetchall()
+    assert [r[0] for r in rows] == ["1", "2"]
+    assert fresh.execute("SELECT message_id FROM posts").fetchone()[0] == "m1"
+
+
+def test_roster_excluded_unless_seed(tmp_path):
+    src = str(tmp_path / "src.db")
+    make_db(src)
+    con = sqlite3.connect(src)
+    con.execute("INSERT INTO subscribers VALUES ('9','u','U','','t',1)")
+    con.commit()
+    con.close()
+    plain = str(tmp_path / "plain")
+    assert sync("push", src, "--out", plain).returncode == 0
+    assert not [n for n in os.listdir(plain) if "subscribers" in n]
+    seed = str(tmp_path / "seed")
+    assert sync("push", src, "--out", seed, "--include-roster").returncode == 0
+    assert [n for n in os.listdir(seed) if "subscribers" in n]
+
+
+def test_statements_respect_d1_cap(tmp_path):
+    src = str(tmp_path / "src.db")
+    make_db(src)
+    con = sqlite3.connect(src)
+    con.execute("CREATE TABLE big (id INTEGER PRIMARY KEY, blob TEXT)")
+    con.executemany("INSERT INTO big VALUES (?, ?)",
+                    [(i, "x" * 20000) for i in range(10)])
+    con.commit()
+    con.close()
+    out = str(tmp_path / "push")
+    assert sync("push", src, "--out", out).returncode == 0
+    for name in os.listdir(out):
+        if not name.endswith(".sql"):
+            continue
+        with open(os.path.join(out, name), encoding="utf-8") as fh:
+            for line in fh:
+                assert len(line) <= 100000, f"{name}: statement exceeds D1 cap"
+
+
+def test_interrupted_apply_resumes(tmp_path):
+    src = str(tmp_path / "src.db")
+    tgt = str(tmp_path / "tgt.db")
+    make_db(src)
+    make_db(tgt)
+    con = sqlite3.connect(src)
+    con.executemany("INSERT INTO kv VALUES (?, ?)", [(f"k{i}", "v") for i in range(60)])
+    con.commit()
+    con.close()
+    out = str(tmp_path / "push")
+    assert sync("push", src, "--out", out).returncode == 0
+    assert sync("apply", tgt, out).returncode == 0
+    again = sync("apply", tgt, out)
+    assert again.returncode == 0 and "0 new" in again.stdout
+    proc = sync("verify", tgt, "--manifest", os.path.join(out, "manifest.json"))
+    assert proc.returncode == 0, proc.stdout
+
+
+def test_compat_covers_all_synced_tables(tmp_path):
+    from predbot.storage.db import Database
+    engine = str(tmp_path / "engine.db")
+    Database(engine).close()
+    merged = str(tmp_path / "all.sql")
+    with open(merged, "w", encoding="utf-8") as fh_out:
+        for name in ("0001_foundation.sql", "0002_update_retry.sql",
+                     "0003_engine_state.sql", "0004_sync_state.sql"):
+            with open(os.path.join(MIGRATIONS, name), encoding="utf-8") as fh_in:
+                fh_out.write(fh_in.read() + "\n")
+    proc = subprocess.run([sys.executable, COMPAT, "--sqlite", engine, "--migrations", merged],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout
+    assert "24 engine tables" in proc.stdout or "engine tables covered" in proc.stdout
+
+
+def test_gate_tables_commit_last(tmp_path):
+    src = str(tmp_path / "src.db")
+    make_db(src)
+    con = sqlite3.connect(src)
+    con.execute("CREATE TABLE prediction_cache (cache_key TEXT PRIMARY KEY, status TEXT)")
+    con.execute("INSERT INTO prediction_cache VALUES ('k','COMPLETE')")
+    con.execute("INSERT INTO kv VALUES ('a','b')")
+    con.commit()
+    con.close()
+    out = str(tmp_path / "push")
+    assert sync("push", src, "--out", out).returncode == 0
+    names = sorted(n for n in os.listdir(out) if n.endswith(".sql"))
+    gate = [n for n in names if n.startswith("p1_")]
+    facts = [n for n in names if n.startswith("p0_")]
+    assert gate and facts
+    assert max(facts) < min(gate), "serving gate must sort after all fact tables"
+    assert any("prediction_cache" in n for n in gate)
+
+
+def test_apply_epoch_fence_before_and_after(tmp_path):
+    src = str(tmp_path / "src.db")
+    tgt = str(tmp_path / "tgt.db")
+    make_db(src)
+    make_db(tgt)
+    con = sqlite3.connect(src)
+    con.executemany("INSERT INTO kv VALUES (?, ?)", [("k1", "v1")])
+    con.commit()
+    con.close()
+    out = str(tmp_path / "push")
+    assert sync("push", src, "--out", out).returncode == 0
+    # Pre-check: moved epoch aborts before writing anything.
+    tgt_con = sqlite3.connect(tgt)
+    tgt_con.execute("UPDATE sync_state SET epoch=5 WHERE id=1")
+    tgt_con.commit()
+    tgt_con.close()
+    assert sync("apply", tgt, out, "--expect-epoch", "0").returncode == 1
+    # Post-check: epoch moved DURING the write is detected. Simulate with a
+    # trigger that bumps the epoch on the applied table's first insert.
+    tgt2 = str(tmp_path / "tgt2.db")
+    make_db(tgt2)
+    trip = sqlite3.connect(tgt2)
+    trip.execute("CREATE TRIGGER trip_epoch AFTER INSERT ON kv BEGIN "
+                 "UPDATE sync_state SET epoch=epoch+1 WHERE id=1; END")
+    trip.commit()
+    trip.close()
+    rc = sync("apply", tgt2, out, "--expect-epoch", "0")
+    assert rc.returncode == 1
+    assert "DURING apply" in (rc.stdout + rc.stderr)
+
+
+def test_concurrent_worker_receipt_survives_engine_apply(tmp_path):
+    # A delivery DM recorded in D1 while an engine apply runs must survive:
+    # receipts replicate INSERT OR IGNORE, so either order converges.
+    src = str(tmp_path / "src.db")
+    tgt = str(tmp_path / "tgt.db")
+    make_db(src)
+    make_db(tgt)
+    tgt_con = sqlite3.connect(tgt)
+    tgt_con.execute("INSERT INTO deliveries VALUES ('picks','2026-10-11','STAGING_1','t')")
+    tgt_con.commit()
+    tgt_con.close()
+    out = str(tmp_path / "push")
+    assert sync("push", src, "--out", out).returncode == 0
+    assert sync("apply", tgt, out).returncode == 0
+    got = sqlite3.connect(tgt).execute("SELECT chat_id FROM deliveries").fetchall()
+    assert got == [("STAGING_1",)]
+
+
+def _seed_engine_tables(path):
+    """Minimal engine-shaped DB: PK tables with history + a settlement flip."""
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE picks (id INTEGER PRIMARY KEY, pick_date TEXT, status TEXT)")
+    con.execute("CREATE TABLE prediction_memberships (prediction_id INTEGER NOT NULL"
+                " REFERENCES picks(id), collection TEXT NOT NULL, rank INTEGER NOT NULL DEFAULT 0,"
+                " PRIMARY KEY (prediction_id, collection))")
+    con.execute("CREATE TABLE match_results (id INTEGER PRIMARY KEY, score TEXT)")
+    con.execute("CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT)")
+    con.executemany("INSERT INTO picks VALUES (?, ?, ?)",
+                    [(1, "2026-10-08", "pending"), (2, "2026-10-08", "pending")])
+    con.executemany("INSERT INTO prediction_memberships VALUES (?, ?, ?)",
+                    [(1, "daily", 1), (2, "daily", 2)])
+    con.execute("INSERT INTO match_results VALUES (1, '1-0')")
+    con.execute("INSERT INTO kv VALUES ('a', 'b')")
+    con.commit()
+    con.close()
+
+
+def test_no_change_diff_emits_zero_writes(tmp_path):
+    base = str(tmp_path / "base.db")
+    _seed_engine_tables(base)
+    out = str(tmp_path / "delta")
+    assert sync("diff", base, base, "--out", out).returncode == 0
+    sql_files = [n for n in os.listdir(out) if n.endswith(".sql")]
+    assert sql_files == [], f"no-change sync must emit no SQL, got {sql_files}"
+
+
+def test_changed_records_converge_and_history_is_never_deleted(tmp_path):
+    base = str(tmp_path / "base.db")
+    src = str(tmp_path / "src.db")
+    _seed_engine_tables(base)
+    import shutil
+    shutil.copy(base, src)
+    con = sqlite3.connect(src)
+    con.execute("UPDATE picks SET status='won' WHERE id=1")          # settlement flip
+    con.execute("INSERT INTO picks VALUES (3, '2026-10-11', 'pending')")  # new day
+    con.execute("INSERT INTO prediction_memberships VALUES (3, 'daily', 1)")
+    con.execute("DELETE FROM prediction_memberships WHERE prediction_id=2")  # reset-day
+    con.execute("DELETE FROM picks WHERE id=2")
+    con.execute("DELETE FROM match_results WHERE id=1")  # NOT allowed: must be ignored
+    con.commit()
+    con.close()
+    out = str(tmp_path / "delta")
+    assert sync("diff", base, src, "--out", out).returncode == 0
+    tgt = str(tmp_path / "tgt.db")
+    shutil.copy(base, tgt)
+    assert sync("apply", tgt, out).returncode == 0
+    got = sqlite3.connect(tgt)
+    assert got.execute("SELECT status FROM picks WHERE id=1").fetchone()[0] == "won"
+    assert got.execute("SELECT COUNT(*) FROM picks WHERE id=3").fetchone()[0] == 1
+    assert got.execute("SELECT COUNT(*) FROM picks WHERE id=2").fetchone()[0] == 0
+    # match_results is append-or-update: the illegitimate delete did NOT replicate.
+    assert got.execute("SELECT COUNT(*) FROM match_results WHERE id=1").fetchone()[0] == 1
+    # Deletes file exists but carries only allowed tables, children first.
+    deletes = os.path.join(out, "p1_deletes.sql")
+    with open(deletes, encoding="utf-8") as fh:
+        text = fh.read()
+    assert "match_results" not in text
+    assert text.index("prediction_memberships") < text.index("DELETE FROM picks")

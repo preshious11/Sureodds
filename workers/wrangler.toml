@@ -1,0 +1,26 @@
+# Stage 1 foundation. Production bot is untouched: no `setWebhook` has been
+# called, the Railway poller remains the only live consumer.
+name = "sureodds-worker"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+# D1 binding. Create once (staging): `wrangler d1 create sureodds_staging`.
+# Production D1 is NOT created in Stage 1.
+[[d1_databases]]
+binding = "DB"
+database_name = "sureodds_staging"
+database_id = "REPLACE_WITH_STAGING_D1_ID"
+
+[vars]
+TIMEZONE = "Africa/Lagos"
+POST_TIME = "09:00"
+DELIVERY_TIME = "09:30"
+RECAP_TIME = "07:45"
+PAGE_SIZE = "5"
+
+# Secrets (never in this file):
+#   wrangler secret put TELEGRAM_BOT_TOKEN
+#   wrangler secret put TELEGRAM_WEBHOOK_SECRET
+#   wrangler secret put TELEGRAM_CHAT_ID   (optional, community destination)
+#
+# Local dev: copy .dev.vars.example to .dev.vars (gitignored).

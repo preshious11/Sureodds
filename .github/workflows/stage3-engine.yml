@@ -1,0 +1,82 @@
+# Stage 3 engine jobs: heavy Python work on GitHub Actions.
+# MANUAL DISPATCH ONLY. No schedule trigger exists on purpose: nothing here
+# runs (or spends provider quota) without a human pressing the button until
+# Stage 4 approves scheduled operation.
+# Repo stays private. Required secrets (configure only with approval):
+#   CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN (D1 export/push),
+#   TELEGRAM_BOT_TOKEN, PROVIDER KEYS (SHARPAPI_KEY, ODDS_API_KEY, ...).
+name: stage3-engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Engine job (generate|settle|recap)"
+        required: true
+        default: "settle"
+        type: choice
+        options: [generate, settle, recap]
+      live:
+        description: "Live providers+Telegram (default false = offline benchmark)"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  engine-once:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: sureodds-engine
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: predictions-bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install minimal runtime dep
+        run: pip install "requests>=2.31,<3"
+      - name: Guard live mode
+        if: inputs.live
+        run: |
+          for v in SHARPAPI_KEY TELEGRAM_BOT_TOKEN CLOUDFLARE_API_TOKEN; do
+            if [ -z "${!v}" ]; then echo "missing secret: $v"; exit 1; fi
+          done
+        env:
+          SHARPAPI_KEY: ${{ secrets.SHARPAPI_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - name: Pull scratch base (documented; needs staging D1)
+        # With staging approved: wrangler d1 export sureodds_staging --output base.sql
+        # then sqlite3 scratch.db < base.sql. Until then the offline path below
+        # proves timing without touching any database.
+        run: echo "pull step is a documented no-op until staging D1 exists"
+      - name: Run one engine job
+        run: |
+          if [ "${{ inputs.live }}" = "true" ]; then
+            export PREDBOT_ALLOW_LIVE=1
+            python run_once.py "${{ inputs.job }}" --live --report report.json
+          else
+            python run_once.py "${{ inputs.job }}" --offline --report report.json
+          fi
+          cat report.json
+        env:
+          SHARPAPI_KEY: ${{ secrets.SHARPAPI_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          SPORTSGAMEODDS_KEY: ${{ secrets.SPORTSGAMEODDS_KEY }}
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: Upload timing report
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-once-report-${{ inputs.job }}
+          path: predictions-bot/report.json

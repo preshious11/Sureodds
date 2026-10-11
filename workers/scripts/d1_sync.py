@@ -1,0 +1,613 @@
+"""Stage 2/3 engine-state synchronization between the Python runner and D1.
+
+Single source of truth: D1 is the SERVING truth (Worker reads only).
+The Actions runner works on a scratch SQLite copy: pull -> compute -> push.
+
+Table ownership (Stage 3 audit — see report for the full table):
+  ENGINE_OWNED  : computed by the engine; full-row replace allowed, but ONLY
+                  when the push proves freshness (--expect-epoch).
+  RUNNER_SCRATCH: provider_cache. Ephemeral API cache (rows exceed D1's 100KB
+                  statement cap); rebuilt by the runner, never served, never
+                  replicated. No history is lost (match_odds_ext/results keep it).
+  SHARED_MERGE  : posts, deliveries. Insert-only receipts; push emits
+                  INSERT OR IGNORE so a newer D1 row is never overwritten.
+                  (The roster is Worker-owned; see --include-roster.)
+  WORKER_OWNED  : telegram_updates, job_state, sync_state. NEVER in a push.
+
+Staleness guard: sync_state.epoch advances on every accepted push. A push
+records the epoch seen at pull time (--expect-epoch); apply/verify refuse
+when the target has moved on. Concurrent generation is fenced by the
+job_state lease AND the epoch check together.
+
+Commands:
+  manifest SRC --out DIR | push SRC --out DIR [--expect-epoch N]
+  coalesce BATCH_DIR --out DIR [--max-bytes 90000]
+  apply TARGET DIR | verify TARGET --manifest DIR/manifest.json
+  lease TARGET JOB OWNER [--ttl-min 30] | release TARGET JOB OWNER
+  epoch-get TARGET | epoch-bump TARGET [--expect N]
+  snapshot SRC --out DIR   (timestamped backup copy + manifest; never the live DB)
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sqlite3
+import sys
+from datetime import datetime, timedelta, timezone
+
+#: Commit phasing (atomic-fencing limitation, Stage 4A audit): D1 file
+#: imports apply statement-by-statement with no cross-file transaction, so a
+#: concurrent writer could interleave. Two mechanisms close the hole:
+#:  1. The `generate` lease + epoch CAS serialize writers (only one holder).
+#:  2. Phase-ordered commit: engine fact tables (p0_*) land before the
+#:     serving gate and receipts (p1_*: prediction_cache COMPLETE marker,
+#:     posts, deliveries). Readers gate on the COMPLETE row for the date, so
+#:     a partial apply is INVISIBLE until the final phase lands; verify then
+#:     proves completeness before cutover. Coalesce preserves lexical order.
+PHASE_GATE_TABLES = {"prediction_cache", "posts", "deliveries"}
+
+#: Parent tables that must sort before their FOREIGN KEY children within a
+#: phase (D1 enforces FKs; local SQLite leaves them off by default, which is
+#: why unordered imports pass locally and fail on D1). Children:
+#: match_odds/match_odds_ext -> match_results, prediction_memberships -> picks.
+#: picks already sorts before prediction_memberships alphabetically; only the
+#: match_* family needs an explicit rank.
+PARENT_FIRST = {"match_results"}
+
+#: Max bytes per emitted SQL statement. D1's per-statement cap is 100,000
+#: bytes; 90,000 leaves headroom for multi-byte characters and the import
+#: wrapper. Statements are built row-by-row and flushed before crossing it,
+#: so no statement can exceed the D1 limit no matter how wide the rows are.
+STATEMENT_MAX_BYTES = 90000
+
+
+def emit_statements(out: str, prefix: str, head: str, rows: list, render) -> int:
+    """Write head + VALUES statements, each <= STATEMENT_MAX_BYTES. Returns file count."""
+    files, current, index = 0, [], 0
+    size = len(head)
+    for r in rows:
+        piece = render(r)
+        if len(head) + len(piece) + 1 > 100000:
+            # A single row that cannot fit D1's per-statement cap in ANY
+            # batching. Failing loudly beats silently losing history; route
+            # such rows via the D1 REST params API or exclude the table.
+            print(f"FAIL {prefix}: single row exceeds D1's 100KB statement cap", file=sys.stderr)
+            raise ValueError(f"{prefix}: oversize row")
+        if current and size + 1 + len(piece) + 1 > STATEMENT_MAX_BYTES:
+            with open(os.path.join(out, f"{prefix}_{index:04d}.sql"), "w", encoding="utf-8") as fh:
+                fh.write(head + ",".join(current) + ";\n")
+            files += 1
+            index += 1
+            current, size = [], len(head)
+        current.append(piece)
+        size += (1 if len(current) > 1 else 0) + len(piece)
+    if current:
+        with open(os.path.join(out, f"{prefix}_{index:04d}.sql"), "w", encoding="utf-8") as fh:
+            fh.write(head + ",".join(current) + ";\n")
+        files += 1
+    return files
+
+#: Never replicated from an Actions snapshot (Worker-owned runtime state).
+PUSH_EXCLUDE = {"telegram_updates", "job_state", "sync_state"}
+
+#: Ephemeral compute scratch: provider API-response cache (payloads routinely
+#: exceed D1's 100KB per-statement cap — the drill found a 103,889-byte row —
+#: and carry expires_at semantics). The runner rebuilds it from providers;
+#: the Worker never serves from it (it reads prediction_cache/picks).
+#: Excluding it loses no history: match_odds_ext/match_results carry the record.
+SCRATCH_EXCLUDE = {"provider_cache"}
+
+#: The subscriber roster is Worker-owned once live: every /start, timezone
+#: change and unsubscribe lands in D1 first, and engine snapshots can never
+#: be fresher (the drill proved a stale snapshot's non-empty username would
+#: regress a newer D1 value under the engine's own merge rule). Ongoing
+#: pushes therefore EXCLUDE subscribers; the roster is seeded once via
+#: --include-roster (initial staging import) and thereafter lives in D1.
+ROSTER_TABLE = "subscribers"
+
+#: Shared mutable receipts: insert-only replication. A conflict means D1
+#: already has the row, which is newer-or-equal by construction (receipts are
+#: never updated), so IGNORE is safe. The roster is NOT here (see above).
+MERGE_ONLY = {"posts", "deliveries"}
+
+
+def app_tables(con: sqlite3.Connection) -> list:
+    rows = con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def table_fingerprint(con: sqlite3.Connection, table: str) -> tuple:
+    # Order-insensitive: rows hash as sorted (column, value) pairs, so a
+    # target whose DDL declares the same columns in a different physical
+    # order (e.g. picks after Python ALTER migrations) still verifies.
+    cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
+    count = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    h = hashlib.sha256()
+    cur = con.execute(f"SELECT * FROM {table}")
+    names = [d[0] for d in cur.description] if cur.description else []
+    for row in cur:
+        h.update(repr(sorted(zip(names, row), key=lambda kv: kv[0])).encode("utf-8"))
+    return count, h.hexdigest(), cols
+
+
+def key_columns(con: sqlite3.Connection, table: str) -> list | None:
+    """Stable row key for diffing: PRIMARY KEY columns, else UNIQUE index
+    columns, else None (add-only by full-row hash; never deleted)."""
+    info = con.execute(f"PRAGMA table_info({table})").fetchall()
+    pks = [r[1] for r in sorted([r for r in info if r[5] > 0], key=lambda r: r[5])]
+    if pks:
+        return pks
+    for idx in con.execute(f"PRAGMA index_list({table})").fetchall():
+        if idx[2]:  # unique
+            cols = [r[2] for r in con.execute(f"PRAGMA index_info({idx[1]})").fetchall()]
+            if cols:
+                return cols
+    return None
+
+
+def row_map(con: sqlite3.Connection, table: str, keys: list | None) -> dict:
+    """key-tuple -> row-hash for every row. Streams; ~70k rows fit in memory."""
+    out = {}
+    cur = con.execute(f"SELECT * FROM {table}")
+    names = [d[0] for d in cur.description] if cur.description else []
+    for row in cur:
+        rec = dict(zip(names, row))
+        key = tuple(rec.get(k) for k in keys) if keys else None
+        h = hashlib.sha256(repr(sorted(rec.items(), key=lambda kv: kv[0])).encode("utf-8")).hexdigest()
+        if key is None:
+            out.setdefault("__hash__:" + h, h)
+        else:
+            out[key] = h
+    return out
+
+
+#: Tables whose rows the engine legitimately DELETES (reset_prediction_day
+#: clears today's unpublished pending rows). All other tables are
+#: append-or-update: diffs never emit DELETEs for them, so history and
+#: settlement records cannot be removed by a sync.
+DELETE_ALLOWED = {"picks", "prediction_memberships", "prediction_cache",
+                  "custom_pick_candidates", "custom_pick_pools"}
+
+#: Delete order is children-before-parents (mirror of the FK-ordered commit).
+DELETE_ORDER = ["prediction_memberships", "custom_pick_candidates", "custom_pick_pools",
+                "prediction_cache", "picks"]
+
+
+def cmd_diff(base: str, src: str, out: str) -> int:
+    """Emit ONLY the delta between the pulled base (D1 export) and the fresh
+    compute snapshot: changed/added rows as phased batches + deletes.sql for
+    DELETE_ALLOWED tables + delta-manifest.json.
+
+    A no-change sync emits zero SQL files (manifest only): ordinary daily
+    operations cost table-fingerprint READS, not 76k row WRITES.
+    """
+    os.makedirs(out, exist_ok=True)
+    bcon = sqlite3.connect(base)
+    scon = sqlite3.connect(src)
+    scon.row_factory = sqlite3.Row
+    delta = {"base": os.path.basename(base), "source": os.path.basename(src),
+             "tables": {}, "deletes": {}}
+    n_files = 0
+    for table in push_tables(scon):
+        if table not in [r[0] for r in bcon.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
+            continue
+        keys = key_columns(scon, table)
+        bmap = row_map(bcon, table, keys)
+        smap = row_map(scon, table, keys)
+        if table in MERGE_ONLY:
+            # Insert-only: rows D1 lacks, never touch existing receipts.
+            wanted = [k for k in smap if k not in bmap]
+        else:
+            wanted = [k for k, h in smap.items() if bmap.get(k) != h]
+        gone = []
+        if keys and table in DELETE_ALLOWED:
+            gone = [k for k in bmap if k not in smap]
+        delta["tables"][table] = {"added_or_changed": len(wanted), "deleted": len(gone)}
+        delta["deletes"][table] = [list(k) for k in gone]
+        if not wanted and not gone:
+            continue
+        cols = [r[1] for r in scon.execute(f"PRAGMA table_info({table})").fetchall()]
+        col_list = ", ".join(cols)
+        if table in MERGE_ONLY:
+            head = f"INSERT OR IGNORE INTO {table} ({col_list}) VALUES "
+            phase = "p1"
+            getrows = _rows_by_key(scon, table, cols, keys, wanted)
+            n_files += emit_statements(out, f"{phase}_{table}", head, getrows,
+                                       lambda r: "(" + ", ".join(quote(v) for v in r) + ")")
+        else:
+            head = f"INSERT OR REPLACE INTO {table} ({col_list}) VALUES "
+            phase = "p1" if table in PHASE_GATE_TABLES else (
+                f"p0_{'0' if table in PARENT_FIRST else '1'}")
+            getrows = _rows_by_key(scon, table, cols, keys, wanted)
+            n_files += emit_statements(out, f"{phase}_{table}", head, getrows,
+                                       lambda r: "(" + ", ".join(quote(v) for v in r) + ")")
+    # Deletes last-writer note: children before parents, one file.
+    ordered = [t for t in DELETE_ORDER if delta["deletes"].get(t)]
+    if any(delta["deletes"].get(t) for t in ordered):
+        bcon_info = scon
+        with open(os.path.join(out, "p1_deletes.sql"), "w", encoding="utf-8") as fh:
+            for table in ordered:
+                keys = key_columns(bcon_info, table)
+                for key in delta["deletes"][table]:
+                    cond = " AND ".join(f"{c}={quote(v)}" for c, v in zip(keys, key))
+                    fh.write(f"DELETE FROM {table} WHERE {cond};\n")
+        n_files += 1
+    with open(os.path.join(out, "delta-manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(delta, fh, indent=2, sort_keys=True, default=str)
+    changed = sum(v["added_or_changed"] for v in delta["tables"].values())
+    removed = sum(v["deleted"] for v in delta["tables"].values())
+    print(f"delta: {changed} upserted, {removed} deleted, {n_files} file(s)")
+    return 0
+
+
+def _rows_by_key(con: sqlite3.Connection, table: str, cols: list, keys: list | None, wanted: list) -> list:
+    """Fetch full rows for wanted keys (PK/UNIQUE lookup; full scan fallback)."""
+    if not wanted:
+        return []
+    cur = con.execute(f"SELECT * FROM {table}")
+    names = [d[0] for d in cur.description] if cur.description else []
+    if keys is None:
+        want_hashes = {k.split("__hash__:", 1)[1] for k in wanted}
+        out = []
+        for row in cur:
+            rec = dict(zip(names, row))
+            h = hashlib.sha256(repr(sorted(rec.items(), key=lambda kv: kv[0])).encode("utf-8")).hexdigest()
+            if h in want_hashes:
+                out.append(tuple(rec.get(c) for c in cols))
+        return out
+    want = set(wanted)
+    out = []
+    for row in cur:
+        rec = dict(zip(names, row))
+        if tuple(rec.get(k) for k in keys) in want:
+            out.append(tuple(rec.get(c) for c in cols))
+    return out
+
+
+def cmd_manifest(src: str, out: str, only=None) -> int:
+    os.makedirs(out, exist_ok=True)
+    con = sqlite3.connect(src)
+    manifest = {"source": os.path.basename(src), "tables": {}}
+    tables = only if only is not None else app_tables(con)
+    for table in tables:
+        count, digest, cols = table_fingerprint(con, table)
+        manifest["tables"][table] = {"rows": count, "sha256": digest, "columns": cols}
+    with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2, sort_keys=True)
+    print(f"{len(manifest['tables'])} tables fingerprinted")
+    return 0
+
+
+def quote(value):
+    if value is None:
+        return "NULL"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, (bytes, bytearray)):
+        return "X'" + bytes(value).hex() + "'"
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def push_tables(con: sqlite3.Connection, include_roster: bool = False) -> list:
+    """Tables a snapshot may contribute. Worker-owned runtime state is never
+    replicated; the roster joins only for the one-time staging seed."""
+    skip = set(PUSH_EXCLUDE) | SCRATCH_EXCLUDE
+    if not include_roster:
+        skip.add(ROSTER_TABLE)
+    return [t for t in app_tables(con) if t not in skip]
+
+
+def cmd_push(src: str, out: str, expect_epoch=None, include_roster: bool = False) -> int:
+    os.makedirs(out, exist_ok=True)
+    con = sqlite3.connect(src)
+    if expect_epoch is not None:
+        got = sync_epoch(con)
+        if got != expect_epoch:
+            print(f"FAIL stale snapshot: expected epoch {expect_epoch}, source is {got} "
+                  f"(pull a fresh base first)", file=sys.stderr)
+            return 1
+    con.row_factory = sqlite3.Row
+    # Filename order IS commit order (coalesce/apply sort lexically):
+    # p0 facts first (parents before children), p1 gate+receipts last.
+    for table in sorted(push_tables(con, include_roster)):
+        dep = "0" if table in PARENT_FIRST else "1"
+        phase = "p1" if table in PHASE_GATE_TABLES else f"p0_{dep}"
+        rows = con.execute(f"SELECT * FROM {table}").fetchall()
+        if not rows:
+            continue
+        cols = rows[0].keys()
+        col_list = ", ".join(cols)
+        if table == "subscribers":
+            # Engine snapshots never carry fresher roster data than D1 (all
+            # /start activity lands in D1 first); replicate as field merges.
+            stmts = 0
+            for i, r in enumerate(rows):
+                vals = {"chat_id": quote(r["chat_id"]),
+                        "username": quote(r["username"]),
+                        "first_name": quote(r["first_name"]),
+                        "timezone": quote(r["timezone"]),
+                        "subscribed_at": quote(r["subscribed_at"])}
+                text = (
+                    "INSERT INTO subscribers(chat_id,username,first_name,timezone,subscribed_at,active) "
+                    f"VALUES({vals['chat_id']},{vals['username']},{vals['first_name']},"
+                    f"{vals['timezone']},{vals['subscribed_at']},1) "
+                    "ON CONFLICT(chat_id) DO UPDATE SET active=1, "
+                    "username=CASE WHEN excluded.username!='' THEN excluded.username "
+                    "ELSE subscribers.username END, "
+                    "first_name=CASE WHEN excluded.first_name!='' THEN excluded.first_name "
+                    "ELSE subscribers.first_name END, "
+                    "subscribed_at=CASE WHEN subscribers.active=0 THEN excluded.subscribed_at "
+                    "ELSE subscribers.subscribed_at END, "
+                    "timezone=CASE WHEN excluded.timezone!='' THEN excluded.timezone "
+                    "ELSE subscribers.timezone END;\n")
+                if len(text) > 100000:
+                    print(f"WARN subscribers row {i} exceeds D1's statement cap; skipped",
+                          file=sys.stderr)
+                    continue
+                with open(os.path.join(out, f"p1_{table}_{i:04d}.sql"), "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                stmts += 1
+            continue
+        if table in MERGE_ONLY:
+            head = f"INSERT OR IGNORE INTO {table} ({col_list}) VALUES "
+        else:
+            head = f"INSERT OR REPLACE INTO {table} ({col_list}) VALUES "
+        emit_statements(out, f"{phase}_{table}", head, rows,
+                        lambda r: "(" + ", ".join(quote(r[c]) for c in cols) + ")")
+    rc = cmd_manifest(src, out, push_tables(sqlite3.connect(src), include_roster))
+    if rc == 0 and expect_epoch is not None:
+        with open(os.path.join(out, "manifest.json"), "r+", encoding="utf-8") as fh:
+            manifest = json.load(fh)
+            manifest["base_epoch"] = expect_epoch
+            fh.seek(0)
+            json.dump(manifest, fh, indent=2, sort_keys=True)
+            fh.truncate()
+    return rc
+
+
+def cmd_apply(target: str, batch_dir: str, expect_epoch=None) -> int:
+    # Epoch CAS DURING the write, not just before it: a concurrent push that
+    # lands mid-apply is detected here (fail closed; applied.json preserves
+    # resume position, verify then proves completeness before any cutover).
+    # Prevention remains the lease's job; this is the tripwire.
+    con = sqlite3.connect(target)
+    if expect_epoch is not None and sync_epoch(con) != expect_epoch:
+        print(f"FAIL target epoch moved before apply (expected {expect_epoch})", file=sys.stderr)
+        return 1
+    state_path = os.path.join(batch_dir, "applied.json")
+    try:
+        with open(state_path, encoding="utf-8") as fh:
+            applied = set(json.load(fh))
+    except (OSError, ValueError):
+        applied = set()
+    files = sorted(f for f in os.listdir(batch_dir) if f.endswith(".sql"))
+    done = 0
+    for name in files:
+        if name in applied:
+            continue
+        with open(os.path.join(batch_dir, name), encoding="utf-8") as fh:
+            con.executescript(fh.read())
+        con.commit()
+        applied.add(name)
+        done += 1
+    with open(state_path, "w", encoding="utf-8") as fh:
+        json.dump(sorted(applied), fh, indent=2)
+    print(f"applied {done} new batch(es), {len(applied)} total")
+    if expect_epoch is not None and sync_epoch(con) != expect_epoch:
+        print(f"FAIL target epoch moved DURING apply (expected {expect_epoch}): "
+              f"do not cut over; re-pull, re-push, re-verify", file=sys.stderr)
+        return 1
+    return 0
+
+
+def sync_epoch(con: sqlite3.Connection) -> int:
+    try:
+        row = con.execute("SELECT epoch FROM sync_state WHERE id=1").fetchone()
+    except sqlite3.OperationalError:
+        return 0
+    return int(row[0]) if row else 0
+
+
+def cmd_epoch_get(target: str) -> int:
+    print(sync_epoch(sqlite3.connect(target)))
+    return 0
+
+
+def cmd_epoch_bump(target: str, expect=None) -> int:
+    con = sqlite3.connect(target)
+    got = sync_epoch(con)
+    if expect is not None and got != expect:
+        print(f"FAIL stale epoch: expected {expect}, target is {got}", file=sys.stderr)
+        return 1
+    con.execute("UPDATE sync_state SET epoch=epoch+1 WHERE id=1")
+    if con.total_changes == 0:
+        con.execute("INSERT INTO sync_state(id, epoch) VALUES(1, 1)")
+    con.commit()
+    print(sync_epoch(con))
+    return 0
+
+
+def cmd_coalesce(batch_dir: str, out: str, max_bytes: int = 90000) -> int:
+    """Merge per-table batch files into import chunks of at most max_bytes.
+
+    D1 limits per STATEMENT are 100KB / 100 parameters; our statements are
+    byte-capped at push time, so chunking only reduces file count for
+    `d1 execute --file` / import polling. Chunk boundaries never split a
+    statement, and output names sort in the same order as inputs (p0_ facts
+    before p1_ gate/receipts), so apply+resume and commit-phase semantics
+    are unchanged. A manifest.json is copied alongside for verify.
+    """
+    os.makedirs(out, exist_ok=True)
+    files = sorted(f for f in os.listdir(batch_dir) if f.endswith(".sql"))
+    chunk, size, index = [], 0, 0
+    chunks = 0
+
+    def flush():
+        nonlocal chunk, size, index, chunks
+        if not chunk:
+            return
+        with open(os.path.join(out, f"chunk_{index:04d}.sql"), "w", encoding="utf-8") as fh:
+            fh.writelines(chunk)
+        chunks += 1
+        index += 1
+        chunk, size = [], 0
+
+    for name in files:
+        with open(os.path.join(batch_dir, name), encoding="utf-8") as fh:
+            text = fh.read()
+        if size + len(text) > max_bytes and chunk:
+            flush()
+        chunk.append(text)
+        size += len(text)
+    flush()
+    for extra in ("manifest.json",):
+        src = os.path.join(batch_dir, extra)
+        if os.path.exists(src):
+            with open(src, encoding="utf-8") as fh_in, open(
+                    os.path.join(out, extra), "w", encoding="utf-8") as fh_out:
+                fh_out.write(fh_in.read())
+    total = sum(os.path.getsize(os.path.join(out, f)) for f in os.listdir(out) if f.endswith(".sql"))
+    print(f"{len(files)} batches -> {chunks} chunks, {total} bytes total")
+    return 0
+
+
+def cmd_snapshot(src: str, out: str) -> int:
+    """Timestamped production-backup drill: file copy + manifest + verify of
+    the copy. The live DB is only ever read (never written) by this command."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    os.makedirs(out, exist_ok=True)
+    dest = os.path.join(out, f"predbot-backup-{stamp}.db")
+    with open(src, "rb") as fh_in, open(dest, "wb") as fh_out:
+        fh_out.write(fh_in.read())
+    manifest_dir = os.path.join(out, f"predbot-backup-{stamp}.manifest")
+    rc = cmd_manifest(dest, manifest_dir)
+    if rc != 0:
+        return rc
+    print(f"backup {dest}")
+    return 0
+
+
+def cmd_verify(target: str, manifest_path: str) -> int:
+    with open(manifest_path, encoding="utf-8") as fh:
+        manifest = json.load(fh)
+    if "base_epoch" in manifest:
+        epoch = sync_epoch(sqlite3.connect(target))
+        if epoch != manifest["base_epoch"]:
+            print(f"WARN target epoch {epoch} != push base epoch {manifest['base_epoch']} "
+                  f"(concurrent push landed; re-verify against the newer manifest)")
+    con = sqlite3.connect(target)
+    ok = True
+    for table, want in sorted(manifest["tables"].items()):
+        try:
+            count, digest, _ = table_fingerprint(con, table)
+        except sqlite3.OperationalError as exc:
+            print(f"FAIL {table}: missing ({exc})")
+            ok = False
+            continue
+        if count != want["rows"] or digest != want["sha256"]:
+            print(f"FAIL {table}: source={want['rows']}/{want['sha256'][:12]} "
+                  f"target={count}/{digest[:12]}")
+            ok = False
+        else:
+            print(f"OK   {table}: {count} rows")
+    return 0 if ok else 1
+
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def cmd_lease(target: str, job: str, owner: str, ttl_min: int) -> int:
+    # Atomic single-statement acquire: the lease is granted only when free,
+    # expired, or already ours. No SELECT-then-UPDATE gap, so two concurrent
+    # acquirers cannot both succeed — on D1 this is one statement, which is
+    # the atomicity unit. Same SQL is used verbatim against D1 via wrangler.
+    con = sqlite3.connect(target)
+    if con.execute("SELECT 1 FROM job_state WHERE name=?", (job,)).fetchone() is None:
+        print(f"FAIL unknown job {job!r}", file=sys.stderr)
+        return 1
+    until_new = (datetime.now(timezone.utc) + timedelta(minutes=ttl_min)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cur = con.execute(
+        "UPDATE job_state SET lease_owner=?, lease_until=?, attempts=attempts+1,"
+        " updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name=?"
+        " AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+        " OR lease_owner=?)",
+        (owner, until_new, job, owner))
+    con.commit()
+    if cur.rowcount == 0:
+        holder = con.execute("SELECT lease_owner, lease_until FROM job_state WHERE name=?",
+                             (job,)).fetchone()
+        print(f"FAIL lease held by {holder[0]} until {holder[1]}", file=sys.stderr)
+        return 1
+    print(f"lease {job} -> {owner} until {until_new}")
+    return 0
+
+
+def cmd_release(target: str, job: str, owner: str) -> int:
+    con = sqlite3.connect(target)
+    cur = con.execute("UPDATE job_state SET lease_owner=NULL, lease_until=NULL WHERE name=? AND lease_owner=?",
+                      (job, owner))
+    con.commit()
+    if cur.rowcount == 0:
+        print(f"FAIL lease not held by {owner}", file=sys.stderr)
+        return 1
+    print(f"released {job}")
+    return 0
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("manifest"); p.add_argument("src"); p.add_argument("--out", required=True)
+    p = sub.add_parser("push"); p.add_argument("src"); p.add_argument("--out", required=True)
+    p.add_argument("--expect-epoch", type=int, default=None)
+    p.add_argument("--include-roster", action="store_true",
+                   help="One-time staging seed only: include the subscriber roster.")
+    p = sub.add_parser("diff"); p.add_argument("base"); p.add_argument("src")
+    p.add_argument("--out", required=True)
+    p = sub.add_parser("coalesce"); p.add_argument("batches"); p.add_argument("--out", required=True)
+    p.add_argument("--max-bytes", type=int, default=90000)
+    p = sub.add_parser("snapshot"); p.add_argument("src"); p.add_argument("--out", required=True)
+    p = sub.add_parser("apply"); p.add_argument("target"); p.add_argument("batches")
+    p.add_argument("--expect-epoch", type=int, default=None,
+                   help="Abort when the target epoch differs before AND after the write.")
+    p = sub.add_parser("verify"); p.add_argument("target"); p.add_argument("--manifest", required=True)
+    p = sub.add_parser("lease"); p.add_argument("target"); p.add_argument("job"); p.add_argument("owner")
+    p.add_argument("--ttl-min", type=int, default=30)
+    p = sub.add_parser("release"); p.add_argument("target"); p.add_argument("job"); p.add_argument("owner")
+    p = sub.add_parser("epoch-get"); p.add_argument("target")
+    p = sub.add_parser("epoch-bump"); p.add_argument("target")
+    p.add_argument("--expect", type=int, default=None)
+    args = ap.parse_args(argv)
+    if args.cmd == "manifest":
+        return cmd_manifest(args.src, args.out)
+    if args.cmd == "push":
+        return cmd_push(args.src, args.out, args.expect_epoch, args.include_roster)
+    if args.cmd == "diff":
+        return cmd_diff(args.base, args.src, args.out)
+    if args.cmd == "coalesce":
+        return cmd_coalesce(args.batches, args.out, args.max_bytes)
+    if args.cmd == "snapshot":
+        return cmd_snapshot(args.src, args.out)
+    if args.cmd == "apply":
+        return cmd_apply(args.target, args.batches, args.expect_epoch)
+    if args.cmd == "verify":
+        return cmd_verify(args.target, args.manifest)
+    if args.cmd == "lease":
+        return cmd_lease(args.target, args.job, args.owner, args.ttl_min)
+    if args.cmd == "release":
+        return cmd_release(args.target, args.job, args.owner)
+    if args.cmd == "epoch-get":
+        return cmd_epoch_get(args.target)
+    if args.cmd == "epoch-bump":
+        return cmd_epoch_bump(args.target, args.expect)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

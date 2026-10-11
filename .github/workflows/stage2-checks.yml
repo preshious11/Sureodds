@@ -1,0 +1,60 @@
+# Stage 2 CI: offline checks only. No schedule trigger, no secrets, no
+# provider or Telegram calls. Live runs remain manual via workflow_dispatch
+# on run_once (Stage 3); this workflow never spends quota.
+name: stage2-checks
+
+on:
+  push:
+    paths:
+      - "predictions-bot/**"
+      - "workers/**"
+      - ".github/workflows/stage2-checks.yml"
+  pull_request:
+    paths:
+      - "predictions-bot/**"
+      - "workers/**"
+  workflow_dispatch:
+
+jobs:
+  worker-foundation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Worker unit tests (auth, views, retry, cron)
+        run: node --test workers/tests/webhook.test.mjs workers/tests/views.test.mjs workers/tests/retry.test.mjs workers/tests/cron.test.mjs
+      - name: Wrangler dry-run (binding check, no deploy)
+        run: npx -y wrangler@4 deploy --dry-run --config workers/wrangler.toml
+
+  schema-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build engine schema from Python migrations
+        run: |
+          python -c "from predbot.storage.db import Database; Database('/tmp/engine_schema.db').close()"
+          cat workers/migrations/0001_foundation.sql workers/migrations/0002_update_retry.sql workers/migrations/0003_engine_state.sql workers/migrations/0004_sync_state.sql > /tmp/all_migrations.sql
+        working-directory: predictions-bot
+      - name: Schema compatibility check
+        run: python workers/scripts/check_schema_compat.py --sqlite /tmp/engine_schema.db --migrations /tmp/all_migrations.sql
+
+  engine-offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install minimal runtime dep
+        run: pip install "requests>=2.31,<3"
+      - name: Offline run-once + regression subset (no network)
+        run: |
+          python run_once.py settle --offline
+          python run_once.py recap --offline
+          python -m pytest tests/test_stage2_runonce.py tests/test_stage3_sync.py tests/test_replay_golden.py tests/test_architecture_boundaries.py tests/test_data_source_of_truth.py -q
+        working-directory: predictions-bot

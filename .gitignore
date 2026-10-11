@@ -48,3 +48,11 @@ venv/
 *.sqlite3
 *.sqlite3-*
 *_output.txt
+
+# ---- Cloudflare Worker staging (Stage 1; production bot untouched) ----
+workers/node_modules/
+workers/.dev.vars
+workers/.wrangler/
+workers/build/
+workers/staging_check.db
+workers/build_stage1_copy.db

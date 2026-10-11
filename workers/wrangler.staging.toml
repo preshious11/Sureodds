@@ -1,0 +1,28 @@
+# Staging Worker. NOT production: different D1, different bot token, no
+# triggers attached (Cron activation is a Stage-4 approval step).
+# No secrets in this file. Required secrets (staging only):
+#   wrangler secret put TELEGRAM_BOT_TOKEN --config wrangler.staging.toml
+#   wrangler secret put TELEGRAM_WEBHOOK_SECRET --config wrangler.staging.toml
+#   wrangler secret put TELEGRAM_CHAT_ID --config wrangler.staging.toml   (optional)
+name = "sureodds-worker-staging"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sureodds_staging"
+database_id = "d1266e71-9a31-4316-9426-e82fedcbf12b"
+
+[vars]
+TIMEZONE = "Africa/Lagos"
+POST_TIME = "09:00"
+DELIVERY_TIME = "09:30"
+RECAP_TIME = "07:45"
+PAGE_SIZE = "5"
+# STAGE3_CRON_ENABLED is deliberately ABSENT (defaults off). Set to "1" via
+# `wrangler secret`... no — via [vars] edit + deploy, only with approval:
+# STAGE3_CRON_ENABLED = "1"
+
+# Stage-4 Cron triggers (DO NOT UNCOMMENT without approval):
+# [[triggers.crons]]
+# crons = ["*/5 * * * *"]   # delivery sweep (Lagos-gated inside the handler)

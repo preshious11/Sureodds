@@ -1,0 +1,270 @@
+// D1 access layer. Stage 1 foundation only: update dedupe, subscriber
+// upsert, day-cache reads, idempotent post/delivery receipts, job state.
+// All queries are indexed point-lookups or date-scoped range reads so the
+// free tier (5M rows read / 100K written per day) is never stressed.
+
+export interface Env {
+  DB: D1Database;
+  TELEGRAM_BOT_TOKEN: string;
+  TELEGRAM_WEBHOOK_SECRET: string;
+  TELEGRAM_CHAT_ID?: string;
+  TIMEZONE?: string;
+  PAGE_SIZE?: string;
+}
+
+/// Two-phase update claim (Stage 2 reliability).
+/// An update is never discarded because processing failed after its ID was
+/// recorded: `tryClaimUpdate` inserts a `pending` row (or reaps a retryable
+/// `failed` row), `completeUpdate` marks `done`, `failUpdate` returns the row
+/// to `failed` with an attempt count so a later sweeper (Stage 3 Cron) or a
+/// Telegram retry can reprocess it. A `done` row is never reprocessed.
+export type ClaimOutcome = "new" | "retry" | "duplicate";
+
+export const MAX_UPDATE_ATTEMPTS = 10;
+
+export async function tryClaimUpdate(db: D1Database, updateId: number): Promise<ClaimOutcome> {
+  if (!Number.isFinite(updateId)) return "duplicate";
+  const inserted = await db
+    .prepare("INSERT OR IGNORE INTO telegram_updates (update_id, status) VALUES (?1, 'pending')")
+    .bind(updateId)
+    .run();
+  if ((inserted.meta.changes ?? 0) > 0) return "new";
+  const row = await db
+    .prepare("SELECT status, attempts FROM telegram_updates WHERE update_id = ?1")
+    .bind(updateId)
+    .first<{ status: string; attempts: number }>();
+  if (!row) return "duplicate";
+  if (row.status === "done") return "duplicate";
+  if ((row.attempts ?? 0) >= MAX_UPDATE_ATTEMPTS) return "duplicate";
+  // Reap a pending/failed row for another attempt (crash-safe: a worker that
+  // died mid-processing leaves `pending`, which the next delivery retries).
+  await db
+    .prepare("UPDATE telegram_updates SET status = 'pending', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE update_id = ?1")
+    .bind(updateId)
+    .run();
+  return row.status === "failed" ? "retry" : "new";
+}
+
+export async function completeUpdate(db: D1Database, updateId: number): Promise<void> {
+  await db
+    .prepare("UPDATE telegram_updates SET status = 'done', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE update_id = ?1")
+    .bind(updateId)
+    .run();
+}
+
+export async function failUpdate(db: D1Database, updateId: number, error: string): Promise<void> {
+  await db
+    .prepare(
+      "UPDATE telegram_updates SET status = 'failed', attempts = attempts + 1, last_error = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE update_id = ?1",
+    )
+    .bind(updateId, error.slice(0, 500))
+    .run();
+}
+
+/// Backwards-compatible single-phase claim (kept for existing callers/tests):
+/// true only when this delivery should be processed.
+export async function claimUpdate(db: D1Database, updateId: number): Promise<boolean> {
+  const outcome = await tryClaimUpdate(db, updateId);
+  return outcome !== "duplicate";
+}
+
+export async function upsertSubscriber(
+  db: D1Database,
+  chatId: string,
+  fields: { username?: string | null; firstName?: string | null; timezone?: string | null },
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO subscribers (chat_id, username, first_name, timezone, subscribed_at, active)
+       VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1)
+       ON CONFLICT(chat_id) DO UPDATE SET
+         username = COALESCE(?2, username),
+         first_name = COALESCE(?3, first_name),
+         active = 1`,
+    )
+    .bind(chatId, fields.username ?? null, fields.firstName ?? null, fields.timezone ?? "")
+    .run();
+}
+
+export interface DayCache {
+  cache_key: string;
+  local_date: string;
+  status: string;
+  payload_json: string;
+}
+
+export async function getDayCache(
+  db: D1Database,
+  localDate: string,
+  timezone: string,
+): Promise<DayCache | null> {
+  const row = await db
+    .prepare(
+      "SELECT cache_key, local_date, status, payload_json FROM prediction_cache WHERE local_date = ?1 AND timezone = ?2 LIMIT 1",
+    )
+    .bind(localDate, timezone)
+    .first<DayCache>();
+  return row ?? null;
+}
+
+export interface CachedPick {
+  id: number;
+  tier: string;
+  rank: number;
+  sport: string;
+  league: string | null;
+  home: string;
+  away: string;
+  start_utc: string;
+  market: string;
+  selection: string;
+  label: string;
+  price: number;
+  prob: number;
+  status: string;
+}
+
+export async function getPicksPage(
+  db: D1Database,
+  pickDate: string,
+  collection: "top" | "daily" | "all",
+  limit: number,
+  offset: number,
+): Promise<CachedPick[]> {
+  const safeLimit = Math.min(Math.max(limit, 1), 25);
+  const safeOffset = Math.max(offset, 0);
+  if (collection === "all") {
+    const { results } = await db
+      .prepare(
+        `SELECT p.id, m.collection AS tier, m.rank, p.sport, p.league, p.home, p.away,
+                p.start_utc, p.market, p.selection, p.label, p.price, p.prob, p.status
+         FROM picks p JOIN prediction_memberships m ON m.prediction_id = p.id
+         WHERE p.pick_date = ?1 AND m.collection = 'all'
+         ORDER BY m.rank ASC LIMIT ?2 OFFSET ?3`,
+      )
+      .bind(pickDate, safeLimit, safeOffset)
+      .all<CachedPick>();
+    return results ?? [];
+  }
+  const { results } = await db
+    .prepare(
+      `SELECT p.id, p.tier, p.rank, p.sport, p.league, p.home, p.away,
+              p.start_utc, p.market, p.selection, p.label, p.price, p.prob, p.status
+       FROM picks p
+       WHERE p.pick_date = ?1 AND p.tier = ?2
+       ORDER BY p.rank ASC LIMIT ?3 OFFSET ?4`,
+    )
+    .bind(pickDate, collection, safeLimit, safeOffset)
+    .all<CachedPick>();
+  return results ?? [];
+}
+
+export async function hasPosted(db: D1Database, kind: string, postDate: string): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT 1 AS one FROM posts WHERE kind = ?1 AND post_date = ?2 LIMIT 1")
+    .bind(kind, postDate)
+    .first<{ one: number }>();
+  return !!row;
+}
+
+export async function markPosted(
+  db: D1Database,
+  kind: string,
+  postDate: string,
+  messageId: string | null,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO posts (kind, post_date, message_id, created_at)
+       VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+       ON CONFLICT(kind, post_date) DO NOTHING`,
+    )
+    .bind(kind, postDate, messageId)
+    .run();
+}
+
+export async function getFailedUpdates(
+  db: D1Database,
+  limit = 50,
+): Promise<{ update_id: number; attempts: number; last_error: string | null }[]> {
+  const { results } = await db
+    .prepare(
+      "SELECT update_id, attempts, last_error FROM telegram_updates WHERE status = 'failed' ORDER BY update_id ASC LIMIT ?1",
+    )
+    .bind(Math.min(Math.max(limit, 1), 100))
+    .all();
+  return results ?? [];
+}
+
+export interface SubscriberRow {
+  chat_id: string;
+  timezone: string;
+}
+
+export async function listActiveSubscribers(
+  db: D1Database,
+  limit: number,
+  offset: number,
+): Promise<SubscriberRow[]> {
+  const { results } = await db
+    .prepare("SELECT chat_id, timezone FROM subscribers WHERE active = 1 ORDER BY subscribed_at ASC LIMIT ?1 OFFSET ?2")
+    .bind(Math.min(Math.max(limit, 1), 500), Math.max(offset, 0))
+    .all<SubscriberRow>();
+  return results ?? [];
+}
+
+export async function deliveriesDone(
+  db: D1Database,
+  kind: string,
+  postDate: string,
+): Promise<Set<string>> {
+  const { results } = await db
+    .prepare("SELECT chat_id FROM deliveries WHERE kind = ?1 AND post_date = ?2")
+    .bind(kind, postDate)
+    .all<{ chat_id: string }>();
+  return new Set((results ?? []).map((r) => r.chat_id));
+}
+
+export async function markDelivery(
+  db: D1Database,
+  kind: string,
+  postDate: string,
+  chatId: string,
+): Promise<void> {
+  await db
+    .prepare(
+      "INSERT OR IGNORE INTO deliveries (kind, post_date, chat_id, created_at) VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+    )
+    .bind(kind, postDate, chatId)
+    .run();
+}
+
+export async function setJobResult(
+  db: D1Database,
+  name: string,
+  result: string,
+): Promise<void> {
+  await db
+    .prepare(
+      "UPDATE job_state SET last_result = ?2, last_run_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name = ?1",
+    )
+    .bind(name, result.slice(0, 500))
+    .run();
+}
+export async function getJobState(
+  db: D1Database,
+  name: string,
+): Promise<{ name: string; due_at: string | null; lease_owner: string | null; attempts: number } | null> {
+  return await db.prepare("SELECT name, due_at, lease_owner, attempts FROM job_state WHERE name = ?1").bind(name).first();
+}
+
+export async function setJobDue(db: D1Database, name: string, dueAt: string | null): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO job_state (name, due_at, attempts, updated_at)
+       VALUES (?1, ?2, 0, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+       ON CONFLICT(name) DO UPDATE SET due_at = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+    )
+    .bind(name, dueAt)
+    .run();
+}

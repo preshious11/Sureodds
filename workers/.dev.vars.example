@@ -1,0 +1,4 @@
+# Local-only secrets. NEVER commit this file (gitignored).
+TELEGRAM_BOT_TOKEN = "123456:STAGING_TOKEN_HERE"
+TELEGRAM_WEBHOOK_SECRET = "local-dev-secret-change-me"
+TELEGRAM_CHAT_ID = ""
