@@ -21,9 +21,36 @@ import math
 REL_TOL = 1e-12
 ABS_TOL = 1e-15
 
+#: Database columns serialized as JSON-inside-a-string in the replay output.
+#: ONLY these leaf keys are parsed and compared structurally (with float
+#: tolerance applied recursively). Every other string — including strings
+#: that merely resemble JSON — stays under strict byte comparison. Verified
+#: by scanning the goldens: `sources` occurs 158x in the slate; the render
+#: file's JSON-strings are markup payloads with no floats.
+JSON_STRING_FIELDS = frozenset({"sources"})
+
 
 class GoldenMismatch(AssertionError):
     """Raised with the JSON path of the first difference."""
+
+
+def _eq_embedded_json(actual: str, expected: str, path: str) -> None:
+    """Compare an allowlisted JSON-string field: both sides must parse to a
+    dict/list (malformed input falls back to strict string comparison, so a
+    corrupted payload fails instead of passing silently), then recurse."""
+    try:
+        parsed_actual = json.loads(actual)
+        parsed_expected = json.loads(expected)
+    except (json.JSONDecodeError, ValueError):
+        if actual != expected:
+            raise GoldenMismatch(f"{path}: embedded JSON differs and is not parseable: "
+                                 f"{actual!r} != {expected!r}")
+        return
+    if not isinstance(parsed_actual, (dict, list)) or not isinstance(parsed_expected, (dict, list)):
+        if actual != expected:
+            raise GoldenMismatch(f"{path}: embedded scalar differs: {actual!r} != {expected!r}")
+        return
+    _eq(parsed_actual, parsed_expected, path + "<json>")
 
 
 def _eq(actual, expected, path: str) -> None:
@@ -39,7 +66,11 @@ def _eq(actual, expected, path: str) -> None:
             extra = sorted(set(actual) - set(expected))
             raise GoldenMismatch(f"{path}: keys differ (missing={missing}, extra={extra})")
         for key in actual:
-            _eq(actual[key], expected[key], f"{path}.{key}")
+            aval, eval_ = actual[key], expected[key]
+            if key in JSON_STRING_FIELDS and isinstance(aval, str) and isinstance(eval_, str):
+                _eq_embedded_json(aval, eval_, f"{path}.{key}")
+            else:
+                _eq(aval, eval_, f"{path}.{key}")
         return
     if isinstance(actual, list) and isinstance(expected, list):
         if len(actual) != len(expected):
