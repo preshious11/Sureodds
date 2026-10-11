@@ -63,18 +63,32 @@ PARENT_FIRST = {"match_results"}
 STATEMENT_MAX_BYTES = 90000
 
 
-def emit_statements(out: str, prefix: str, head: str, rows: list, render) -> int:
-    """Write head + VALUES statements, each <= STATEMENT_MAX_BYTES. Returns file count."""
-    files, current, index = 0, [], 0
+def emit_statements(out: str, prefix: str, head: str, rows: list, render, rest_dir: str = "") -> int:
+    """Write head + VALUES statements, each <= STATEMENT_MAX_BYTES. Returns file count.
+
+    A single row that cannot fit D1's per-statement cap in ANY batching is
+    diverted to rest/<prefix>.jsonl as {sql, params} for the D1 REST query
+    API (params don't count toward the SQL-text cap; row cap is 2MB) instead
+    of aborting the whole diff. Applying rest/ needs CLOUDFLARE_API_TOKEN and
+    is a separately audited step; the manifest records rest_pending.
+    """
+    import json as _json
+    files, current, index, rested = 0, [], 0, 0
     size = len(head)
     for r in rows:
         piece = render(r)
         if len(head) + len(piece) + 1 > 100000:
-            # A single row that cannot fit D1's per-statement cap in ANY
-            # batching. Failing loudly beats silently losing history; route
-            # such rows via the D1 REST params API or exclude the table.
-            print(f"FAIL {prefix}: single row exceeds D1's 100KB statement cap", file=sys.stderr)
-            raise ValueError(f"{prefix}: oversize row")
+            if not rest_dir:
+                print(f"FAIL {prefix}: single row exceeds D1's 100KB statement cap", file=sys.stderr)
+                raise ValueError(f"{prefix}: oversize row")
+            os.makedirs(rest_dir, exist_ok=True)
+            cols = head[head.index("(") + 1:head.index(")")].split(",")
+            placeholders = ",".join("?" * len(cols))
+            stmt = f"{head[:head.index('VALUES')]}VALUES({placeholders})"
+            with open(os.path.join(rest_dir, f"{prefix}.jsonl"), "a", encoding="utf-8") as fh:
+                fh.write(_json.dumps({"sql": stmt, "params": list(r)}, default=str) + "\n")
+            rested += 1
+            continue
         if current and size + 1 + len(piece) + 1 > STATEMENT_MAX_BYTES:
             with open(os.path.join(out, f"{prefix}_{index:04d}.sql"), "w", encoding="utf-8") as fh:
                 fh.write(head + ",".join(current) + ";\n")
@@ -177,13 +191,18 @@ DELETE_ORDER = ["prediction_memberships", "custom_pick_candidates", "custom_pick
                 "prediction_cache", "picks"]
 
 
-def cmd_diff(base: str, src: str, out: str) -> int:
+def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: bool = True) -> int:
     """Emit ONLY the delta between the pulled base (D1 export) and the fresh
     compute snapshot: changed/added rows as phased batches + deletes.sql for
     DELETE_ALLOWED tables + delta-manifest.json.
 
     A no-change sync emits zero SQL files (manifest only): ordinary daily
     operations cost table-fingerprint READS, not 76k row WRITES.
+
+    only_tables restricts the diff to named tables (a compute scratch DB that
+    lacks history must never be diffed whole: every absent history row would
+    look deleted). allow_deletes=False suppresses all DELETE emission for
+    additive-only runs (e.g. publishing a backdated fixture slate).
     """
     os.makedirs(out, exist_ok=True)
     bcon = sqlite3.connect(base)
@@ -192,7 +211,14 @@ def cmd_diff(base: str, src: str, out: str) -> int:
     delta = {"base": os.path.basename(base), "source": os.path.basename(src),
              "tables": {}, "deletes": {}}
     n_files = 0
-    for table in push_tables(scon):
+    tables = push_tables(scon)
+    if only_tables:
+        unknown = set(only_tables) - set(tables)
+        if unknown:
+            print(f"FAIL unknown tables: {sorted(unknown)}", file=sys.stderr)
+            return 1
+        tables = [t for t in tables if t in set(only_tables)]
+    for table in tables:
         if table not in [r[0] for r in bcon.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
             continue
@@ -205,7 +231,7 @@ def cmd_diff(base: str, src: str, out: str) -> int:
         else:
             wanted = [k for k, h in smap.items() if bmap.get(k) != h]
         gone = []
-        if keys and table in DELETE_ALLOWED:
+        if allow_deletes and keys and table in DELETE_ALLOWED:
             gone = [k for k in bmap if k not in smap]
         delta["tables"][table] = {"added_or_changed": len(wanted), "deleted": len(gone)}
         delta["deletes"][table] = [list(k) for k in gone]
@@ -213,19 +239,22 @@ def cmd_diff(base: str, src: str, out: str) -> int:
             continue
         cols = [r[1] for r in scon.execute(f"PRAGMA table_info({table})").fetchall()]
         col_list = ", ".join(cols)
+        rest = os.path.join(out, "rest")
         if table in MERGE_ONLY:
             head = f"INSERT OR IGNORE INTO {table} ({col_list}) VALUES "
             phase = "p1"
             getrows = _rows_by_key(scon, table, cols, keys, wanted)
             n_files += emit_statements(out, f"{phase}_{table}", head, getrows,
-                                       lambda r: "(" + ", ".join(quote(v) for v in r) + ")")
+                                       lambda r: "(" + ", ".join(quote(v) for v in r) + ")",
+                                       rest)
         else:
             head = f"INSERT OR REPLACE INTO {table} ({col_list}) VALUES "
             phase = "p1" if table in PHASE_GATE_TABLES else (
                 f"p0_{'0' if table in PARENT_FIRST else '1'}")
             getrows = _rows_by_key(scon, table, cols, keys, wanted)
             n_files += emit_statements(out, f"{phase}_{table}", head, getrows,
-                                       lambda r: "(" + ", ".join(quote(v) for v in r) + ")")
+                                       lambda r: "(" + ", ".join(quote(v) for v in r) + ")",
+                                       rest)
     # Deletes last-writer note: children before parents, one file.
     ordered = [t for t in DELETE_ORDER if delta["deletes"].get(t)]
     if any(delta["deletes"].get(t) for t in ordered):
@@ -238,10 +267,19 @@ def cmd_diff(base: str, src: str, out: str) -> int:
                     fh.write(f"DELETE FROM {table} WHERE {cond};\n")
         n_files += 1
     with open(os.path.join(out, "delta-manifest.json"), "w", encoding="utf-8") as fh:
+        rest_pending = 0
+        rest_dir = os.path.join(out, "rest")
+        if os.path.isdir(rest_dir):
+            for name in os.listdir(rest_dir):
+                if name.endswith(".jsonl"):
+                    with open(os.path.join(rest_dir, name), encoding="utf-8") as rf:
+                        rest_pending += sum(1 for _ in rf)
+        delta["rest_pending"] = rest_pending
         json.dump(delta, fh, indent=2, sort_keys=True, default=str)
     changed = sum(v["added_or_changed"] for v in delta["tables"].values())
     removed = sum(v["deleted"] for v in delta["tables"].values())
-    print(f"delta: {changed} upserted, {removed} deleted, {n_files} file(s)")
+    print(f"delta: {changed} upserted, {removed} deleted, {n_files} file(s), "
+          f"{delta['rest_pending']} rest-pending")
     return 0
 
 
@@ -267,6 +305,39 @@ def _rows_by_key(con: sqlite3.Connection, table: str, cols: list, keys: list | N
         if tuple(rec.get(k) for k in keys) in want:
             out.append(tuple(rec.get(c) for c in cols))
     return out
+
+
+def cmd_rebase(src: str, out: str, specs: list) -> int:
+    """Shift autoincrement id ranges so a fixture partition can land in D1
+    without colliding with existing rows: --rebase
+    picks:id:100000:prediction_memberships:prediction_id (repeatable).
+    Copies src->out first; src is never modified. Offsets must exceed the
+    target's current MAX(id); the plan step prints both for the operator to
+    confirm before any write."""
+    import shutil
+    shutil.copy(src, out)
+    con = sqlite3.connect(out)
+    for spec in specs:
+        try:
+            table, column, offset, ref_table, ref_column = spec.split(":")
+            offset = int(offset)
+        except ValueError:
+            print(f"FAIL bad --rebase spec {spec!r} (want table:column:offset:reftable:refcolumn)",
+                  file=sys.stderr)
+            return 1
+        existing = [r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        if table not in existing or ref_table not in existing:
+            print(f"FAIL rebase table missing: {spec!r}", file=sys.stderr)
+            return 1
+        mx = con.execute(f"SELECT COALESCE(MAX({column}),0) FROM {table}").fetchone()[0]
+        con.execute(f"UPDATE {ref_table} SET {ref_column}={ref_column}+{offset}")
+        con.execute(f"UPDATE {table} SET {column}={column}+{offset}")
+        con.commit()
+        lo = con.execute(f"SELECT COALESCE(MIN({column}),0) FROM {table}").fetchone()[0]
+        hi = con.execute(f"SELECT COALESCE(MAX({column}),0) FROM {table}").fetchone()[0]
+        print(f"rebase {table}.{column}: max was {mx}, now {lo}..{hi}")
+    return 0
 
 
 def cmd_manifest(src: str, out: str, only=None) -> int:
@@ -358,7 +429,8 @@ def cmd_push(src: str, out: str, expect_epoch=None, include_roster: bool = False
         else:
             head = f"INSERT OR REPLACE INTO {table} ({col_list}) VALUES "
         emit_statements(out, f"{phase}_{table}", head, rows,
-                        lambda r: "(" + ", ".join(quote(r[c]) for c in cols) + ")")
+                        lambda r: "(" + ", ".join(quote(r[c]) for c in cols) + ")",
+                        os.path.join(out, "rest"))
     rc = cmd_manifest(src, out, push_tables(sqlite3.connect(src), include_roster))
     if rc == 0 and expect_epoch is not None:
         with open(os.path.join(out, "manifest.json"), "r+", encoding="utf-8") as fh:
@@ -570,9 +642,16 @@ def main(argv=None) -> int:
                    help="One-time staging seed only: include the subscriber roster.")
     p = sub.add_parser("diff"); p.add_argument("base"); p.add_argument("src")
     p.add_argument("--out", required=True)
+    p.add_argument("--tables", default="",
+                   help="Comma-separated subset to diff (default: all pushable).")
+    p.add_argument("--no-deletes", action="store_true",
+                   help="Additive-only run: never emit DELETEs.")
     p = sub.add_parser("coalesce"); p.add_argument("batches"); p.add_argument("--out", required=True)
     p.add_argument("--max-bytes", type=int, default=90000)
     p = sub.add_parser("snapshot"); p.add_argument("src"); p.add_argument("--out", required=True)
+    p = sub.add_parser("rebase"); p.add_argument("src"); p.add_argument("--out", required=True)
+    p.add_argument("--rebase", action="append", default=[],
+                   help="table:column:offset:reftable:refcolumn (repeatable)")
     p = sub.add_parser("apply"); p.add_argument("target"); p.add_argument("batches")
     p.add_argument("--expect-epoch", type=int, default=None,
                    help="Abort when the target epoch differs before AND after the write.")
@@ -589,11 +668,14 @@ def main(argv=None) -> int:
     if args.cmd == "push":
         return cmd_push(args.src, args.out, args.expect_epoch, args.include_roster)
     if args.cmd == "diff":
-        return cmd_diff(args.base, args.src, args.out)
+        only = [t.strip() for t in args.tables.split(",") if t.strip()] or None
+        return cmd_diff(args.base, args.src, args.out, only, not args.no_deletes)
     if args.cmd == "coalesce":
         return cmd_coalesce(args.batches, args.out, args.max_bytes)
     if args.cmd == "snapshot":
         return cmd_snapshot(args.src, args.out)
+    if args.cmd == "rebase":
+        return cmd_rebase(args.src, args.out, args.rebase)
     if args.cmd == "apply":
         return cmd_apply(args.target, args.batches, args.expect_epoch)
     if args.cmd == "verify":

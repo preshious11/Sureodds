@@ -108,6 +108,29 @@ def test_roster_excluded_unless_seed(tmp_path):
     assert [n for n in os.listdir(seed) if "subscribers" in n]
 
 
+def test_oversize_row_diverted_to_rest_not_dropped(tmp_path):
+    base = str(tmp_path / "base.db")
+    _seed_engine_tables(base)
+    src = str(tmp_path / "src.db")
+    import shutil
+    shutil.copy(base, src)
+    con = sqlite3.connect(src)
+    con.execute("CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT)")
+    con.execute("INSERT INTO kv VALUES ('big', ?)", ("x" * 120000,))
+    con.commit()
+    con.close()
+    out = str(tmp_path / "delta")
+    assert sync("diff", base, src, "--out", out, "--tables", "kv").returncode == 0
+    rest = [n for n in os.listdir(os.path.join(out, "rest")) if n.endswith(".jsonl")]
+    assert len(rest) == 1
+    import json as _json
+    with open(os.path.join(out, "rest", rest[0]), encoding="utf-8") as fh:
+        entry = _json.loads(fh.readline())
+    assert "?" in entry["sql"] and entry["params"][1] == "x" * 120000
+    with open(os.path.join(out, "delta-manifest.json"), encoding="utf-8") as fh:
+        assert _json.load(fh)["rest_pending"] == 1
+
+
 def test_statements_respect_d1_cap(tmp_path):
     src = str(tmp_path / "src.db")
     make_db(src)
@@ -209,6 +232,61 @@ def test_apply_epoch_fence_before_and_after(tmp_path):
     rc = sync("apply", tgt2, out, "--expect-epoch", "0")
     assert rc.returncode == 1
     assert "DURING apply" in (rc.stdout + rc.stderr)
+
+
+def test_diff_scoping_tables_and_no_deletes(tmp_path):
+    base = str(tmp_path / "base.db")
+    src = str(tmp_path / "src.db")
+    _seed_engine_tables(base)
+    import shutil
+    shutil.copy(base, src)
+    con = sqlite3.connect(src)
+    con.execute("UPDATE kv SET v='changed'")
+    con.execute("INSERT INTO picks VALUES (9, '2026-10-11', 'pending')")
+    con.execute("DELETE FROM prediction_memberships WHERE prediction_id=1")
+    con.commit()
+    con.close()
+    # --tables restricts to kv: picks change invisible, membership delete invisible.
+    scoped = str(tmp_path / "scoped")
+    assert sync("diff", base, src, "--out", scoped, "--tables", "kv").returncode == 0
+    names = os.listdir(scoped)
+    assert any("kv" in n for n in names if n.endswith(".sql"))
+    assert not any("picks" in n or "membership" in n for n in names if n.endswith(".sql"))
+    # --no-deletes suppresses the membership DELETE while keeping upserts.
+    nodelete = str(tmp_path / "nodelete")
+    assert sync("diff", base, src, "--out", nodelete, "--no-deletes").returncode == 0
+    assert not os.path.exists(os.path.join(nodelete, "p1_deletes.sql"))
+    assert any(n.endswith(".sql") for n in os.listdir(nodelete))
+    # Unknown table is a hard error, not a silent skip.
+    bad = sync("diff", base, src, "--out", str(tmp_path / "bad"), "--tables", "nope")
+    assert bad.returncode == 1
+
+
+def test_rebase_avoids_id_collision_and_preserves_refs(tmp_path):
+    base = str(tmp_path / "base.db")
+    _seed_engine_tables(base)
+    src = str(tmp_path / "src.db")
+    import shutil
+    shutil.copy(base, src)
+    con = sqlite3.connect(src)
+    con.execute("INSERT INTO picks VALUES (3, '2026-09-19', 'pending')")
+    con.execute("INSERT INTO prediction_memberships VALUES (3, 'daily', 1)")
+    con.commit()
+    con.close()
+    rebased = str(tmp_path / "rebased.db")
+    assert sync("rebase", src, "--out", rebased, "--rebase",
+                "picks:id:100000:prediction_memberships:prediction_id").returncode == 0
+    # Source untouched; rebased ids shifted with refs intact.
+    assert sqlite3.connect(src).execute("SELECT MAX(id) FROM picks").fetchone()[0] == 3
+    got = sqlite3.connect(rebased)
+    assert got.execute("SELECT MIN(id) FROM picks").fetchone()[0] == 100001
+    refs = {r[0] for r in got.execute("SELECT prediction_id FROM prediction_memberships"
+                                      " WHERE collection='daily' AND rank=1").fetchall()}
+    assert refs == {100001, 100003}
+    assert got.execute("SELECT COUNT(*) FROM prediction_memberships m JOIN picks p"
+                       " ON p.id=m.prediction_id").fetchone()[0] == 3
+    bad = sync("rebase", src, "--out", str(tmp_path / "x.db"), "--rebase", "bogus")
+    assert bad.returncode == 1
 
 
 def test_concurrent_worker_receipt_survives_engine_apply(tmp_path):
