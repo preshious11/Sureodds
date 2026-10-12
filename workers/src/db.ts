@@ -22,6 +22,14 @@ export type ClaimOutcome = "new" | "retry" | "duplicate";
 
 export const MAX_UPDATE_ATTEMPTS = 10;
 
+/// A `pending` claim older than this is presumed crashed (never completed)
+/// and may be stolen by a redelivery. Younger than this, a duplicate
+/// delivery means another invocation is still processing: back off.
+/// 300s comfortably exceeds any healthy webhook handling time (D1 reads +
+/// at most one Telegram send) while staying far inside Telegram's ~24h
+/// redelivery window, so a crashed claim is always eventually reaped.
+export const CLAIM_TIMEOUT_SECONDS = 300;
+
 /// Quota-exhaustion signal from D1 (free tier: 100K rows written/day).
 /// Operations that hit it must fail CLOSED: no state change, no false ack.
 export class QuotaExhausted extends Error {
@@ -55,18 +63,16 @@ export async function tryClaimUpdate(db: D1Database, updateId: number): Promise<
   }
   if ((inserted.meta.changes ?? 0) > 0) return "new";
   const row = await db
-    .prepare("SELECT status, attempts FROM telegram_updates WHERE update_id = ?1")
+    .prepare("SELECT status, attempts, updated_at FROM telegram_updates WHERE update_id = ?1")
     .bind(updateId)
-    .first<{ status: string; attempts: number }>();
+    .first<{ status: string; attempts: number; updated_at: string }>();
   if (!row) return "duplicate";
   if (row.status === "done") return "duplicate";
   if ((row.attempts ?? 0) >= MAX_UPDATE_ATTEMPTS) return "duplicate";
   if (row.status === "failed") {
-    // Reap ONLY failed rows, and only if still failed (conditional write):
-    // a redelivered update for a crash-leftover `pending` row is processed
-    // WITHOUT a state flip, so Telegram retries during an outage cost zero
-    // writes instead of amplifying quota burn, and two concurrent deliveries
-    // cannot steal each other's claim.
+    // Reap ONLY failed rows, and only if still failed (conditional write),
+    // so two concurrent deliveries cannot steal each other's claim. Crash-
+    // leftover `pending` rows are handled by the stale-lease rule below.
     let reaped;
     try {
       reaped = await db
@@ -79,7 +85,26 @@ export async function tryClaimUpdate(db: D1Database, updateId: number): Promise<
     }
     return (reaped.meta.changes ?? 0) > 0 ? "retry" : "duplicate";
   }
-  return "new";
+  // Pending row, owned by whoever inserted it: a concurrent duplicate
+  // delivery must NOT execute side effects twice. Only a STALE claim (older
+  // than CLAIM_TIMEOUT_SECONDS: the owner crashed without completing) may be
+  // stolen, again conditionally so two racers cannot both win. ISO-8601 UTC
+  // timestamps compare lexicographically.
+  const cutoff = new Date(Date.now() - CLAIM_TIMEOUT_SECONDS * 1000)
+    .toISOString()
+    .replace(/\.\d+Z$/, "Z");
+  if (!row.updated_at || row.updated_at >= cutoff) return "duplicate";
+  let stolen;
+  try {
+    stolen = await db
+      .prepare("UPDATE telegram_updates SET status = 'pending', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE update_id = ?1 AND status = 'pending' AND updated_at < ?2")
+      .bind(updateId, cutoff)
+      .run();
+  } catch (err) {
+    throwIfQuota(err);
+    throw err;
+  }
+  return (stolen.meta.changes ?? 0) > 0 ? "retry" : "duplicate";
 }
 
 export async function completeUpdate(db: D1Database, updateId: number): Promise<void> {

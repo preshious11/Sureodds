@@ -37,7 +37,7 @@ async function answerCallback(env: Env, id: string, text?: string): Promise<void
   await tgApi(env, "answerCallbackQuery", { callback_query_id: id, text: text ?? undefined });
 }
 
-async function handleUpdate(env: Env, update: Record<string, unknown>): Promise<void> {
+export async function handleUpdate(env: Env, update: Record<string, unknown>): Promise<void> {
   const updateId = update.update_id as number;
   const claim = await tryClaimUpdate(env.DB, updateId);
   if (claim === "duplicate") return; // already done (or exhausted retries) — never reprocess.

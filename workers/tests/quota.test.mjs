@@ -55,14 +55,24 @@ function quotaDb({ quotaBlocked = false, updates = new Map(), subs = new Map() }
           if (this._sql.includes("INTO telegram_updates")) {
             const id = this._args[0];
             if (self.updates.has(id)) return done(0);
-            self.updates.set(id, { status: "pending", attempts: 0 });
+            self.updates.set(id, {
+              status: "pending",
+              attempts: 0,
+              updated_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+            });
             return done(1);
           }
           if (this._sql.includes("SET status = 'pending'")) {
             const r = self.updates.get(this._args[0]);
-            if (r && r.status === "failed") {
+            if (r && r.status === "failed" && this._sql.includes("AND status = 'failed'")) {
               r.status = "pending";
               return done(1);
+            }
+            if (
+              r && r.status === "pending" &&
+              this._sql.includes("AND updated_at <") && r.updated_at < this._args[1]
+            ) {
+              return done(1); // stale-lease steal (timestamp refreshed server-side)
             }
             return done(0);
           }
@@ -136,13 +146,16 @@ describe("webhook under quota outage: fail closed, zero amplification", () => {
     assert.equal(await tryClaimUpdate(fresh, 50), "duplicate"); // exactly-once
   });
 
-  it("pending redelivery costs zero writes (no state flip)", async () => {
+  it("fresh pending redelivery backs off (zero writes); stale pending is stolen", async () => {
     const db = quotaDb();
-    assert.equal(await tryClaimUpdate(db, 61), "new"); // crash before complete
+    assert.equal(await tryClaimUpdate(db, 61), "new"); // owner working
     const before = db.billed();
-    assert.equal(await tryClaimUpdate(db, 61), "new"); // redelivery
+    assert.equal(await tryClaimUpdate(db, 61), "duplicate"); // concurrent: no double work
     assert.equal(db.billed(), before); // SELECT only
     assert.equal(db.writes.length, 2); // two INSERT statements, one billed row
+    db.updates.get(61).updated_at = "2020-01-01T00:00:00Z"; // owner crashed long ago
+    assert.equal(await tryClaimUpdate(db, 61), "retry");
+    assert.equal(db.billed(), before + 1); // exactly one conditional steal
   });
 
   it("failed redelivery reaps with one conditional write", async () => {

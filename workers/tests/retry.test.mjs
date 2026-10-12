@@ -7,9 +7,10 @@ import {
   MAX_UPDATE_ATTEMPTS,
 } from "../src/db.ts";
 
-// Faithful in-memory D1 for the telegram_updates lifecycle.
+// Faithful in-memory D1 for the telegram_updates lifecycle (conditions honored).
 function updateDb() {
   const rows = new Map();
+  const nowIso = () => new Date().toISOString().replace(/\.\d+Z$/, "Z");
   return {
     rows,
     prepare(sql) {
@@ -25,21 +26,42 @@ function updateDb() {
           if (this._sql.startsWith("INSERT OR IGNORE")) {
             const id = this._args[0];
             if (self.rows.has(id)) return { meta: { changes: 0 } };
-            self.rows.set(id, { status: "pending", attempts: 0 });
+            self.rows.set(id, { status: "pending", attempts: 0, updated_at: nowIso() });
             return { meta: { changes: 1 } };
           }
-          if (this._sql.startsWith("UPDATE telegram_updates SET status = 'pending'")) {
-            return { meta: { changes: 1 } };
+          if (this._sql.includes("AND status = 'failed'")) {
+            const r = self.rows.get(this._args[0]);
+            if (r && r.status === "failed") {
+              r.status = "pending";
+              r.updated_at = nowIso();
+              return { meta: { changes: 1 } };
+            }
+            return { meta: { changes: 0 } };
+          }
+          if (this._sql.includes("AND status = 'pending' AND updated_at <")) {
+            const r = self.rows.get(this._args[0]);
+            const cutoff = this._args[1];
+            if (r && r.status === "pending" && r.updated_at < cutoff) {
+              r.updated_at = nowIso();
+              return { meta: { changes: 1 } };
+            }
+            return { meta: { changes: 0 } };
           }
           if (this._sql.includes("SET status = 'done'")) {
-            self.rows.get(this._args[0]).status = "done";
-            return { meta: { changes: 1 } };
+            const r = self.rows.get(this._args[0]);
+            if (r && r.status !== "done") {
+              r.status = "done";
+              r.updated_at = nowIso();
+              return { meta: { changes: 1 } };
+            }
+            return { meta: { changes: 0 } };
           }
           if (this._sql.includes("SET status = 'failed'")) {
             const r = self.rows.get(this._args[0]);
             r.status = "failed";
             r.attempts += 1;
             r.last_error = this._args[1];
+            r.updated_at = nowIso();
             return { meta: { changes: 1 } };
           }
           throw new Error("unexpected SQL: " + this._sql);
@@ -76,11 +98,23 @@ describe("update lifecycle: never silently discarded", () => {
     assert.equal(await tryClaimUpdate(db, 7), "duplicate");
   });
 
-  it("a crashed worker (pending, no completion) is retried, not lost", async () => {
+  it("a crashed worker (pending, no completion) is retried once stale, never lost", async () => {
     const db = updateDb();
     assert.equal(await tryClaimUpdate(db, 9), "new");
-    // No complete/fail call: process died. Next delivery retries.
-    assert.equal(await tryClaimUpdate(db, 9), "new");
+    // Owner still (presumably) working: a duplicate delivery backs off.
+    assert.equal(await tryClaimUpdate(db, 9), "duplicate");
+    // Owner crashed long ago: the next redelivery steals the stale claim.
+    db.rows.get(9).updated_at = "2020-01-01T00:00:00Z";
+    assert.equal(await tryClaimUpdate(db, 9), "retry");
+    await completeUpdate(db, 9);
+    assert.equal(await tryClaimUpdate(db, 9), "duplicate");
+  });
+
+  it("two concurrent deliveries of the same pending update never both process", async () => {
+    const db = updateDb();
+    const [first, second] = [await tryClaimUpdate(db, 21), await tryClaimUpdate(db, 21)];
+    assert.equal(first, "new");
+    assert.equal(second, "duplicate"); // in-flight elsewhere: no double side effects
   });
 
   it("poison updates stop after max attempts", async () => {
