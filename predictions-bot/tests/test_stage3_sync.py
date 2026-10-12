@@ -262,6 +262,161 @@ def test_diff_scoping_tables_and_no_deletes(tmp_path):
     assert bad.returncode == 1
 
 
+def test_plan_enforces_write_budget_and_cleans_up(tmp_path):
+    base = str(tmp_path / "base.db")
+    src = str(tmp_path / "src.db")
+    _seed_engine_tables(base)
+    import shutil
+    shutil.copy(base, src)
+    con = sqlite3.connect(src)
+    con.executemany("INSERT INTO picks VALUES (?, ?, ?)",
+                    [(10 + i, "2026-10-11", "pending") for i in range(5)])
+    con.commit()
+    con.close()
+    over = str(tmp_path / "over")
+    proc = sync("plan", base, src, "--out", over, "--tables", "picks", "--write-budget", "2")
+    assert proc.returncode == 2
+    left = os.listdir(over)
+    assert "plan.json" in left  # numbers kept for the report
+    assert not [n for n in left if n.endswith(".sql")], "refused plan must leave no appliable SQL"
+    ok = str(tmp_path / "ok")
+    assert sync("plan", base, src, "--out", ok, "--tables", "picks",
+                "--write-budget", "50").returncode == 0
+    import json as _json
+    with open(os.path.join(ok, "plan.json"), encoding="utf-8") as fh:
+        plan = _json.load(fh)
+    assert plan["inserts"] == 5 and plan["complete"] is True
+    assert plan["estimated_writes"] <= 50
+
+
+def test_push_refuses_unscoped_full_replacement(tmp_path):
+    base = str(tmp_path / "base.db")
+    _seed_engine_tables(base)
+    con = sqlite3.connect(base)
+    con.executemany("INSERT INTO kv VALUES (?, ?)", [(f"k{i}", "v") for i in range(30)])
+    con.commit()
+    con.close()
+    out = str(tmp_path / "push")
+    proc = sync("push", base, "--out", out, "--max-full-rows", "10")
+    assert proc.returncode == 2
+    out2 = str(tmp_path / "push2")
+    assert sync("push", base, "--out", out2, "--max-full-rows", "10", "--full-ok").returncode == 0
+
+
+def _mock_d1_server(handler):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length)
+            code, payload = handler(self.path, dict(self.headers), body)
+            data = __import__("json").dumps(payload).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *a):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    return server, url
+
+
+def _rest_dir(tmp_path, rows):
+    import json as _json
+    d = str(tmp_path / "delta")
+    os.makedirs(os.path.join(d, "rest"), exist_ok=True)
+    with open(os.path.join(d, "rest", "p0_1_kv_0000.jsonl"), "w", encoding="utf-8") as fh:
+        for k, v in rows:
+            fh.write(_json.dumps({"sql": "INSERT OR REPLACE INTO kv (k, v) VALUES (?,?)",
+                                  "params": [k, v]}) + "\n")
+    return d
+
+
+def test_rest_apply_validates_before_sending(tmp_path):
+    import json as _json
+    d = str(tmp_path / "delta")
+    os.makedirs(os.path.join(d, "rest"), exist_ok=True)
+    with open(os.path.join(d, "rest", "p0_1_kv_0000.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write('{"sql": "INSERT OR REPLACE INTO kv (k,v) VALUES (?,?)", "params": ["a","b"]}\n')
+        fh.write("NOT JSON AT ALL\n")
+    calls = []
+    server, url = _mock_d1_server(lambda p, h, b: (calls.append(b), (200, [{"success": True}]))[1])
+    try:
+        proc = sync("rest-apply", d + "/rest", "--account-id", "a", "--database-id", "b",
+                    "--api-token", "t", "--endpoint", url)
+    finally:
+        server.shutdown()
+    assert proc.returncode == 1
+    assert calls == [], "malformed payload must send nothing"
+
+
+def test_rest_apply_rejects_non_insert(tmp_path):
+    d = _rest_dir(tmp_path, [])
+    import json as _json
+    with open(os.path.join(d, "rest", "evil.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(_json.dumps({"sql": "DELETE FROM kv", "params": []}) + "\n")
+    calls = []
+    server, url = _mock_d1_server(lambda p, h, b: (calls.append(b), (200, [{"success": True}]))[1])
+    try:
+        proc = sync("rest-apply", d + "/rest", "--account-id", "a", "--database-id", "b",
+                    "--api-token", "t", "--endpoint", url)
+    finally:
+        server.shutdown()
+    assert proc.returncode == 1
+    assert calls == []
+
+
+def test_rest_apply_retries_resumes_and_verifies(tmp_path):
+    import json as _json
+    d = _rest_dir(tmp_path, [(f"k{i}", "v") for i in range(3)])
+    calls = []
+    failures = {"n": 1}  # first request fails transiently, then heals
+    seen_auth = {}
+
+    def handler(path, headers, body):
+        calls.append(_json.loads(body))
+        seen_auth["auth"] = headers.get("Authorization", "")
+        if failures["n"] > 0:
+            failures["n"] -= 1
+            return 500, {"error": "boom"}
+        batch = _json.loads(body)
+        return 200, [{"success": True} for _ in batch]
+
+    server, url = _mock_d1_server(handler)
+    try:
+        proc = sync("rest-apply", d + "/rest", "--account-id", "acct", "--database-id", "db",
+                    "--api-token", "SECRET", "--batch-size", "2", "--endpoint", url)
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0, proc.stderr
+    assert seen_auth["auth"] == "Bearer SECRET"
+    # All three rows went in exactly one batch each (retry re-sent batch 1, no dupes applied server-side here).
+    assert os.path.exists(os.path.join(d, "rest", "applied-rest.json"))
+    # Resume is a no-op success.
+    proc2 = sync("rest-apply", d + "/rest", "--account-id", "acct", "--database-id", "db",
+                 "--api-token", "SECRET", "--endpoint", url)
+    assert proc2.returncode == 0
+
+
+def test_rest_apply_quota_failure_is_explicit(tmp_path):
+    d = _rest_dir(tmp_path, [("k1", "v")])
+    server, url = _mock_d1_server(
+        lambda p, h, b: (200, [{"success": False, "error": "row write limit exceeded [code: 7500]"}]))
+    try:
+        proc = sync("rest-apply", d + "/rest", "--account-id", "a", "--database-id", "b",
+                    "--api-token", "t", "--retries", "0", "--endpoint", url)
+    finally:
+        server.shutdown()
+    assert proc.returncode == 1
+
+
 def test_rebase_avoids_id_collision_and_preserves_refs(tmp_path):
     base = str(tmp_path / "base.db")
     _seed_engine_tables(base)

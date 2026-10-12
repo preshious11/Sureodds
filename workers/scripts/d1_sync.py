@@ -228,12 +228,17 @@ def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
         if table in MERGE_ONLY:
             # Insert-only: rows D1 lacks, never touch existing receipts.
             wanted = [k for k in smap if k not in bmap]
+            added = len(wanted)
+            updated = 0
         else:
             wanted = [k for k, h in smap.items() if bmap.get(k) != h]
+            added = sum(1 for k in wanted if k not in bmap)
+            updated = len(wanted) - added
         gone = []
         if allow_deletes and keys and table in DELETE_ALLOWED:
             gone = [k for k in bmap if k not in smap]
-        delta["tables"][table] = {"added_or_changed": len(wanted), "deleted": len(gone)}
+        delta["tables"][table] = {"added_or_changed": len(wanted), "added": added,
+                                  "updated": updated, "deleted": len(gone)}
         delta["deletes"][table] = [list(k) for k in gone]
         if not wanted and not gone:
             continue
@@ -373,7 +378,64 @@ def push_tables(con: sqlite3.Connection, include_roster: bool = False) -> list:
     return [t for t in app_tables(con) if t not in skip]
 
 
-def cmd_push(src: str, out: str, expect_epoch=None, include_roster: bool = False) -> int:
+def cmd_plan(base: str, src: str, out: str, only_tables=None, allow_deletes: bool = True,
+             write_budget: int = 5000) -> int:
+    """Build a diff, then audit it into plan.json and enforce the write budget.
+
+    Estimated D1 row writes = upserts + deletes + rest_pending (each REST row
+    costs one write). Refuses (exit 2) when the estimate exceeds the budget,
+    so a mis-scoped run can never repeat the 76K-row quota incident. A plan
+    with rest_pending>0 is marked "complete": false until rest-apply succeeds.
+    """
+    rc = cmd_diff(base, src, out, only_tables, allow_deletes)
+    if rc != 0:
+        return rc
+    with open(os.path.join(out, "delta-manifest.json"), encoding="utf-8") as fh:
+        delta = json.load(fh)
+    upserts = sum(v["added_or_changed"] for v in delta["tables"].values())
+    deletes = sum(v["deleted"] for v in delta["tables"].values())
+    rest = int(delta.get("rest_pending", 0))
+    files = sorted(f for f in os.listdir(out) if f.endswith(".sql"))
+    plan = {
+        "tables": {t: v for t, v in delta["tables"].items()
+                   if v["added_or_changed"] or v["deleted"]},
+        "inserts": sum(v.get("added", 0) for v in delta["tables"].values()),
+        "updates": sum(v.get("updated", 0) for v in delta["tables"].values()),
+        "deletes": deletes,
+        "rest_pending": rest,
+        "sql_batches": len(files),
+        "estimated_writes": upserts + deletes + rest,
+        "write_budget": write_budget,
+        "complete": rest == 0,
+    }
+    with open(os.path.join(out, "plan.json"), "w", encoding="utf-8") as fh:
+        json.dump(plan, fh, indent=2, sort_keys=True)
+    print(f"plan: +{plan['inserts']}/~{plan['updates']}/-{plan['deletes']} "
+          f"rest={rest} batches={len(files)} estimated_writes={plan['estimated_writes']} "
+          f"budget={write_budget}")
+    if plan["estimated_writes"] > write_budget:
+        import shutil
+        print(f"FAIL plan exceeds write budget ({plan['estimated_writes']} > {write_budget}); "
+              f"narrow --tables or raise --write-budget explicitly", file=sys.stderr)
+        # Remove emitted batches so a later step cannot apply a refused plan.
+        for name in files:
+            try:
+                os.remove(os.path.join(out, name))
+            except OSError:
+                pass
+        for name in ("delta-manifest.json",):
+            try:
+                os.remove(os.path.join(out, name))
+            except OSError:
+                pass
+        return 2
+    if not plan["complete"]:
+        print("NOTE plan incomplete until rest-apply succeeds (do not bump epoch yet)")
+    return 0
+
+
+def cmd_push(src: str, out: str, expect_epoch=None, include_roster: bool = False,
+             max_full_rows: int = 20000, full_ok: bool = False) -> int:
     os.makedirs(out, exist_ok=True)
     con = sqlite3.connect(src)
     if expect_epoch is not None:
@@ -382,6 +444,12 @@ def cmd_push(src: str, out: str, expect_epoch=None, include_roster: bool = False
             print(f"FAIL stale snapshot: expected epoch {expect_epoch}, source is {got} "
                   f"(pull a fresh base first)", file=sys.stderr)
             return 1
+    total = sum(con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+                for t in push_tables(con, include_roster))
+    if total > max_full_rows and not full_ok:
+        print(f"FAIL unscoped full push of {total} rows exceeds --max-full-rows {max_full_rows}; "
+              f"use scoped diff/plan instead, or pass --full-ok explicitly", file=sys.stderr)
+        return 2
     con.row_factory = sqlite3.Row
     # Filename order IS commit order (coalesce/apply sort lexically):
     # p0 facts first (parents before children), p1 gate+receipts last.
@@ -483,6 +551,99 @@ def sync_epoch(con: sqlite3.Connection) -> int:
     except sqlite3.OperationalError:
         return 0
     return int(row[0]) if row else 0
+
+
+def cmd_rest_apply(batches: str, account_id: str, database_id: str, api_token: str,
+                   batch_size: int = 25, retries: int = 3, endpoint: str = "") -> int:
+    """Apply rest/*.jsonl oversize rows via the D1 REST query API (params do
+    not count toward the 100KB SQL-text cap; row cap is 2MB).
+
+    Safety: every line is validated FIRST (shape {sql, params}, allowlisted
+    INSERT verbs only); any malformed line aborts before anything is sent.
+    Sends in batches with retries and records progress in applied-rest.json,
+    so a retry resumes without rewriting rows (statements are idempotent
+    INSERT OR REPLACE / IGNORE). A batch whose per-statement results are not
+    all successful fails the run: rest_pending rows are never silently
+    dropped, and callers must not bump the epoch until this exits 0.
+    Response bodies are summarized (counts only); params are never logged.
+    """
+    import time
+    import urllib.request
+    entries = []
+    for name in sorted(os.listdir(batches)):
+        if not name.endswith(".jsonl"):
+            continue
+        with open(os.path.join(batches, name), encoding="utf-8") as fh:
+            for lineno, line in enumerate(fh, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    print(f"FAIL malformed JSON {name}:{lineno}; nothing sent", file=sys.stderr)
+                    return 1
+                if not isinstance(entry, dict) or not isinstance(entry.get("sql"), str) \
+                        or not isinstance(entry.get("params"), list):
+                    print(f"FAIL bad entry shape {name}:{lineno}; nothing sent", file=sys.stderr)
+                    return 1
+                verb = entry["sql"].lstrip().split(None, 1)[0].upper() if entry["sql"].strip() else ""
+                if not entry["sql"].strip().upper().startswith("INSERT OR "):
+                    print(f"FAIL non-INSERT statement {name}:{lineno} ({verb}); nothing sent",
+                          file=sys.stderr)
+                    return 1
+                entries.append((name, entry))
+    if not entries:
+        print("rest-apply: nothing pending")
+        return 0
+    state_path = os.path.join(batches, "applied-rest.json")
+    try:
+        with open(state_path, encoding="utf-8") as fh:
+            applied = set(json.load(fh))
+    except (OSError, ValueError):
+        applied = set()
+    url = endpoint or (f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
+                         f"/d1/database/{database_id}/query")
+    pending = [(i, n, e) for i, (n, e) in enumerate(entries) if f"{n}#{i}" not in applied]
+    print(f"rest-apply: {len(entries)} total, {len(pending)} pending")
+    for start in range(0, len(pending), batch_size):
+        chunk = pending[start:start + batch_size]
+        payload = json.dumps([{"sql": e["sql"], "params": e["params"]} for _, _, e in chunk]).encode()
+        ok = False
+        for attempt in range(retries + 1):
+            req = urllib.request.Request(url, data=payload,
+                                         headers={"Content-Type": "application/json",
+                                                  "Authorization": f"Bearer {api_token}"},
+                                         method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    body = json.load(resp)
+            except Exception as exc:  # noqa: BLE001 - transient or quota; retried below
+                last = f"transport: {type(exc).__name__}"
+                time.sleep(min(2 ** attempt, 8))
+                continue
+            results = body if isinstance(body, list) else body.get("result", [])
+            failures = [r for r in results
+                        if not (isinstance(r, dict) and r.get("success", True))]
+            if isinstance(results, list) and not failures and len(results) == len(chunk):
+                ok = True
+                break
+            last = f"{len(failures)}/{len(chunk)} failed"
+            if any("row write limit" in json.dumps(r) for r in failures):
+                print("FAIL D1 write quota exhausted during rest-apply; progress saved, "
+                      "retry after reset", file=sys.stderr)
+                break
+            time.sleep(min(2 ** attempt, 8))
+        if not ok:
+            print(f"FAIL rest batch at offset {start} ({last}); applied so far kept in "
+                  f"applied-rest.json; epoch must NOT advance", file=sys.stderr)
+            return 1
+        applied.update(f"{n}#{i}" for i, n, _ in chunk)
+        with open(state_path, "w", encoding="utf-8") as fh:
+            json.dump(sorted(applied), fh, indent=2)
+        print(f"rest-apply: {len(applied)}/{len(entries)} applied")
+    print(f"rest-apply complete: {len(entries)} rows via {len(entries)} params calls")
+    return 0
 
 
 def cmd_epoch_get(target: str) -> int:
@@ -640,6 +801,22 @@ def main(argv=None) -> int:
     p.add_argument("--expect-epoch", type=int, default=None)
     p.add_argument("--include-roster", action="store_true",
                    help="One-time staging seed only: include the subscriber roster.")
+    p.add_argument("--max-full-rows", type=int, default=20000)
+    p.add_argument("--full-ok", action="store_true",
+                   help="Acknowledge an unscoped full-table push explicitly.")
+    p = sub.add_parser("plan"); p.add_argument("base"); p.add_argument("src")
+    p.add_argument("--out", required=True)
+    p.add_argument("--tables", default="")
+    p.add_argument("--no-deletes", action="store_true")
+    p.add_argument("--write-budget", type=int, default=5000)
+    p = sub.add_parser("rest-apply"); p.add_argument("batches")
+    p.add_argument("--account-id", required=True)
+    p.add_argument("--database-id", required=True)
+    p.add_argument("--api-token", required=True)
+    p.add_argument("--batch-size", type=int, default=25)
+    p.add_argument("--retries", type=int, default=3)
+    p.add_argument("--endpoint", default="",
+                   help="Override D1 query endpoint (tests only; default is the real API).")
     p = sub.add_parser("diff"); p.add_argument("base"); p.add_argument("src")
     p.add_argument("--out", required=True)
     p.add_argument("--tables", default="",
@@ -666,7 +843,16 @@ def main(argv=None) -> int:
     if args.cmd == "manifest":
         return cmd_manifest(args.src, args.out)
     if args.cmd == "push":
-        return cmd_push(args.src, args.out, args.expect_epoch, args.include_roster)
+        return cmd_push(args.src, args.out, args.expect_epoch, args.include_roster,
+                        args.max_full_rows, args.full_ok)
+    if args.cmd == "plan":
+        only = [t.strip() for t in args.tables.split(",") if t.strip()] or None
+        return cmd_plan(args.base, args.src, args.out, only, not args.no_deletes,
+                        args.write_budget)
+    if args.cmd == "rest-apply":
+        return cmd_rest_apply(args.batches, args.account_id, args.database_id,
+                              args.api_token, args.batch_size, args.retries,
+                              args.endpoint)
     if args.cmd == "diff":
         only = [t.strip() for t in args.tables.split(",") if t.strip()] or None
         return cmd_diff(args.base, args.src, args.out, only, not args.no_deletes)

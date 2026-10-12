@@ -1,0 +1,218 @@
+# Stage 4C staging sync: engine (offline fixtures) -> scoped incremental
+# plan -> guarded apply to staging D1 -> readback verify.
+# MANUAL DISPATCH ONLY. No schedule, no live providers, no production target.
+# Dry-run (default true) performs reads + planning only and writes nothing.
+name: stage4c-staging-sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Fixture operation"
+        required: true
+        default: "fixture-generate"
+        type: choice
+        options: [fixture-generate]
+      dry_run:
+        description: "Plan only, no D1 writes (default true)"
+        required: false
+        default: true
+        type: boolean
+      write_budget:
+        description: "Max D1 row writes for the plan"
+        required: false
+        default: "2000"
+
+env:
+  STAGING_DB_NAME: sureodds_staging
+  STAGING_DB_ID: d1266e71-9a31-4316-9426-e82fedcbf12b
+  TIMEZONE: Africa/Lagos
+
+jobs:
+  staging-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: sureodds-staging-sync
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install runtime dependency
+        run: pip install -r predictions-bot/requirements.txt
+        working-directory: .
+      - name: Staging target guard (never production)
+        run: |
+          set -euo pipefail
+          test "${{ env.STAGING_DB_NAME }}" = "sureodds_staging"
+          grep -q 'database_name = "sureodds_staging"' workers/wrangler.staging.toml
+          grep -q "${{ env.STAGING_DB_ID }}" workers/wrangler.staging.toml
+          echo "target=${{ env.STAGING_DB_NAME }} only; no production D1 exists in this repo"
+      - name: Cloudflare credentials check
+        run: |
+          set -euo pipefail
+          for v in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            if [ -z "${!v:-}" ]; then
+              echo "missing Actions secret: $v (Settings > Secrets > Actions; Cloudflare token needs D1 Edit on this account)"
+              exit 1
+            fi
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Pull staging base (export + load, timed)
+        id: pull
+        run: |
+          set -euo pipefail
+          cd workers
+          export CLOUDFLARE_API_TOKEN="${{ secrets.CLOUDFLARE_API_TOKEN }}"
+          export CLOUDFLARE_ACCOUNT_ID="${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
+          start=$SECONDS
+          npx -y wrangler@4 d1 export "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --output /tmp/stage4c_base.sql
+          python3 - "$PWD" <<'EOF'
+          import sqlite3, sys, time
+          t0 = time.perf_counter()
+          con = sqlite3.connect("/tmp/stage4c_base.db")
+          con.executescript(open("/tmp/stage4c_base.sql", encoding="utf-8").read())
+          con.commit()
+          print("base picks:", con.execute("SELECT COUNT(*) FROM picks").fetchone()[0])
+          print("base load seconds: %.1f" % (time.perf_counter() - t0))
+          EOF
+          echo "pull_seconds=$((SECONDS - start))" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Acquire generation lease (or stop)
+        id: lease
+        run: |
+          set -euo pipefail
+          cd workers
+          out=$(npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until='2099-01-01T00:00:00Z', attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='generate' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))")
+          echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); m=d[0]['meta']['changes']; print('lease changes:', m); sys.exit(0 if m==1 else 1)"
+          echo "acquired=true" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Run engine on offline fixtures (timed)
+        id: generate
+        run: |
+          set -euo pipefail
+          cd predictions-bot
+          start=$SECONDS
+          mkdir -p /tmp/stage4c_work
+          python3 - <<'EOF'
+          import sys, time
+          sys.path.insert(0, "tools"); sys.path.insert(0, ".")
+          import replay
+          t0 = time.perf_counter()
+          result = replay.run(send_delay=0.0, workdir="/tmp/stage4c_work")
+          slate = result["slate"]
+          print("replay seconds: %.1f" % (time.perf_counter() - t0))
+          print("date:", slate.get("date"), "stored:", len(slate["stored_picks"]))
+          EOF
+          echo "generate_done=true" >> "$GITHUB_OUTPUT"
+      - name: Rebase fixture ids above staging max
+        run: |
+          set -euo pipefail
+          maxid=$(cd workers && npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "SELECT COALESCE(MAX(id),0) AS m FROM picks" | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['results'][0]['m'])")
+          offset=$((maxid + 100000))
+          echo "staging max id: $maxid, rebase offset: $offset"
+          python3 workers/scripts/d1_sync.py rebase /tmp/stage4c_work/replay.db \
+            --out /tmp/stage4c_rebased.db \
+            --rebase "picks:id:${offset}:prediction_memberships:prediction_id"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Build scoped plan with write budget
+        id: plan
+        run: |
+          set -euo pipefail
+          python3 workers/scripts/d1_sync.py plan /tmp/stage4c_base.db /tmp/stage4c_rebased.db \
+            --out /tmp/stage4c_plan \
+            --tables picks,prediction_memberships,prediction_cache --no-deletes \
+            --write-budget "${{ inputs.write_budget }}"
+          cat /tmp/stage4c_plan/plan.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Apply to staging D1 (skipped in dry-run)
+        if: inputs.dry_run == false
+        run: |
+          set -euo pipefail
+          cd workers
+          epoch=$(npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "SELECT epoch FROM sync_state WHERE id=1" | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['results'][0]['epoch'])")
+          echo "epoch before: $epoch"
+          ok=0; total=0
+          for f in /tmp/stage4c_plan/p0_*.sql /tmp/stage4c_plan/p1_*.sql; do
+            [ -e "$f" ] || continue
+            total=$((total + 1))
+            base=$(basename "$f")
+            if npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+              --config wrangler.staging.toml --file "$f" --json > "/tmp/applied_$base.json"; then
+              if python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d[0]['success'] else 1)" "/tmp/applied_$base.json"; then
+                ok=$((ok + 1))
+                echo "OK $base"
+              else
+                echo "FAIL $base (success=false)"; exit 1
+              fi
+            else
+              echo "FAIL $base (wrangler error)"; exit 1
+            fi
+          done
+          echo "applied $ok/$total batch files"
+          if [ -d /tmp/stage4c_plan/rest ] && [ -n "$(ls /tmp/stage4c_plan/rest/*.jsonl 2>/dev/null)" ]; then
+            python3 workers/scripts/d1_sync.py rest-apply /tmp/stage4c_plan/rest \
+              --account-id "$CLOUDFLARE_ACCOUNT_ID" --database-id "$STAGING_DB_ID" \
+              --api-token "$CLOUDFLARE_API_TOKEN"
+          else
+            echo "no rest batches pending"
+          fi
+          npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "UPDATE sync_state SET epoch=epoch+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=1 AND epoch=$epoch" | python3 -c "import json,sys; d=json.load(sys.stdin); m=d[0]['meta']['changes']; print('epoch bump changes:', m); sys.exit(0 if m==1 else 1)"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Readback verification
+        if: inputs.dry_run == false
+        run: |
+          set -euo pipefail
+          cd workers
+          npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "SELECT pick_date, COUNT(*) AS n FROM picks GROUP BY pick_date ORDER BY pick_date" | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['results'])"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Release lease (always, if acquired)
+        if: always() && steps.lease.outputs.acquired == 'true'
+        run: |
+          cd workers
+          npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "UPDATE job_state SET lease_owner=NULL, lease_until=NULL WHERE name='generate' AND lease_owner='gha-${{ github.run_id }}'" || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Upload sanitized report (plan only, never dumps)
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4c-plan
+          path: /tmp/stage4c_plan/plan.json
