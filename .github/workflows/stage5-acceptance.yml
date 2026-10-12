@@ -120,11 +120,25 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Run engine (live only with RUN-LIVE, else offline fixture)
+      - name: Resolve execution mode (single decision for all steps)
+        id: mode
+        run: |
+          set -euo pipefail
+          # Live mode ONLY when all three hold; every other combination is
+          # offline fixture mode. Downstream steps must branch on this output,
+          # never re-derive the mode from raw inputs (a past bug ran fixture
+          # generation but then expected the live database file).
+          if [ "${{ inputs.operation }}" = "live-generate" ] && [ "${{ inputs.dry_run }}" = "false" ] && [ "${{ inputs.live_confirm }}" = "RUN-LIVE" ]; then
+            echo "mode=live" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=offline" >> "$GITHUB_OUTPUT"
+          fi
+          echo "resolved mode: $(test "${{ inputs.operation }}" = "live-generate" && test "${{ inputs.dry_run }}" = "false" && test "${{ inputs.live_confirm }}" = "RUN-LIVE" && echo live || echo offline)"
+      - name: Run engine (live only in live mode, else offline fixture)
         run: |
           set -euo pipefail
           cd predictions-bot
-          if [ "${{ inputs.operation }}" = "live-generate" ] && [ "${{ inputs.dry_run }}" = "false" ]; then
+          if [ "${{ steps.mode.outputs.mode }}" = "live" ]; then
             export PREDBOT_ALLOW_LIVE=1
             export DB_PATH=/tmp/acc_live.db
             python3 - <<'EOF'
@@ -135,6 +149,7 @@ jobs:
           print("live db ready, picks:", con.execute("SELECT COUNT(*) FROM picks").fetchone()[0])
           EOF
             python3 run_once.py generate --live --report /tmp/acc_gen.json
+            test -f /tmp/acc_live.db || { echo "FAIL expected /tmp/acc_live.db missing" >&2; exit 1; }
           else
             mkdir -p /tmp/acc_work
             python3 - <<'EOF'
@@ -147,6 +162,7 @@ jobs:
           print("date:", result["slate"].get("date"))
           EOF
             cp /tmp/acc_work/replay.db /tmp/acc_scratch.db
+            test -f /tmp/acc_scratch.db || { echo "FAIL expected /tmp/acc_scratch.db missing" >&2; exit 1; }
           fi
           cat /tmp/acc_gen.json 2>/dev/null || true
         env:
@@ -159,20 +175,23 @@ jobs:
       - name: Prepare scratch (fixture rebase only; live uses native ids)
         run: |
           set -euo pipefail
-          if [ "${{ inputs.operation }}" = "fixture-replay" ]; then
+          if [ "${{ steps.mode.outputs.mode }}" = "offline" ]; then
+            test -f /tmp/acc_scratch.db || { echo "FAIL offline mode needs /tmp/acc_scratch.db" >&2; exit 1; }
             python3 workers/scripts/d1_sync.py rebase /tmp/acc_scratch.db \
               --out /tmp/acc_rebased.db \
               --rebase "picks:id:100000:prediction_memberships:prediction_id"
           else
             # Live generation ran on the pulled base copy: ids already match
             # D1, so no rebase. Copy to keep downstream paths identical.
+            test -f /tmp/acc_live.db || { echo "FAIL live mode needs /tmp/acc_live.db" >&2; exit 1; }
             cp /tmp/acc_live.db /tmp/acc_rebased.db
           fi
       - name: Build scoped plan with write budget
         id: plan
         run: |
           set -euo pipefail
-          if [ "${{ inputs.operation }}" = "live-generate" ]; then
+          test -f /tmp/acc_rebased.db || { echo "FAIL expected /tmp/acc_rebased.db missing" >&2; exit 1; }
+          if [ "${{ steps.mode.outputs.mode }}" = "live" ]; then
             deletes_flag=""
           else
             deletes_flag="--no-deletes"
@@ -184,7 +203,7 @@ jobs:
             --write-budget "${{ inputs.write_budget }}"
           cat /tmp/acc_plan/plan.json
       - name: Require COMPLETE current-day cache (live mode)
-        if: inputs.operation == 'live-generate'
+        if: steps.mode.outputs.mode == 'live'
         run: |
           set -euo pipefail
           today=$(TZ=Africa/Lagos date +%F)

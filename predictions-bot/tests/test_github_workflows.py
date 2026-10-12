@@ -110,6 +110,54 @@ def test_all_workflow_python_heredocs_compile():
     assert not problems, "uncompilable embedded Python:\n" + "\n".join(problems)
 
 
+def _run_blocks(text: str):
+    """Yield (step name or '', block text) for each run: block."""
+    blocks, current, name = [], None, ""
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("- name:"):
+            if current is not None:
+                blocks.append((name, "\n".join(current)))
+            name, current = stripped[len("- name:"):].strip(), None
+        elif stripped.endswith("run: |") and current is None:
+            current = []
+        elif current is not None:
+            indent = len(line) - len(line.lstrip())
+            if stripped and indent < 10 and not stripped.startswith("#"):
+                blocks.append((name, "\n".join(current)))
+                current = None
+                if stripped.startswith("- name:"):
+                    name = stripped[len("- name:"):].strip()
+            else:
+                current.append(line)
+    if current is not None:
+        blocks.append((name, "\n".join(current)))
+    return blocks
+
+
+def test_stage5_single_mode_decision():
+    """One resolver owns the offline/live decision; every DB-selecting step
+    branches on its output, never re-derives mode from raw inputs (a past bug
+    generated the fixture DB but then expected the live DB file)."""
+    text = (WORKFLOWS / "stage5-acceptance.yml").read_text(encoding="utf-8")
+    assert "id: mode" in text
+    resolver = [b for n, b in _run_blocks(text) if "mode=" in b]
+    assert resolver, "no mode resolver step found"
+    body = resolver[0]
+    for token in ("inputs.operation", "inputs.dry_run", "inputs.live_confirm",
+                  "mode=live", "mode=offline"):
+        assert token in body, f"resolver must test all three inputs, missing {token}"
+    for name, block in _run_blocks(text):
+        selects_db = ("acc_live.db" in block or "acc_scratch.db" in block
+                      or "no-deletes" in block or "--rebase" in block)
+        if not selects_db:
+            continue
+        assert "steps.mode.outputs.mode" in block, \
+            f"step {name!r} selects DB files without consulting the resolved mode"
+        assert "inputs.operation" not in block and "inputs.dry_run" not in block, \
+            f"step {name!r} re-derives mode from raw inputs instead of steps.mode"
+
+
 def test_heredoc_checker_catches_misaligned_closer():
     bad = "jobs:\n  j:\n    steps:\n      - run: |\n        set -e\n        if true; then\n          cat <<'EOF'\n          hi\n          EOF\n        fi\n"
     errs = _heredoc_errors(bad)
