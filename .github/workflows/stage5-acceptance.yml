@@ -27,6 +27,11 @@ on:
         description: "Type RUN-LIVE to allow live providers + staging writes"
         required: false
         default: ""
+      allow_telegram_posts:
+        description: "Allow channel posts during live runs (default false: views only)"
+        required: false
+        default: false
+        type: boolean
       write_budget:
         description: "Max D1 row writes for the plan"
         required: false
@@ -141,6 +146,12 @@ jobs:
           if [ "${{ steps.mode.outputs.mode }}" = "live" ]; then
             export PREDBOT_ALLOW_LIVE=1
             export DB_PATH=/tmp/acc_live.db
+            if [ "${{ inputs.allow_telegram_posts }}" != "true" ]; then
+              # Silence all Telegram pushes (channel cards, recaps): acceptance
+              # verifies pull (commands/views) only. Pushes need explicit opt-in.
+              export TELEGRAM_CHAT_ID=""
+              export SUBSCRIBER_DELIVERY_ENABLED=false
+            fi
             python3 - <<'EOF'
           import sqlite3
           con = sqlite3.connect("/tmp/acc_live.db")

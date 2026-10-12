@@ -164,3 +164,17 @@ def test_heredoc_checker_catches_misaligned_closer():
     assert len(errs) == 1 and "closer indent 10 != block base 8" in errs[0]
     good = bad.replace("\n          EOF\n", "\n        EOF\n")
     assert _heredoc_errors(good) == []
+
+
+def test_stage5_live_pushes_need_explicit_opt_in():
+    """The live engine branch must silence Telegram pushes unless
+    allow_telegram_posts is true: acceptance verifies pull (commands/views),
+    and an unapproved channel/recap post would violate the no-broadcast rule."""
+    text = (WORKFLOWS / "stage5-acceptance.yml").read_text(encoding="utf-8")
+    assert "allow_telegram_posts" in text
+    live_branch = [b for n, b in _run_blocks(text) if "PREDBOT_ALLOW_LIVE=1" in b]
+    assert live_branch, "no live engine branch found"
+    body = live_branch[0]
+    assert 'TELEGRAM_CHAT_ID=""' in body
+    assert "SUBSCRIBER_DELIVERY_ENABLED=false" in body
+    assert "allow_telegram_posts" in body
