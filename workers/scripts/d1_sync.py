@@ -138,14 +138,88 @@ def table_fingerprint(con: sqlite3.Connection, table: str) -> tuple:
     # Order-insensitive: rows hash as sorted (column, value) pairs, so a
     # target whose DDL declares the same columns in a different physical
     # order (e.g. picks after Python ALTER migrations) still verifies.
+    # Volatile write-stamps and timing telemetry are excluded from the hash
+    # (see VOLATILE_COLUMNS / VOLATILE_JSON_PATHS): identical predictions
+    # re-run minutes apart must compare equal. Full rows still replicate.
     cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
     count = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
     h = hashlib.sha256()
     cur = con.execute(f"SELECT * FROM {table}")
     names = [d[0] for d in cur.description] if cur.description else []
     for row in cur:
-        h.update(repr(sorted(zip(names, row), key=lambda kv: kv[0])).encode("utf-8"))
+        h.update(_row_hash(table, names, row).encode("utf-8"))
     return count, h.hexdigest(), cols
+
+
+#: Wall-clock write stamps excluded from row-hash comparison. Evidence: two
+#: identical replay runs 88s apart differ ONLY here (plus JSON timings
+#: below); every probability, price, status, selection, odd and ID is
+#: bit-identical. Safety per column:
+#: - picks.created_at: write default (db.py setdefault); never read by
+#:   selection, pricing or display logic (verified by grep: only writes,
+#:   ticket-audit display, and an unrelated recovery dataclass field).
+#: - picks.settled_at: always written atomically WITH status+result_json by
+#:   settle_pick, so excluding it cannot mask a grading change (the status
+#:   and result still trigger the update, carrying the fresh timestamp).
+#: Policy: extend ONLY with run-vs-run diff evidence, never speculatively.
+VOLATILE_COLUMNS = {
+    "picks": {"created_at", "settled_at"},
+}
+
+#: Timing-telemetry subtrees inside JSON payload columns, excluded from the
+#: hash by explicit path (never by key name, so a market literally called
+#: "timings" could not be ignored). Evidence: identical runs differ only in
+#: these cpu/wall duration leaves; the replay harness itself already strips
+#: "timings" from golden diagnostics (tools/replay.py _VOLATILE precedent).
+#: - prediction_cache.payload_json @ generation.timings
+#: - custom_pick_pools.diagnostics_json @ timings
+VOLATILE_JSON_PATHS = {
+    "prediction_cache": {"payload_json": ["generation", "timings"]},
+    "custom_pick_pools": {"diagnostics_json": ["timings"]},
+}
+
+
+def _without_volatile_subpath(value, path: list):
+    """Return value with the nested path removed (lists traversed by index
+    only when the path element is an int; dicts by key). Missing paths and
+    unparsable JSON are returned unchanged (fail-visible, never fail-silent).
+    """
+    if not path or not isinstance(value, (dict, list)):
+        return value
+    head, rest = path[0], path[1:]
+    if isinstance(value, dict):
+        if head not in value:
+            return value
+        if not rest:
+            return {k: v for k, v in value.items() if k != head}
+        return {k: (_without_volatile_subpath(v, rest) if k == head else v)
+                for k, v in value.items()}
+    if isinstance(head, int) and 0 <= head < len(value):
+        return [(_without_volatile_subpath(v, rest) if i == head else v)
+                for i, v in enumerate(value)]
+    return value
+
+
+def _row_hash(table: str, names: list, row: tuple) -> str:
+    skip = VOLATILE_COLUMNS.get(table, set())
+    json_paths = VOLATILE_JSON_PATHS.get(table, {})
+    pairs = []
+    by_name = dict(zip(names, row))
+    for name in names:
+        if name in skip:
+            continue
+        value = by_name[name]
+        if name in json_paths and isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except ValueError:
+                pairs.append((name, value))
+                continue
+            cleaned = _without_volatile_subpath(parsed, json_paths[name])
+            pairs.append((name, json.dumps(cleaned, sort_keys=True)))
+            continue
+        pairs.append((name, value))
+    return repr(sorted(pairs, key=lambda kv: kv[0]))
 
 
 def key_columns(con: sqlite3.Connection, table: str) -> list | None:
@@ -164,18 +238,18 @@ def key_columns(con: sqlite3.Connection, table: str) -> list | None:
 
 
 def row_map(con: sqlite3.Connection, table: str, keys: list | None) -> dict:
-    """key-tuple -> row-hash for every row. Streams; ~70k rows fit in memory."""
+    """key-tuple -> row-hash for every row. Streams; ~70k rows fit in memory.
+    Hashing honors VOLATILE_COLUMNS / VOLATILE_JSON_PATHS (see table_fingerprint)."""
     out = {}
     cur = con.execute(f"SELECT * FROM {table}")
     names = [d[0] for d in cur.description] if cur.description else []
+    key_idx = [names.index(k) for k in keys] if keys else None
     for row in cur:
-        rec = dict(zip(names, row))
-        key = tuple(rec.get(k) for k in keys) if keys else None
-        h = hashlib.sha256(repr(sorted(rec.items(), key=lambda kv: kv[0])).encode("utf-8")).hexdigest()
-        if key is None:
+        h = hashlib.sha256(_row_hash(table, names, row).encode("utf-8")).hexdigest()
+        if key_idx is None:
             out.setdefault("__hash__:" + h, h)
         else:
-            out[key] = h
+            out[tuple(row[i] for i in key_idx)] = h
     return out
 
 

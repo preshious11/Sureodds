@@ -508,6 +508,94 @@ def test_repeated_fixture_sync_is_zero_write(tmp_path):
     assert n == 3, "no duplicates may appear"
 
 
+def test_volatile_timestamps_ignored_but_grading_syncs(tmp_path):
+    """created_at/settled_at alone never trigger a rewrite; a status flip does
+    (carrying the fresh timestamp with the full row)."""
+    import shutil
+    base = str(tmp_path / "base.db")
+    con = sqlite3.connect(base)
+    con.execute("CREATE TABLE picks (id INTEGER PRIMARY KEY, status TEXT,"
+                " result_json TEXT, created_at TEXT, settled_at TEXT)")
+    con.execute("INSERT INTO picks VALUES (1, 'pending', NULL, '2026-10-11T10:00:00Z', NULL)")
+    con.commit()
+    con.close()
+    # Touch only the write stamps: zero files.
+    src = str(tmp_path / "src.db")
+    shutil.copy(base, src)
+    con = sqlite3.connect(src)
+    con.execute("UPDATE picks SET created_at='2026-10-11T11:00:00Z', settled_at='2026-10-11T11:00:00Z'")
+    con.commit()
+    con.close()
+    out = str(tmp_path / "delta")
+    assert sync("diff", base, src, "--out", out, "--tables", "picks").returncode == 0
+    assert [n for n in os.listdir(out) if n.endswith(".sql")] == []
+    # Genuine grading flip: exactly one row emitted, with its new timestamp.
+    con = sqlite3.connect(src)
+    con.execute("UPDATE picks SET status='won', result_json='{\"s\":\"2-0\"}',"
+                " settled_at='2026-10-11T12:00:00Z' WHERE id=1")
+    con.commit()
+    con.close()
+    out2 = str(tmp_path / "delta2")
+    assert sync("diff", base, src, "--out", out2, "--tables", "picks").returncode == 0
+    files = [n for n in os.listdir(out2) if n.endswith(".sql")]
+    assert len(files) == 1
+    with open(os.path.join(out2, files[0]), encoding="utf-8") as fh:
+        text = fh.read()
+    assert "'won'" in text and "2026-10-11T12:00:00Z" in text
+
+
+def test_volatile_json_timings_ignored_but_content_syncs(tmp_path):
+    """generation.timings drift alone emits nothing; a status change emits."""
+    import json as _json
+    import shutil
+    base = str(tmp_path / "base.db")
+    con = sqlite3.connect(base)
+    con.execute("CREATE TABLE prediction_cache (cache_key TEXT PRIMARY KEY,"
+                " status TEXT, payload_json TEXT)")
+    payload = {"generation": {"timings": {"wall": 0.5}, "complete": True}, "n": 3}
+    con.execute("INSERT INTO prediction_cache VALUES ('k', 'COMPLETE', ?)",
+                (_json.dumps(payload),))
+    con.commit()
+    con.close()
+    src = str(tmp_path / "src.db")
+    shutil.copy(base, src)
+    con = sqlite3.connect(src)
+    payload["generation"]["timings"]["wall"] = 0.9
+    con.execute("UPDATE prediction_cache SET payload_json=? WHERE cache_key='k'",
+                (_json.dumps(payload),))
+    con.commit()
+    con.close()
+    out = str(tmp_path / "delta")
+    assert sync("diff", base, src, "--out", out, "--tables", "prediction_cache").returncode == 0
+    assert [n for n in os.listdir(out) if n.endswith(".sql")] == []
+    con = sqlite3.connect(src)
+    con.execute("UPDATE prediction_cache SET status='PARTIAL' WHERE cache_key='k'")
+    con.commit()
+    con.close()
+    out2 = str(tmp_path / "delta2")
+    assert sync("diff", base, src, "--out", out2, "--tables", "prediction_cache").returncode == 0
+    assert len([n for n in os.listdir(out2) if n.endswith(".sql")]) == 1
+
+
+def test_identical_replay_runs_diff_to_zero(tmp_path):
+    """End-to-end guard for the observed failure: two identical engine runs
+    must produce zero SQL (timestamps and timing telemetry excluded)."""
+    import sys as _sys
+    _sys.path.insert(0, str(__import__("pathlib").Path("tools").resolve()))
+    import replay
+    first = str(tmp_path / "first")
+    second = str(tmp_path / "second")
+    import os as _os
+    _os.makedirs(first, exist_ok=True)
+    _os.makedirs(second, exist_ok=True)
+    replay.run(send_delay=0.0, workdir=first)
+    replay.run(send_delay=0.0, workdir=second)
+    out = str(tmp_path / "delta")
+    assert sync("diff", os.path.join(first, "replay.db"), os.path.join(second, "replay.db"),
+                "--out", out).returncode == 0
+    assert [n for n in os.listdir(out) if n.endswith(".sql")] == []
+
+
 def test_concurrent_worker_receipt_survives_engine_apply(tmp_path):
     # A delivery DM recorded in D1 while an engine apply runs must survive:
     # receipts replicate INSERT OR IGNORE, so either order converges.
