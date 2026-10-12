@@ -2,7 +2,7 @@
 // Intrusion surface is intentionally small: no provider calls, no generation,
 // no spending. Slow work belongs in GitHub Actions (Stage 2) or later Crons.
 
-import { completeUpdate, failUpdate, tryClaimUpdate, upsertSubscriber, type Env } from "./db.ts";
+import { QuotaExhausted, completeUpdate, failUpdate, tryClaimUpdate, upsertSubscriber, type Env } from "./db.ts";
 import {
   commandToView,
   isAuthorized,
@@ -45,8 +45,17 @@ async function handleUpdate(env: Env, update: Record<string, unknown>): Promise<
     await routeUpdate(env, update);
     await completeUpdate(env.DB, updateId);
   } catch (err) {
+    if (err instanceof QuotaExhausted) {
+      // Quota outage: record NOTHING (not even a failure row — the write
+      // itself would fail). The update stays pending/undone, Telegram gets a
+      // 500 and redelivers later, and deduplication is intact because no done
+      // row exists. Zero additional writes are spent on the retry path.
+      throw err;
+    }
     // Persist the failure and leave the update retryable: a Telegram retry
     // or the Stage-3 sweeper reaps `failed` rows. The update is NOT lost.
+    // (If failUpdate itself hits quota, it throws QuotaExhausted: same
+    // fail-closed outcome as above.)
     const message = err instanceof Error ? err.message : String(err);
     await failUpdate(env.DB, updateId, message);
     throw err;

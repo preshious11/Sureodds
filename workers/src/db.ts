@@ -22,12 +22,37 @@ export type ClaimOutcome = "new" | "retry" | "duplicate";
 
 export const MAX_UPDATE_ATTEMPTS = 10;
 
+/// Quota-exhaustion signal from D1 (free tier: 100K rows written/day).
+/// Operations that hit it must fail CLOSED: no state change, no false ack.
+export class QuotaExhausted extends Error {
+  constructor(message = "D1 free-tier daily row write limit exceeded") {
+    super(message);
+    this.name = "QuotaExhausted";
+  }
+}
+
+export function isQuotaError(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? err ?? "");
+  return /row write limit|D1_ERROR|code:\s*7500|exceeded.*write/i.test(msg);
+}
+
+function throwIfQuota(err: unknown): void {
+  if (isQuotaError(err)) throw new QuotaExhausted(String((err as Error)?.message ?? err));
+  throw err;
+}
+
 export async function tryClaimUpdate(db: D1Database, updateId: number): Promise<ClaimOutcome> {
   if (!Number.isFinite(updateId)) return "duplicate";
-  const inserted = await db
-    .prepare("INSERT OR IGNORE INTO telegram_updates (update_id, status) VALUES (?1, 'pending')")
-    .bind(updateId)
-    .run();
+  let inserted;
+  try {
+    inserted = await db
+      .prepare("INSERT OR IGNORE INTO telegram_updates (update_id, status) VALUES (?1, 'pending')")
+      .bind(updateId)
+      .run();
+  } catch (err) {
+    throwIfQuota(err);
+    throw err;
+  }
   if ((inserted.meta.changes ?? 0) > 0) return "new";
   const row = await db
     .prepare("SELECT status, attempts FROM telegram_updates WHERE update_id = ?1")
@@ -36,29 +61,54 @@ export async function tryClaimUpdate(db: D1Database, updateId: number): Promise<
   if (!row) return "duplicate";
   if (row.status === "done") return "duplicate";
   if ((row.attempts ?? 0) >= MAX_UPDATE_ATTEMPTS) return "duplicate";
-  // Reap a pending/failed row for another attempt (crash-safe: a worker that
-  // died mid-processing leaves `pending`, which the next delivery retries).
-  await db
-    .prepare("UPDATE telegram_updates SET status = 'pending', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE update_id = ?1")
-    .bind(updateId)
-    .run();
-  return row.status === "failed" ? "retry" : "new";
+  if (row.status === "failed") {
+    // Reap ONLY failed rows, and only if still failed (conditional write):
+    // a redelivered update for a crash-leftover `pending` row is processed
+    // WITHOUT a state flip, so Telegram retries during an outage cost zero
+    // writes instead of amplifying quota burn, and two concurrent deliveries
+    // cannot steal each other's claim.
+    let reaped;
+    try {
+      reaped = await db
+        .prepare("UPDATE telegram_updates SET status = 'pending', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE update_id = ?1 AND status = 'failed'")
+        .bind(updateId)
+        .run();
+    } catch (err) {
+      throwIfQuota(err);
+      throw err;
+    }
+    return (reaped.meta.changes ?? 0) > 0 ? "retry" : "duplicate";
+  }
+  return "new";
 }
 
 export async function completeUpdate(db: D1Database, updateId: number): Promise<void> {
-  await db
-    .prepare("UPDATE telegram_updates SET status = 'done', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE update_id = ?1")
-    .bind(updateId)
-    .run();
+  try {
+    await db
+      .prepare("UPDATE telegram_updates SET status = 'done', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE update_id = ?1 AND status != 'done'")
+      .bind(updateId)
+      .run();
+  } catch (err) {
+    throwIfQuota(err);
+    throw err;
+  }
 }
 
 export async function failUpdate(db: D1Database, updateId: number, error: string): Promise<void> {
-  await db
-    .prepare(
-      "UPDATE telegram_updates SET status = 'failed', attempts = attempts + 1, last_error = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE update_id = ?1",
-    )
-    .bind(updateId, error.slice(0, 500))
-    .run();
+  // attempts++ is the retry budget itself: this write is load-bearing, but a
+  // quota failure here must surface as QuotaExhausted (unprocessed, redeliver)
+  // rather than being swallowed as a recorded failure.
+  try {
+    await db
+      .prepare(
+        "UPDATE telegram_updates SET status = 'failed', attempts = attempts + 1, last_error = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE update_id = ?1",
+      )
+      .bind(updateId, error.slice(0, 500))
+      .run();
+  } catch (err) {
+    throwIfQuota(err);
+    throw err;
+  }
 }
 
 /// Backwards-compatible single-phase claim (kept for existing callers/tests):
@@ -73,17 +123,41 @@ export async function upsertSubscriber(
   chatId: string,
   fields: { username?: string | null; firstName?: string | null; timezone?: string | null },
 ): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO subscribers (chat_id, username, first_name, timezone, subscribed_at, active)
-       VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1)
-       ON CONFLICT(chat_id) DO UPDATE SET
-         username = COALESCE(?2, username),
-         first_name = COALESCE(?3, first_name),
-         active = 1`,
-    )
-    .bind(chatId, fields.username ?? null, fields.firstName ?? null, fields.timezone ?? "")
-    .run();
+  // Read-then-write: a no-op visit must not cost a row WRITE (writes are
+  // 50x scarcer than reads on the free tier). Only an actual change writes.
+  const username = fields.username ?? null;
+  const firstName = fields.firstName ?? null;
+  // NOTE: this statement never touches timezone/subscribed_at (insert-only
+  // columns here); the no-op check below compares exactly the columns this
+  // write can change, so an unchanged visit never costs a row write.
+  const current = await db
+    .prepare("SELECT username, first_name, active FROM subscribers WHERE chat_id = ?1")
+    .bind(chatId)
+    .first<{ username: string | null; first_name: string | null; active: number }>();
+  if (
+    current &&
+    (current.username ?? null) === username &&
+    (current.first_name ?? null) === firstName &&
+    (current.active ?? 0) === 1
+  ) {
+    return;
+  }
+  try {
+    await db
+      .prepare(
+        `INSERT INTO subscribers (chat_id, username, first_name, timezone, subscribed_at, active)
+         VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%SZ','now'), 1)
+         ON CONFLICT(chat_id) DO UPDATE SET
+           username = COALESCE(?2, username),
+           first_name = COALESCE(?3, first_name),
+           active = 1`,
+      )
+      .bind(chatId, username, firstName, fields.timezone ?? "")
+      .run();
+  } catch (err) {
+    throwIfQuota(err);
+    throw err;
+  }
 }
 
 export interface DayCache {

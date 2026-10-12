@@ -333,6 +333,14 @@ def test_no_change_diff_emits_zero_writes(tmp_path):
     assert sync("diff", base, base, "--out", out).returncode == 0
     sql_files = [n for n in os.listdir(out) if n.endswith(".sql")]
     assert sql_files == [], f"no-change sync must emit no SQL, got {sql_files}"
+    # Applying the empty delta executes zero statements (D1 would see no writes).
+    import shutil
+    tgt = str(tmp_path / "tgt.db")
+    shutil.copy(base, tgt)
+    before = sqlite3.connect(tgt).execute("SELECT COUNT(*) FROM picks").fetchone()[0]
+    assert sync("apply", tgt, out).returncode == 0
+    after = sqlite3.connect(tgt).execute("SELECT COUNT(*) FROM picks").fetchone()[0]
+    assert before == after
 
 
 def test_changed_records_converge_and_history_is_never_deleted(tmp_path):
