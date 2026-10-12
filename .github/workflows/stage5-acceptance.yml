@@ -138,14 +138,14 @@ jobs:
           else
             mkdir -p /tmp/acc_work
             python3 - <<'EOF'
-            import sys, time
-            sys.path.insert(0, "tools"); sys.path.insert(0, ".")
-            import replay
-            t0 = time.perf_counter()
-            result = replay.run(send_delay=0.0, workdir="/tmp/acc_work")
-            print("replay seconds: %.1f" % (time.perf_counter() - t0))
-            print("date:", result["slate"].get("date"))
-            EOF
+          import sys, time
+          sys.path.insert(0, "tools"); sys.path.insert(0, ".")
+          import replay
+          t0 = time.perf_counter()
+          result = replay.run(send_delay=0.0, workdir="/tmp/acc_work")
+          print("replay seconds: %.1f" % (time.perf_counter() - t0))
+          print("date:", result["slate"].get("date"))
+          EOF
             cp /tmp/acc_work/replay.db /tmp/acc_scratch.db
           fi
           cat /tmp/acc_gen.json 2>/dev/null || true
