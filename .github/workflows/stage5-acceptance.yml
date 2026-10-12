@@ -1,0 +1,266 @@
+# Stage 5 acceptance: fresh current-day predictions to staging D1.
+# MANUAL DISPATCH ONLY. No schedule, no production target, no broadcasts.
+# Two modes:
+#   dry_run=true (default): reads + offline planning only, zero D1 writes,
+#     zero provider calls. Safe to run any time.
+#   dry_run=false + live_confirm=RUN-LIVE: live providers + staging writes.
+#     Requires explicit approval (this input) AND provider secrets.
+# Fixture data is never presented as today's picks; the require-complete gate
+# enforces a COMPLETE cache for the current Lagos date before epoch advance.
+name: stage5-acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Engine source"
+        required: true
+        default: "live-generate"
+        type: choice
+        options: [live-generate, fixture-replay]
+      dry_run:
+        description: "Plan only, no D1 writes (default true)"
+        required: false
+        default: true
+        type: boolean
+      live_confirm:
+        description: "Type RUN-LIVE to allow live providers + staging writes"
+        required: false
+        default: ""
+      write_budget:
+        description: "Max D1 row writes for the plan"
+        required: false
+        default: "5000"
+
+env:
+  STAGING_DB_NAME: sureodds_staging
+  STAGING_DB_ID: d1266e71-9a31-4316-9426-e82fedcbf12b
+  TIMEZONE: Africa/Lagos
+  # Known historical exclusion (auditable, never silent): the September
+  # PARTIAL cache rides the REST path separately and stays out of the
+  # acceptance run. Required current-day cache records are NOT excludable:
+  # require-complete gates the epoch on them below.
+  KNOWN_EXCLUSIONS: "prediction_cache:daily_predictions:Africa/Lagos:2026-09-19"
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: sureodds-staging-sync
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install runtime dependency
+        run: pip install -r predictions-bot/requirements.txt
+      - name: Staging target guard (never production)
+        run: |
+          set -euo pipefail
+          test "${{ env.STAGING_DB_NAME }}" = "sureodds_staging"
+          grep -q 'database_name = "sureodds_staging"' workers/wrangler.staging.toml
+          grep -q "${{ env.STAGING_DB_ID }}" workers/wrangler.staging.toml
+          echo "target=${{ env.STAGING_DB_NAME }} only"
+      - name: Live-run authorization gate
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.dry_run }}" = "false" ]; then
+            test "${{ inputs.live_confirm }}" = "RUN-LIVE" || \
+              (echo "FAIL live run requires live_confirm=RUN-LIVE" >&2; exit 1)
+            for v in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID SHARPAPI_KEY TELEGRAM_BOT_TOKEN; do
+              if [ -z "${!v:-}" ]; then echo "missing secret: $v" >&2; exit 1; fi
+            done
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SHARPAPI_KEY: ${{ secrets.SHARPAPI_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      - name: Pull staging base (export + load, timed)
+        id: pull
+        run: |
+          set -euo pipefail
+          cd workers
+          start=$SECONDS
+          npx -y wrangler@4 d1 export "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --output /tmp/acc_base.sql
+          python3 - <<'EOF'
+          import sqlite3, time
+          t0 = time.perf_counter()
+          con = sqlite3.connect("/tmp/acc_base.db")
+          con.executescript(open("/tmp/acc_base.sql", encoding="utf-8").read())
+          con.commit()
+          print("base picks:", con.execute("SELECT COUNT(*) FROM picks").fetchone()[0])
+          print("base load seconds: %.1f" % (time.perf_counter() - t0))
+          EOF
+          echo "pull_seconds=$((SECONDS - start))" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Acquire generation lease (or stop)
+        id: lease
+        run: |
+          set -euo pipefail
+          cd workers
+          out=$(npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until='2099-01-01T00:00:00Z', attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='generate' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))")
+          echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); m=d[0]['meta']['changes']; print('lease changes:', m); sys.exit(0 if m==1 else 1)"
+          echo "acquired=true" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Run engine (live only with RUN-LIVE, else offline fixture)
+        run: |
+          set -euo pipefail
+          cd predictions-bot
+          if [ "${{ inputs.operation }}" = "live-generate" ] && [ "${{ inputs.dry_run }}" = "false" ]; then
+            export PREDBOT_ALLOW_LIVE=1
+            export DB_PATH=/tmp/acc_live.db
+            python3 - <<'EOF'
+          import sqlite3
+          con = sqlite3.connect("/tmp/acc_live.db")
+          con.executescript(open("/tmp/acc_base.sql", encoding="utf-8").read())
+          con.commit()
+          print("live db ready, picks:", con.execute("SELECT COUNT(*) FROM picks").fetchone()[0])
+          EOF
+            python3 run_once.py generate --live --report /tmp/acc_gen.json
+          else
+            mkdir -p /tmp/acc_work
+            python3 - <<'EOF'
+            import sys, time
+            sys.path.insert(0, "tools"); sys.path.insert(0, ".")
+            import replay
+            t0 = time.perf_counter()
+            result = replay.run(send_delay=0.0, workdir="/tmp/acc_work")
+            print("replay seconds: %.1f" % (time.perf_counter() - t0))
+            print("date:", result["slate"].get("date"))
+            EOF
+            cp /tmp/acc_work/replay.db /tmp/acc_scratch.db
+          fi
+          cat /tmp/acc_gen.json 2>/dev/null || true
+        env:
+          SHARPAPI_KEY: ${{ secrets.SHARPAPI_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          SPORTSGAMEODDS_KEY: ${{ secrets.SPORTSGAMEODDS_KEY }}
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: Prepare scratch (fixture rebase only; live uses native ids)
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.operation }}" = "fixture-replay" ]; then
+            python3 workers/scripts/d1_sync.py rebase /tmp/acc_scratch.db \
+              --out /tmp/acc_rebased.db \
+              --rebase "picks:id:100000:prediction_memberships:prediction_id"
+          else
+            # Live generation ran on the pulled base copy: ids already match
+            # D1, so no rebase. Copy to keep downstream paths identical.
+            cp /tmp/acc_live.db /tmp/acc_rebased.db
+          fi
+      - name: Build scoped plan with write budget
+        id: plan
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.operation }}" = "live-generate" ]; then
+            deletes_flag=""
+          else
+            deletes_flag="--no-deletes"
+          fi
+          python3 workers/scripts/d1_sync.py plan /tmp/acc_base.db /tmp/acc_rebased.db \
+            --out /tmp/acc_plan \
+            --tables picks,prediction_memberships,prediction_cache $deletes_flag \
+            --exclude-keys "${{ env.KNOWN_EXCLUSIONS }}" \
+            --write-budget "${{ inputs.write_budget }}"
+          cat /tmp/acc_plan/plan.json
+      - name: Require COMPLETE current-day cache (live mode)
+        if: inputs.operation == 'live-generate'
+        run: |
+          set -euo pipefail
+          today=$(TZ=Africa/Lagos date +%F)
+          echo "Lagos today: $today"
+          python3 workers/scripts/d1_sync.py require-complete /tmp/acc_rebased.db "$today"
+      - name: Apply to staging D1 (skipped in dry-run)
+        if: inputs.dry_run == false
+        run: |
+          set -euo pipefail
+          cd workers
+          epoch=$(npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "SELECT epoch FROM sync_state WHERE id=1" | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['results'][0]['epoch'])")
+          echo "epoch before: $epoch"
+          ok=0; total=0
+          for f in /tmp/acc_plan/p0_*.sql /tmp/acc_plan/p1_*.sql; do
+            [ -e "$f" ] || continue
+            total=$((total + 1))
+            base=$(basename "$f")
+            if npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+              --config wrangler.staging.toml --file "$f" --json > "/tmp/applied_$base.json"; then
+              if python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d[0]['success'] else 1)" "/tmp/applied_$base.json"; then
+                ok=$((ok + 1))
+                echo "OK $base"
+              else
+                echo "FAIL $base (success=false)"; exit 1
+              fi
+            else
+              echo "FAIL $base (wrangler error)"; exit 1
+            fi
+          done
+          echo "applied $ok/$total batch files"
+          if [ -d /tmp/acc_plan/rest ] && [ -n "$(ls /tmp/acc_plan/rest/*.jsonl 2>/dev/null)" ]; then
+            python3 workers/scripts/d1_sync.py rest-apply /tmp/acc_plan/rest \
+              --account-id "$CLOUDFLARE_ACCOUNT_ID" --database-id "$STAGING_DB_ID" \
+              --api-token "$CLOUDFLARE_API_TOKEN"
+          else
+            echo "no rest batches pending"
+          fi
+          python3 - <<'EOF'
+          import json, os
+          plan = json.load(open("/tmp/acc_plan/plan.json"))
+          if int(plan.get("rest_pending", 0)) > 0:
+              state = "/tmp/acc_plan/rest/applied-rest.json"
+              assert os.path.exists(state), "rest pending but rest-apply left no state"
+          print("rest gate: OK")
+          EOF
+          npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "UPDATE sync_state SET epoch=epoch+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=1 AND epoch=$epoch" | python3 -c "import json,sys; d=json.load(sys.stdin); m=d[0]['meta']['changes']; print('epoch bump changes:', m); sys.exit(0 if m==1 else 1)"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Readback verification
+        if: inputs.dry_run == false
+        run: |
+          set -euo pipefail
+          cd workers
+          npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "SELECT pick_date, COUNT(*) AS n FROM picks GROUP BY pick_date ORDER BY pick_date" | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['results'])"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Release lease (always, if acquired)
+        if: always() && steps.lease.outputs.acquired == 'true'
+        run: |
+          cd workers
+          npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "UPDATE job_state SET lease_owner=NULL, lease_until=NULL WHERE name='generate' AND lease_owner='gha-${{ github.run_id }}'" || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Upload sanitized report (plan only, never dumps)
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-acceptance-plan
+          path: /tmp/acc_plan/plan.json

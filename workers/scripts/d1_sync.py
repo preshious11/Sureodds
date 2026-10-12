@@ -265,7 +265,8 @@ DELETE_ORDER = ["prediction_memberships", "custom_pick_candidates", "custom_pick
                 "prediction_cache", "picks"]
 
 
-def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: bool = True) -> int:
+def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: bool = True,
+             exclude_keys=None) -> int:
     """Emit ONLY the delta between the pulled base (D1 export) and the fresh
     compute snapshot: changed/added rows as phased batches + deletes.sql for
     DELETE_ALLOWED tables + delta-manifest.json.
@@ -277,6 +278,10 @@ def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
     lacks history must never be diffed whole: every absent history row would
     look deleted). allow_deletes=False suppresses all DELETE emission for
     additive-only runs (e.g. publishing a backdated fixture slate).
+    exclude_keys maps table -> set of single-column PK values (as strings) to
+    skip entirely, recorded in the manifest under "excluded". Used ONLY for
+    explicitly approved rows (e.g. a historical PARTIAL cache that must ride
+    the REST path later): skipping is auditable, never silent.
     """
     os.makedirs(out, exist_ok=True)
     bcon = sqlite3.connect(base)
@@ -299,6 +304,10 @@ def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
         keys = key_columns(scon, table)
         bmap = row_map(bcon, table, keys)
         smap = row_map(scon, table, keys)
+        skip_vals = (exclude_keys or {}).get(table, set())
+        if skip_vals and (keys is None or len(keys) != 1):
+            print(f"FAIL --exclude-keys needs a single-column PK for {table}", file=sys.stderr)
+            return 1
         if table in MERGE_ONLY:
             # Insert-only: rows D1 lacks, never touch existing receipts.
             wanted = [k for k in smap if k not in bmap]
@@ -308,11 +317,18 @@ def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
             wanted = [k for k, h in smap.items() if bmap.get(k) != h]
             added = sum(1 for k in wanted if k not in bmap)
             updated = len(wanted) - added
+        excluded = sorted(str(k[0]) for k in wanted if str(k[0]) in skip_vals)
+        if excluded:
+            drop = {k for k in wanted if str(k[0]) in skip_vals}
+            wanted = [k for k in wanted if k not in drop]
+            added = sum(1 for k in wanted if k not in bmap)
+            updated = len(wanted) - added
         gone = []
         if allow_deletes and keys and table in DELETE_ALLOWED:
             gone = [k for k in bmap if k not in smap]
         delta["tables"][table] = {"added_or_changed": len(wanted), "added": added,
-                                  "updated": updated, "deleted": len(gone)}
+                                  "updated": updated, "deleted": len(gone),
+                                  "excluded": excluded}
         delta["deletes"][table] = [list(k) for k in gone]
         if not wanted and not gone:
             continue
@@ -452,16 +468,58 @@ def push_tables(con: sqlite3.Connection, include_roster: bool = False) -> list:
     return [t for t in app_tables(con) if t not in skip]
 
 
+def _parse_exclude_keys(value: str) -> dict:
+    """Comma-separated TABLE:key list -> {table: {keys}}. Split on the FIRST
+    colon only: keys themselves (e.g. cache_key values) may contain colons.
+    Malformed entries are a hard error (an exclusion must never be silently
+    misparsed)."""
+    out: dict = {}
+    for spec in (value or "").split(","):
+        spec = spec.strip()
+        if not spec:
+            continue
+        if ":" not in spec:
+            raise ValueError(f"--exclude-keys entries look like TABLE:key, got {spec!r}")
+        table, key = spec.split(":", 1)
+        if not table.strip() or not key.strip():
+            raise ValueError(f"--exclude-keys entries look like TABLE:key, got {spec!r}")
+        out.setdefault(table.strip(), set()).add(key.strip())
+    return out
+
+
+def cmd_require_complete(db_path: str, local_date: str, timezone: str = "Africa/Lagos") -> int:
+    """Acceptance gate: fail unless prediction_cache holds a COMPLETE row for
+    the given Lagos date. Prints the row; never writes. The epoch may advance
+    for a date only after this passes (checked against the WORKER's serving
+    gate: getDayCache requires status COMPLETE)."""
+    con = sqlite3.connect(db_path)
+    row = con.execute(
+        "SELECT cache_key, local_date, timezone, status FROM prediction_cache"
+        " WHERE local_date=? AND timezone=? AND status='COMPLETE' LIMIT 1",
+        (local_date, timezone)).fetchone()
+    if not row:
+        have = con.execute(
+            "SELECT local_date, timezone, status FROM prediction_cache ORDER BY local_date DESC LIMIT 5"
+        ).fetchall()
+        print(f"FAIL no COMPLETE cache for {local_date} [{timezone}]; newest rows: {have}",
+              file=sys.stderr)
+        return 1
+    print(f"COMPLETE cache: {row[0]} date={row[1]} tz={row[2]}")
+    return 0
+
+
 def cmd_plan(base: str, src: str, out: str, only_tables=None, allow_deletes: bool = True,
-             write_budget: int = 5000) -> int:
+             write_budget: int = 5000, exclude_keys=None) -> int:
     """Build a diff, then audit it into plan.json and enforce the write budget.
 
     Estimated D1 row writes = upserts + deletes + rest_pending (each REST row
     costs one write). Refuses (exit 2) when the estimate exceeds the budget,
     so a mis-scoped run can never repeat the 76K-row quota incident. A plan
     with rest_pending>0 is marked "complete": false until rest-apply succeeds.
+    Explicitly excluded rows are listed under "excluded" (auditable, and they
+    do not count toward the budget since nothing is emitted for them).
     """
-    rc = cmd_diff(base, src, out, only_tables, allow_deletes)
+    rc = cmd_diff(base, src, out, only_tables, allow_deletes, exclude_keys)
     if rc != 0:
         return rc
     with open(os.path.join(out, "delta-manifest.json"), encoding="utf-8") as fh:
@@ -470,12 +528,15 @@ def cmd_plan(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
     deletes = sum(v["deleted"] for v in delta["tables"].values())
     rest = int(delta.get("rest_pending", 0))
     files = sorted(f for f in os.listdir(out) if f.endswith(".sql"))
+    excluded = {t: sorted(v.get("excluded", [])) for t, v in delta["tables"].items()
+                if v.get("excluded")}
     plan = {
         "tables": {t: v for t, v in delta["tables"].items()
-                   if v["added_or_changed"] or v["deleted"]},
+                   if v["added_or_changed"] or v["deleted"] or v.get("excluded")},
         "inserts": sum(v.get("added", 0) for v in delta["tables"].values()),
         "updates": sum(v.get("updated", 0) for v in delta["tables"].values()),
         "deletes": deletes,
+        "excluded": excluded,
         "rest_pending": rest,
         "sql_batches": len(files),
         "estimated_writes": upserts + deletes + rest,
@@ -486,7 +547,7 @@ def cmd_plan(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
         json.dump(plan, fh, indent=2, sort_keys=True)
     print(f"plan: +{plan['inserts']}/~{plan['updates']}/-{plan['deletes']} "
           f"rest={rest} batches={len(files)} estimated_writes={plan['estimated_writes']} "
-          f"budget={write_budget}")
+          f"budget={write_budget} excluded={sum(len(v) for v in excluded.values())}")
     if plan["estimated_writes"] > write_budget:
         import shutil
         print(f"FAIL plan exceeds write budget ({plan['estimated_writes']} > {write_budget}); "
@@ -883,6 +944,8 @@ def main(argv=None) -> int:
     p.add_argument("--tables", default="")
     p.add_argument("--no-deletes", action="store_true")
     p.add_argument("--write-budget", type=int, default=5000)
+    p.add_argument("--exclude-keys", default="",
+                   help="Comma-separated TABLE:key skips, recorded in the manifest.")
     p = sub.add_parser("rest-apply"); p.add_argument("batches")
     p.add_argument("--account-id", required=True)
     p.add_argument("--database-id", required=True)
@@ -897,6 +960,10 @@ def main(argv=None) -> int:
                    help="Comma-separated subset to diff (default: all pushable).")
     p.add_argument("--no-deletes", action="store_true",
                    help="Additive-only run: never emit DELETEs.")
+    p.add_argument("--exclude-keys", default="",
+                   help="Comma-separated TABLE:key skips, recorded in the manifest.")
+    p = sub.add_parser("require-complete"); p.add_argument("db"); p.add_argument("date")
+    p.add_argument("--timezone", default="Africa/Lagos")
     p = sub.add_parser("coalesce"); p.add_argument("batches"); p.add_argument("--out", required=True)
     p.add_argument("--max-bytes", type=int, default=90000)
     p = sub.add_parser("snapshot"); p.add_argument("src"); p.add_argument("--out", required=True)
@@ -921,15 +988,27 @@ def main(argv=None) -> int:
                         args.max_full_rows, args.full_ok)
     if args.cmd == "plan":
         only = [t.strip() for t in args.tables.split(",") if t.strip()] or None
+        try:
+            excluded = _parse_exclude_keys(args.exclude_keys)
+        except ValueError as exc:
+            print(f"FAIL {exc}", file=sys.stderr)
+            return 2
         return cmd_plan(args.base, args.src, args.out, only, not args.no_deletes,
-                        args.write_budget)
+                        args.write_budget, excluded)
     if args.cmd == "rest-apply":
         return cmd_rest_apply(args.batches, args.account_id, args.database_id,
                               args.api_token, args.batch_size, args.retries,
                               args.endpoint)
     if args.cmd == "diff":
         only = [t.strip() for t in args.tables.split(",") if t.strip()] or None
-        return cmd_diff(args.base, args.src, args.out, only, not args.no_deletes)
+        try:
+            excluded = _parse_exclude_keys(args.exclude_keys)
+        except ValueError as exc:
+            print(f"FAIL {exc}", file=sys.stderr)
+            return 2
+        return cmd_diff(args.base, args.src, args.out, only, not args.no_deletes, excluded)
+    if args.cmd == "require-complete":
+        return cmd_require_complete(args.db, args.date, args.timezone)
     if args.cmd == "coalesce":
         return cmd_coalesce(args.batches, args.out, args.max_bytes)
     if args.cmd == "snapshot":

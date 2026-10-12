@@ -596,6 +596,62 @@ def test_identical_replay_runs_diff_to_zero(tmp_path):
     assert [n for n in os.listdir(out) if n.endswith(".sql")] == []
 
 
+def test_exclude_keys_skips_auditable_rows_only(tmp_path):
+    import shutil
+    base = str(tmp_path / "base.db")
+    _seed_engine_tables(base)
+    src = str(tmp_path / "src.db")
+    shutil.copy(base, src)
+    con = sqlite3.connect(src)
+    con.execute("CREATE TABLE IF NOT EXISTS prediction_cache (cache_key TEXT PRIMARY KEY,"
+                " status TEXT, payload_json TEXT)")
+    con.execute("INSERT INTO prediction_cache VALUES ('skip-me', 'PARTIAL', '{}')")
+    con.execute("INSERT INTO prediction_cache VALUES ('keep-me', 'COMPLETE', '{}')")
+    con.commit()
+    con.close()
+    # Base lacks the table rows entirely? Seed base identically minus the rows.
+    bcon = sqlite3.connect(base)
+    bcon.execute("CREATE TABLE IF NOT EXISTS prediction_cache (cache_key TEXT PRIMARY KEY,"
+                 " status TEXT, payload_json TEXT)")
+    bcon.commit()
+    bcon.close()
+    out = str(tmp_path / "delta")
+    assert sync("diff", base, src, "--out", out, "--tables", "prediction_cache",
+                "--exclude-keys", "prediction_cache:skip-me").returncode == 0
+    import json as _json
+    with open(os.path.join(out, "delta-manifest.json"), encoding="utf-8") as fh:
+        delta = _json.load(fh)
+    assert delta["tables"]["prediction_cache"]["excluded"] == ["skip-me"]
+    assert delta["tables"]["prediction_cache"]["added"] == 1
+    files = [n for n in os.listdir(out) if n.endswith(".sql")]
+    assert len(files) == 1
+    with open(os.path.join(out, files[0]), encoding="utf-8") as fh:
+        text = fh.read()
+    assert "keep-me" in text and "skip-me" not in text
+    # Malformed specs fail loudly.
+    bad = sync("diff", base, src, "--out", str(tmp_path / "bad"),
+               "--tables", "prediction_cache", "--exclude-keys", "no-colon-here")
+    assert bad.returncode == 2
+
+
+def test_require_complete_gate(tmp_path):
+    base = str(tmp_path / "base.db")
+    con = sqlite3.connect(base)
+    con.execute("CREATE TABLE prediction_cache (cache_key TEXT PRIMARY KEY, local_date TEXT,"
+                " timezone TEXT, status TEXT, payload_json TEXT)")
+    con.execute("INSERT INTO prediction_cache VALUES ('k', '2026-10-11', 'Africa/Lagos',"
+                " 'PARTIAL', '{}')")
+    con.commit()
+    con.close()
+    assert sync("require-complete", base, "2026-10-11").returncode == 1
+    con = sqlite3.connect(base)
+    con.execute("UPDATE prediction_cache SET status='COMPLETE' WHERE cache_key='k'")
+    con.commit()
+    con.close()
+    assert sync("require-complete", base, "2026-10-11").returncode == 0
+    assert sync("require-complete", base, "2026-10-12").returncode == 1
+
+
 def test_concurrent_worker_receipt_survives_engine_apply(tmp_path):
     # A delivery DM recorded in D1 while an engine apply runs must survive:
     # receipts replicate INSERT OR IGNORE, so either order converges.
