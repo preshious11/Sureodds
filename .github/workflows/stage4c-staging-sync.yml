@@ -124,14 +124,26 @@ jobs:
           print("date:", slate.get("date"), "stored:", len(slate["stored_picks"]))
           EOF
           echo "generate_done=true" >> "$GITHUB_OUTPUT"
-      - name: Rebase fixture ids above staging max
+      - name: Rebase fixture ids into the fixed staging partition
+        # Partition registry (fixture date -> id offset; NEVER derived from the
+        # live max id, otherwise every run mints new PKs and re-inserts the
+        # same fixture as duplicates):
+        #   2026-09-19 replay fixture -> offset 100000 (ids 100001..)
+        # Guard below refuses if foreign rows ever invade the partition
+        # ceiling (fixture holds <1k rows; live ids approaching it means the
+        # registry must assign a new offset, never reuse this one).
         run: |
           set -euo pipefail
+          offset=100000
+          ceiling=$((offset + 1000000))
           maxid=$(cd workers && npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
             --config wrangler.staging.toml --json \
             --command "SELECT COALESCE(MAX(id),0) AS m FROM picks" | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['results'][0]['m'])")
-          offset=$((maxid + 100000))
-          echo "staging max id: $maxid, rebase offset: $offset"
+          echo "staging max id: $maxid, fixture offset: $offset, ceiling: $ceiling"
+          if [ "$maxid" -ge "$ceiling" ]; then
+            echo "FAIL foreign rows inside the fixture partition ceiling; assign a new offset, never reuse" >&2
+            exit 1
+          fi
           python3 workers/scripts/d1_sync.py rebase /tmp/stage4c_work/replay.db \
             --out /tmp/stage4c_rebased.db \
             --rebase "picks:id:${offset}:prediction_memberships:prediction_id"
@@ -184,6 +196,21 @@ jobs:
           else
             echo "no rest batches pending"
           fi
+          # Incomplete plans must never advance the epoch: every rest entry
+          # needs a matching applied-rest.json record.
+          python3 - <<'EOF'
+          import json, os
+          plan = json.load(open("/tmp/stage4c_plan/plan.json"))
+          pending = int(plan.get("rest_pending", 0))
+          if pending:
+              state = "/tmp/stage4c_plan/rest/applied-rest.json"
+              assert os.path.exists(state), "rest pending but rest-apply left no state"
+              applied = json.load(open(state))
+              files = [f for f in os.listdir("/tmp/stage4c_plan/rest") if f.endswith(".jsonl")]
+              total = sum(sum(1 for _ in open(os.path.join("/tmp/stage4c_plan/rest", f))) for f in files)
+              assert len(applied) >= total, f"rest incomplete: {len(applied)}/{total} applied"
+          print("rest gate: OK (pending=%d)" % pending)
+          EOF
           npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
             --config wrangler.staging.toml --json \
             --command "UPDATE sync_state SET epoch=epoch+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=1 AND epoch=$epoch" | python3 -c "import json,sys; d=json.load(sys.stdin); m=d[0]['meta']['changes']; print('epoch bump changes:', m); sys.exit(0 if m==1 else 1)"

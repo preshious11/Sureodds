@@ -444,6 +444,70 @@ def test_rebase_avoids_id_collision_and_preserves_refs(tmp_path):
     assert bad.returncode == 1
 
 
+def test_rebase_is_deterministic_across_runs(tmp_path):
+    """Same source + same fixed offset must yield byte-identical output, so a
+    repeated fixture sync matches existing D1 rows instead of re-inserting."""
+    import hashlib
+    import shutil
+    base = str(tmp_path / "base.db")
+    _seed_engine_tables(base)
+    src = str(tmp_path / "src.db")
+    shutil.copy(base, src)
+    con = sqlite3.connect(src)
+    con.execute("INSERT INTO picks VALUES (3, '2026-09-19', 'pending')")
+    con.execute("INSERT INTO prediction_memberships VALUES (3, 'daily', 1)")
+    con.commit()
+    con.close()
+    outs = []
+    for i in (1, 2):
+        out = str(tmp_path / f"rebased{i}.db")
+        assert sync("rebase", src, "--out", out, "--rebase",
+                    "picks:id:100000:prediction_memberships:prediction_id").returncode == 0
+        outs.append(out)
+    hashes = []
+    for out in outs:
+        con = sqlite3.connect(out)
+        h = hashlib.sha256()
+        for tbl in ("picks", "prediction_memberships"):
+            for row in con.execute(f"SELECT * FROM {tbl} ORDER BY 1"):
+                h.update(repr(row).encode())
+        hashes.append(h.hexdigest())
+    assert hashes[0] == hashes[1]
+
+
+def test_repeated_fixture_sync_is_zero_write(tmp_path):
+    """A fresh engine scratch holds ONLY new rows (like replay scratch); after
+    import, diffing the same rebased source again emits nothing and adds nothing."""
+    base = str(tmp_path / "base.db")
+    _seed_engine_tables(base)  # picks 1,2 already in "D1"
+    src = str(tmp_path / "src.db")
+    fresh = sqlite3.connect(src)
+    fresh.execute("CREATE TABLE picks (id INTEGER PRIMARY KEY, pick_date TEXT, status TEXT)")
+    fresh.execute("CREATE TABLE prediction_memberships (prediction_id INTEGER NOT NULL"
+                  " REFERENCES picks(id), collection TEXT NOT NULL, rank INTEGER NOT NULL DEFAULT 0,"
+                  " PRIMARY KEY (prediction_id, collection))")
+    fresh.execute("INSERT INTO picks VALUES (7, '2026-09-19', 'pending')")
+    fresh.execute("INSERT INTO prediction_memberships VALUES (7, 'daily', 1)")
+    fresh.commit()
+    fresh.close()
+    rebased = str(tmp_path / "rebased.db")
+    assert sync("rebase", src, "--out", rebased, "--rebase",
+                "picks:id:100000:prediction_memberships:prediction_id").returncode == 0
+    first = str(tmp_path / "first")
+    assert sync("diff", base, rebased, "--out", first,
+                "--tables", "picks,prediction_memberships", "--no-deletes").returncode == 0
+    assert [n for n in os.listdir(first) if n.endswith(".sql")]
+    # Import (as the workflow would), then diff the same source again.
+    assert sync("apply", base, first).returncode == 0
+    assert sqlite3.connect(base).execute("SELECT COUNT(*) FROM picks").fetchone()[0] == 3
+    second = str(tmp_path / "second")
+    assert sync("diff", base, rebased, "--out", second,
+                "--tables", "picks,prediction_memberships", "--no-deletes").returncode == 0
+    assert [n for n in os.listdir(second) if n.endswith(".sql")] == []
+    n = sqlite3.connect(base).execute("SELECT COUNT(*) FROM picks").fetchone()[0]
+    assert n == 3, "no duplicates may appear"
+
+
 def test_concurrent_worker_receipt_survives_engine_apply(tmp_path):
     # A delivery DM recorded in D1 while an engine apply runs must survive:
     # receipts replicate INSERT OR IGNORE, so either order converges.
