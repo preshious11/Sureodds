@@ -862,12 +862,14 @@ def cmd_rest_apply(batches: str, account_id: str, database_id: str, api_token: s
 
     Safety: every line is validated FIRST (shape {sql, params}, allowlisted
     INSERT verbs only); any malformed line aborts before anything is sent.
-    Sends in batches with retries and records progress in applied-rest.json,
-    so a retry resumes without rewriting rows (statements are idempotent
-    INSERT OR REPLACE / IGNORE). A batch whose per-statement results are not
-    all successful fails the run: rest_pending rows are never silently
-    dropped, and callers must not bump the epoch until this exits 0.
-    Response bodies are summarized (counts only); params are never logged.
+    Sends one {sql, params} object per HTTP call (the /query endpoint
+    rejects a batch array) with retries, and records progress in
+    applied-rest.json every batch_size entries so a retry resumes without
+    rewriting rows (statements are idempotent INSERT OR REPLACE / IGNORE).
+    Any entry that doesn't succeed fails the run: rest_pending rows are
+    never silently dropped, and callers must not bump the epoch until this
+    exits 0. Response bodies are summarized (counts only); params are never
+    logged.
     """
     import time
     import urllib.error
@@ -912,9 +914,12 @@ def cmd_rest_apply(batches: str, account_id: str, database_id: str, api_token: s
                          f"/d1/database/{database_id}/query")
     pending = [(i, n, e) for i, (n, e) in enumerate(entries) if f"{n}#{i}" not in applied]
     print(f"rest-apply: {len(entries)} total, {len(pending)} pending")
-    for start in range(0, len(pending), batch_size):
-        chunk = pending[start:start + batch_size]
-        payload = json.dumps([{"sql": e["sql"], "params": e["params"]} for _, _, e in chunk]).encode()
+    # D1's /query endpoint takes exactly one {sql, params} object per request
+    # (error 7400 "Expected object, received array" if sent a batch array),
+    # so each entry is its own HTTP call; batch_size only paces how often
+    # applied-rest.json is flushed, not what's sent on the wire.
+    for idx, (i, n, e) in enumerate(pending):
+        payload = json.dumps({"sql": e["sql"], "params": e["params"]}).encode()
         ok = False
         for attempt in range(retries + 1):
             req = urllib.request.Request(url, data=payload,
@@ -940,23 +945,24 @@ def cmd_rest_apply(batches: str, account_id: str, database_id: str, api_token: s
             results = body if isinstance(body, list) else body.get("result", [])
             failures = [r for r in results
                         if not (isinstance(r, dict) and r.get("success", True))]
-            if isinstance(results, list) and not failures and len(results) == len(chunk):
+            if isinstance(results, list) and results and not failures:
                 ok = True
                 break
-            last = f"{len(failures)}/{len(chunk)} failed"
+            last = f"{len(failures)}/{max(len(results), 1)} failed"
             if any("row write limit" in json.dumps(r) for r in failures):
                 print("FAIL D1 write quota exhausted during rest-apply; progress saved, "
                       "retry after reset", file=sys.stderr)
                 break
             time.sleep(min(2 ** attempt, 8))
         if not ok:
-            print(f"FAIL rest batch at offset {start} ({last}); applied so far kept in "
+            print(f"FAIL rest entry {n}#{i} ({last}); applied so far kept in "
                   f"applied-rest.json; epoch must NOT advance", file=sys.stderr)
             return 1
-        applied.update(f"{n}#{i}" for i, n, _ in chunk)
-        with open(state_path, "w", encoding="utf-8") as fh:
-            json.dump(sorted(applied), fh, indent=2)
-        print(f"rest-apply: {len(applied)}/{len(entries)} applied")
+        applied.add(f"{n}#{i}")
+        if (idx + 1) % batch_size == 0 or idx == len(pending) - 1:
+            with open(state_path, "w", encoding="utf-8") as fh:
+                json.dump(sorted(applied), fh, indent=2)
+            print(f"rest-apply: {len(applied)}/{len(entries)} applied")
     print(f"rest-apply complete: {len(entries)} rows via {len(entries)} params calls")
     return 0
 
