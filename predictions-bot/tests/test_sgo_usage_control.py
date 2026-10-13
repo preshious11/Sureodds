@@ -68,7 +68,8 @@ def test_billing_unit_is_objects_returned_with_a_minimum_of_one(db):
 def test_every_request_is_attributed_without_secrets(db):
     p = sgo(db, ResultHttp([final_event()]))
     p._call("/events", {"eventID": "E1"}, "settlement", sport="BASEBALL", league="MLB", event_id="E1")
-    row = db.query("SELECT * FROM sgo_usage")[0]
+    row = db.query("SELECT * FROM sgo_usage WHERE reason='settlement'")[0]
+    assert db.query("SELECT COUNT(*) AS n FROM sgo_usage WHERE reason='quota_probe'")[0]['n'] == 1
     assert (row["reason"], row["endpoint"], row["status"], row["objects_billed"]) == ("settlement", "/events", "ok", 1)
     assert (row["sport"], row["league"], row["event_id"], row["ts"]) == ("BASEBALL", "MLB", "E1", row["ts"])
     assert row["note"] == "scheduled"                                    # who drove it: scheduler / manual / diagnostic
@@ -117,7 +118,8 @@ def test_a_server_error_is_retried_at_most_once(db):
     with pytest.raises(ProviderError):
         p._call("/events", {}, "generation")
     assert http.n() == 2                                                  # maximum: 1 try + 1 retry
-    assert db.query("SELECT http_attempts, status FROM sgo_usage")[0]["status"] == "error"
+    row = db.query("SELECT http_attempts, status FROM sgo_usage WHERE reason='generation'")[0]
+    assert row['status'] == 'error' and row['http_attempts'] == 2
 
 
 def test_a_client_error_is_not_retried(db):
@@ -441,3 +443,25 @@ def test_nothing_in_the_subscriber_surface_mentions_sgo_usage():
         if f.name == "lastrun.py":                                        # admin-only (/lastrun)
             continue
         assert "sgo_meter" not in f.read_text(encoding="utf-8"), f.name
+
+
+@pytest.mark.parametrize('origin', ['scheduled', 'manual', 'diagnostic'])
+@pytest.mark.parametrize('reason', ['generation', 'settlement', 'fallback', 'catalog', 'manual', 'diagnostic'])
+def test_direct_request_loads_exhausted_usage_before_any_paid_lookup(db, monkeypatch, origin, reason):
+    from types import SimpleNamespace
+    from predbot.providers import sportsgameodds
+    monkeypatch.setattr(sportsgameodds, 'time', SimpleNamespace(monotonic=lambda: 1.))
+    monkeypatch.setenv('PREDBOT_SGO_ORIGIN', origin)
+    probe, http = FakeProbe(usage(2500, 2500)), ResultHttp()
+    p = sgo(db, http, probe)
+    with pytest.raises(SgoUnavailable):
+        p._call('/leagues' if reason == 'catalog' else '/events', {}, reason)
+    assert probe.calls == 1 and http.calls == []
+
+
+def test_direct_fallback_loads_usage_and_prefers_an_eligible_free_source(db):
+    probe, http = FakeProbe(usage(1950, 2500)), ResultHttp()
+    p = sgo(db, http, probe)
+    with pytest.raises(SgoUnavailable):
+        p._call('/events', {}, 'fallback', needs_sgo=False)
+    assert probe.calls == 1 and http.calls == []

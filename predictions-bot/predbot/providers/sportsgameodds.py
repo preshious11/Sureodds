@@ -113,7 +113,8 @@ class SportsGameOddsProvider(BaseProvider):
                          retries=0, sleep_on_429=False, max_bytes=SGO_MAX_BODY_BYTES)
         self._probe = Http("https://api.sportsgameodds.com/v2", headers={"X-Api-Key": api_key}, rate=limiter,
                            retries=0, timeout=15, sleep_on_429=False)
-        self._probe_failed_at = 0.0
+        # Zero is a valid monotonic timestamp on a fresh host, not "no failure".
+        self._probe_failed_at: Optional[float] = None
         self._catalog_retry_at = 0.0
         # per-run / per-process memos that stop the same data being bought twice
         self._league_memo: Dict[Tuple[str, str], Tuple[datetime, List[Event], int]] = {}
@@ -131,7 +132,7 @@ class SportsGameOddsProvider(BaseProvider):
     def _refresh_usage(self) -> bool:
         """Read /account/usage and hand the monthly entity numbers to the meter. Only numbers are kept - the response
         also carries the account e-mail and key id, which are never stored, logged or printed."""
-        if time.monotonic() - self._probe_failed_at < 1800:
+        if self._probe_failed_at is not None and time.monotonic() - self._probe_failed_at < 1800:
             return False
         try:
             data = self._probe.get("/account/usage")
@@ -201,6 +202,7 @@ class SportsGameOddsProvider(BaseProvider):
         Metering: the billed objects (objects returned, minimum 1) and the HTTP attempts are recorded with the reason."""
         if self.meter.in_cooldown():
             raise SgoUnavailable("SGO is cooling down after a rate limit")
+        self.monthly_entities()
         if not self.meter.allows(reason, self.origin, needs_sgo):
             raise SgoUnavailable(f"SGO budget does not allow '{reason}' right now")
         attempts = 0
@@ -235,7 +237,7 @@ class SportsGameOddsProvider(BaseProvider):
     def _on_rate_limited(self) -> None:
         """A 429 means one of two different things. Ask SGO which: out of monthly quota (pause until the usage is due
         for a re-read) or only over the per-minute limit (pause briefly and escalate if it repeats)."""
-        self._probe_failed_at = 0.0
+        self._probe_failed_at = None
         self._refresh_usage()
         gone = self.meter.exhausted()
         if gone:

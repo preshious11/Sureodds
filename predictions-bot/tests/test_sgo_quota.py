@@ -139,3 +139,44 @@ def test_settlement_lookups_skip_sgo_when_its_quota_is_gone(db):
 def test_quota_state_is_a_plain_dict_for_the_provider_report(db):
     import json
     json.dumps(provider(db, FakeProbe(usage(1, 2500)), FakeHttp()).quota_state())
+
+
+@pytest.mark.parametrize('clock', [0., 1., 60., 1799., 1800., 100000.])
+def test_first_usage_probe_is_independent_of_host_uptime(db, monkeypatch, clock):
+    from types import SimpleNamespace
+    from predbot.providers import sportsgameodds
+    monkeypatch.setattr(sportsgameodds, 'time', SimpleNamespace(monotonic=lambda: clock))
+    probe = FakeProbe(usage(2505, 2500))
+    p = provider(db, probe, FakeHttp())
+    assert p.monthly_entities() == (2505, 2500)
+    assert p.quota_exhausted()
+    assert probe.calls == 1
+
+
+def test_real_probe_failure_at_clock_zero_keeps_the_full_cooldown(db, monkeypatch):
+    from types import SimpleNamespace
+    from predbot.providers import sportsgameodds
+    clock = [0.]
+    monkeypatch.setattr(sportsgameodds, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+    probe = FakeProbe(error=ProviderError('401'))
+    p = provider(db, probe, FakeHttp())
+    assert p.monthly_entities() is None and probe.calls == 1
+    probe.error, probe.payload = None, usage(2505, 2500)
+    clock[0] = 1799.
+    assert p.monthly_entities() is None and probe.calls == 1
+    clock[0] = 1800.
+    assert p.monthly_entities() == (2505, 2500) and probe.calls == 2
+
+
+def test_429_forces_a_usage_refresh_even_on_a_fresh_host(db, monkeypatch):
+    from types import SimpleNamespace
+    from predbot.providers import sportsgameodds
+    monkeypatch.setattr(sportsgameodds, 'time', SimpleNamespace(monotonic=lambda: 0.))
+    probe = FakeProbe(error=ProviderError('401'))
+    p = provider(db, probe, FakeHttp())
+    assert p.monthly_entities() is None
+    probe.error, probe.payload = None, usage(2505, 2500)
+    p._on_rate_limited()
+    assert probe.calls == 2
+    assert p.meter.exhausted() and p.meter.in_cooldown()
+    assert p.budget.is_exhausted('sportsgameodds')
