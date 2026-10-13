@@ -870,6 +870,7 @@ def cmd_rest_apply(batches: str, account_id: str, database_id: str, api_token: s
     Response bodies are summarized (counts only); params are never logged.
     """
     import time
+    import urllib.error
     import urllib.request
     entries = []
     for name in sorted(os.listdir(batches)):
@@ -923,8 +924,17 @@ def cmd_rest_apply(batches: str, account_id: str, database_id: str, api_token: s
             try:
                 with urllib.request.urlopen(req, timeout=60) as resp:
                     body = json.load(resp)
+            except urllib.error.HTTPError as exc:
+                # The response body is Cloudflare's own error JSON (codes/
+                # messages only, no secrets) and is the only way to tell a
+                # bad token/account id (4xx, won't clear on retry) from a
+                # transient rate limit or outage (429/5xx, retried below).
+                detail = exc.read().decode("utf-8", "replace")[:500]
+                last = f"HTTPError {exc.code}: {detail}"
+                time.sleep(min(2 ** attempt, 8))
+                continue
             except Exception as exc:  # noqa: BLE001 - transient or quota; retried below
-                last = f"transport: {type(exc).__name__}"
+                last = f"transport: {type(exc).__name__}: {exc}"
                 time.sleep(min(2 ** attempt, 8))
                 continue
             results = body if isinstance(body, list) else body.get("result", [])
