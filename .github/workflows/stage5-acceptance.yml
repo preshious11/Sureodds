@@ -255,7 +255,7 @@ jobs:
           done
           echo "applied $ok/$total batch files"
           if [ -d /tmp/acc_plan/rest ] && [ -n "$(ls /tmp/acc_plan/rest/*.jsonl 2>/dev/null)" ]; then
-            python3 workers/scripts/d1_sync.py rest-apply /tmp/acc_plan/rest \
+            python3 scripts/d1_sync.py rest-apply /tmp/acc_plan/rest \
               --account-id "$CLOUDFLARE_ACCOUNT_ID" --database-id "$STAGING_DB_ID" \
               --api-token "$CLOUDFLARE_API_TOKEN"
           else
