@@ -98,15 +98,27 @@ def stored_result(r, db: Database) -> Optional[MatchResult]:
     state = db.live_state(r["pick_date"], r["fixture_key"])
     candidates = [(rows[0], state["result_json"])] if rows and state and state["result_json"] else []
     candidates += [(row, row["result_json"]) for row in rows if row["result_json"]]
+    usable = []
     for reference, payload in candidates:
         try:
             result = _decode_result(payload)
             if result is not None:
                 result = orient_result(result, reference, r)
                 if grade(_row_to_line(r), result, r["sport"]) != PENDING:
-                    return result
+                    usable.append(result)
         except (ValueError, TypeError, KeyError, AttributeError):
             log.warning("unusable stored result for pick %s", r["id"])
+    if usable:
+        for i, left in enumerate(usable):
+            for right in usable[i+1:]:
+                score_conflict = any(left.scores[k] != right.scores[k]
+                                     for k in left.scores.keys() & right.scores.keys())
+                stat_conflict = any(left.stats[k] != right.stats[k]
+                                    for k in left.stats.keys() & right.stats.keys())
+                if left.status != right.status or score_conflict or stat_conflict:
+                    log.warning("conflicting stored results for pick %s; leaving unresolved", r["id"])
+                    return None
+        return usable[0]
     if r["sport"] == "football" and all(_pid(r, k) for k in ("canonical_competition_id", "home_id", "away_id")):
         history = db.query(
             "SELECT * FROM match_results WHERE sport=? AND competition_id=? AND kickoff_utc=? "
@@ -476,7 +488,7 @@ def _run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]
 
     if counts["settled"]:
         try:
-            Calibrator(db).refit()
+            Calibrator(db, scope="settlement_v2").refit()
         except (ValueError, KeyError, TypeError) as e:
             log.error("calibration refit failed (probabilities may be stale): %s", e)
     try:

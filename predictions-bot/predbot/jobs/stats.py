@@ -279,7 +279,7 @@ def compute(db: Database, today_local: datetime) -> Dict:
         "streak": _streak(all_rows),
     }
     try:
-        out["brier"] = Calibrator(db).brier()
+        out["brier"] = Calibrator(db, scope="settlement_v2").brier()
     except (ValueError, KeyError, TypeError):
         out["brier"] = None
     return out
@@ -360,13 +360,18 @@ def _leg_block(rows: List) -> Dict:
             cnt["unresolved"] += 1
         elif st in cnt:
             cnt[st] += 1
-        if st not in SETTLED:
+        try:
+            meta = (json.loads(r['sources'] or '{}').get('_notes') or {})
+        except (KeyError, IndexError, TypeError, ValueError):
+            meta = {}
+        strict = meta.get('probability_basis') == 'strict_win_v2'
+        if st not in SETTLED and not (strict and st == 'push'):
             continue
         p = _num(r, "prob")
         if p is not None:
             probs.append(p)
-            ys.append(_Y[st])
-            market = _num(r, "p_market")
+            ys.append(float(st == 'won') if strict else _Y[st])
+            market = (meta.get('settlement') or {}).get('market_strict_win') if strict else _num(r, "p_market")
             raw = _num(r, "prob_raw")
             pm.append(market if market is not None else p)
             raws.append(raw if raw is not None else p)

@@ -320,6 +320,7 @@ def _seed_history(db, rows, today: str, days=(1, 2, 3, 4)) -> None:
     for back in days:
         for i, r in enumerate(rows):
             row = {k: r[k] for k in _COLS}
+            row["is_representative"] = r.get("is_representative", 1)
             row["pick_date"] = (base - timedelta(days=back)).isoformat()
             row["start_utc"] = iso(parse_iso(r["start_utc"]) - timedelta(days=back))
             db.settle_pick(db.insert_pick(row), _OUTCOMES[(i + back) % len(_OUTCOMES)])

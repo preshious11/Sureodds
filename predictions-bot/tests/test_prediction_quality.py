@@ -255,18 +255,19 @@ def test_totals_are_graded_by_distance_from_the_main_line():
     assert tier == {2.5: evmod.MAIN, 3.5: evmod.SECONDARY, 5.5: evmod.RESTRICTED}
 
 
-def test_a_restricted_market_cannot_outrank_a_main_one_merely_on_probability():
-    """First-half / corners legs are offered last: a 0.90 corners leg does not jump a 0.70 win."""
+def test_restricted_market_competes_after_coverage_and_uncertainty_gates():
+    """A well-covered restricted market competes on its penalized evidence rank."""
     c = Config(daily_odds_min=1.4, daily_odds_max=1.6)                    # one leg completes the ticket
     corners = cand(_fx(0), "total", "over", 0.90, 1.45, quotes=books(6, 1.45), line=9.5, stat="corners")
     win = cand(_fx(1), "result3", "home", 0.70, 1.45, quotes=books(6, 1.45))
     ps = select([corners, win], c, dt())
-    assert [s.line.market for s in ps.daily] == ["result3"]
+    assert [s.line.market for s in ps.daily] == ["total"]
 
 
-def test_the_top_is_main_markets_only():
+def test_top_accepts_well_supported_btts_with_its_secondary_uncertainty():
     pool = [cand(_fx(i), "btts", "yes", 0.75, 1.45, quotes=books(6, 1.45)) for i in range(6)]
-    assert select(pool, Config(), dt()).top == []
+    chosen = select(pool, Config(), dt()).top
+    assert len(chosen) == 2 and all(s.line.market == "btts" for s in chosen)
 
 
 # =========================================================================== ranking: evidence, not raw probability

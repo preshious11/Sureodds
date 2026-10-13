@@ -17,8 +17,8 @@ probability is ever ranked against another family's. Eligibility follows the mat
 Main line. Of the lines quoted on both sides, the one whose likelier side is closest to even (the market's own definition of
 its central line; same principle as ``families.main_line_table``). A handicap's home line L and away line -L are ONE line
 seen from either side. Lines quoted on one side only are used only when no line has both. A probability is the production
-``p_model``; for a push line it already is ``P(win) + 0.5 P(push)``, so ``p > 0.5`` means exactly "win more likely than
-lose", with or without pushes. A far line (Over 0.5, +2.5) is more probable but never "main", so it is never chosen for
+decisive-stake fair probability in the settlement metadata (legacy rows use ``p_model``); this describes
+the modal side without confusing a push with a full win. Tickets independently use strict-win probability. A far line (Over 0.5, +2.5) is more probable but never "main", so it is never chosen for
 being probable. A perfectly balanced main line has no likelier side and the family is omitted.
 
 A family with no eligible representative is omitted for that fixture, with a recorded reason. Team totals, period markets,
@@ -62,15 +62,22 @@ def in_pool(s) -> bool:
     return True
 
 
+def _structure_probability(s):
+    # Representatives describe the modal decisive side, whereas tickets use
+    # strict-win probability. A draw/push must not make both sides disappear.
+    q = (s.notes.get('settlement') or {}).get('fair_probability')
+    return s.p_model if q is None else q
+
+
 def _best(cands: Iterable):
     """Deterministic best of equals: probability, then bookmaker coverage, then the line key."""
-    return max(cands, key=lambda s: (s.p_model, s.line.distinct_books(), str(s.line.key())))
+    return max(cands, key=lambda s: (_structure_probability(s), s.line.distinct_books(), str(s.line.key())))
 
 
 def _result3(cands: Sequence) -> Tuple[Optional[object], str]:
     one = {s.line.selection: _best(c for c in cands if c.line.selection == s.line.selection)
            for s in cands if s.line.selection in ("home", "draw", "away")}
-    best = max(one.values(), key=lambda s: (s.p_model, s.line.distinct_books(), str(s.line.key()))) if one else None
+    best = max(one.values(), key=lambda s: (_structure_probability(s), s.line.distinct_books(), str(s.line.key()))) if one else None
     if len(one) == 3:
         return best, "modal outcome"
     if best is not None and best.p_model > 0.5:
@@ -96,7 +103,7 @@ def _double_chance(dc: Sequence, one_x_two: Dict[str, object]) -> Tuple[Optional
 def _likelier_side(cands: Sequence) -> Tuple[Optional[object], str]:
     """Binary market: the likelier side, which must be more likely than its opposite (p > 0.5)."""
     best = _best(cands)
-    return (best, "likelier side") if best.p_model > 0.5 else (None, NO_ELIGIBLE_SIDE)
+    return (best, "likelier side") if _structure_probability(best) > 0.5 else (None, NO_ELIGIBLE_SIDE)
 
 
 def _line_key(s) -> float:
@@ -117,11 +124,11 @@ def _main_line(cands: Sequence, market: str) -> Tuple[Optional[object], str]:
 
     def balance(item):
         k, v = item
-        return (abs(max(s.p_model for s in v) - 0.5), -max(s.line.distinct_books() for s in v), abs(k), k)
+        return (abs(max(_structure_probability(s) for s in v) - 0.5), -max(s.line.distinct_books() for s in v), abs(k), k)
 
     k, members = min(pool.items(), key=balance)
     best = _best(members)
-    if best.p_model <= 0.5:
+    if _structure_probability(best) <= 0.5:
         return None, BALANCED_MAIN_LINE
     return best, f"main line {k:g}"
 

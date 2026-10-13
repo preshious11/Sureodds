@@ -53,6 +53,12 @@ CREATE TABLE IF NOT EXISTS provider_cache (
     expires_at TEXT NOT NULL,
     cache_version INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ticket_candidates (
+    pick_date TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY(pick_date, candidate_id)
+);
 CREATE TABLE IF NOT EXISTS picks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     pick_date TEXT NOT NULL,             -- local date the pick was published for (YYYY-MM-DD)
@@ -303,6 +309,8 @@ class Database:
         for col in ("canonical_event_id", "canonical_competition_id", "home_id", "away_id"):
             if col not in pick_cols:
                 self.conn.execute(f"ALTER TABLE picks ADD COLUMN {col} TEXT")
+        if 'is_representative' not in pick_cols:
+            self.conn.execute('ALTER TABLE picks ADD COLUMN is_representative INTEGER NOT NULL DEFAULT 1')
         self._migrate_prediction_uniqueness()
         if self.get_kv('migration:prediction_memberships:v1') != 'done':
             self.conn.execute("INSERT OR IGNORE INTO prediction_memberships SELECT id,'all',rank FROM picks")
@@ -311,15 +319,15 @@ class Database:
         self.conn.commit()
 
     def _migrate_prediction_uniqueness(self) -> None:
-        """One stored prediction per (day, canonical event, market FAMILY) - was one per (day, canonical event).
-
-        ``market`` is the canonical family key (result3, result2, dc, dnb, handicap, total, btts), never a display string.
-        The old index is only dropped, never any row, so every stored and settled prediction survives; the new, looser
-        index can always be built because the old rule already implied it. Idempotent."""
+        """One representative per fixture/family; ticket-only alternates may coexist.
+        Existing rows default to representatives. No forecast/settlement is rewritten.
+        Exact-outcome uniqueness still prevents duplicate bets across collections.
+        """
         self.conn.execute("DROP INDEX IF EXISTS uq_prediction_event_day")
+        self.conn.execute("DROP INDEX IF EXISTS uq_prediction_event_family_day")
         self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_prediction_event_family_day "
                           "ON picks(pick_date,canonical_event_id,market) "
-                          "WHERE canonical_event_id IS NOT NULL AND canonical_event_id<>''")
+                          "WHERE canonical_event_id IS NOT NULL AND canonical_event_id<>'' AND is_representative=1")
 
     def _migrate_split_picks_kind(self) -> None:
         """The card went out as ONE ``picks`` message; it is now two (``picks_top``, ``picks_daily``). A ``picks`` row
@@ -573,7 +581,8 @@ class Database:
             qs = ",".join("?" for _ in row)
             cur = self.execute(f"INSERT INTO picks({cols}) VALUES({qs})", list(row.values()))
             pid = int(cur.lastrowid)
-            self.add_membership(pid, 'all', row.get('rank', 0))
+            if row.get('is_representative', 1):
+                self.add_membership(pid, 'all', row.get('rank', 0))
             if row.get('tier') in ('top', 'daily'):
                 self.add_membership(pid, row['tier'], row.get('rank', 0))
             return pid
@@ -595,6 +604,10 @@ class Database:
                           " ORDER BY p.pick_date DESC,m.rank,p.id", params)
 
     def store_prediction(self, row):
+        with self.transaction():
+            return self._store_representative(row)
+
+    def _store_representative(self, row):
         """Immutable first prediction for a fixture x market family on a day, irrespective of collection.
         A fixture may hold several predictions (one per family); a stored one is never replaced or updated.
 
@@ -602,15 +615,22 @@ class Database:
         ids existed (NULL) or under another provider's event id - by ``fixture_key`` and the family's own coordinates
         (market, period, stat, entity). Without the second, such a row slips past the first check and the insert then
         collides with ``uq_picks_fixture_selection`` (the exact-duplicate guard on fixture_key)."""
-        existing = self.query("SELECT id FROM picks WHERE pick_date=? AND canonical_event_id=? AND market=?",
+        existing = self.query("SELECT id FROM picks WHERE pick_date=? AND canonical_event_id=? AND market=? AND EXISTS (SELECT 1 FROM prediction_memberships WHERE prediction_id=picks.id AND collection='all')",
                               (row['pick_date'], row['canonical_event_id'], row['market']))
         if not existing and row.get('fixture_key'):
             existing = self.query("SELECT id FROM picks WHERE pick_date=? AND fixture_key=? AND market=? AND period=? "
-                                  "AND stat=? AND entity=? ORDER BY id LIMIT 1",
+                                  "AND stat=? AND entity=? AND EXISTS (SELECT 1 FROM prediction_memberships WHERE prediction_id=picks.id AND collection='all') ORDER BY id LIMIT 1",
                                   (row['pick_date'], row['fixture_key'], row['market'], row.get('period', 'full'),
                                    row.get('stat', 'points'), row.get('entity', 'all')))
         if existing:
             return int(existing[0]['id'])
+        exact = self._exact_prediction(row)
+        if exact:
+            # A previously promoted alternate can become this family's All
+            # representative. Reuse its immutable forecast; never rewrite it.
+            pid = int(exact[0]['id'])
+            self.add_membership(pid, 'all', row.get('rank', 0))
+            return pid
         try:
             return self.insert_pick(dict(row, tier='all'))
         except sqlite3.IntegrityError:                  # lost a race / an index we did not anticipate: first write wins
@@ -621,6 +641,62 @@ class Database:
             if not winner:
                 raise
             return int(winner[0]['id'])
+
+    @staticmethod
+    def _candidate_identity(row):
+        coords = [row['canonical_event_id'], row['market'], row['period'], row['stat'],
+                  row['entity'], row['line'], row['selection']]
+        return hashlib.sha256(json.dumps(coords, sort_keys=True).encode()).hexdigest()
+
+    def archive_ticket_candidate(self, row):
+        """Refresh UNUSED evaluations before publication; issued forecasts are
+        first-write-wins. This pool is not settlement history. A partial retry
+        may add coverage for a bet that has never been recorded as a forecast.
+        """
+        identity = self._candidate_identity(row)
+        frozen = bool(self._exact_prediction(row) or self.deliveries_exist('picks', row['pick_date'])
+                      or self.query("SELECT 1 FROM posts WHERE post_date=? AND kind IN ('picks','picks_top','picks_daily')",
+                                    (row['pick_date'],)))
+        clause = '' if frozen else 'ON CONFLICT(pick_date,candidate_id) DO UPDATE SET payload_json=excluded.payload_json'
+        self.execute('INSERT OR IGNORE INTO ticket_candidates VALUES(?,?,?) '+clause,
+                     (row['pick_date'], identity, json.dumps(row, sort_keys=True, allow_nan=False)))
+
+    def ticket_candidate_rows(self, day):
+        rows = []
+        for item in self.query('SELECT * FROM ticket_candidates WHERE pick_date=? ORDER BY candidate_id', (day,)):
+            row = json.loads(item['payload_json'])
+            row.update(id=item['candidate_id'], status='pending')
+            if isinstance(row['sources'], dict):
+                row['sources'] = json.dumps(row['sources'])
+            # An already issued forecast is immutable, including across retries.
+            existing = self._exact_prediction(row)
+            if existing:
+                stored = dict(existing[0])
+                incoming_meta = json.loads(row['sources']).get('_notes') or {}
+                stored_meta = json.loads(stored.get('sources') or '{}').get('_notes') or {}
+                if incoming_meta.get('probability_basis') == 'strict_win_v2' and stored_meta.get('probability_basis') != 'strict_win_v2':
+                    # Preserve the legacy forecast, but do not rank conditional
+                    # legacy confidence against corrected strict-win candidates.
+                    continue
+                row = stored
+            rows.append(row)
+        return rows
+
+    def _exact_prediction(self, row):
+        return self.query('SELECT * FROM picks WHERE pick_date=? AND canonical_event_id=? '
+                          'AND market=? AND period=? AND stat=? AND entity=? AND line IS ? AND selection=?',
+                          (row['pick_date'], row['canonical_event_id'], row['market'], row['period'],
+                           row['stat'], row['entity'], row['line'], row['selection']))
+
+    def store_ticket_prediction(self, row):
+        existing = self._exact_prediction(row)
+        if existing:
+            return existing[0]['id']
+        values = dict(row)
+        values.pop('id', None)
+        values.pop('status', None)
+        values['is_representative'] = 0
+        return self.insert_pick(values)
 
     def reset_prediction_day(self, day, timezone, now_utc, dry_run=False):
         """Invalidate only the shared snapshot and the unpublished future pending pool for ``day``.
@@ -641,6 +717,7 @@ class Database:
                 for pid in ids:
                     self.execute('DELETE FROM prediction_memberships WHERE prediction_id=?', (pid,))
                     self.execute('DELETE FROM picks WHERE id=?', (pid,))
+                self.execute("DELETE FROM ticket_candidates WHERE pick_date=? AND json_extract(payload_json, '$.start_utc')>?", (day, now_utc))
                 self.delete_prediction_cache(key)
         return {'snapshot_key': key, 'pending_predictions_removed': len(ids), 'dry_run': dry_run,
                 'predictions_kept_for_day': kept, 'provider_cache_preserved': True, 'history_preserved': True}
@@ -750,7 +827,7 @@ class Database:
 
     def all_settled_for_calibration(self, limit: int = 3000) -> List[sqlite3.Row]:
         return self.query(
-            "SELECT prob, prob_raw, status, price FROM picks WHERE status IN ('won','lost','half_won','half_lost') "
+            "SELECT prob, prob_raw, status, price, sources, sport, market, period, line FROM picks WHERE status IN ('won','lost','half_won','half_lost','push') "
             "ORDER BY id DESC LIMIT ?", (limit,))
 
     def previous_pick_fixtures(self, before_date: str, lookback_days: int = 2) -> List[sqlite3.Row]:

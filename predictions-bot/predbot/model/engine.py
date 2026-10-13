@@ -27,6 +27,7 @@ class Generation:
     predictions: list = field(default_factory=list)
     diagnostics: dict = field(default_factory=dict)
     candidates: list = field(default_factory=list)
+    ticket_predictions: list = field(default_factory=list)
 
 
 def representative_predictions(scored, results_gate=None):
@@ -80,11 +81,11 @@ def representative_predictions(scored, results_gate=None):
         "line_rejections": dict(rejected),
         "line_rejections_by_market": {m: dict(c) for m, c in sorted(by_market.items())},
         "event_no_valid_market": dict(no_valid),
-        "markets_evaluated": len(scored)}, candidates=candidates)
+        "markets_evaluated": len(scored)}, candidates=candidates, ticket_predictions=[s for values in groups.values() for s in values])
 
 
 def generate(events, db, settings: ModelSettings, results_gate=None, scorer=None):
-    elo, calibrator = Elo(db), Calibrator(db)
+    elo, calibrator = Elo(db), Calibrator(db, scope="settlement_v2")
     scored, failures, sufficient = [], Counter(), 0
     for event in events:
         if not event.markets:

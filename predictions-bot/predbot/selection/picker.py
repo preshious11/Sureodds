@@ -14,6 +14,7 @@ class PickSet:
     complete: bool = True
     predictions: list = field(default_factory=list)
     candidates: list = field(default_factory=list)
+    ticket_predictions: list = field(default_factory=list)
     candidate_timezone: str = ""
 
     def all(self):
@@ -54,7 +55,8 @@ class PredictionPool:
     def package(self, cfg, now_utc):
         """Selectors see immutable stored rows only. Memberships never copy predictions."""
         db, day = self.db, self.day
-        pool = self.rows('all')
+        has_archive = bool(db.query('SELECT 1 FROM ticket_candidates WHERE pick_date=? LIMIT 1', (day,)))
+        pool = db.ticket_candidate_rows(day) if has_archive else self.rows('all')
         top, top_diag = select_top(pool, cfg, now_utc)
         daily, daily_diag = select_daily(pool, cfg, now_utc)
         with db.transaction():
@@ -64,9 +66,10 @@ class PredictionPool:
                            "AND prediction_id IN (SELECT id FROM picks WHERE pick_date=?)", (day,))
                 for collection, rows in (('top', top), ('daily', daily)):
                     for rank, row in enumerate(rows, 1):
-                        db.add_membership(row['id'], collection, rank)
+                        pid = db.store_ticket_prediction(row) if isinstance(row['id'], str) else row['id']
+                        db.add_membership(pid, collection, rank)
         return {'top': top_diag, 'daily': daily_diag,
-                'all_predictions': len(pool), 'top_selected': len(self.rows('top')),
+                'all_predictions': len(self.rows('all')), 'ticket_candidates': len(pool), 'top_selected': len(self.rows('top')),
                 'daily_selected': len(self.rows('daily'))}
 
     def close(self):

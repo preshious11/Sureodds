@@ -132,10 +132,14 @@ def uncertainty(ml, quality: str, has_sharp: bool, cfg) -> float:
 
 
 def edge_points(s) -> Optional[float]:
-    """Edge over the sharp reference in probability points: p_fair - 1/price_available, i.e. ``p_fair * edge_ev /
-    (1 + edge_ev)``. ``None`` when no sharp book priced the line (never inferred from the soft market)."""
+    """Settlement-aware return advantage divided by the reference offer price.
+    Binary legacy rows use the equivalent fair-probability minus implied price.
+    None when no sharp reference quoted the complete market.
+    """
     if s.p_fair is None or s.edge_ev is None:
         return None
+    if (s.notes.get('settlement') or {}).get('version') == 2:
+        return s.edge_ev / s.notes['reference_price']
     return s.p_fair * s.edge_ev / (1.0 + s.edge_ev)
 
 

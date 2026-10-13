@@ -232,26 +232,19 @@ export async function getPicksPage(
 ): Promise<CachedPick[]> {
   const safeLimit = Math.min(Math.max(limit, 1), 25);
   const safeOffset = Math.max(offset, 0);
-  if (collection === "all") {
-    const { results } = await db
-      .prepare(
-        `SELECT p.id, m.collection AS tier, m.rank, p.sport, p.league, p.home, p.away,
-                p.start_utc, p.market, p.selection, p.label, p.price, p.prob, p.status
-         FROM picks p JOIN prediction_memberships m ON m.prediction_id = p.id
-         WHERE p.pick_date = ?1 AND m.collection = 'all'
-         ORDER BY m.rank ASC LIMIT ?2 OFFSET ?3`,
-      )
-      .bind(pickDate, safeLimit, safeOffset)
-      .all<CachedPick>();
-    return results ?? [];
-  }
   const { results } = await db
     .prepare(
-      `SELECT p.id, p.tier, p.rank, p.sport, p.league, p.home, p.away,
+      `SELECT p.id, m.collection AS tier, m.rank AS rank, p.sport, p.league, p.home, p.away,
+              p.start_utc, p.market, p.selection, p.label, p.price, p.prob, p.status
+       FROM picks p JOIN prediction_memberships m ON m.prediction_id = p.id
+       WHERE p.pick_date = ?1 AND m.collection = ?2
+       UNION ALL
+       SELECT p.id, ?2 AS tier, p.rank AS rank, p.sport, p.league, p.home, p.away,
               p.start_utc, p.market, p.selection, p.label, p.price, p.prob, p.status
        FROM picks p
-       WHERE p.pick_date = ?1 AND p.tier = ?2
-       ORDER BY p.rank ASC LIMIT ?3 OFFSET ?4`,
+       WHERE p.pick_date = ?1 AND (?2 = 'all' OR p.tier = ?2)
+         AND NOT EXISTS (SELECT 1 FROM prediction_memberships m WHERE m.prediction_id = p.id)
+       ORDER BY rank ASC, id ASC LIMIT ?3 OFFSET ?4`,
     )
     .bind(pickDate, collection, safeLimit, safeOffset)
     .all<CachedPick>();

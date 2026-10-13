@@ -30,7 +30,7 @@ ENGINE_TABLES = (
     "match_odds_ext", "match_results", "participant_aliases", "picks",
     "posts", "prediction_cache", "prediction_memberships", "provider_cache",
     "provider_identity", "ratings", "results_seen", "sgo_usage",
-    "subscribers",
+    "subscribers", "ticket_candidates",
 )
 
 

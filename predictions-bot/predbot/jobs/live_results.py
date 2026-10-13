@@ -34,6 +34,10 @@ def same_orientation(reference, row):
     """Does ``row`` list home and away the same way as ``reference`` (another leg / record of the same fixture)?
     True / False, or None when it cannot be proven. Canonical participant ids decide first; names only when ids are
     missing, and a name must match one side WITHOUT matching the other."""
+    for key in ("sport", "canonical_competition_id"):
+        left, right = _field(reference, key), _field(row, key)
+        if left and right and left != right:
+            return None
     rh, ra, h, a = (_field(reference, "home_id"), _field(reference, "away_id"),
                     _field(row, "home_id"), _field(row, "away_id"))
     if rh and ra and h and a:
@@ -41,6 +45,7 @@ def same_orientation(reference, row):
             return True
         if (rh, ra) == (a, h):
             return False
+        return None  # known conflicting identities cannot be repaired by fuzzy names
     sport = _field(row, "sport")
     ref_home, ref_away, home, away = (_field(reference, "home"), _field(reference, "away"),
                                       _field(row, "home"), _field(row, "away"))
@@ -162,7 +167,7 @@ def _settle_fixture(resolver, db, rows, result, now, cache, begun, clock=None):
         for row, candidate in prepared:
             settle.settle_result(row, candidate, db, Elo(db), clock(), counts, expire_missing=True)
         if counts["settled"]:
-            Calibrator(db).refit()
+            Calibrator(db, scope="settlement_v2").refit()
         db.complete_live_settlement(reference["pick_date"], reference["fixture_key"])
     log.info("live: settled %d picks", counts["settled"] + counts["void"])
     return counts
@@ -190,7 +195,7 @@ def _run(resolver, db, cfg, tg, now):
     clock = lambda: now + timedelta(seconds=time.monotonic() - started)
     expired = settle.expire_pending(db, now)
     if expired["settled"]:
-        Calibrator(db).refit()
+        Calibrator(db, scope="settlement_v2").refit()
     # The SQL range is a broad candidate bound; each fixture uses its own sport cutoff below.
     lookback = max(DURATION_H.values()) + max(LIVE_GRACE_H.values())
     rows = db.live_picks(iso(now - timedelta(hours=lookback)), iso(now))

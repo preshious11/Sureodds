@@ -21,6 +21,7 @@ shapes ``p_model`` (smoothing), but it is never evidence and never counts as a c
 from __future__ import annotations
 
 import logging
+import math
 import statistics
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -30,7 +31,8 @@ from predbot.model.calibration import Calibrator
 from predbot.model.devig import blend_logit, devig, shin_devig, single_side_prob
 from predbot.model.elo import Elo
 from predbot.model.margin import MarginModel
-from predbot.model.poisson import lambdas_from_market, price_line
+from predbot.model.poisson import lambdas_from_market, price_line, settlement_line
+from predbot.model.payoff import Payoff, requires_distribution
 from predbot.providers.base import Event, MarketLine
 
 log = logging.getLogger(__name__)
@@ -291,11 +293,30 @@ class EventModel:
         elif self.sport in MARGIN_SPORTS:
             spread = self._main_line("handicap")
             ph = two.get("home")
+            if ph is None and self.sport == 'american_football' and res.get('home') is not None and res.get('away') is not None:
+                decisive = res['home']+res['away']
+                ph = res['home']/decisive if decisive > 0 else None
             if spread is None and ph is None and tot is None:
                 return
+            tie_probability = None
+            if self.sport == 'american_football':
+                three = {m.selection: m for m in self._find('result3')}
+                if set(three) == {'home','draw','away'}:
+                    common = set.intersection(*(set(m.book_quotes) for m in three.values()))
+                    estimates = []
+                    for book in sorted(common):
+                        prices = {side: three[side].book_quotes[book] for side in three}
+                        if all(math.isfinite(p) and p > 1 for p in prices.values()) and sum(1/p for p in prices.values()) > 1:
+                            estimates.append((book, devig(prices)['draw']))
+                    if estimates:
+                        tie_probability = sum(p for _, p in estimates)/len(estimates)
+                        self.notes['nfl_tie_evidence'] = {
+                            'source': 'matched_book_three_way', 'period': 'full',
+                            'probability': tie_probability, 'books': [b for b, _ in estimates]}
+                self.notes['nfl_settlement_contract'] = 'final_margin_v1'
             self.margin_model = MarginModel.from_market(
                 self.sport, ph, spread[0] if spread else None, spread[1] if spread else None,
-                tot[0] if tot else None, tot[1] if tot else None)
+                tot[0] if tot else None, tot[1] if tot else None, tie_probability)
             self.notes["margin"] = (round(self.margin_model.mu, 1), round(self.margin_model.mu_t, 1))
 
     # -------------------------------------------------------------- pricing
@@ -362,9 +383,43 @@ class EventModel:
         basis = "market_blend"
         if self.independent_mode == "independent" and p_ind is not None:
             p_final, basis = p_ind, "independent"
-        p_raw = max(0.02, min(0.98, p_final))
-        p_final = self.cal.apply(p_final)
-        p_final = max(0.02, min(0.98, p_final))
+        # Sources/odds speak in decisive-stake price probabilities. Convert to
+        # mutually exclusive settlements BEFORE publishing strict-win confidence.
+        shape = None
+        if basis == 'independent':
+            shape = settlement_line(ml, *self.ind_estimate.lambdas, self.sport)
+        elif self.grid_lambdas:
+            shape = settlement_line(ml, *self.grid_lambdas, self.sport)
+        elif self.margin_model:
+            shape = self.margin_model.settlement(ml)
+        if shape is None and requires_distribution(ml, self.sport):
+            return None  # two prices alone cannot identify push/partial masses
+        shape = shape or Payoff.binary(p_final)
+        quote_raw = max(0.02, min(0.98, p_final))
+        quote_final = max(0.02, min(0.98, self.cal.apply(quote_raw)))
+        if self.sport == 'american_football':
+            # Retain the upper safety cap and all ticket floors. Do not inflate
+            # a rare priced outcome to 2% and manufacture a positive return.
+            quote_raw = max(0., min(.98, p_final))
+            quote_final = max(0., min(.98, self.cal.apply(quote_raw)))
+        if (self.sport == 'american_football' and ml.market == 'result3' and ml.selection == 'draw'
+                and ml.period == 'full' and self.margin_model
+                and self.margin_model.tie_probability is not None):
+            # This very same event is the two-way refund mass. A generic 2%
+            # numeric floor must not turn a priced rare tie into a false edge.
+            quote_raw = quote_final = self.margin_model.tie_probability
+            basis, contributing = 'market_tie_reference', ['market']
+        fixed = self.margin_model.fixed_tie(ml) if self.margin_model else None
+        try:
+            raw_payoff = shape.reprice(quote_raw, fixed)
+            payoff = shape.reprice(quote_final, fixed)
+            market_payoff = shape.reprice(p_mkt, fixed)
+        except ValueError:
+            return None  # incompatible tie evidence and quote: never invent an advantage
+        p_raw, p_final = raw_payoff.won, payoff.won
+        if p_ind is not None:
+            ind_payoff = settlement_line(ml, *self.ind_estimate.lambdas, self.sport)
+            p_ind = ind_payoff.won if ind_payoff else None
 
         # COHERENCE of the contributing estimates (market vs the score model fitted to it, Elo, sharp). This is not
         # independent confirmation - the score model is derived from the market - so evidence is judged elsewhere
@@ -373,8 +428,8 @@ class EventModel:
         agreement = 1.0 - min(1.0, statistics.pstdev(vals) / 0.10) if len(vals) >= 2 else 0.35
         if not self.market_complete.get(ml.key(), False):
             agreement *= 0.7
-        ev = p_final * ml.price - 1.0
-        edge = p_final - p_mkt
+        ev = payoff.ev(ml.price)
+        edge = p_final - market_payoff.won
         edge_ev = None
         if p_fair is not None:
             soft = self._soft_quotes(ml)
@@ -382,24 +437,34 @@ class EventModel:
                 # The best SOFT price is the actionable one: a median book always carries its margin, so against a
                 # sharp fair price its EV is negative for almost every line and says nothing about THIS line.
                 usable = max(soft) if self.edge_price == "best" else float(statistics.median(soft))
-                edge_ev = p_fair * usable - 1.0
+                try:
+                    edge_ev = shape.reprice(p_fair, fixed).ev(usable)
+                except ValueError:
+                    return None
         liquidity = min(1.0, ml.distinct_books() / 3.0)
         label = selection_label(ml, self.ev.home, self.ev.away, self.sport)
         notes = dict(self.notes)
         notes["model_basis"] = basis
+        notes["settlement"] = payoff.notes(ml.price)
+        notes["settlement"]["quote_raw"] = quote_raw
+        notes["settlement"]["market_strict_win"] = market_payoff.won
+        notes["probability_basis"] = "strict_win_v2"
+        if edge_ev is not None:
+            notes["reference_price"] = usable
         notes["independent_model"] = {
             "status": ind_status, "mode": self.independent_mode,
             "source": getattr(self.ind_estimate, "source", None),
             "p": None if p_ind is None else round(p_ind, 4),
-            "edge_vs_market": None if p_ind is None else round(p_ind - p_mkt, 4),
-            "ev": None if p_ind is None else round(p_ind * ml.price - 1.0, 4),
+            "edge_vs_market": None if p_ind is None else round(p_ind - market_payoff.won, 4),
+            "ev": None if p_ind is None else round(ind_payoff.ev(ml.price), 4),
             "lambdas": None if self.ind_estimate is None else [round(x, 3) for x in self.ind_estimate.lambdas],
             "detail": None if self.ind_estimate is None else self.ind_estimate.detail}
         return Scored(event=self.ev, line=ml, p_market=p_mkt, p_model=p_final, p_raw=p_raw, sources=sources,
                       p_independent=p_ind, independent_status=ind_status, p_model_basis=basis,
                       agreement=agreement, ev=ev, edge=edge, label=label, liquidity=liquidity,
                       notes=notes, p_fair=p_fair, fair_books=list(self.fair_books.get(ml.key(), [])),
-                      edge_ev=edge_ev, independent=[k for k in ("sharp", "elo") if k in contributing])
+                      edge_ev=edge_ev, independent=([] if basis == 'market_tie_reference' else ["history"] if basis == "independent" else
+                                   [k for k in ("sharp", "elo") if k in contributing]))
 
     def score_all(self) -> List[Scored]:
         out = []

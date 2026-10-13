@@ -43,10 +43,15 @@ def test_replay_is_offline_and_every_prediction_is_one_row_per_event_and_family(
     slate = replay.run(send_delay=0.0)["slate"]
     diag = slate["diagnostics"]
     rows = slate["stored_picks"]
-    assert len(rows) == len({(r["canonical_event_id"], r["market"]) for r in rows}) == diag["valid_predictions_generated"]
+    representatives = [r for r in rows if "all" in r["collections"]]
+    assert len(representatives) == len({(r["canonical_event_id"], r["market"]) for r in representatives}) == diag["valid_predictions_generated"]
+    assert len(rows) == len({(r["canonical_event_id"], r["market"], r["period"], r["stat"], r["entity"], r["line"], r["selection"]) for r in rows})
+    for collection in ("top", "daily"):
+        selected = [r for r in rows if collection in r["collections"]]
+        assert len(selected) == len({r["canonical_event_id"] for r in selected})
     assert len({r["canonical_event_id"] for r in rows}) == diag["fixtures_with_predictions"]
     assert len(rows) > diag["fixtures_with_predictions"]                       # several predictions per fixture
-    assert diag["stored_all_predictions"] == diag["all_predictions"] == len(rows)
+    assert diag["stored_all_predictions"] == diag["all_predictions"] == len(representatives)
     assert {r["tier"] for r in rows} <= {"top", "daily", "all"}
     assert diag["merged_events"] >= 15
     assert slate["delivery"]["second_pass"] == 0                # deliveries are once per subscriber per day

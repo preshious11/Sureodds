@@ -13,6 +13,8 @@ import math
 from typing import Optional, Tuple
 
 from predbot.providers.base import MarketLine
+from predbot.model.payoff import Payoff, line_payoff, nfl_tie_sensitive
+from predbot.markets.settlement import _cmp_line
 
 SIGMA_MARGIN = {"basketball": 12.0, "american_football": 13.5, "tennis": 0.0}
 SIGMA_TOTAL = {"basketball": 18.0, "american_football": 14.0}
@@ -47,16 +49,20 @@ def _inv_phi(p: float) -> float:
 
 
 class MarginModel:
-    def __init__(self, sport: str, mu: float, mu_total: float):
+    def __init__(self, sport: str, mu: float, mu_total: float, tie_probability=None):
         self.sport = sport
         self.mu = mu
         self.mu_t = mu_total
         self.sm = SIGMA_MARGIN.get(sport, 12.0)
         self.st = SIGMA_TOTAL.get(sport, 18.0)
+        if tie_probability is not None and (not math.isfinite(tie_probability) or not 0 <= tie_probability < 1):
+            raise ValueError('invalid full-game tie probability')
+        self.tie_probability = tie_probability
 
     @classmethod
     def from_market(cls, sport: str, p_home_ml: Optional[float], spread_home: Optional[float],
-                    p_cover_home: Optional[float], total_line: Optional[float], p_over: Optional[float]):
+                    p_cover_home: Optional[float], total_line: Optional[float], p_over: Optional[float],
+                    tie_probability=None):
         sm = SIGMA_MARGIN.get(sport, 12.0)
         st = SIGMA_TOTAL.get(sport, 18.0)
         mu: Optional[float] = None
@@ -73,7 +79,33 @@ class MarginModel:
             mu_t = total_line + st * z
         else:
             mu_t = PRIOR_TOTAL.get(sport, 200.0)
-        return cls(sport, mu, mu_t)
+        return cls(sport, mu, mu_t, tie_probability)
+
+    def _margin_settlement(self, ml, mean, sigma, line):
+        payoff = self._line_settlement(mean, sigma, line, 'over')
+        if self.sport != 'american_football' or ml.period not in ('full', '', None):
+            return payoff
+        if self.tie_probability is None:
+            return None if nfl_tie_sensitive(ml.market, ml.period, ml.line) else payoff
+        # Remove the Gaussian zero-margin mass; use observed same-period tie
+        # pricing instead. Retain the model's conditional nonzero-margin shape.
+        gaussian_zero = _phi((.5-mean)/sigma)-_phi((-.5-mean)/sigma)
+        category = _cmp_line(0, line, 'over')
+        masses = {name: getattr(payoff, name) for name in ('won','lost','push','half_won','half_lost','void')}
+        masses[category] = max(0., masses[category]-gaussian_zero)
+        scale = (1-self.tie_probability)/(1-gaussian_zero)
+        masses = {name: value*scale for name, value in masses.items()}
+        masses[category] += self.tie_probability
+        return Payoff(**masses)
+
+    def fixed_tie(self, ml):
+        if self.sport != 'american_football' or ml.period not in ('full', '', None) or self.tie_probability is None:
+            return None
+        if ml.market in ('result2', 'dnb'):
+            return ('push', self.tie_probability)
+        if ml.market == 'handicap' and ml.line is not None:
+            return (_cmp_line(0, -ml.line, 'over'), self.tie_probability)
+        return None
 
     # continuous scores: a "push" happens only on integer lines; we use a
     # continuity correction of +-0.5 to approximate discrete pushes.
@@ -83,17 +115,36 @@ class MarginModel:
             # sport (e.g. tennis, which MarginModel isn't meant to price) -
             # fail loudly to None rather than dividing by zero.
             return None
-        frac = round(abs(line - math.floor(line)), 2)
-        if frac in (0.25, 0.75):
-            return 0.5 * (self._line_prob(mean, sigma, line - 0.25, side) + self._line_prob(mean, sigma, line + 0.25, side))
-        if frac == 0.0:
-            # integer line: P(win) + 0.5 P(push)
-            over = 1 - _phi((line + 0.5 - mean) / sigma)
-            push = _phi((line + 0.5 - mean) / sigma) - _phi((line - 0.5 - mean) / sigma)
-            p = over + 0.5 * push
-        else:
-            p = 1 - _phi((line - mean) / sigma)
-        return p if side == "over" else 1 - p
+        return self._line_settlement(mean, sigma, line, side).fair_probability
+
+    def _line_settlement(self, mean, sigma, line, side):
+        # Aggregate Gaussian tails; keep discrete masses near the settlement boundary.
+        lo, hi = math.floor(line)-2, math.ceil(line)+2
+        dist = {lo-1: _phi((lo-.5-mean)/sigma), hi+1: 1-_phi((hi+.5-mean)/sigma)}
+        for k in range(lo, hi+1):
+            dist[k] = _phi((k+.5-mean)/sigma)-_phi((k-.5-mean)/sigma)
+        return line_payoff(dist, line, side)
+
+    def settlement(self, ml):
+        if ml.stat != 'points' or ml.is_player_prop:
+            return None
+        scale = PERIOD_SCALE.get(ml.period, 1.0)
+        mu, total = self.mu*scale, self.mu_t*scale
+        sm, st = self.sm*math.sqrt(scale), self.st*math.sqrt(scale)
+        if sm <= 0 or st <= 0:
+            return None
+        if ml.market == 'handicap' and ml.line is not None:
+            return self._margin_settlement(ml, mu if ml.selection == 'home' else -mu, sm, -ml.line)
+        if ml.market == 'total' and ml.line is not None:
+            if ml.entity == 'all':
+                return self._line_settlement(total, st, ml.line, ml.selection)
+            mean = (total + (mu if ml.entity == 'home' else -mu))/2
+            return self._line_settlement(mean, math.sqrt(st*st+sm*sm)/2, ml.line, ml.selection)
+        if ml.market == 'dnb' or (ml.market == 'result2' and
+                (self.sport == 'american_football' or ml.period not in ('full', '', None))):
+            return self._margin_settlement(ml, mu if ml.selection == 'home' else -mu, sm, 0)
+        p = self.prob(ml)
+        return Payoff.binary(p) if p is not None else None
 
     def prob(self, ml: MarketLine) -> Optional[float]:
         if ml.stat != "points" or ml.is_player_prop:
@@ -102,12 +153,25 @@ class MarginModel:
         mu, mu_t = self.mu * s, self.mu_t * s
         sm, st = self.sm * math.sqrt(s), self.st * math.sqrt(s)
         m, sel = ml.market, ml.selection
+        if self.sport == 'american_football' and ml.period in ('full', '', None):
+            if m in ('result2', 'dnb', 'handicap'):
+                payoff = self.settlement(ml)
+                return payoff.fair_probability if payoff is not None else None
+            if m == 'result3':
+                if self.tie_probability is None:
+                    return None
+                if sel == 'draw':
+                    return self.tie_probability
+                payoff = self._margin_settlement(ml, mu if sel == 'home' else -mu, sm, 0)
+                return payoff.won
         if m in ("result2", "dnb", "result3"):
             ph = 1 - _phi((0 - mu) / sm)
             if m == "result3":
                 # a genuine tie is rare in these sports; approximate with +-0.5
                 tie = _phi((0.5 - mu) / sm) - _phi((-0.5 - mu) / sm)
                 return {"home": ph - tie / 2, "away": 1 - ph - tie / 2, "draw": tie}.get(sel)
+            if m == "dnb" or ml.period not in ("full", "", None):
+                return self._line_settlement(mu if sel == "home" else -mu, sm, 0, "over").fair_probability
             return ph if sel == "home" else 1 - ph
         if m == "handicap" and ml.line is not None:
             mean = mu if sel == "home" else -mu

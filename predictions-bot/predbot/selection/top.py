@@ -1,21 +1,15 @@
-"""Small, explainable Top selector. A target is never a minimum ticket requirement.
+"""Top tickets from validated alternatives, under unchanged odds and leg limits.
 
-Which ticket (among candidates that already passed every Top gate - nothing here makes a pick easier to qualify):
-
-1. the 1-3 leg combination of different fixtures, from the ``TOP_SEARCH_K`` best-ranked fixtures, whose combined odds
-   lie inside ``TOP_COMBINED_ODDS`` .. ``TOP_ODDS_MAX`` and whose JOINT evidence-adjusted confidence (the product of
-   the legs' ranking scores) is highest; then the one closest to the target; then the one with fewer legs. A single
-   exceptional leg is simply the best 1-leg combination;
-2. when no combination fits the band, the previous best-first build (it may end below the target - the target is
-   not a minimum) - but never above ``TOP_ODDS_MAX``, not even with its first leg;
-3. no candidates: no Top Picks today.
+A bounded search maximizes joint evidence-adjusted strict-win confidence within
+ the odds band, then expected return. Below-band best-first fallback is retained.
 """
 import json
 import math
 from collections import Counter
-from itertools import combinations
+from predbot.selection.search import search
 
 from predbot.selection.evidence import min_books
+from predbot.model.payoff import nfl_contract_valid, nfl_tie_sensitive
 
 
 def notes(row):
@@ -24,7 +18,7 @@ def notes(row):
 
 def ranked(rows):
     return sorted(rows, key=lambda r: (-(r.get('rank_score') if r.get('rank_score') is not None else r['prob']),
-                                        -r['prob'], r['start_utc'], r['id']))
+                                        -r.get('ev', 0), -r['prob'], r['start_utc'], str(r['id'])))
 
 
 def promotion_reason(row, cfg, now_utc, top=False):
@@ -32,14 +26,19 @@ def promotion_reason(row, cfg, now_utc, top=False):
         return 'started_or_settled'
     if row['market'] in cfg.disabled_markets:
         return 'disabled_market'      # a product choice about what to PROMOTE; the prediction itself stays in All
+    if not nfl_contract_valid(row, notes(row)):
+        return 'unknown_nfl_tie_probability'
     if row['prob'] < (cfg.top_min_prob if top else cfg.daily_min_prob):
         return 'below_probability'
-    need = cfg.top_min_books if top else min_books(row.get('quality') or 'main', cfg)
+    quality_books = min_books(row.get('quality') or 'main', cfg)
+    need = max(cfg.top_min_books, quality_books) if top else quality_books
     if (row.get('books') or 1) < need:
         return 'insufficient_books'
-    if top and row.get('quality') != 'main':
-        return 'market_quality'
     meta = notes(row)
+    if row.get('sport') == 'american_football' and nfl_tie_sensitive(
+            row['market'], row.get('period', 'full'), row.get('line')):
+        if len(set(meta['nfl_tie_evidence']['books'])) < need:
+            return 'insufficient_tie_books'
     evidence = meta.get('evidence') or {}
     if evidence.get('dispersion') is not None and evidence['dispersion'] > cfg.max_book_dispersion:
         return 'book_disagreement'
@@ -54,7 +53,7 @@ def promotion_reason(row, cfg, now_utc, top=False):
     return None
 
 
-#: how many of the best-ranked fixtures the combination search considers (C(12,1..3) = 298 combinations at most)
+# Legacy diagnostic constant; search now considers the whole eligible pool.
 TOP_SEARCH_K = 12
 
 
@@ -70,26 +69,10 @@ def _confidence(row):
 
 
 def best_combination(pool, cfg):
-    """The best in-band 1..3 leg combination of ``pool`` (already ranked, best first), or None. Deterministic."""
-    legs_max = max(0, min(3, cfg.top_legs_max))
-    fixtures, seen = [], set()
-    for row in pool:
-        if _event(row) not in seen:
-            seen.add(_event(row))
-            fixtures.append(row)
-        if len(fixtures) == TOP_SEARCH_K:
-            break
-    best = None
-    for n in range(1, legs_max + 1):
-        for combo in combinations(fixtures, n):
-            odds = math.prod(r['price'] for r in combo)
-            if not cfg.top_odds_target <= odds <= cfg.top_odds_max:
-                continue
-            key = (-math.prod(_confidence(r) for r in combo), abs(odds - cfg.top_odds_target), n,
-                   tuple(fixtures.index(r) for r in combo))
-            if best is None or key < best[0]:
-                best = (key, list(combo), odds)
-    return (best[1], best[2]) if best else None
+    """Search fixture alternatives rather than freezing each fixture's first row."""
+    found, _ = search(pool, cfg.top_odds_target, cfg.top_odds_max,
+                      max(0, min(3, cfg.top_legs_max)))
+    return found
 
 
 def select_top(rows, cfg, now_utc):
@@ -119,7 +102,9 @@ def select_top(rows, cfg, now_utc):
     diagnostics = {'candidates': len(candidates), 'selected': len(selected), 'combined_odds': odds,
                    'target_reached': bool(selected) and odds >= cfg.top_odds_target,
                    'rejections': dict(rejected)}
-    found = best_combination(ranked(candidates), cfg)
+    found, search_diag = search(ranked(candidates), cfg.top_odds_target, cfg.top_odds_max,
+                                max(0, min(3, cfg.top_legs_max)))
+    diagnostics["search_details"] = search_diag
     if found and [r['id'] for r in found[0]] != [r['id'] for r in selected]:
         selected, odds = found
         diagnostics.update(selected=len(selected), combined_odds=odds, target_reached=True, search='combination')

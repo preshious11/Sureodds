@@ -17,6 +17,7 @@ from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 from predbot.providers.base import MarketLine
+from predbot.model.payoff import Payoff, line_payoff
 
 MAX_GOALS = {"football": 10, "baseball": 20}
 DEFAULT_RHO = {"football": -0.10, "baseball": 0.0}
@@ -210,9 +211,38 @@ def _line_outcome(dist: Dict[int, float], line: float, side: str) -> Tuple[float
 
 
 def effective_prob(p_win: float, p_push: float) -> float:
-    """Probability used for EV/ranking: a push returns the stake, so treat it
-    as half a win in a 'does this selection pay out' sense."""
-    return p_win + 0.5 * p_push
+    """Fair price probability conditional on decisive stake; never binary EV."""
+    return p_win / (1 - p_push) if p_push < 1 else .5
+
+
+def settlement_line(ml, lh, la, sport):
+    """Full and partial settlement masses from the line's score distribution."""
+    if ml.stat != 'points' or ml.is_player_prop:
+        return None
+    g = grid_for_period(lh, la, ml.period, sport)
+    if ml.market == 'dnb' or (ml.market == 'result2' and
+                              (sport == 'football' or ml.period not in ('full', '', None))):
+        h, d, a = g.result()
+        return Payoff(won=h if ml.selection == 'home' else a,
+                      lost=a if ml.selection == 'home' else h, push=d)
+    if ml.market == 'total' and ml.line is not None:
+        return line_payoff(g.total_dist(ml.entity), ml.line, ml.selection)
+    if ml.market == 'handicap' and ml.line is not None:
+        dist = g.margin_dist()
+        if ml.selection == 'away':
+            dist = {-k: v for k, v in dist.items()}
+        return line_payoff(dist, -ml.line, 'over')
+    if ml.market == 'result_total' and ml.line is not None:
+        from predbot.markets.settlement import grade
+        from predbot.providers.base import MatchResult
+        masses = {k: 0.0 for k in ('won', 'lost', 'push', 'half_won', 'half_lost', 'void')}
+        for h in range(g.n + 1):
+            for a in range(g.n + 1):
+                result = MatchResult(status='final', scores={ml.period: (h, a), 'full': (h, a)})
+                masses[grade(ml, result, sport)] += g.grid[h][a]
+        return Payoff(**masses)
+    p = price_line(ml, lh, la, sport)
+    return Payoff.binary(p) if p is not None else None
 
 
 # --------------------------------------------------------------------------
