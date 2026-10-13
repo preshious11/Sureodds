@@ -156,7 +156,7 @@ jobs:
           set -euo pipefail
           python3 workers/scripts/d1_sync.py plan /tmp/stage4c_base.db /tmp/stage4c_rebased.db \
             --out /tmp/stage4c_plan \
-            --tables picks,prediction_memberships,prediction_cache --no-deletes \
+            --tables picks,prediction_memberships,ticket_candidates,prediction_cache --no-deletes \
             --write-budget "${{ inputs.write_budget }}"
           cat /tmp/stage4c_plan/plan.json
         env:

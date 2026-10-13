@@ -209,7 +209,7 @@ jobs:
           fi
           python3 workers/scripts/d1_sync.py plan /tmp/acc_base.db /tmp/acc_rebased.db \
             --out /tmp/acc_plan \
-            --tables picks,prediction_memberships,prediction_cache $deletes_flag \
+            --tables picks,prediction_memberships,ticket_candidates,prediction_cache $deletes_flag \
             --exclude-keys "${{ env.KNOWN_EXCLUSIONS }}" \
             --write-budget "${{ inputs.write_budget }}"
           cat /tmp/acc_plan/plan.json

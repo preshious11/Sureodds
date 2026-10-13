@@ -3,6 +3,9 @@
 # on run_once (Stage 3); this workflow never spends quota.
 name: stage2-checks
 
+permissions:
+  contents: read
+
 on:
   push:
     paths:
@@ -20,11 +23,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Record tested commit
+        run: git rev-parse HEAD
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
       - name: Worker unit tests (auth, views, retry, cron)
-        run: node --test workers/tests/webhook.test.mjs workers/tests/views.test.mjs workers/tests/retry.test.mjs workers/tests/cron.test.mjs
+        run: node --test workers/tests/*.test.mjs
       - name: Wrangler dry-run (binding check, no deploy)
         run: npx -y wrangler@4 deploy --dry-run --config workers/wrangler.toml
 
@@ -32,13 +39,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Record tested commit
+        run: git rev-parse HEAD
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Build engine schema from Python migrations
         run: |
           python -c "from predbot.storage.db import Database; Database('/tmp/engine_schema.db').close()"
-          cat workers/migrations/0001_foundation.sql workers/migrations/0002_update_retry.sql workers/migrations/0003_engine_state.sql workers/migrations/0004_sync_state.sql > /tmp/all_migrations.sql
+          cat ../workers/migrations/*.sql > /tmp/all_migrations.sql
         working-directory: predictions-bot
       - name: Schema compatibility check
         run: python workers/scripts/check_schema_compat.py --sqlite /tmp/engine_schema.db --migrations /tmp/all_migrations.sql
@@ -47,14 +58,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Record tested commit
+        run: git rev-parse HEAD
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Install runtime and test dependencies
-        run: pip install -r requirements.txt -r requirements-test.txt
-      - name: Offline run-once + regression subset (no network)
         run: |
-          python run_once.py settle --offline
-          python run_once.py recap --offline
-          python -m pytest tests/test_stage2_runonce.py tests/test_stage3_sync.py tests/test_replay_golden.py tests/test_architecture_boundaries.py tests/test_data_source_of_truth.py -q
+          python -m venv /tmp/sureodds-release-venv
+          /tmp/sureodds-release-venv/bin/python -m pip install -r requirements.txt -r requirements-test.txt
+          /tmp/sureodds-release-venv/bin/python -c "import sys,pytest; print(sys.version); print('pytest',pytest.__version__); assert sys.version_info[:2]==(3,11); assert pytest.__version__.split('.')[0]=='8'"
+        working-directory: predictions-bot
+      - name: Offline run-once + complete Python suite (no provider calls)
+        run: |
+          /tmp/sureodds-release-venv/bin/python run_once.py settle --offline
+          /tmp/sureodds-release-venv/bin/python run_once.py recap --offline
+          /tmp/sureodds-release-venv/bin/python -m pytest tests -q -p no:cacheprovider
         working-directory: predictions-bot
