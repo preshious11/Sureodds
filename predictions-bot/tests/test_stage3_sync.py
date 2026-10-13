@@ -175,7 +175,7 @@ def test_compat_covers_all_synced_tables(tmp_path):
     merged = str(tmp_path / "all.sql")
     with open(merged, "w", encoding="utf-8") as fh_out:
         for name in ("0001_foundation.sql", "0002_update_retry.sql",
-                     "0003_engine_state.sql", "0004_sync_state.sql"):
+                     "0003_engine_state.sql", "0004_sync_state.sql", "0005_ticket_candidates.sql"):
             with open(os.path.join(MIGRATIONS, name), encoding="utf-8") as fh_in:
                 fh_out.write(fh_in.read() + "\n")
     proc = subprocess.run([sys.executable, COMPAT, "--sqlite", engine, "--migrations", merged],
@@ -652,6 +652,30 @@ def test_require_complete_gate(tmp_path):
     assert sync("require-complete", base, "2026-10-12").returncode == 1
 
 
+def test_require_complete_failure_prints_provider_verdict(tmp_path):
+    """The gate failure must name the cause (required vs optional vs error)
+    from the PARTIAL row itself, so a bare log line diagnoses the run."""
+    import json as _json
+    base = str(tmp_path / "base.db")
+    con = sqlite3.connect(base)
+    con.execute("CREATE TABLE prediction_cache (cache_key TEXT PRIMARY KEY, local_date TEXT,"
+                " timezone TEXT, status TEXT, payload_json TEXT)")
+    payload = {"generation": {"complete": False,
+                              "provider_coverage": {"required": ["sharpapi"],
+                                                    "missing_required": [],
+                                                    "optional_degraded": {"sportsgameodds": "partial"},
+                                                    "complete": False}}}
+    con.execute("INSERT INTO prediction_cache VALUES ('k', '2026-10-13', 'Africa/Lagos',"
+                " 'PARTIAL', ?)", (_json.dumps(payload),))
+    con.commit()
+    con.close()
+    proc = sync("require-complete", base, "2026-10-13")
+    assert proc.returncode == 1
+    assert "missing_required=[]" in proc.stderr
+    assert "optional_degraded={'sportsgameodds': 'partial'}" in proc.stderr
+    assert "payload_json" not in proc.stderr  # never dump the payload itself
+
+
 def test_concurrent_worker_receipt_survives_engine_apply(tmp_path):
     # A delivery DM recorded in D1 while an engine apply runs must survive:
     # receipts replicate INSERT OR IGNORE, so either order converges.
@@ -729,12 +753,10 @@ def test_changed_records_converge_and_history_is_never_deleted(tmp_path):
     got = sqlite3.connect(tgt)
     assert got.execute("SELECT status FROM picks WHERE id=1").fetchone()[0] == "won"
     assert got.execute("SELECT COUNT(*) FROM picks WHERE id=3").fetchone()[0] == 1
-    assert got.execute("SELECT COUNT(*) FROM picks WHERE id=2").fetchone()[0] == 0
+    assert got.execute("SELECT COUNT(*) FROM picks WHERE id=2").fetchone()[0] == 1
+    assert got.execute("SELECT COUNT(*) FROM prediction_memberships WHERE prediction_id=2").fetchone()[0] == 1
     # match_results is append-or-update: the illegitimate delete did NOT replicate.
     assert got.execute("SELECT COUNT(*) FROM match_results WHERE id=1").fetchone()[0] == 1
-    # Deletes file exists but carries only allowed tables, children first.
+    # A partial/reset source must never erase historical tickets in D1.
     deletes = os.path.join(out, "p1_deletes.sql")
-    with open(deletes, encoding="utf-8") as fh:
-        text = fh.read()
-    assert "match_results" not in text
-    assert text.index("prediction_memberships") < text.index("DELETE FROM picks")
+    assert not os.path.exists(deletes)

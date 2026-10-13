@@ -36,6 +36,7 @@ import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 #: Commit phasing (atomic-fencing limitation, Stage 4A audit): D1 file
 #: imports apply statement-by-statement with no cross-file transaction, so a
@@ -63,7 +64,7 @@ PARENT_FIRST = {"match_results"}
 STATEMENT_MAX_BYTES = 90000
 
 
-def emit_statements(out: str, prefix: str, head: str, rows: list, render, rest_dir: str = "") -> int:
+def emit_statements(out: str, prefix: str, head: str, rows: list, render, rest_dir: str = "", suffix: str = "") -> int:
     """Write head + VALUES statements, each <= STATEMENT_MAX_BYTES. Returns file count.
 
     A single row that cannot fit D1's per-statement cap in ANY batching is
@@ -74,32 +75,32 @@ def emit_statements(out: str, prefix: str, head: str, rows: list, render, rest_d
     """
     import json as _json
     files, current, index, rested = 0, [], 0, 0
-    size = len(head)
+    size = len(head) + len(suffix)
     for r in rows:
         piece = render(r)
-        if len(head) + len(piece) + 1 > 100000:
+        if len(head) + len(piece) + len(suffix) + 1 > 100000:
             if not rest_dir:
                 print(f"FAIL {prefix}: single row exceeds D1's 100KB statement cap", file=sys.stderr)
                 raise ValueError(f"{prefix}: oversize row")
             os.makedirs(rest_dir, exist_ok=True)
             cols = head[head.index("(") + 1:head.index(")")].split(",")
             placeholders = ",".join("?" * len(cols))
-            stmt = f"{head[:head.index('VALUES')]}VALUES({placeholders})"
+            stmt = f"{head[:head.index('VALUES')]}VALUES({placeholders}){suffix}"
             with open(os.path.join(rest_dir, f"{prefix}.jsonl"), "a", encoding="utf-8") as fh:
                 fh.write(_json.dumps({"sql": stmt, "params": list(r)}, default=str) + "\n")
             rested += 1
             continue
         if current and size + 1 + len(piece) + 1 > STATEMENT_MAX_BYTES:
             with open(os.path.join(out, f"{prefix}_{index:04d}.sql"), "w", encoding="utf-8") as fh:
-                fh.write(head + ",".join(current) + ";\n")
+                fh.write(head + ",".join(current) + suffix + ";\n")
             files += 1
             index += 1
-            current, size = [], len(head)
+            current, size = [], len(head) + len(suffix)
         current.append(piece)
         size += (1 if len(current) > 1 else 0) + len(piece)
     if current:
         with open(os.path.join(out, f"{prefix}_{index:04d}.sql"), "w", encoding="utf-8") as fh:
-            fh.write(head + ",".join(current) + ";\n")
+            fh.write(head + ",".join(current) + suffix + ";\n")
         files += 1
     return files
 
@@ -125,6 +126,40 @@ ROSTER_TABLE = "subscribers"
 #: already has the row, which is newer-or-equal by construction (receipts are
 #: never updated), so IGNORE is safe. The roster is NOT here (see above).
 MERGE_ONLY = {"posts", "deliveries"}
+
+# Synchronization is not an administrative history editor. Corrections require
+# a separately reviewed recovery procedure, never a stale engine snapshot.
+PRESERVE_ONLY = {"prediction_memberships", "match_results", "match_odds",
+                 "match_odds_ext", "results_seen", "canonical_events",
+                 "canonical_participants"}
+
+
+def write_policy(table, cols):
+    """Target-side guards apply equally to SQL batches and REST overflow rows."""
+    columns = ", ".join(cols)
+    if table in MERGE_ONLY | PRESERVE_ONLY:
+        return f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ", ""
+    if table == "picks":
+        mutable = [c for c in ("status", "settled_at", "result_json") if c in cols]
+        if "id" not in cols or "status" not in cols:
+            return f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ", ""
+        immutable = [c for c in cols if c not in mutable and c != "created_at"]
+        same = " AND ".join(f"picks.{c} IS excluded.{c}" for c in immutable)
+        assignments = ", ".join(f"{c}=excluded.{c}" for c in mutable)
+        suffix = (f" ON CONFLICT(id) DO UPDATE SET {assignments} WHERE "
+                  f"picks.status='pending' AND excluded.status IN "
+                  f"('won','lost','push','void','half_won','half_lost') AND {same}")
+        return f"INSERT OR IGNORE INTO picks ({columns}) VALUES ", suffix
+    # Candidate archives and serving snapshots may be refreshed before issue;
+    # once synced, retain them rather than replace historical evaluation data.
+    if table == "prediction_cache" and {"cache_key", "status"} <= set(cols):
+        assignments = ", ".join(f"{c}=excluded.{c}" for c in cols if c != "cache_key")
+        return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
+                f" ON CONFLICT(cache_key) DO UPDATE SET {assignments} "
+                "WHERE prediction_cache.status!='COMPLETE' AND excluded.status='COMPLETE'")
+    if table in {"ticket_candidates", "prediction_cache"}:
+        return f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ", ""
+    return f"INSERT OR REPLACE INTO {table} ({columns}) VALUES ", ""
 
 
 def app_tables(con: sqlite3.Connection) -> list:
@@ -258,14 +293,14 @@ def row_map(con: sqlite3.Connection, table: str, keys: list | None) -> dict:
 #: append-or-update: diffs never emit DELETEs for them, so history and
 #: settlement records cannot be removed by a sync.
 DELETE_ALLOWED = {"picks", "prediction_memberships", "prediction_cache",
-                  "custom_pick_candidates", "custom_pick_pools"}
+                  "custom_pick_candidates", "custom_pick_pools", "ticket_candidates"}
 
 #: Delete order is children-before-parents (mirror of the FK-ordered commit).
-DELETE_ORDER = ["prediction_memberships", "custom_pick_candidates", "custom_pick_pools",
+DELETE_ORDER = ["ticket_candidates", "prediction_memberships", "custom_pick_candidates", "custom_pick_pools",
                 "prediction_cache", "picks"]
 
 
-def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: bool = True,
+def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: bool = False,
              exclude_keys=None) -> int:
     """Emit ONLY the delta between the pulled base (D1 export) and the fresh
     compute snapshot: changed/added rows as phased batches + deletes.sql for
@@ -283,9 +318,15 @@ def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
     explicitly approved rows (e.g. a historical PARTIAL cache that must ride
     the REST path later): skipping is auditable, never silent.
     """
+    if allow_deletes:
+        print("FAIL destructive synchronization requires a separately validated recovery plan", file=sys.stderr)
+        return 1
     os.makedirs(out, exist_ok=True)
-    bcon = sqlite3.connect(base)
-    scon = sqlite3.connect(src)
+    if os.listdir(out):
+        print("FAIL output directory must be empty (stale batches are unsafe)", file=sys.stderr)
+        return 1
+    bcon = sqlite3.connect(Path(base).resolve().as_uri() + "?mode=ro", uri=True)
+    scon = sqlite3.connect(Path(src).resolve().as_uri() + "?mode=ro", uri=True)
     scon.row_factory = sqlite3.Row
     delta = {"base": os.path.basename(base), "source": os.path.basename(src),
              "tables": {}, "deletes": {}}
@@ -300,7 +341,13 @@ def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
     for table in tables:
         if table not in [r[0] for r in bcon.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
-            continue
+            print(f"FAIL base lacks {table}; migrate then pull a fresh complete base", file=sys.stderr)
+            return 1
+        if {r[1] for r in bcon.execute(f"PRAGMA table_info({table})")} != {
+                r[1] for r in scon.execute(f"PRAGMA table_info({table})")}:
+            print(f"FAIL schema mismatch for {table}; migrate before synchronization", file=sys.stderr)
+            return 1
+    for table in tables:
         keys = key_columns(scon, table)
         bmap = row_map(bcon, table, keys)
         smap = row_map(scon, table, keys)
@@ -343,13 +390,13 @@ def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
                                        lambda r: "(" + ", ".join(quote(v) for v in r) + ")",
                                        rest)
         else:
-            head = f"INSERT OR REPLACE INTO {table} ({col_list}) VALUES "
+            head, suffix = write_policy(table, cols)
             phase = "p1" if table in PHASE_GATE_TABLES else (
                 f"p0_{'0' if table in PARENT_FIRST else '1'}")
             getrows = _rows_by_key(scon, table, cols, keys, wanted)
             n_files += emit_statements(out, f"{phase}_{table}", head, getrows,
                                        lambda r: "(" + ", ".join(quote(v) for v in r) + ")",
-                                       rest)
+                                       rest, suffix)
     # Deletes last-writer note: children before parents, one file.
     ordered = [t for t in DELETE_ORDER if delta["deletes"].get(t)]
     if any(delta["deletes"].get(t) for t in ordered):
@@ -503,12 +550,32 @@ def cmd_require_complete(db_path: str, local_date: str, timezone: str = "Africa/
         ).fetchall()
         print(f"FAIL no COMPLETE cache for {local_date} [{timezone}]; newest rows: {have}",
               file=sys.stderr)
+        # Self-diagnosing failure: extract the generation verdict recorded in
+        # the newest PARTIAL row (provider coverage + error type), so the run
+        # log alone identifies whether a required provider failed, quotas were
+        # hit, or generation raised — no extra provider calls, no secrets
+        # (allowlisted scalar fields only, payload never dumped).
+        try:
+            prow = con.execute(
+                "SELECT payload_json FROM prediction_cache WHERE local_date=? AND timezone=?"
+                " ORDER BY local_date DESC LIMIT 1",
+                (local_date, timezone)).fetchone()
+            if prow and prow[0]:
+                gen = (json.loads(prow[0]).get("generation") or {})
+                cov = gen.get("provider_coverage") or {}
+                print(f"diagnosis date={local_date}: complete={gen.get('complete')}, "
+                      f"error_type={gen.get('error_type')}, "
+                      f"required={cov.get('required')}, "
+                      f"missing_required={cov.get('missing_required')}, "
+                      f"optional_degraded={cov.get('optional_degraded')}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001 - diagnosis is best-effort only
+            print(f"diagnosis unavailable: {type(exc).__name__}", file=sys.stderr)
         return 1
     print(f"COMPLETE cache: {row[0]} date={row[1]} tz={row[2]}")
     return 0
 
 
-def cmd_plan(base: str, src: str, out: str, only_tables=None, allow_deletes: bool = True,
+def cmd_plan(base: str, src: str, out: str, only_tables=None, allow_deletes: bool = False,
              write_budget: int = 5000, exclude_keys=None) -> int:
     """Build a diff, then audit it into plan.json and enforce the write budget.
 
@@ -572,7 +639,10 @@ def cmd_plan(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
 def cmd_push(src: str, out: str, expect_epoch=None, include_roster: bool = False,
              max_full_rows: int = 20000, full_ok: bool = False) -> int:
     os.makedirs(out, exist_ok=True)
-    con = sqlite3.connect(src)
+    if os.listdir(out):
+        print("FAIL output directory must be empty (stale batches are unsafe)", file=sys.stderr)
+        return 1
+    con = sqlite3.connect(Path(src).resolve().as_uri() + "?mode=ro", uri=True)
     if expect_epoch is not None:
         got = sync_epoch(con)
         if got != expect_epoch:
@@ -627,13 +697,10 @@ def cmd_push(src: str, out: str, expect_epoch=None, include_roster: bool = False
                     fh.write(text)
                 stmts += 1
             continue
-        if table in MERGE_ONLY:
-            head = f"INSERT OR IGNORE INTO {table} ({col_list}) VALUES "
-        else:
-            head = f"INSERT OR REPLACE INTO {table} ({col_list}) VALUES "
+        head, suffix = write_policy(table, list(cols))
         emit_statements(out, f"{phase}_{table}", head, rows,
                         lambda r: "(" + ", ".join(quote(r[c]) for c in cols) + ")",
-                        os.path.join(out, "rest"))
+                        os.path.join(out, "rest"), suffix)
     rc = cmd_manifest(src, out, push_tables(sqlite3.connect(src), include_roster))
     if rc == 0 and expect_epoch is not None:
         with open(os.path.join(out, "manifest.json"), "r+", encoding="utf-8") as fh:
@@ -670,6 +737,11 @@ def cmd_apply(target: str, batch_dir: str, expect_epoch=None) -> int:
         con.commit()
         applied.add(name)
         done += 1
+        # Each committed batch is replay-safe; checkpoint after EACH commit so
+        # interruption does not lose the position of earlier successful files.
+        with open(state_path + ".tmp", "w", encoding="utf-8") as fh:
+            json.dump(sorted(applied), fh, indent=2)
+        os.replace(state_path + ".tmp", state_path)
     with open(state_path, "w", encoding="utf-8") as fh:
         json.dump(sorted(applied), fh, indent=2)
     print(f"applied {done} new batch(es), {len(applied)} total")
@@ -993,7 +1065,7 @@ def main(argv=None) -> int:
         except ValueError as exc:
             print(f"FAIL {exc}", file=sys.stderr)
             return 2
-        return cmd_plan(args.base, args.src, args.out, only, not args.no_deletes,
+        return cmd_plan(args.base, args.src, args.out, only, False,
                         args.write_budget, excluded)
     if args.cmd == "rest-apply":
         return cmd_rest_apply(args.batches, args.account_id, args.database_id,
@@ -1006,7 +1078,7 @@ def main(argv=None) -> int:
         except ValueError as exc:
             print(f"FAIL {exc}", file=sys.stderr)
             return 2
-        return cmd_diff(args.base, args.src, args.out, only, not args.no_deletes, excluded)
+        return cmd_diff(args.base, args.src, args.out, only, False, excluded)
     if args.cmd == "require-complete":
         return cmd_require_complete(args.db, args.date, args.timezone)
     if args.cmd == "coalesce":
