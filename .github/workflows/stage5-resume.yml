@@ -1,0 +1,179 @@
+# Stage 5 resume: apply a PREVIOUS run's plan artifact to staging D1.
+# MANUAL DISPATCH ONLY. No engine, no providers, no regeneration, no
+# broadcasts, no production target.
+#
+# Use when a prior stage5-acceptance run planned (and possibly partially
+# applied) but did not finish: download its uploaded plan artifact and run
+# THIS workflow with the artifact attached (see stage5-acceptance-plan
+# artifacts on the failed run, or re-upload the same files).
+#
+# Safety, in order: target guard -> artifact validation (target, budget,
+# batch inventory, table allowlist, rest presence) -> lease -> idempotent
+# apply of every batch (already-applied rows are harmless: REPLACE/IGNORE)
+# -> rest-apply -> conditional epoch bump -> readback verify -> release.
+# Worker-owned tables, subscribers and roster data can never pass validation.
+name: stage5-resume
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run ID of the prior stage5 run whose plan artifact to resume"
+        required: true
+      dry_run:
+        description: "Validate only, no D1 writes (default true)"
+        required: false
+        default: true
+        type: boolean
+      write_budget:
+        description: "Max D1 row writes for the resumed plan"
+        required: false
+        default: "2000"
+      artifact_name:
+        description: "Plan artifact name from the prior run"
+        required: false
+        default: "stage5-acceptance-plan"
+
+env:
+  STAGING_DB_NAME: sureodds_staging
+  STAGING_DB_ID: d1266e71-9a31-4316-9426-e82fedcbf12b
+  TIMEZONE: Africa/Lagos
+
+jobs:
+  resume:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: sureodds-staging-sync
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Staging target guard (never production)
+        run: |
+          set -euo pipefail
+          test "${{ env.STAGING_DB_NAME }}" = "sureodds_staging"
+          grep -q 'database_name = "sureodds_staging"' workers/wrangler.staging.toml
+          grep -q "${{ env.STAGING_DB_ID }}" workers/wrangler.staging.toml
+          echo "target=${{ env.STAGING_DB_NAME }} only"
+      - name: Cloudflare credentials check
+        run: |
+          set -euo pipefail
+          for v in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            if [ -z "${!v:-}" ]; then echo "missing secret: $v" >&2; exit 1; fi
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Download prior run's plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: /tmp/resume
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate resumed plan (no writes)
+        run: |
+          set -euo pipefail
+          ls /tmp/resume
+          python3 workers/scripts/resume_validate.py /tmp/resume \
+            --target-db "$STAGING_DB_NAME" \
+            --write-budget "${{ inputs.write_budget }}"
+      - name: Acquire generation lease (or stop)
+        if: inputs.dry_run == false
+        id: lease
+        run: |
+          set -euo pipefail
+          cd workers
+          npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until='2099-01-01T00:00:00Z', attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='generate' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1
+          echo "acquired=true" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Apply resumed batches (skipped in dry-run)
+        if: inputs.dry_run == false
+        run: |
+          set -euo pipefail
+          cd workers
+          epoch=$(npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "SELECT epoch FROM sync_state WHERE id=1" | python3 scripts/d1_json.py --get 0.results.0.epoch)
+          echo "epoch before: $epoch"
+          : > /tmp/resume_applied.log
+          ok=0; total=0
+          for f in /tmp/resume/p0_*.sql /tmp/resume/p1_*.sql; do
+            [ -e "$f" ] || continue
+            total=$((total + 1))
+            base=$(basename "$f")
+            if grep -qx "$base" /tmp/resume_applied.log 2>/dev/null; then
+              echo "SKIP $base (already applied this run)"; ok=$((ok + 1)); continue
+            fi
+            if npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+              --config wrangler.staging.toml --json --file "$f" > "/tmp/resumed_$base.json" 2>&1; then
+              if python3 scripts/d1_json.py --assert-success "/tmp/resumed_$base.json"; then
+                echo "$base" >> /tmp/resume_applied.log
+                ok=$((ok + 1))
+                echo "OK $base"
+              else
+                echo "FAIL $base (D1 reported failure):"; tail -20 "/tmp/resumed_$base.json"; exit 1
+              fi
+            else
+              echo "FAIL $base (wrangler error):"; tail -20 "/tmp/resumed_$base.json"; exit 1
+            fi
+          done
+          echo "applied $ok/$total batch files"
+          if [ -d /tmp/resume/rest ] && [ -n "$(ls /tmp/resume/rest/*.jsonl 2>/dev/null)" ]; then
+            python3 workers/scripts/d1_sync.py rest-apply /tmp/resume/rest \
+              --account-id "$CLOUDFLARE_ACCOUNT_ID" --database-id "$STAGING_DB_ID" \
+              --api-token "$CLOUDFLARE_API_TOKEN"
+          else
+            echo "no rest batches pending"
+          fi
+          python3 - <<'EOF'
+          import json, os
+          plan = json.load(open("/tmp/resume/plan.json"))
+          if int(plan.get("rest_pending", 0)) > 0:
+              state = "/tmp/resume/rest/applied-rest.json"
+              assert os.path.exists(state), "rest pending but rest-apply left no state"
+          print("rest gate: OK")
+          EOF
+          npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "UPDATE sync_state SET epoch=epoch+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=1 AND epoch=$epoch" | python3 scripts/d1_json.py --expect-changes 1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Readback verification
+        if: inputs.dry_run == false
+        run: |
+          set -euo pipefail
+          cd workers
+          npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "SELECT pick_date, COUNT(*) AS n FROM picks GROUP BY pick_date ORDER BY pick_date" | python3 scripts/d1_json.py --get 0.results
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Release lease (always, if acquired)
+        if: always() && steps.lease.outputs.acquired == 'true'
+        run: |
+          cd workers
+          npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            --config wrangler.staging.toml --json \
+            --command "UPDATE job_state SET lease_owner=NULL, lease_until=NULL WHERE name='generate' AND lease_owner='gha-${{ github.run_id }}'" || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

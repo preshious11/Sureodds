@@ -325,5 +325,12 @@ jobs:
           if-no-files-found: warn
           path: |
             /tmp/acc_plan/plan.json
+            /tmp/acc_plan/delta-manifest.json
+            /tmp/acc_plan/p0_*.sql
+            /tmp/acc_plan/p1_*.sql
+            /tmp/acc_plan/rest/*.jsonl
             /tmp/acc_gen.json
             /tmp/acc_run_meta.json
+            !/tmp/acc_plan/p1_deliveries_*.sql
+            !/tmp/acc_plan/p1_posts_*.sql
+            !**/*subscribers*
