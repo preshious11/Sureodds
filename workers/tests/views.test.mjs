@@ -41,6 +41,33 @@ describe("Lagos calendar", () => {
 });
 
 describe("views never touch providers", () => {
+  it("renders all four views with a throwing network stub (zero outbound calls)", async () => {
+    const realFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      throw new Error("network must never be used by views");
+    };
+    try {
+      const picks = [
+        { id: 1, home: "Arsenal", away: "Chelsea", label: "Home Win", price: 2.1 },
+        { id: 2, home: "Barca", away: "Real", label: "Over 2.5", price: 1.9 },
+      ];
+      const env = {
+        DB: stubDb({ cache: { status: "COMPLETE", payload_json: "{}" }, picks }),
+        TIMEZONE: "Africa/Lagos",
+        PAGE_SIZE: "5",
+      };
+      for (const view of ["top", "daily", "all", "stats"]) {
+        const res = await renderView(env, view, 0, "2026-10-11");
+        assert.ok(res.text.length > 0, view);
+        assert.ok(res.replyMarkup, view);
+      }
+      assert.equal(calls, 0);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
   it("returns honest not-ready state when cache is missing/partial", async () => {
     const env = { DB: stubDb(), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" };
     const res = await renderView(env, "top", 0, "2026-10-11");

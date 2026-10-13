@@ -1125,6 +1125,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("manifest"); p.add_argument("src"); p.add_argument("--out", required=True)
+    p.add_argument("--tables", default="",
+                   help="Comma-separated subset (default: all app tables).")
     p = sub.add_parser("push"); p.add_argument("src"); p.add_argument("--out", required=True)
     p.add_argument("--expect-epoch", type=int, default=None)
     p.add_argument("--include-roster", action="store_true",
@@ -1175,7 +1177,8 @@ def main(argv=None) -> int:
     p.add_argument("--expect", type=int, default=None)
     args = ap.parse_args(argv)
     if args.cmd == "manifest":
-        return cmd_manifest(args.src, args.out)
+        only = [t.strip() for t in args.tables.split(",") if t.strip()] or None
+        return cmd_manifest(args.src, args.out, only)
     if args.cmd == "push":
         return cmd_push(args.src, args.out, args.expect_epoch, args.include_roster,
                         args.max_full_rows, args.full_ok)

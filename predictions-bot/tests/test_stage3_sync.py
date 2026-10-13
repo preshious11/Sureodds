@@ -734,6 +734,83 @@ def test_require_complete_failure_prints_provider_verdict(tmp_path):
     assert "payload_json" not in proc.stderr  # never dump the payload itself
 
 
+def test_end_to_end_offline_pipeline_with_mid_apply_failure(tmp_path):
+    """Full lifecycle with the real scripts on throwaway DBs: plan (budgeted)
+    -> lease -> apply (fails halfway) -> resume -> epoch bump (fenced) ->
+    verify -> readback. Mirrors the GitHub Actions order of operations."""
+    import shutil
+    base = str(tmp_path / "base.db")
+    _seed_engine_tables(base)
+    con = sqlite3.connect(base)
+    con.execute("CREATE TABLE prediction_cache (cache_key TEXT PRIMARY KEY,"
+                " local_date TEXT, timezone TEXT, status TEXT, payload_json TEXT)")
+    con.execute("INSERT INTO prediction_cache VALUES ('day', '2026-10-13', 'Africa/Lagos',"
+                " 'COMPLETE', '{}')")
+    con.execute("CREATE TABLE sync_state (id INTEGER PRIMARY KEY, epoch INTEGER)")
+    con.execute("INSERT INTO sync_state VALUES (1, 7)")
+    con.execute("CREATE TABLE job_state (name TEXT PRIMARY KEY, lease_owner TEXT,"
+                " lease_until TEXT, attempts INTEGER DEFAULT 0,"
+                " last_run_at TEXT, last_result TEXT,"
+                " updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')))")
+    con.execute("INSERT INTO job_state (name) VALUES ('generate')")
+    con.commit()
+    con.close()
+    # Engine output: one settled pick, one new pick, one new cache row.
+    src = str(tmp_path / "src.db")
+    shutil.copy(base, src)
+    con = sqlite3.connect(src)
+    con.execute("UPDATE picks SET status='won' WHERE id=1")
+    con.execute("INSERT INTO picks VALUES (9, '2026-10-13', 'pending')")
+    con.execute("INSERT INTO prediction_memberships VALUES (9, 'daily', 1)")
+    con.execute("INSERT INTO prediction_cache VALUES ('day2', '2026-10-13', 'Africa/Lagos',"
+                " 'COMPLETE', '{}')")
+    con.commit()
+    con.close()
+    out = str(tmp_path / "plan")
+    assert sync("plan", base, src, "--out", out, "--tables",
+                "picks,prediction_memberships,prediction_cache",
+                "--write-budget", "100").returncode == 0
+    # Lease, then apply with a poisoned second batch to simulate interruption.
+    assert sync("lease", base, "generate", "e2e").returncode == 0
+    batches = sorted(n for n in os.listdir(out) if n.endswith(".sql"))
+    assert len(batches) >= 2
+    poisoned = os.path.join(out, batches[1])
+    with open(poisoned, "a", encoding="utf-8") as fh:
+        fh.write("THIS IS NOT SQL;\n")
+    assert sync("apply", base, out, "--expect-epoch", "7").returncode != 0
+    # Epoch must be untouched by the failed apply.
+    assert sqlite3.connect(base).execute("SELECT epoch FROM sync_state WHERE id=1"
+                                         ).fetchone()[0] == 7
+    # Remove the poison (operator fix), resume: completes without duplicates.
+    with open(poisoned, encoding="utf-8") as fh:
+        lines = [ln for ln in fh if "THIS IS NOT SQL" not in ln]
+    with open(poisoned, "w", encoding="utf-8") as fh:
+        fh.writelines(lines)
+    assert sync("apply", base, out, "--expect-epoch", "7").returncode == 0
+    assert sync("epoch-bump", base, "--expect", "7").returncode == 0
+    assert sqlite3.connect(base).execute("SELECT epoch FROM sync_state WHERE id=1"
+                                         ).fetchone()[0] == 8
+    # Full-manifest verify against the source passes after resume. The epoch
+    # itself is target-side fencing state (converged by the fenced bump, not
+    # by row replication), so align it before comparing.
+    con = sqlite3.connect(src)
+    con.execute("UPDATE sync_state SET epoch=8 WHERE id=1")
+    con.commit()
+    con.close()
+    man = str(tmp_path / "man")
+    # Scoped to synced tables: the epoch is target-side fencing state that
+    # legitimately differs (converged by the fenced bump, not replication).
+    assert sync("manifest", src, "--out", man, "--tables",
+                "picks,prediction_memberships,prediction_cache").returncode == 0
+    assert sync("verify", base, "--manifest", os.path.join(man, "manifest.json")).returncode == 0
+    # Readback: settled flip present exactly once, new pick present once.
+    got = sqlite3.connect(base)
+    assert got.execute("SELECT status FROM picks WHERE id=1").fetchone()[0] == "won"
+    assert got.execute("SELECT COUNT(*) FROM picks WHERE id=9").fetchone()[0] == 1
+    assert got.execute("SELECT COUNT(*) FROM picks").fetchone()[0] == 3
+    assert sync("release", base, "generate", "e2e").returncode == 0
+
+
 def test_concurrent_worker_receipt_survives_engine_apply(tmp_path):
     # A delivery DM recorded in D1 while an engine apply runs must survive:
     # receipts replicate INSERT OR IGNORE, so either order converges.
