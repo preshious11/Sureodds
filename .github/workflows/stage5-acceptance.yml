@@ -289,8 +289,34 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Record run metadata (always, for post-mortems)
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json
+          meta = {
+            "repo": "${{ github.repository }}",
+            "ref": "${{ github.ref }}",
+            "sha": "${{ github.sha }}",
+            "run_id": "${{ github.run_id }}",
+            "event": "${{ github.event_name }}",
+            "operation": "${{ inputs.operation }}",
+            "dry_run": "${{ inputs.dry_run }}",
+            "live_confirm": "${{ inputs.live_confirm != '' }}",
+            "write_budget": "${{ inputs.write_budget }}",
+          }
+          # live_confirm VALUE is never recorded, only whether it was given.
+          with open("/tmp/acc_run_meta.json", "w", encoding="utf-8") as fh:
+              json.dump(meta, fh, indent=2)
+          print(json.dumps(meta, indent=2))
+          EOF
       - name: Upload sanitized report (plan only, never dumps)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stage5-acceptance-plan
-          path: /tmp/acc_plan/plan.json
+          if-no-files-found: warn
+          path: |
+            /tmp/acc_plan/plan.json
+            /tmp/acc_gen.json
+            /tmp/acc_run_meta.json

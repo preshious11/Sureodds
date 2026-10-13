@@ -96,6 +96,33 @@ def offline_benchmark(job: str) -> dict:
     return result
 
 
+def summarize_snapshot(snapshot) -> dict:
+    """Sanitized generation summary for CI artifacts and logs.
+
+    Explicit allowlist only: snapshot status/date, pick counts, and the
+    provider-coverage record (required/missing/degraded/complete). Never the
+    raw generation diagnostics (which carry quota counters and provider
+    internals) and never any credential. Safe to upload as a workflow
+    artifact and to print in logs.
+    """
+    generation = getattr(snapshot, "generation", None) or {}
+    coverage = generation.get("provider_coverage") or {}
+    return {
+        "snapshot_status": getattr(snapshot, "status", "unknown"),
+        "snapshot_date": getattr(snapshot, "date", ""),
+        "top_picks": len(getattr(snapshot, "top_picks", None) or []),
+        "daily_picks": len(getattr(snapshot, "daily_picks", None) or []),
+        "all_predictions": len(getattr(snapshot, "all_predictions", None) or []),
+        "provider_coverage": {
+            "required": list(coverage.get("required", [])),
+            "missing_required": list(coverage.get("missing_required", [])),
+            "optional_degraded": dict(coverage.get("optional_degraded", {})),
+            "complete": bool(coverage.get("complete", False)),
+        },
+        "error_type": generation.get("error_type"),
+    }
+
+
 def live_run(job: str, force: bool) -> dict:
     from predbot.bot.telegram import Telegram
     from predbot.cache.fetcher import UnifiedFetcher
@@ -122,7 +149,15 @@ def live_run(job: str, force: bool) -> dict:
         service = UnifiedFetcher(chain, db, cfg)
         t0 = time.perf_counter()
         if job == "generate":
-            daily_picks.run(chain, db, cfg, tg, force=force, service=service)
+            snapshot = daily_picks.run(chain, db, cfg, tg, force=force, service=service)
+            wall = time.perf_counter() - t0
+            report = {"job": job, "mode": "live", "lagos_now": lagos_now.isoformat(),
+                      "wall_s": round(wall, 3)}
+            # daily_picks.run returns None only on paths that print nothing to
+            # post (empty unevaluated slate); a missing snapshot is itself
+            # diagnostic evidence, recorded without any further provider calls.
+            report["generation"] = summarize_snapshot(snapshot) if snapshot is not None else None
+            return report
         elif job == "settle":
             outcome = settle.run(resolver, db, cfg)
             wall = time.perf_counter() - t0
