@@ -33,6 +33,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
@@ -75,10 +76,12 @@ def emit_statements(out: str, prefix: str, head: str, rows: list, render, rest_d
     """
     import json as _json
     files, current, index, rested = 0, [], 0, 0
-    size = len(head) + len(suffix)
+    overhead = len((head + suffix).encode('utf-8'))
+    size = overhead
     for r in rows:
         piece = render(r)
-        if len(head) + len(piece) + len(suffix) + 1 > 100000:
+        piece_size = len(piece.encode('utf-8'))
+        if overhead + piece_size + 1 > STATEMENT_MAX_BYTES:
             if not rest_dir:
                 print(f"FAIL {prefix}: single row exceeds D1's 100KB statement cap", file=sys.stderr)
                 raise ValueError(f"{prefix}: oversize row")
@@ -90,14 +93,14 @@ def emit_statements(out: str, prefix: str, head: str, rows: list, render, rest_d
                 fh.write(_json.dumps({"sql": stmt, "params": list(r)}, default=str) + "\n")
             rested += 1
             continue
-        if current and size + 1 + len(piece) + 1 > STATEMENT_MAX_BYTES:
+        if current and size + 1 + piece_size + 1 > STATEMENT_MAX_BYTES:
             with open(os.path.join(out, f"{prefix}_{index:04d}.sql"), "w", encoding="utf-8") as fh:
                 fh.write(head + ",".join(current) + suffix + ";\n")
             files += 1
             index += 1
-            current, size = [], len(head) + len(suffix)
+            current, size = [], overhead
         current.append(piece)
-        size += (1 if len(current) > 1 else 0) + len(piece)
+        size += (1 if len(current) > 1 else 0) + piece_size
     if current:
         with open(os.path.join(out, f"{prefix}_{index:04d}.sql"), "w", encoding="utf-8") as fh:
             fh.write(head + ",".join(current) + suffix + ";\n")
@@ -131,10 +134,19 @@ MERGE_ONLY = {"posts", "deliveries"}
 # a separately reviewed recovery procedure, never a stale engine snapshot.
 PRESERVE_ONLY = {"prediction_memberships", "match_results", "match_odds",
                  "match_odds_ext", "results_seen", "canonical_events",
-                 "canonical_participants"}
+                 "canonical_participants", "provider_identity", "participant_aliases",
+                 "custom_pick_candidates", "custom_pick_pools"}
 
 
-def write_policy(table, cols):
+def unsafe_history_sql(sql):
+    """Reject legacy destructive batches before any local/REST batch is applied."""
+    protected = '|'.join(sorted(PRESERVE_ONLY | MERGE_ONLY | {'picks', 'ticket_candidates', 'prediction_cache'}))
+    return bool(re.search(
+        rf'\b(?:DELETE\s+FROM|DROP\s+TABLE|INSERT\s+OR\s+REPLACE\s+INTO)\s+["`\[]?(?:{protected})\b',
+        sql, re.IGNORECASE))
+
+
+def write_policy(table, cols, con=None):
     """Target-side guards apply equally to SQL batches and REST overflow rows."""
     columns = ", ".join(cols)
     if table in MERGE_ONLY | PRESERVE_ONLY:
@@ -154,12 +166,71 @@ def write_policy(table, cols):
     # once synced, retain them rather than replace historical evaluation data.
     if table == "prediction_cache" and {"cache_key", "status"} <= set(cols):
         assignments = ", ".join(f"{c}=excluded.{c}" for c in cols if c != "cache_key")
+        publication_guard = ''
+        if con is not None and 'local_date' in cols:
+            for receipt in ('posts', 'deliveries'):
+                if receipt in app_tables(con):
+                    publication_guard += (f" AND NOT EXISTS(SELECT 1 FROM {receipt} WHERE "
+                                          f"post_date=prediction_cache.local_date AND kind IN "
+                                          "('picks','picks_top','picks_daily'))")
         return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
                 f" ON CONFLICT(cache_key) DO UPDATE SET {assignments} "
-                "WHERE prediction_cache.status!='COMPLETE' AND excluded.status='COMPLETE'")
+                "WHERE prediction_cache.status!='COMPLETE' AND excluded.status='COMPLETE'" + publication_guard)
     if table in {"ticket_candidates", "prediction_cache"}:
         return f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ", ""
+    if table == 'api_budget' and {'provider','bucket','used'} <= set(cols):
+        return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
+                " ON CONFLICT(provider,bucket) DO UPDATE SET used=MAX(api_budget.used,excluded.used)")
+    if table == 'live_fixture_state' and {'pick_date','fixture_key','status'} <= set(cols):
+        assignments = ', '.join(f'{c}=excluded.{c}' for c in cols if c not in {'pick_date','fixture_key'})
+        return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
+                f" ON CONFLICT(pick_date,fixture_key) DO UPDATE SET {assignments} "
+                "WHERE live_fixture_state.status NOT IN ('final','postponed','cancelled') "
+                "AND NOT (live_fixture_state.status='in_progress' AND excluded.status='scheduled')")
     return f"INSERT OR REPLACE INTO {table} ({columns}) VALUES ", ""
+
+
+def emit_linked_rows(con, table, cols, rows, out, prefix, rest):
+    """Prevent local integer-ID collisions from attaching history to another fixture.
+
+    Compare the source parent's immutable snapshot with the actual target parent,
+    not just its ID. This condition survives coalescing and REST parameterization.
+    """
+    parents = [(r[3], r[2], r[4]) for r in con.execute(f"PRAGMA foreign_key_list({table})")]
+    if table == 'prediction_memberships' and not parents:
+        parents = [('prediction_id', 'picks', 'id')]
+    statements = []
+    for index, row in enumerate(rows):
+        values = dict(zip(cols, row))
+        clauses, parameters = [], list(row)
+        for child_key, parent, parent_key in parents:
+            cur = con.execute(f"SELECT * FROM {parent} WHERE {parent_key}=?", (values[child_key],))
+            record = cur.fetchone()
+            if record is None:
+                raise ValueError(f"{table}: missing source parent {parent}")
+            names = [d[0] for d in cur.description]
+            immutable = [(name, value) for name, value in zip(names, record)
+                         if not (parent == 'picks' and name in
+                                 {'status', 'settled_at', 'result_json', 'created_at'})]
+            clauses.append(f"EXISTS(SELECT 1 FROM {parent} WHERE " +
+                           " AND ".join(f"{name} IS ?" for name, _ in immutable) + ")")
+            parameters.extend(value for _, value in immutable)
+        sql = (f"INSERT OR IGNORE INTO {table} ({', '.join(cols)}) SELECT " +
+               ', '.join('?' for _ in cols) + ' WHERE ' + ' AND '.join(clauses))
+        pieces = sql.split('?')
+        rendered = ''.join(piece + (quote(parameters[i]) if i < len(parameters) else '')
+                           for i, piece in enumerate(pieces)) + ';\n'
+        if len(rendered.encode('utf-8')) > STATEMENT_MAX_BYTES:
+            os.makedirs(rest, exist_ok=True)
+            with open(os.path.join(rest, prefix + '.jsonl'), 'a', encoding='utf-8') as fh:
+                fh.write(json.dumps({'sql': sql, 'params': parameters}) + '\n')
+        else:
+            statements.append(rendered)
+    if statements:
+        # Individual statements obey D1 limits; coalesce supplies bounded files.
+        with open(os.path.join(out, prefix + '_0000.sql'), 'w', encoding='utf-8') as fh:
+            fh.writelines(statements)
+    return int(bool(statements))
 
 
 def app_tables(con: sqlite3.Connection) -> list:
@@ -382,6 +453,11 @@ def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
         cols = [r[1] for r in scon.execute(f"PRAGMA table_info({table})").fetchall()]
         col_list = ", ".join(cols)
         rest = os.path.join(out, "rest")
+        if table in {'prediction_memberships', 'match_odds', 'match_odds_ext'}:
+            rows = _rows_by_key(scon, table, cols, keys, wanted)
+            n_files += emit_linked_rows(scon, table, cols, rows, out,
+                                       'p0_1_' + table, rest)
+            continue
         if table in MERGE_ONLY:
             head = f"INSERT OR IGNORE INTO {table} ({col_list}) VALUES "
             phase = "p1"
@@ -390,7 +466,7 @@ def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
                                        lambda r: "(" + ", ".join(quote(v) for v in r) + ")",
                                        rest)
         else:
-            head, suffix = write_policy(table, cols)
+            head, suffix = write_policy(table, cols, scon)
             phase = "p1" if table in PHASE_GATE_TABLES else (
                 f"p0_{'0' if table in PARENT_FIRST else '1'}")
             getrows = _rows_by_key(scon, table, cols, keys, wanted)
@@ -456,8 +532,12 @@ def cmd_rebase(src: str, out: str, specs: list) -> int:
     Copies src->out first; src is never modified. Offsets must exceed the
     target's current MAX(id); the plan step prints both for the operator to
     confirm before any write."""
-    import shutil
-    shutil.copy(src, out)
+    if os.path.exists(out):
+        print('FAIL rebase output must not already exist', file=sys.stderr)
+        return 1
+    with sqlite3.connect(Path(src).resolve().as_uri() + '?mode=ro', uri=True) as source:
+        with sqlite3.connect(out) as target:
+            source.backup(target)  # file copying omits committed WAL records
     con = sqlite3.connect(out)
     for spec in specs:
         try:
@@ -565,6 +645,7 @@ def cmd_require_complete(db_path: str, local_date: str, timezone: str = "Africa/
                 cov = gen.get("provider_coverage") or {}
                 print(f"diagnosis date={local_date}: complete={gen.get('complete')}, "
                       f"error_type={gen.get('error_type')}, "
+                      f"error_traceback={gen.get('error_traceback')}, "
                       f"required={cov.get('required')}, "
                       f"missing_required={cov.get('missing_required')}, "
                       f"optional_degraded={cov.get('optional_degraded')}", file=sys.stderr)
@@ -666,6 +747,10 @@ def cmd_push(src: str, out: str, expect_epoch=None, include_roster: bool = False
             continue
         cols = rows[0].keys()
         col_list = ", ".join(cols)
+        if table in {'prediction_memberships', 'match_odds', 'match_odds_ext'}:
+            emit_linked_rows(con, table, list(cols), rows, out, f'{phase}_{table}',
+                             os.path.join(out, 'rest'))
+            continue
         if table == "subscribers":
             # Engine snapshots never carry fresher roster data than D1 (all
             # /start activity lands in D1 first); replicate as field merges.
@@ -697,7 +782,7 @@ def cmd_push(src: str, out: str, expect_epoch=None, include_roster: bool = False
                     fh.write(text)
                 stmts += 1
             continue
-        head, suffix = write_policy(table, list(cols))
+        head, suffix = write_policy(table, list(cols), con)
         emit_statements(out, f"{phase}_{table}", head, rows,
                         lambda r: "(" + ", ".join(quote(r[c]) for c in cols) + ")",
                         os.path.join(out, "rest"), suffix)
@@ -718,6 +803,7 @@ def cmd_apply(target: str, batch_dir: str, expect_epoch=None) -> int:
     # resume position, verify then proves completeness before any cutover).
     # Prevention remains the lease's job; this is the tripwire.
     con = sqlite3.connect(target)
+    con.execute('PRAGMA foreign_keys=ON')
     if expect_epoch is not None and sync_epoch(con) != expect_epoch:
         print(f"FAIL target epoch moved before apply (expected {expect_epoch})", file=sys.stderr)
         return 1
@@ -728,12 +814,21 @@ def cmd_apply(target: str, batch_dir: str, expect_epoch=None) -> int:
     except (OSError, ValueError):
         applied = set()
     files = sorted(f for f in os.listdir(batch_dir) if f.endswith(".sql"))
+    for name in files:
+        with open(os.path.join(batch_dir, name), encoding='utf-8') as fh:
+            if unsafe_history_sql(fh.read()):
+                print(f"FAIL unsafe historical SQL in {name}; nothing applied", file=sys.stderr)
+                return 1
     done = 0
     for name in files:
         if name in applied:
             continue
         with open(os.path.join(batch_dir, name), encoding="utf-8") as fh:
-            con.executescript(fh.read())
+            try:
+                con.executescript('BEGIN IMMEDIATE;\n' + fh.read() + '\nCOMMIT;')
+            except sqlite3.Error:
+                con.rollback()
+                raise
         con.commit()
         applied.add(name)
         done += 1
@@ -798,6 +893,9 @@ def cmd_rest_apply(batches: str, account_id: str, database_id: str, api_token: s
                 if not entry["sql"].strip().upper().startswith("INSERT OR "):
                     print(f"FAIL non-INSERT statement {name}:{lineno} ({verb}); nothing sent",
                           file=sys.stderr)
+                    return 1
+                if unsafe_history_sql(entry['sql']):
+                    print(f"FAIL unsafe historical SQL {name}:{lineno}; nothing sent", file=sys.stderr)
                     return 1
                 entries.append((name, entry))
     if not entries:
@@ -883,6 +981,9 @@ def cmd_coalesce(batch_dir: str, out: str, max_bytes: int = 90000) -> int:
     are unchanged. A manifest.json is copied alongside for verify.
     """
     os.makedirs(out, exist_ok=True)
+    if os.listdir(out):
+        print('FAIL coalesce output must be empty', file=sys.stderr)
+        return 1
     files = sorted(f for f in os.listdir(batch_dir) if f.endswith(".sql"))
     chunk, size, index = [], 0, 0
     chunks = 0
@@ -900,10 +1001,26 @@ def cmd_coalesce(batch_dir: str, out: str, max_bytes: int = 90000) -> int:
     for name in files:
         with open(os.path.join(batch_dir, name), encoding="utf-8") as fh:
             text = fh.read()
-        if size + len(text) > max_bytes and chunk:
-            flush()
-        chunk.append(text)
-        size += len(text)
+        if unsafe_history_sql(text):
+            print(f'FAIL unsafe historical SQL in {name}', file=sys.stderr)
+            return 1
+        statement = ''
+        for line in text.splitlines(keepends=True):
+            statement += line
+            if not sqlite3.complete_statement(statement):
+                continue
+            byte_count = len(statement.encode('utf-8'))
+            if byte_count > max_bytes:
+                print(f'FAIL statement exceeds coalesce byte limit in {name}', file=sys.stderr)
+                return 1
+            if size + byte_count > max_bytes and chunk:
+                flush()
+            chunk.append(statement)
+            size += byte_count
+            statement = ''
+        if statement.strip():
+            print(f'FAIL incomplete SQL in {name}', file=sys.stderr)
+            return 1
     flush()
     for extra in ("manifest.json",):
         src = os.path.join(batch_dir, extra)
@@ -919,11 +1036,15 @@ def cmd_coalesce(batch_dir: str, out: str, max_bytes: int = 90000) -> int:
 def cmd_snapshot(src: str, out: str) -> int:
     """Timestamped production-backup drill: file copy + manifest + verify of
     the copy. The live DB is only ever read (never written) by this command."""
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     os.makedirs(out, exist_ok=True)
     dest = os.path.join(out, f"predbot-backup-{stamp}.db")
-    with open(src, "rb") as fh_in, open(dest, "wb") as fh_out:
-        fh_out.write(fh_in.read())
+    if os.path.exists(dest):
+        print('FAIL snapshot output already exists', file=sys.stderr)
+        return 1
+    with sqlite3.connect(Path(src).resolve().as_uri() + '?mode=ro', uri=True) as source:
+        with sqlite3.connect(dest) as target:
+            source.backup(target)
     manifest_dir = os.path.join(out, f"predbot-backup-{stamp}.manifest")
     rc = cmd_manifest(dest, manifest_dir)
     if rc != 0:

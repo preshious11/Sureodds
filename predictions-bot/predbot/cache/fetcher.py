@@ -2,6 +2,8 @@
 from __future__ import annotations
 import json
 import logging
+import os
+import traceback as _traceback
 from datetime import timedelta
 from typing import Optional
 
@@ -10,9 +12,26 @@ from predbot.cache.providers import sport_states
 from predbot.jobs import daily_picks, stats as stats_mod
 from predbot.providers.chain import ProviderChain
 from predbot.selection.picker import PredictionPool
+from predbot.util.redact import redact
 from predbot.util.timeutil import iso, parse_hhmm, to_local, utcnow, day_bounds, parse_iso
 
 log = logging.getLogger(__name__)
+
+
+def sanitized_traceback(exc: BaseException, frames: int = 8) -> str:
+    """Failure location for persisted diagnostics: ``file:line in func``
+    chains (basenames only, so no local paths leak) plus the redacted
+    exception line. No locals, no values, no payloads - safe for CI
+    artifacts and run logs. Best-effort: never raises.
+    """
+    try:
+        chain = " <- ".join(
+            f"{os.path.basename(f.filename)}:{f.lineno} in {f.name}"
+            for f in _traceback.extract_tb(exc.__traceback__)[-frames:])
+        return f"{type(exc).__name__}: {redact(str(exc))[:200]} @ {chain}" if chain \
+            else f"{type(exc).__name__}: {redact(str(exc))[:200]}"
+    except Exception:  # noqa: BLE001 - diagnostics must never break the failure path
+        return f"{type(exc).__name__} (traceback unavailable)"
 
 
 class UnifiedFetcher:
@@ -156,7 +175,8 @@ class UnifiedFetcher:
                 backoff = self.cfg.cache_retry_seconds
             snapshot = DailySnapshot(date=day, generated_at=iso(now), origin='sqlite',
                                      status='PARTIAL', generation={'complete': False,
-                                     'error_type': type(exc).__name__})
+                                     'error_type': type(exc).__name__,
+                                     'error_traceback': sanitized_traceback(exc)})
             if persist:
                 self.db.defer_prediction_retry(self._key(day), iso(now + timedelta(seconds=backoff)))
                 self._store(snapshot, now)

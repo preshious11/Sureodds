@@ -120,6 +120,7 @@ def summarize_snapshot(snapshot) -> dict:
             "complete": bool(coverage.get("complete", False)),
         },
         "error_type": generation.get("error_type"),
+        "error_traceback": generation.get("error_traceback"),
     }
 
 

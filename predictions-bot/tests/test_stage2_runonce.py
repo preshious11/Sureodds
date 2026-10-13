@@ -88,4 +88,13 @@ def test_summarize_snapshot_never_leaks_secrets_or_internals():
     assert "SECRET" not in text
     assert set(json.loads(text)) == {"snapshot_status", "snapshot_date", "top_picks",
                                      "daily_picks", "all_predictions", "provider_coverage",
-                                     "error_type"}
+                                     "error_type", "error_traceback"}
+
+
+def test_summarize_snapshot_carries_sanitized_traceback():
+    snap = _snapshot(generation={"complete": False, "error_type": "AttributeError",
+                                 "error_traceback": "daily_picks.py:166 in build_picks",
+                                 "provider_coverage": {}})
+    summary = summarize_snapshot(snap)
+    assert summary["error_type"] == "AttributeError"
+    assert summary["error_traceback"] == "daily_picks.py:166 in build_picks"

@@ -173,6 +173,27 @@ def test_all_failures_stay_partial(db, monkeypatch, clock):
     assert all(s['status'] == 'failed' for s in snapshot.sport_status.values())
 
 
+def test_generation_crash_records_sanitized_traceback(db, monkeypatch, clock):
+    """A mid-generation AttributeError stays PARTIAL and persists file:line
+    evidence (no secrets, no payloads) for the gate diagnosis."""
+    import json
+    from predbot.jobs import daily_picks
+    app, f, b = service(db, monkeypatch)
+    def boom(*a, **k):
+        raise AttributeError("'NoneType' object has no attribute 'foo'")
+    monkeypatch.setattr(daily_picks, "build_picks", boom)
+    snapshot = app.get_daily_snapshot()
+    assert snapshot.status == "PARTIAL"
+    assert snapshot.generation["error_type"] == "AttributeError"
+    trace = snapshot.generation["error_traceback"]
+    assert "AttributeError" in trace
+    assert "test_sqlite_prediction_cache.py" in trace and " in boom" in trace
+    assert "/home/" not in trace and "/Users/" not in trace and "C:\\" not in trace
+    row = db.get_prediction_cache(app._key(snapshot.date))
+    assert row["status"] == "PARTIAL"
+    assert json.loads(row["payload_json"])["generation"]["error_type"] == "AttributeError"
+
+
 @pytest.mark.parametrize('stale', ['version', 'expiry', 'json'])
 def test_stale_snapshot_regenerated(db, monkeypatch, clock, stale):
     app, f, b = service(db, monkeypatch)
