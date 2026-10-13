@@ -252,7 +252,9 @@ def generated(db, monkeypatch):
     provider.fetch_events.side_effect = fetch
     chain = ProviderChain({'test': provider}, ['test'])
     monkeypatch.setattr(daily_picks, 'make_results_gate', lambda *args: lambda event: 'test')
-    cfg = Config(timezone=ZONE, independent_model_mode='off')
+    # The lone mock is required here so a partial fetch still yields PARTIAL,
+    # as under the pre-policy all-complete rule.
+    cfg = Config(timezone=ZONE, independent_model_mode='off', required_providers=('test',))
     return UnifiedFetcher(chain, db, cfg), provider, clock
 
 

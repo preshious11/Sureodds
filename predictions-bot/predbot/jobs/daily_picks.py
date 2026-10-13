@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 
 def score_events(events: List[Event], db: Database, cfg: Config, independent=None) -> List[Scored]:
     elo = Elo(db)
-    cal = Calibrator(db)
+    cal = Calibrator(db, scope="settlement_v2")
     mode = getattr(cfg, "independent_model_mode", "shadow")
     if independent is None and mode != "off":
         independent = IndependentModels.default(db, cfg)
@@ -147,14 +147,14 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
                                                        cfg.elo_min_games, cfg.edge_price), gate,
                               scorer=lambda batch: score_events(batch, db, cfg, independent))
     tables = {}
-    for s in generation.predictions:
+    for s in generation.ticket_predictions:
         evidence = assess(s, cfg, tables)
         s.quality, s.se, s.p_lcb, s.rank_score = evidence.quality, evidence.se, evidence.p_lcb, evidence.rank
         s.notes['evidence'] = evidence.as_notes()
         s.notes['independent'] = s.independent
     ps = PickSet(predictions=generation.predictions, pool_size=discovered, eligible=len(events),
                  diagnostics=generation.diagnostics, candidates=generation.candidates,
-                 candidate_timezone=cfg.timezone)
+                 candidate_timezone=cfg.timezone, ticket_predictions=generation.ticket_predictions)
     unsupported = identity_failures.get("unsupported_competition", 0)
     ps.diagnostics.update(fixtures_discovered=discovered, supported_fixtures=discovered - unsupported,
                           normalized=len(events),
@@ -163,7 +163,42 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
                                                     if k != "unsupported_competition"},
                           unsupported_competition=unsupported,
                           provider_identity_failures=provider_failures)
-    ps.complete = bool(providers) and all(p.get('status') == 'complete' for p in providers.values())
+    # Completeness = every REQUIRED provider fetched cleanly. Optional
+    # providers (SGO, Odds API by default) may be quota-gated or failed: their
+    # valid predictions still count, and the degraded coverage is recorded in
+    # diagnostics instead of forcing PARTIAL. A required name outside this
+    # run's provider set (custom order, test doubles) cannot report, so it is
+    # skipped but logged - never silently. Unknown required names inside the
+    # set can never be satisfied, so a typo fails closed to PARTIAL.
+    run_order = getattr(chain, "order", [])
+    considered = set(run_order if isinstance(run_order, (list, tuple)) else []) | set(providers)
+    required = [p for p in dict.fromkeys(getattr(cfg, "required_providers", ["sharpapi"]) or [])
+                if p in considered]
+    skipped_required = [p for p in dict.fromkeys(getattr(cfg, "required_providers", ["sharpapi"]) or [])
+                        if p not in considered]
+    statuses = {n: (r.get("status") if isinstance(r, dict) else None) for n, r in providers.items()}
+    # Custom provider chains have no named backbone. Preserve their all-sources
+    # completeness contract rather than letting an empty required set pass failures.
+    if not required and providers:
+        required = list(providers)
+    missing_required = [n for n in required if statuses.get(n) != "complete"]
+    optional_degraded = {n: s for n, s in statuses.items()
+                         if n not in required and s != "complete"}
+    if skipped_required:
+        log.info("completeness: required provider(s) not in this run's set, skipped: %s",
+                 skipped_required)
+    if missing_required:
+        log.warning("incomplete generation: required provider(s) not complete: %s",
+                    {n: statuses.get(n) for n in missing_required})
+    if optional_degraded:
+        log.info("degraded generation: optional provider(s) not complete: %s", optional_degraded)
+    ps.complete = bool(providers) and not missing_required
+    ps.diagnostics["provider_coverage"] = {
+        "required": required,
+        "missing_required": missing_required,
+        "optional_degraded": optional_degraded,
+        "complete": ps.complete,
+    }
     last = getattr(chain, 'last_timings', None)
     for name, t in (last.items() if isinstance(last, dict) else ()):
         if isinstance(t, dict):
@@ -173,7 +208,7 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
                            "merged_pairs_by_league": dict(Counter(p["league"] for p in merged_pairs)),
                            "merged_pairs": merged_pairs})
     ps.diagnostics.update({"providers": providers, "api_usage": api_usage, "http_requests": http_requests,
-                           "pipeline_version": 4,
+                           "pipeline_version": 5,
                            "runtime_revision": os.environ.get("RAILWAY_GIT_COMMIT_SHA") or os.environ.get("SOURCE_VERSION") or "unknown",
 
                            "events_by_sport": dict(Counter(e.sport for e in events)),
@@ -191,6 +226,28 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     return ps
 
 
+def prediction_row(s, pick_date, rank=0):
+    """Canonical immutable forecast row, independent of its display collection."""
+    ml, e = s.line, s.event
+    row = {
+        'pick_date': pick_date, 'tier': 'all', 'rank': rank,
+        'provider': e.provider, 'provider_event_id': e.provider_event_id,
+        'sport': e.sport, 'league': e.league, 'home': e.home, 'away': e.away,
+        'start_utc': iso(e.start), 'market': ml.market, 'period': ml.period, 'stat': ml.stat,
+        'entity': ml.entity, 'line': ml.line, 'selection': ml.selection, 'label': s.label,
+        'price': ml.price, 'prob': s.p_model, 'prob_raw': s.p_raw, 'ev': s.ev,
+        'p_market': s.p_market, 'p_fair': s.p_fair, 'edge_ev': s.edge_ev,
+        'rank_score': s.rank_score, 'books': ml.distinct_books(), 'quality': s.quality,
+        'sources': {**s.sources, '_alt_ids': e.extra.get('alt_ids', {}), '_providers': e.sources,
+                    '_sport_key': e.extra.get('sport_key', ''), '_league_id': e.league_id,
+                    '_notes': {**s.notes, 'edge': s.edge}},
+        'provider_odd_id': ml.provider_odd_id, 'fixture_key': fixture_key(e),
+        'canonical_event_id': e.canonical_event_id, 'canonical_competition_id': e.canonical_competition_id,
+        'home_id': e.home_id, 'away_id': e.away_id,
+    }
+    return row
+
+
 def store_picks(ps: PickSet, db: Database, pick_date: str) -> None:
     """Store every All Prediction (one per fixture x market family) before any collection selector runs.
 
@@ -199,24 +256,10 @@ def store_picks(ps: PickSet, db: Database, pick_date: str) -> None:
     """
     with db.transaction():
         for rank, s in enumerate(ps.predictions, 1):
-            ml, e = s.line, s.event
-            row = {
-                'pick_date': pick_date, 'tier': 'all', 'rank': rank,
-                'provider': e.provider, 'provider_event_id': e.provider_event_id,
-                'sport': e.sport, 'league': e.league, 'home': e.home, 'away': e.away,
-                'start_utc': iso(e.start), 'market': ml.market, 'period': ml.period, 'stat': ml.stat,
-                'entity': ml.entity, 'line': ml.line, 'selection': ml.selection, 'label': s.label,
-                'price': ml.price, 'prob': s.p_model, 'prob_raw': s.p_raw, 'ev': s.ev,
-                'p_market': s.p_market, 'p_fair': s.p_fair, 'edge_ev': s.edge_ev,
-                'rank_score': s.rank_score, 'books': ml.distinct_books(), 'quality': s.quality,
-                'sources': {**s.sources, '_alt_ids': e.extra.get('alt_ids', {}), '_providers': e.sources,
-                            '_sport_key': e.extra.get('sport_key', ''), '_league_id': e.league_id,
-                            '_notes': {**s.notes, 'edge': s.edge}},
-                'provider_odd_id': ml.provider_odd_id, 'fixture_key': fixture_key(e),
-                'canonical_event_id': e.canonical_event_id, 'canonical_competition_id': e.canonical_competition_id,
-                'home_id': e.home_id, 'away_id': e.away_id,
-            }
+            row = prediction_row(s, pick_date, rank)
             db.store_prediction(row)
+        for s in ps.ticket_predictions:
+            db.archive_ticket_candidate(prediction_row(s, pick_date))
         if ps.candidate_timezone:
             counts = db.store_custom_pick_candidates(
                 pick_date, ps.candidate_timezone, ps.candidates,

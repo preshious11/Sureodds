@@ -53,7 +53,12 @@ def service(db, monkeypatch, football_error=False):
     monkeypatch.setattr(daily_picks, 'score_events', score)
     # These tests are about caching, not settlement: every fake event has a results path.
     monkeypatch.setattr(daily_picks, 'make_results_gate', lambda cfg, providers: (lambda event: 'test'))
-    return UnifiedFetcher(chain, db, Config(timezone='Africa/Lagos', cache_retry_seconds=900)), football, baseball
+    # Both mock providers are required here, so a failing one still yields
+    # PARTIAL exactly as before the required/optional coverage policy (which
+    # by default only requires sharpapi, a name outside this mock set).
+    return UnifiedFetcher(chain, db,
+                          Config(timezone='Africa/Lagos', cache_retry_seconds=900,
+                                 required_providers=('football', 'baseball'))), football, baseball
 
 
 def all_sports(snapshot):

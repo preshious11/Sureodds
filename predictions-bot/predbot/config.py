@@ -191,6 +191,14 @@ class Config:
         "soccer_epl,soccer_spain_la_liga,soccer_italy_serie_a,soccer_germany_bundesliga,soccer_france_ligue_one,soccer_uefa_champs_league,soccer_uefa_europa_league,soccer_uefa_nations_league,soccer_efl_champ,soccer_netherlands_eredivisie,soccer_portugal_primeira_liga,soccer_turkey_super_league"), INTERNATIONAL_ODDS_KEYS))
     oddsapi_min_keys_per_sport: int = field(default_factory=lambda: _int("ODDSAPI_MIN_KEYS_PER_SPORT", 1))
     provider_order: List[str] = field(default_factory=lambda: _list("PROVIDER_ORDER", "oddsapi,sharpapi,sportsgameodds"))
+    #: Completeness policy: only these providers MUST report status 'complete'
+    #: for a slate to be COMPLETE. SharpAPI is the fixture-feed backbone (the
+    #: bot refuses to start without it); the Odds API and SportsGameOdds are
+    #: optional by default, so a quota-gated SGO (or a failed odds feed) yields
+    #: a COMPLETE slate with RECORDED degraded coverage instead of a PARTIAL
+    #: slate that blocks publication. Narrower than PROVIDER_ORDER on purpose;
+    #: widen it only with justification (every name must earn its veto).
+    required_providers: List[str] = field(default_factory=lambda: _list("REQUIRED_PROVIDERS", "sharpapi"))
     sgo_sports: List[str] = field(default_factory=lambda: _list("SGO_SPORTS", ""))
     sgo_leagues: List[str] = field(default_factory=lambda: _list("SGO_LEAGUES", "NBA,NFL,MLB,MLS,NCAAF,NCAAB,UEFA_CHAMPIONS_LEAGUE"))
     sgo_event_limit: int = field(default_factory=lambda: _int("SGO_EVENT_LIMIT", 50))
