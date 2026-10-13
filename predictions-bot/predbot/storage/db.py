@@ -631,6 +631,26 @@ class Database:
             pid = int(exact[0]['id'])
             self.add_membership(pid, 'all', row.get('rank', 0))
             return pid
+        if row.get('is_representative', 1) and row.get('canonical_event_id'):
+            # Mirror of uq_prediction_event_family_day: a representative row
+            # for this (day, event, market) already exists but carries no 'all'
+            # membership (partial import or legacy write), so none of the
+            # checks above could see it while the unique index still forbids a
+            # second one. First write wins: keep the stored forecast, adopt it
+            # into 'all' so it becomes visible, and never rewrite history.
+            clash = self.query("SELECT id, selection, line, period, stat, entity, status FROM picks "
+                               "WHERE pick_date=? AND canonical_event_id=? AND market=? "
+                               "AND is_representative=1 ORDER BY id LIMIT 1",
+                               (row['pick_date'], row['canonical_event_id'], row['market']))
+            if clash:
+                pid = int(clash[0]['id'])
+                logging.getLogger(__name__).warning(
+                    "representative collision kept first write | day=%s event=%s market=%s "
+                    "kept=%s dropped_selection=%s",
+                    row['pick_date'], row['canonical_event_id'], row['market'],
+                    dict(clash[0]), row.get('selection'))
+                self.add_membership(pid, 'all', row.get('rank', 0))
+                return pid
         try:
             return self.insert_pick(dict(row, tier='all'))
         except sqlite3.IntegrityError:                  # lost a race / an index we did not anticipate: first write wins

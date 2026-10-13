@@ -193,6 +193,58 @@ def test_a_stored_prediction_is_immutable_after_first_write(db):
     assert (stored["price"], stored["prob"], stored["label"]) == (1.8, 0.7, "first")
 
 
+def _orphan(db, **kw):
+    """A representative row with no 'all' membership, as a partial import or a
+    legacy write leaves it: invisible to the membership-gated duplicate
+    checks, but still enforced by uq_prediction_event_family_day."""
+    import json as _json
+    params = row("e9", **kw)
+    params["sources"] = _json.dumps(params["sources"])
+    params["created_at"] = "2030-06-01T00:00:00Z"
+    params.setdefault("status", "pending")
+    keys = [k for k in params if k != "id"]
+    cols = ",".join(keys)
+    cur = db.conn.execute(f"INSERT INTO picks({cols}) VALUES({','.join('?' for _ in keys)})",
+                          [params[k] for k in keys])
+    db.conn.commit()
+    assert db.query("SELECT COUNT(*) AS n FROM prediction_memberships WHERE prediction_id=?",
+                    (cur.lastrowid,))[0]["n"] == 0
+    return int(cur.lastrowid)
+
+
+def test_orphan_representative_without_membership_reconciles_without_integrity_error(db, caplog):
+    """The October 13 live failure: a stored representative the duplicate
+    checks cannot see (no 'all' membership) used to crash the insert with
+    UNIQUE constraint failed on (pick_date, canonical_event_id, market)."""
+    import logging
+    orphan = _orphan(db, market="total", selection="over", line=2.5, price=1.9)
+    with caplog.at_level(logging.WARNING, logger="predbot.storage.db"):
+        pid = db.store_prediction(row("e9", market="total", selection="under", line=2.5, price=2.1))
+    assert pid == orphan                                                  # first write wins
+    assert db.query("SELECT COUNT(*) AS n FROM picks")[0]["n"] == 1       # still one row
+    stored = db.query("SELECT price, selection FROM picks WHERE id=?", (pid,))[0]
+    assert (stored["price"], stored["selection"]) == (1.9, "over")        # never rewritten
+    assert any("representative collision kept first write" in r.message for r in caplog.records)
+    assert db.query("SELECT COUNT(*) AS n FROM prediction_memberships "
+                    "WHERE prediction_id=? AND collection='all'", (pid,))[0]["n"] == 1   # adopted: visible now
+
+
+def test_identical_outcome_adopts_the_orphan_row(db):
+    orphan = _orphan(db, market="total", selection="over", line=2.5, price=1.9)
+    pid = db.store_prediction(row("e9", market="total", selection="over", line=2.5, price=2.2))
+    assert pid == orphan
+    assert db.query("SELECT COUNT(*) AS n FROM picks")[0]["n"] == 1
+
+
+def test_repeated_generation_keeps_stable_ids_and_memberships(db):
+    first = db.store_prediction(row("e1", market="result3", selection="home"))
+    second = db.store_prediction(row("e1", market="result3", selection="home"))
+    third = db.store_prediction(row("e1", market="total", selection="over", line=2.5))
+    assert first == second and third != first
+    assert db.query("SELECT COUNT(*) AS n FROM picks")[0]["n"] == 2
+    assert db.query("SELECT COUNT(*) AS n FROM prediction_memberships WHERE collection='all'")[0]["n"] == 2
+
+
 # ------------------------------------------------------------------------------------------------ Top / Daily
 def promoted(event, market, prob, price, **kw):
     r = row(event, market=market, prob=prob, price=price, rank_score=prob, books=6, quality="main", ev=0.0, edge_ev=None, id=hash((event, market)) % 10**6, **kw)
