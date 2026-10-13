@@ -184,6 +184,64 @@ def test_compat_covers_all_synced_tables(tmp_path):
     assert "24 engine tables" in proc.stdout or "engine tables covered" in proc.stdout
 
 
+def test_0005_migration_preserves_rows_and_unblocks_sync(tmp_path):
+    """Pre-migration staging shape + rows -> apply ONLY 0005 ->
+    all rows intact, is_representative defaults to 1, ticket_candidates
+    exists, and the engine/D1 schemas reconcile for sync."""
+    pre = str(tmp_path / "pre.db")
+    con = sqlite3.connect(pre)
+    for name in ("0001_foundation.sql", "0003_engine_state.sql", "0004_sync_state.sql"):
+        with open(os.path.join(MIGRATIONS, name), encoding="utf-8") as fh:
+            con.executescript(fh.read())
+    cols = [r[1] for r in con.execute("PRAGMA table_info(picks)").fetchall()]
+    assert "is_representative" not in cols
+    assert "ticket_candidates" not in {
+        r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    seed = [
+        ("2026-10-08", "c1", "result3", "pending"),
+        ("2026-10-08", "c1", "total", "pending"),
+        ("2026-10-08", None, "result3", "won"),
+        ("2026-10-08", "", "result3", "lost"),
+    ]
+    for day, canon, market, status in seed:
+        col_list = ", ".join(c for c in cols if c not in ("id",))
+        placeholders = ", ".join("?" for c in cols if c not in ("id",))
+        row = {c: None for c in cols if c not in ("id",)}
+        row.update({"pick_date": day, "tier": "all", "rank": 1, "provider": "sharpapi",
+                    "provider_event_id": "e", "sport": "football", "home": "A", "away": "B",
+                    "start_utc": "2026-10-08T18:00:00Z", "market": market, "period": "game",
+                    "stat": "goals", "entity": "all", "selection": "home", "label": "L",
+                    "price": 2.0, "prob": 0.6, "ev": 0.0, "status": status,
+                    "created_at": "t", "canonical_event_id": canon})
+        con.execute(f"INSERT INTO picks ({col_list}) VALUES ({placeholders})",
+                    [row[c] for c in cols if c not in ("id",)])
+    con.commit()
+    before = con.execute("SELECT COUNT(*) FROM picks").fetchone()[0]
+    # Applying ONLY the 0005 file, exactly as staging D1 must.
+    with open(os.path.join(MIGRATIONS, "0005_ticket_candidates.sql"), encoding="utf-8") as fh:
+        con.executescript(fh.read())
+    con.commit()
+    assert con.execute("SELECT COUNT(*) FROM picks").fetchone()[0] == before
+    assert all(r[0] == 1 for r in con.execute("SELECT DISTINCT is_representative FROM picks").fetchall())
+    assert con.execute("SELECT COUNT(*) FROM ticket_candidates").fetchone()[0] == 0
+    assert con.execute("SELECT COUNT(*) FROM picks WHERE canonical_event_id IS NULL").fetchone()[0] == 1
+    con.close()
+    # Engine schema and migrated schema now reconcile for every synced table.
+    from predbot.storage.db import Database
+    engine = str(tmp_path / "engine.db")
+    Database(engine).close()
+    merged = str(tmp_path / "all.sql")
+    with open(merged, "w", encoding="utf-8") as fh_out:
+        for name in ("0001_foundation.sql", "0002_update_retry.sql",
+                     "0003_engine_state.sql", "0004_sync_state.sql", "0005_ticket_candidates.sql"):
+            with open(os.path.join(MIGRATIONS, name), encoding="utf-8") as fh_in:
+                fh_out.write(fh_in.read() + "\n")
+    proc = subprocess.run([sys.executable, COMPAT, "--sqlite", engine, "--migrations", merged],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout
+
+
 def test_gate_tables_commit_last(tmp_path):
     src = str(tmp_path / "src.db")
     make_db(src)
