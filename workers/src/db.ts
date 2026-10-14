@@ -275,12 +275,23 @@ export interface StatsRow {
   result_json: string | null;
 }
 
-/** Every pick issued for a day, for settlement stats (not collection-scoped). */
+/**
+ * Picks TRACKED for settlement stats: only predictions published as Top or
+ * Daily (predbot/storage/db.py picks_where(..., published_only=True) is the
+ * production equivalent — it keeps a row only when its derived tier, with
+ * 'top' taking priority over 'daily', is not 'all'). All Predictions is a
+ * browsing list and must never contribute to hit rate, ROI, or ticket
+ * settlement. A prediction with EXISTS on either collection is returned
+ * exactly once (picks.id is the primary key; this is a WHERE EXISTS, not a
+ * JOIN, so a leg present in both Top and Daily is never double-counted).
+ */
 export async function getStatsRowsForDate(db: D1Database, pickDate: string): Promise<StatsRow[]> {
   const { results } = await db
     .prepare(
       `SELECT status, price, label, home, away, result_json FROM picks
-       WHERE pick_date = ?1 AND EXISTS (SELECT 1 FROM prediction_memberships m WHERE m.prediction_id = picks.id AND m.collection = 'all')`,
+       WHERE pick_date = ?1 AND EXISTS (
+         SELECT 1 FROM prediction_memberships m WHERE m.prediction_id = picks.id AND m.collection IN ('top', 'daily')
+       )`,
     )
     .bind(pickDate)
     .all<StatsRow>();

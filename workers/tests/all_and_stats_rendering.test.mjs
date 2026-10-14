@@ -89,21 +89,29 @@ describe("/all sport menu and per-sport fixture pages", () => {
 });
 
 describe("/stats and /yesterday real settlement data", () => {
-  it("renders yesterday's actual won/lost counts and hit rate", async () => {
+  // predbot/storage/db.py picks_where(..., published_only=True) is the
+  // production equivalent: only predictions with a 'top' or 'daily'
+  // membership are tracked for stats. All Predictions ('all'-only rows)
+  // must never contribute. This is the exact bug the 2026-10-14 screenshot
+  // caught ("149 picks" instead of the real ~7 Top+Daily picks).
+  const insertPick = (sql, id, day, status, price) =>
+    sql.prepare("INSERT INTO picks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, day, "all", id, "football", "L", "A", "B", `${day}T18:00:00Z`, "x", "y", "lbl", price, 0.6, status, null);
+  const addMembership = (sql, id, collection) =>
+    sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)").run(id, collection, id);
+
+  it("renders yesterday's actual won/lost counts and hit rate from Top+Daily only", async () => {
     const sql = baseSchema();
     const today = "2026-10-14";
     const yesterday = "2026-10-13";
     setCache(sql, today);
-    const insert = sql.prepare(
-      "INSERT INTO picks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-    );
-    const membership = sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)");
     const settled = [
-      [1, "won", 2.0], [2, "won", 1.6], [3, "lost", 1.5], [4, "push", 1.9],
+      [1, "won", 2.0, "top"], [2, "won", 1.6, "daily"], [3, "lost", 1.5, "daily"], [4, "push", 1.9, "top"],
     ];
-    for (const [id, status, price] of settled) {
-      insert.run(id, yesterday, "all", id, "football", "L", "A", "B", "2026-10-13T18:00:00Z", "x", "y", "lbl", price, 0.6, status, null);
-      membership.run(id, "all", id);
+    for (const [id, status, price, collection] of settled) {
+      insertPick(sql, id, yesterday, status, price);
+      addMembership(sql, id, "all"); // every pick also carries 'all' — must not matter
+      addMembership(sql, id, collection);
     }
     try {
       const db = stubDb(sql);
@@ -128,6 +136,80 @@ describe("/stats and /yesterday real settlement data", () => {
       const db = stubDb(sql);
       const stats = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
       assert.match(stats.text, /No results yet/);
+    } finally {
+      sql.close();
+    }
+  });
+
+  it("adding 100 All-Predictions-only rows does not change tracked statistics", async () => {
+    const sql = baseSchema();
+    const today = "2026-10-14";
+    const yesterday = "2026-10-13";
+    setCache(sql, today);
+    // The two tracked legs (what production would actually count).
+    insertPick(sql, 1, yesterday, "won", 2.0); addMembership(sql, 1, "all"); addMembership(sql, 1, "top");
+    insertPick(sql, 2, yesterday, "lost", 1.5); addMembership(sql, 2, "all"); addMembership(sql, 2, "daily");
+    const before = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+    // 100 All-Predictions-only rows, mixed won/lost, same day, no top/daily membership at all.
+    for (let id = 100; id < 200; id += 1) {
+      insertPick(sql, id, yesterday, id % 2 === 0 ? "won" : "lost", 3.0);
+      addMembership(sql, id, "all");
+    }
+    try {
+      const after = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      assert.equal(after.text, before.text, "All Predictions must never change tracked stats");
+      assert.match(after.text, /2 picks/); // still just the 2 tracked legs, not 102
+      assert.doesNotMatch(after.text, /100|101|102/);
+    } finally {
+      sql.close();
+    }
+  });
+
+  it("a prediction in BOTH Top and Daily is counted exactly once", async () => {
+    const sql = baseSchema();
+    const today = "2026-10-14";
+    const yesterday = "2026-10-13";
+    setCache(sql, today);
+    insertPick(sql, 1, yesterday, "won", 2.0);
+    addMembership(sql, 1, "all");
+    addMembership(sql, 1, "top");
+    addMembership(sql, 1, "daily"); // same prediction promoted into both tickets
+    try {
+      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      assert.match(stats.text, /1 pick\b/);
+      assert.doesNotMatch(stats.text, /2 picks/);
+    } finally {
+      sql.close();
+    }
+  });
+
+  it("a day with a pending Top/Daily leg is not-yet-final, matching production's day_block gate", async () => {
+    const sql = baseSchema();
+    const today = "2026-10-14";
+    const yesterday = "2026-10-13";
+    setCache(sql, today);
+    insertPick(sql, 1, yesterday, "won", 2.0); addMembership(sql, 1, "all"); addMembership(sql, 1, "top");
+    insertPick(sql, 2, yesterday, "pending", 1.8); addMembership(sql, 2, "all"); addMembership(sql, 2, "daily");
+    try {
+      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      assert.match(stats.text, /1 of 2 settled · final card after the last result/);
+      assert.doesNotMatch(stats.text, /🎯/); // no hit rate until the day is fully settled
+    } finally {
+      sql.close();
+    }
+  });
+
+  it("void legs are counted but excluded from the staked/ROI denominator", async () => {
+    const sql = baseSchema();
+    const today = "2026-10-14";
+    const yesterday = "2026-10-13";
+    setCache(sql, today);
+    insertPick(sql, 1, yesterday, "won", 2.0); addMembership(sql, 1, "all"); addMembership(sql, 1, "top");
+    insertPick(sql, 2, yesterday, "void", 1.8); addMembership(sql, 2, "all"); addMembership(sql, 2, "daily");
+    try {
+      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      assert.match(stats.text, /✅ 1  ❌ 0  ➖ 1/);
+      assert.match(stats.text, /🎯 100%/); // decided = won+lost = 1, hit rate on decided legs only
     } finally {
       sql.close();
     }
