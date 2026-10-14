@@ -8,8 +8,8 @@ compatibility_date = "2026-10-01"
 # Production D1 is NOT created in Stage 1.
 [[d1_databases]]
 binding = "DB"
-database_name = "sureodds_staging"
-database_id = "REPLACE_WITH_STAGING_D1_ID"
+database_name = "sureodds_production"
+database_id = "db428f31-713c-401c-8c6f-07ce839f5950"
 
 [vars]
 TIMEZONE = "Africa/Lagos"

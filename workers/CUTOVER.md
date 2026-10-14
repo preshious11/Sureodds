@@ -47,13 +47,23 @@ Confirm the values you'll need, without printing any secret:
 `wrangler.toml`'s `database_id` is still the placeholder
 `REPLACE_WITH_STAGING_D1_ID` — production D1 has never been created.
 
+**`0002_update_retry.sql` is upgrade-only and must be skipped on a fresh
+database** — its own header comment says so explicitly: `0001_foundation.sql`
+already declares the columns `0002` would otherwise `ALTER TABLE ... ADD
+COLUMN` in, specifically so a brand-new database only needs `0001` (0002
+exists only for a database created from an OLDER copy of `0001` that
+predates those columns being inline — i.e. a legacy-upgrade path, not the
+fresh-database path a brand-new production D1 takes). A fresh database
+runs `0001` + `0003` through `0007`, never `0002`:
+
 ```powershell
 cd workers
 wrangler d1 create sureodds_production
 # copy the returned database_id into wrangler.toml's [[d1_databases]] block, replacing REPLACE_WITH_STAGING_D1_ID
 
 $migrations = @(
-  "migrations/0001_foundation.sql", "migrations/0002_update_retry.sql",
+  "migrations/0001_foundation.sql",
+  # 0002_update_retry.sql deliberately OMITTED — upgrade-only, see above.
   "migrations/0003_engine_state.sql", "migrations/0004_sync_state.sql",
   "migrations/0005_ticket_candidates.sql", "migrations/0006_custom_sessions.sql",
   "migrations/0007_custom_picks_conversation.sql"
@@ -62,6 +72,35 @@ foreach ($f in $migrations) {
   wrangler d1 execute sureodds_production --remote --config wrangler.toml --file $f
 }
 ```
+
+### Resuming a migration run that already hit the `0002` duplicate-column error
+
+If you already ran `0001` successfully and then `0002` failed with
+`duplicate column name: status` (the exact error this section exists to
+prevent), your production D1 is in a safe, known state — nothing needs
+rolling back:
+- `0001` is fully applied (it's the first statement and it succeeded).
+- `0002` did **not** partially apply: its first statement is the one that
+  failed (`status`), and D1/wrangler stops a `--file` batch at the first
+  error, so none of `0002`'s four `ALTER TABLE` statements ran.
+- Just continue from `0003` onward — do **not** retry `0002`:
+  ```powershell
+  cd workers
+  $remaining = @(
+    "migrations/0003_engine_state.sql", "migrations/0004_sync_state.sql",
+    "migrations/0005_ticket_candidates.sql", "migrations/0006_custom_sessions.sql",
+    "migrations/0007_custom_picks_conversation.sql"
+  )
+  foreach ($f in $remaining) {
+    wrangler d1 execute sureodds_production --remote --config wrangler.toml --file $f
+  }
+  ```
+- To double-check `0001`'s columns are really there before continuing:
+  ```powershell
+  wrangler d1 execute sureodds_production --remote --config wrangler.toml --json `
+    --command "SELECT sql FROM sqlite_master WHERE name='telegram_updates'"
+  # expect status/attempts/last_error/updated_at already in the CREATE TABLE text
+  ```
 
 ## 3. Historical-data requirements — do NOT copy staging data in
 
