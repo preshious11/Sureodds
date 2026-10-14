@@ -13,7 +13,7 @@ function realDb() {
   // 0002 only ALTERs columns that 0001 already defines inline for a fresh
   // DB (see 0001's own comment) — applying both to a brand-new :memory: DB
   // would duplicate those columns, so 0002 is skipped here deliberately.
-  for (const file of ["0001_foundation.sql", "0003_engine_state.sql", "0006_custom_sessions.sql", "0007_custom_picks_conversation.sql"]) {
+  for (const file of ["0001_foundation.sql", "0003_engine_state.sql", "0006_custom_sessions.sql", "0007_custom_picks_conversation.sql", "0008_pinned_menu.sql"]) {
     sql.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), "utf8"));
   }
   return {
@@ -218,6 +218,149 @@ describe("/menu admin command — the group's Custom Picks entry point", () => {
     await withFetch(f2, () => handleUpdate(noUsername, textMessage(2, "private-7", "7", "/menu")));
     assert.equal(f2.calls.length, 1);
     assert.match(f2.calls[0].body.text, /username/);
+  });
+});
+
+describe("/pinmenu admin command — private-chat only, posts + pins the group menu", () => {
+  function stubFetchForPin({ pinOk = true } = {}) {
+    const calls = [];
+    let nextId = 500;
+    const fn = async (url, init) => {
+      const body = init?.body ? JSON.parse(init.body) : null;
+      calls.push({ url, body });
+      if (url.includes("pinChatMessage")) {
+        return pinOk ? { ok: true, status: 200, json: async () => ({ ok: true }) } : { ok: false, status: 400, json: async () => ({}) };
+      }
+      if (url.includes("sendMessage")) {
+        return { ok: true, status: 200, json: async () => ({ ok: true, result: { message_id: nextId++ } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+    fn.calls = calls;
+    return fn;
+  }
+  function pinEnv(db, overrides = {}) {
+    return { ...env(db), TELEGRAM_CHAT_ID: "group-1", TELEGRAM_BOT_USERNAME: "SureOddsBot", TELEGRAM_ADMIN_IDS: "7", ...overrides };
+  }
+  it("rejects a non-admin in private chat: 'Not allowed.', nothing posted or pinned", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetchForPin();
+    await withFetch(fetchImpl, () => handleUpdate(pinEnv(db), textMessage(1, "private-9", "9", "/pinmenu")));
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.equal(fetchImpl.calls[0].body.chat_id, "private-9");
+    assert.match(fetchImpl.calls[0].body.text, /Not allowed/);
+  });
+  it("is silently ignored when sent from a group, even by an admin: private-chat only", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetchForPin();
+    await withFetch(fetchImpl, () => handleUpdate(pinEnv(db), textMessage(1, "group-1", "7", "/pinmenu", "supergroup")));
+    assert.equal(fetchImpl.calls.length, 0, "no response at all from a group — not just a refusal");
+  });
+  it("refuses to post without a configured group destination or bot username, same as /menu", async () => {
+    const db = realDb();
+    const noChat = { ...env(db), TELEGRAM_BOT_USERNAME: "SureOddsBot", TELEGRAM_ADMIN_IDS: "7" };
+    const f1 = stubFetchForPin();
+    await withFetch(f1, () => handleUpdate(noChat, textMessage(1, "private-7", "7", "/pinmenu")));
+    assert.equal(f1.calls.length, 1);
+    assert.match(f1.calls[0].body.text, /not configured/);
+    const noUsername = { ...env(db), TELEGRAM_CHAT_ID: "group-1", TELEGRAM_ADMIN_IDS: "7" };
+    const f2 = stubFetchForPin();
+    await withFetch(f2, () => handleUpdate(noUsername, textMessage(2, "private-7", "7", "/pinmenu")));
+    assert.equal(f2.calls.length, 1);
+    assert.match(f2.calls[0].body.text, /username/);
+  });
+  it("an admin in private chat posts the full existing group menu and pins it, then confirms privately", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetchForPin();
+    await withFetch(fetchImpl, () => handleUpdate(pinEnv(db), textMessage(1, "private-7", "7", "/pinmenu")));
+    const posted = fetchImpl.calls.find((c) => c.url.includes("sendMessage") && c.body.chat_id === "group-1");
+    assert.ok(posted, "the menu must be posted to the group, not the admin's own chat");
+    assert.equal(posted.body.text, "⚽ Predictions\n\nToday's picks, results and more.");
+    const kb = JSON.stringify(posted.body.reply_markup);
+    // Reuses the exact same keyboard /menu already posts: Top/Daily, All
+    // (private deep link), Stats/Yesterday, Custom Picks (private deep link).
+    assert.match(kb, /Top Picks/);
+    assert.match(kb, /Daily Picks/);
+    assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=all/);
+    assert.match(kb, /Stats/);
+    assert.match(kb, /Yesterday/);
+    assert.match(kb, /✨ Custom Picks/);
+    assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=custom_picks/);
+    const pin = fetchImpl.calls.find((c) => c.url.includes("pinChatMessage"));
+    assert.ok(pin, "the posted message must be pinned");
+    assert.equal(pin.body.chat_id, "group-1");
+    assert.equal(pin.body.message_id, posted.body.message_id ?? 500);
+    const ack = fetchImpl.calls.find((c) => c.body.chat_id === "private-7" && /posted and pinned/.test(c.body.text));
+    assert.ok(ack, "the admin must get a private confirmation naming the result");
+    const row = db._sql.prepare("SELECT message_id, pinned_by FROM pinned_menu WHERE chat_id='group-1'").get();
+    assert.equal(row.message_id, 500);
+    assert.equal(row.pinned_by, "private-7");
+  });
+  it("explains the missing 'Pin Messages' permission clearly when pinning fails, without crashing or losing the post", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetchForPin({ pinOk: false });
+    await withFetch(fetchImpl, () => handleUpdate(pinEnv(db), textMessage(1, "private-7", "7", "/pinmenu")));
+    const posted = fetchImpl.calls.find((c) => c.url.includes("sendMessage") && c.body.chat_id === "group-1");
+    assert.ok(posted, "the menu is still posted even though pinning will fail");
+    const ack = fetchImpl.calls.find((c) => c.body.chat_id === "private-7");
+    assert.match(ack.body.text, /Pin Messages/);
+    assert.match(ack.body.text, /permission/);
+    const row = db._sql.prepare("SELECT 1 FROM pinned_menu WHERE chat_id='group-1'").get();
+    assert.equal(row, undefined, "nothing was actually pinned, so nothing should be recorded as pinned");
+  });
+  it("repeating /pinmenu after a success edits the SAME message in place — no duplicate post, no re-pin needed", async () => {
+    const db = realDb();
+    const first = stubFetchForPin();
+    await withFetch(first, () => handleUpdate(pinEnv(db), textMessage(1, "private-7", "7", "/pinmenu")));
+    const second = stubFetchForPin();
+    await withFetch(second, () => handleUpdate(pinEnv(db), textMessage(2, "private-7", "7", "/pinmenu")));
+    const edit = second.calls.find((c) => c.url.includes("editMessageText"));
+    assert.ok(edit, "the second run must edit the already-pinned message");
+    assert.equal(edit.body.chat_id, "group-1");
+    assert.equal(edit.body.message_id, 500);
+    assert.equal(second.calls.some((c) => c.url.includes("sendMessage") && c.body.chat_id === "group-1"), false, "no duplicate posted to the group");
+    assert.equal(second.calls.some((c) => c.url.includes("pinChatMessage")), false, "editing in place never needs a re-pin");
+    const ack = second.calls.find((c) => c.body.chat_id === "private-7");
+    assert.match(ack.body.text, /already pinned/);
+    assert.match(ack.body.text, /No duplicate/);
+  });
+  it("if the previously pinned message is gone, falls back to posting and pinning a fresh one", async () => {
+    const db = realDb();
+    const first = stubFetchForPin();
+    await withFetch(first, () => handleUpdate(pinEnv(db), textMessage(1, "private-7", "7", "/pinmenu")));
+    let editAttempted = false;
+    const second = (() => {
+      const calls = [];
+      let nextId = 900;
+      const fn = async (url, init) => {
+        const body = init?.body ? JSON.parse(init.body) : null;
+        calls.push({ url, body });
+        if (url.includes("editMessageText")) {
+          editAttempted = true;
+          return { ok: false, status: 400, json: async () => ({}) }; // message deleted/too old
+        }
+        if (url.includes("sendMessage")) return { ok: true, status: 200, json: async () => ({ ok: true, result: { message_id: nextId++ } }) };
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      };
+      fn.calls = calls;
+      return fn;
+    })();
+    await withFetch(second, () => handleUpdate(pinEnv(db), textMessage(2, "private-7", "7", "/pinmenu")));
+    assert.equal(editAttempted, true);
+    const posted = second.calls.find((c) => c.url.includes("sendMessage") && c.body.chat_id === "group-1");
+    assert.ok(posted, "a fresh menu must still be posted when the old one can't be edited");
+    const pin = second.calls.find((c) => c.url.includes("pinChatMessage"));
+    assert.ok(pin, "the fresh post must be pinned");
+    const row = db._sql.prepare("SELECT message_id FROM pinned_menu WHERE chat_id='group-1'").get();
+    assert.equal(row.message_id, 900);
+  });
+  it("the existing public /menu command is completely unaffected: still works from any chat, still never pins", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetchForPin();
+    await withFetch(fetchImpl, () => handleUpdate(pinEnv(db), textMessage(1, "group-1", "7", "/menu", "supergroup")));
+    assert.equal(fetchImpl.calls.some((c) => c.url.includes("pinChatMessage")), false, "/menu must never pin");
+    const posted = fetchImpl.calls.find((c) => c.body.chat_id === "group-1" && c.url.includes("sendMessage"));
+    assert.ok(posted, "/menu still posts to the group from a non-private chat, unlike /pinmenu");
   });
 });
 

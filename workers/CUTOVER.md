@@ -66,7 +66,7 @@ $migrations = @(
   # 0002_update_retry.sql deliberately OMITTED — upgrade-only, see above.
   "migrations/0003_engine_state.sql", "migrations/0004_sync_state.sql",
   "migrations/0005_ticket_candidates.sql", "migrations/0006_custom_sessions.sql",
-  "migrations/0007_custom_picks_conversation.sql"
+  "migrations/0007_custom_picks_conversation.sql", "migrations/0008_pinned_menu.sql"
 )
 foreach ($f in $migrations) {
   wrangler d1 execute sureodds_production --remote --config wrangler.toml --file $f
@@ -89,7 +89,7 @@ rolling back:
   $remaining = @(
     "migrations/0003_engine_state.sql", "migrations/0004_sync_state.sql",
     "migrations/0005_ticket_candidates.sql", "migrations/0006_custom_sessions.sql",
-    "migrations/0007_custom_picks_conversation.sql"
+    "migrations/0007_custom_picks_conversation.sql", "migrations/0008_pinned_menu.sql"
   )
   foreach ($f in $remaining) {
     wrangler d1 execute sureodds_production --remote --config wrangler.toml --file $f

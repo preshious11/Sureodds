@@ -700,3 +700,27 @@ export async function setJobDue(db: D1Database, name: string, dueAt: string | nu
     .bind(name, dueAt)
     .run();
 }
+
+export interface PinnedMenuRow {
+  chat_id: string;
+  message_id: number;
+  pinned_by: string;
+  pinned_at: string;
+}
+
+/** ~/pinmenu's memory of which group message is the currently pinned community menu (0008_pinned_menu.sql). */
+export async function getPinnedMenu(db: D1Database, chatId: string): Promise<PinnedMenuRow | null> {
+  const row = await db.prepare("SELECT chat_id, message_id, pinned_by, pinned_at FROM pinned_menu WHERE chat_id = ?1").bind(chatId).first<PinnedMenuRow>();
+  return row ?? null;
+}
+
+export async function setPinnedMenu(db: D1Database, chatId: string, messageId: number, pinnedBy: string, pinnedAt: string): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO pinned_menu (chat_id, message_id, pinned_by, pinned_at)
+       VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(chat_id) DO UPDATE SET message_id = ?2, pinned_by = ?3, pinned_at = ?4`,
+    )
+    .bind(chatId, messageId, pinnedBy, pinnedAt)
+    .run();
+}

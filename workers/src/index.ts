@@ -10,6 +10,7 @@ import {
   getConversationRequest,
   getCustomPickCandidates,
   getCustomPickPool,
+  getPinnedMenu,
   getSuggestion,
   isCustomOnCooldown,
   isCustomSessionActive,
@@ -17,6 +18,7 @@ import {
   listActiveSuggestions,
   recordCustomRequest,
   setConversationRequest,
+  setPinnedMenu,
   storeSuggestion,
   tryClaimUpdate,
   upsertSubscriber,
@@ -145,6 +147,75 @@ async function sendGroupAllRedirect(env: Env, chatId: string): Promise<void> {
   const replyMarkup = allRedirectKeyboard(env.TELEGRAM_BOT_USERNAME);
   const text = replyMarkup ? ALL_GROUP_TEXT : ALL_GROUP_TEXT_NO_LINK;
   await tgApi(env, "sendMessage", { chat_id: chatId, text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) });
+}
+
+/**
+ * /pinmenu's implementation: posts (or refreshes in place) the exact same
+ * community menu /menu already sends, then pins it — reporting the result
+ * back to the admin privately. Reuses communityMenuKeyboard/COMMUNITY_MENU_TEXT
+ * verbatim (same labels, same group-to-private All/Custom Picks buttons).
+ *
+ * Duplicate-post prevention + "replace safely" (requirements 7/8): if a
+ * previous /pinmenu run is on record for this group, the SAME message is
+ * edited in place rather than posting a new one — editing a pinned message
+ * never unpins it, so nothing needs re-pinning and no other message or
+ * admin's pin is ever touched. Only when that edit fails (message deleted,
+ * bot removed, etc.) does this fall back to posting + pinning a fresh one.
+ */
+async function pinCommunityMenu(env: Env, adminChatId: string): Promise<void> {
+  const groupChatId = env.TELEGRAM_CHAT_ID as string;
+  const botUsername = env.TELEGRAM_BOT_USERNAME as string;
+  const previous = await getPinnedMenu(env.DB, groupChatId);
+
+  if (previous) {
+    try {
+      await tgApi(env, "editMessageText", {
+        chat_id: groupChatId,
+        message_id: previous.message_id,
+        text: COMMUNITY_MENU_TEXT,
+        reply_markup: communityMenuKeyboard(botUsername),
+      });
+      await tgApi(env, "sendMessage", {
+        chat_id: adminChatId,
+        text: `Menu already pinned in the group — refreshed it in place (message ${previous.message_id}). No duplicate was posted.`,
+      });
+      return;
+    } catch {
+      // The previously pinned message is gone/unpinned/uneditable — fall
+      // through and post+pin a fresh one below.
+    }
+  }
+
+  let messageId: number | undefined;
+  try {
+    const res = await tgApi(env, "sendMessage", {
+      chat_id: groupChatId,
+      text: COMMUNITY_MENU_TEXT,
+      reply_markup: communityMenuKeyboard(botUsername),
+    });
+    const body = (await res.json()) as { result?: { message_id?: number } };
+    messageId = body.result?.message_id;
+  } catch {
+    await tgApi(env, "sendMessage", { chat_id: adminChatId, text: "Failed to post the menu to the group. Nothing was pinned." });
+    return;
+  }
+  if (messageId == null) {
+    await tgApi(env, "sendMessage", { chat_id: adminChatId, text: "Menu posted, but Telegram didn't return a message id, so it could not be pinned." });
+    return;
+  }
+  try {
+    await tgApi(env, "pinChatMessage", { chat_id: groupChatId, message_id: messageId, disable_notification: true });
+  } catch {
+    await tgApi(env, "sendMessage", {
+      chat_id: adminChatId,
+      text:
+        "Menu posted to the group, but I couldn't pin it — I need the 'Pin Messages' admin permission there. " +
+        "Grant it to the bot and try /pinmenu again.",
+    });
+    return;
+  }
+  await setPinnedMenu(env.DB, groupChatId, messageId, adminChatId, new Date().toISOString());
+  await tgApi(env, "sendMessage", { chat_id: adminChatId, text: `Menu posted and pinned in the group (message ${messageId}).` });
 }
 
 /** Best-effort "⏳ Building your picks..." indicator; a failure here must never block the real result. */
@@ -346,6 +417,34 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       reply_markup: communityMenuKeyboard(env.TELEGRAM_BOT_USERNAME),
     });
     await tgApi(env, "sendMessage", { chat_id: chatId, text: "Community menu posted." });
+    return;
+  }
+
+  // /pinmenu (admin-only, private chat only): posts (or refreshes in place)
+  // the SAME community menu as /menu, then pins it in the group. A
+  // separate command from /menu rather than changing /menu's own meaning —
+  // /menu already works from any chat and never pins, and the task that
+  // asked for this explicitly said to preserve that existing behavior
+  // untouched and add a new command instead of overloading it.
+  if (text.trim() === "/pinmenu") {
+    if (chatType !== "private") return; // admin command, private chat only — silently ignored elsewhere.
+    const adminIds = (env.TELEGRAM_ADMIN_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!adminIds.includes(String(from.id ?? ""))) {
+      await tgApi(env, "sendMessage", { chat_id: chatId, text: "Not allowed." });
+      return;
+    }
+    if (!env.TELEGRAM_CHAT_ID) {
+      await tgApi(env, "sendMessage", { chat_id: chatId, text: "Community destination is not configured. Set TELEGRAM_CHAT_ID." });
+      return;
+    }
+    if (!env.TELEGRAM_BOT_USERNAME) {
+      await tgApi(env, "sendMessage", {
+        chat_id: chatId,
+        text: "Could not resolve this bot's username. Menu was not posted. Try /pinmenu again.",
+      });
+      return;
+    }
+    await pinCommunityMenu(env, chatId);
     return;
   }
 

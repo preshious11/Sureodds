@@ -28,6 +28,7 @@ const FRESH_DB_SEQUENCE = [
   "0005_ticket_candidates.sql",
   "0006_custom_sessions.sql",
   "0007_custom_picks_conversation.sql",
+  "0008_pinned_menu.sql",
 ];
 
 describe("migration chain against a fresh database (workers/CUTOVER.md step 2)", () => {
