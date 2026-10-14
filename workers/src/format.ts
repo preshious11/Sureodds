@@ -262,6 +262,147 @@ export function yesterdayLines(day: string, b: StatsBlock, issued: number): stri
   return lines;
 }
 
+const UNRESOLVED_REASONS = new Set(["settlement deadline expired"]);
+
+/** ~ predbot/jobs/stats.py outcome(): won|lost|void|push|unresolved, or null while unsettled. */
+export function outcomeOf(status: string, resultJson: string | null): "won" | "lost" | "void" | "push" | "unresolved" | null {
+  if (status === "won" || status === "half_won") return "won";
+  if (status === "lost" || status === "half_lost") return "lost";
+  if (status === "push") return "push";
+  if (status === "void") {
+    if (resultJson) {
+      try {
+        const data = JSON.parse(resultJson);
+        if (data && typeof data === "object" && UNRESOLVED_REASONS.has(data.reason)) return "unresolved";
+      } catch {
+        // falls through to void
+      }
+    }
+    return "void";
+  }
+  return null; // pending
+}
+
+export interface DayStatsRow {
+  pick_date: string;
+  sport: string;
+  status: string;
+  price: number;
+  label: string;
+  home: string;
+  away: string;
+  start_utc: string;
+  result_json: string | null;
+}
+
+export interface SportBlock {
+  sport: string;
+  issued: number;
+  won: number;
+  settled: number;
+}
+
+/**
+ * ~ predbot/jobs/stats.py sports_day(): per sport, picks issued/won/settled
+ * for ONE day's rows. A sport whose picks are all unsettled is still
+ * listed with settled=0. Most issued first, then most settled, then
+ * alphabetical — exact tie-break order from production.
+ */
+export function sportsDayBlock(rows: DayStatsRow[]): SportBlock[] {
+  const agg = new Map<string, SportBlock>();
+  for (const r of rows) {
+    const b = agg.get(r.sport) ?? { sport: r.sport, issued: 0, won: 0, settled: 0 };
+    b.issued += 1;
+    const kind = outcomeOf(r.status, r.result_json);
+    if (kind !== null) {
+      b.settled += 1;
+      if (kind === "won") b.won += 1;
+    }
+    agg.set(r.sport, b);
+  }
+  return [...agg.values()].sort((a, b) => b.issued - a.issued || b.settled - a.settled || a.sport.localeCompare(b.sport));
+}
+
+/** ~ predbot/bot/format.py by_sport_lines(): "🏅 By sport" + "⚽ Football 2/3  ·  🏀 Basketball —". */
+export function bySportLines(rows: SportBlock[]): string[] {
+  if (rows.length === 0) return [];
+  const items = rows.map((b) => {
+    const label = `${SPORT_ICON[b.sport] ?? SPORT_ICON.other} ${SPORT_LABEL[b.sport] ?? b.sport}`;
+    return b.settled ? `${label} ${b.won}/${b.settled}` : `${label} —`;
+  });
+  return ["🏅 By sport", items.join("  ·  ")];
+}
+
+/** ~ predbot/jobs/stats.py _streak_of(): current run of consecutive won/lost results, most-recent-first. */
+export function streakOf(rows: DayStatsRow[]): string {
+  const sorted = [...rows].sort((a, b) => (a.pick_date === b.pick_date ? (a.start_utc < b.start_utc ? -1 : 1) : a.pick_date < b.pick_date ? -1 : 1));
+  const seq = sorted.map((r) => outcomeOf(r.status, r.result_json)).filter((k): k is "won" | "lost" => k === "won" || k === "lost");
+  if (seq.length === 0) return "";
+  const last = seq[seq.length - 1];
+  let n = 0;
+  for (let i = seq.length - 1; i >= 0 && seq[i] === last; i--) n += 1;
+  return `${last === "won" ? "W" : "L"}${n}`;
+}
+
+export interface LastDaysBlock extends StatsBlock {
+  hitRate: number | null;
+  streak: string;
+  strip: { date: string; marks: string[] }[];
+  windowDays: number;
+}
+
+const OUTCOME_MARK: Record<string, string> = { won: "✅", lost: "❌", void: "➖", push: "↩️", unresolved: "❔" };
+
+/**
+ * ~ predbot/jobs/stats.py last_days(): settled-only block (hit rate on
+ * settled, not gated on day-finality like the single-day block, since this
+ * spans many already-decided days), the current streak, and a per-day
+ * strip (most recent day first) of that day's settled marks in kickoff
+ * order. Simplification vs. production: the strip's within-day order is
+ * kickoff time only — production additionally sorts Top legs before Daily
+ * within a day, which needs a resolved tier column this query doesn't
+ * carry; documented, not fabricated (never reorders across days, never
+ * invents a leg).
+ */
+export function lastDaysBlock(rows: DayStatsRow[], windowDays: number): LastDaysBlock {
+  const settled = rows.filter((r) => outcomeOf(r.status, r.result_json) !== null);
+  const block = computeStatsBlock(settled);
+  const decided = block.won + block.lost;
+  const byDate = new Map<string, DayStatsRow[]>();
+  for (const r of settled) {
+    const list = byDate.get(r.pick_date) ?? [];
+    list.push(r);
+    byDate.set(r.pick_date, list);
+  }
+  const strip = [...byDate.keys()]
+    .sort((a, b) => (a < b ? 1 : -1))
+    .map((date) => ({
+      date,
+      marks: [...byDate.get(date)!]
+        .sort((a, b) => (a.start_utc < b.start_utc ? -1 : 1))
+        .map((r) => OUTCOME_MARK[outcomeOf(r.status, r.result_json) as string]),
+    }));
+  return { ...block, hitRate: decided ? (100 * block.won) / decided : null, streak: streakOf(settled), strip, windowDays };
+}
+
+/** ~ predbot/bot/format.py last_days_lines(), minus the 7-day Top-ticket line (see PRODUCTION_PARITY.md). */
+export function lastDaysLines(seven: LastDaysBlock): string[] {
+  if (!seven.windowDays) return [];
+  const header = seven.windowDays >= 7 ? "📈 Last 7 days" : `📈 Last ${seven.windowDays} day${seven.windowDays === 1 ? "" : "s"}`;
+  const parts = [countsLine(seven)];
+  if (seven.hitRate !== null) parts.push(`🎯 ${Math.round(seven.hitRate)}%`);
+  if (seven.streak) parts.push(seven.streak.startsWith("W") ? `🔥 ${seven.streak}` : seven.streak);
+  const lines = [header, parts.join("  ·  ")];
+  if (seven.strip.length) {
+    lines.push(
+      seven.strip
+        .map((d) => `${WEEKDAY_ABBR[new Date(`${d.date}T00:00:00Z`).getUTCDay()]} ${d.marks.join("")}`)
+        .join("  "),
+    );
+  }
+  return lines;
+}
+
 export const NO_RESULTS_YET = "📊 No results yet — the first recap arrives the morning after the first slate.";
 
 /** "YYYY-MM-DD" shifted by `deltaDays` (UTC-safe; local date arithmetic only). */

@@ -4,7 +4,15 @@
 // workers/PRODUCTION_PARITY.md for the full production-vs-staging
 // comparison and the gaps intentionally not ported in this pass.
 
-import { getAllPicksForCollection, getDayCache, getStatsRowsForDate, type Env, type CachedPick } from "./db.ts";
+import {
+  getAllPicksForCollection,
+  getDayCache,
+  getFirstPickDate,
+  getStatsRowsForDate,
+  getStatsRowsForRange,
+  type Env,
+  type CachedPick,
+} from "./db.ts";
 import {
   buildKeyboard,
   menuKeyboard,
@@ -19,13 +27,17 @@ import {
   SPORT_LABEL,
   TOP_TITLE,
   ZONE_LABEL,
+  bySportLines,
   computeStatsBlock,
   dayLabel,
   escHtml,
   fixtureBlock,
+  lastDaysBlock,
+  lastDaysLines,
   nPicks,
   picksCard,
   shiftDate,
+  sportsDayBlock,
   yesterdayLines,
   type PickLineInput,
 } from "./format.ts";
@@ -80,6 +92,32 @@ function clampPage(page: number, count: number, size: number): number {
   return Math.min(Math.max(0, page), totalPages(count, size) - 1);
 }
 
+/**
+ * ~ predbot/bot/broadcast.py picks_messages/summary_card: the automatic
+ * group post is the WHOLE ticket in one message, never paginated — unlike
+ * the interactive /top /daily views (renderTicket below), which page at
+ * PICKS_PER_PAGE. Reusing renderTicket's paginated output here would have
+ * silently posted only the first page of a Daily ticket with more than
+ * PICKS_PER_PAGE legs to the group, with a "Page 1 of N" footer that
+ * production's automatic post never has.
+ */
+export async function renderGroupCard(
+  env: Env,
+  kind: "top" | "daily",
+  localDate: string,
+): Promise<{ text: string; isEmpty: boolean }> {
+  const all = await getAllPicksForCollection(env.DB, localDate, kind);
+  const title = kind === "top" ? TOP_TITLE : DAILY_TITLE;
+  if (all.length === 0) {
+    return { text: wrapTitleHtml(picksCard([], localDate, title, { zone: ZONE_LABEL }), title), isEmpty: true };
+  }
+  const sorted = all
+    .map(toPickLineInput)
+    .sort((a, b) => new Date(a.startUtc).getTime() - new Date(b.startUtc).getTime());
+  const body = picksCard(sorted, localDate, title, { zone: ZONE_LABEL });
+  return { text: wrapTitleHtml(body, title), isEmpty: false };
+}
+
 async function renderTicket(
   env: Env,
   view: "top" | "daily",
@@ -90,7 +128,17 @@ async function renderTicket(
   const title = view === "top" ? TOP_TITLE : DAILY_TITLE;
   if (all.length === 0) {
     const body = picksCard([], localDate, title, { zone: ZONE_LABEL });
-    const keyboard = view === "top" ? topEmptyKeyboard() : buildKeyboard(view, 0, 1, localDate);
+    // predbot/bot/callbacks.py open_view: the Custom Picks deep-link button
+    // only replaces the normal keyboard for a genuinely-empty Top (evaluated,
+    // zero qualifying picks) — Daily's empty state keeps the plain pager/
+    // switch keyboard. If the bot username isn't configured, production
+    // would refuse to show a dead link; here that means falling back to the
+    // plain keyboard rather than omitting the card (never leaves /top
+    // silently unanswered).
+    const keyboard =
+      view === "top" && env.TELEGRAM_BOT_USERNAME
+        ? topEmptyKeyboard(env.TELEGRAM_BOT_USERNAME)
+        : buildKeyboard(view, 0, 1, localDate);
     return { text: wrapTitleHtml(body, title), replyMarkup: keyboard };
   }
   const pages = totalPages(all.length, PICKS_PER_PAGE);
@@ -223,11 +271,34 @@ async function renderStatsLike(
   }
   const block = computeStatsBlock(rows);
   const issued = rows.length;
-  const body = [
-    `<b>${title}</b> · ${dayLabel(localDate)}`,
-    "",
-    ...yesterdayLines(yesterday, block, issued).map(escHtml),
-  ].join("\n");
+  const settledYesterday = block.won + block.lost + block.push + block.void + block.unresolved;
+
+  // ~ predbot/jobs/stats.py compute(): 7-day window capped to how long the
+  // engine has actually been running (never claims "Last 7 days" on day 2).
+  const since7 = shiftDate(localDate, -7);
+  const [rows7, firstPickDate] = await Promise.all([
+    getStatsRowsForRange(env.DB, since7, localDate),
+    getFirstPickDate(env.DB),
+  ]);
+  let windowDays = 0;
+  if (firstPickDate) {
+    const days = Math.round((Date.parse(localDate) - Date.parse(firstPickDate)) / 86_400_000);
+    windowDays = Math.max(0, Math.min(7, days));
+  }
+
+  const blocks: string[][] = [yesterdayLines(yesterday, block, issued).map(escHtml)];
+  if (settledYesterday > 0) {
+    const sportRows = rows7.filter((r) => r.pick_date === yesterday);
+    const sportLines = bySportLines(sportsDayBlock(sportRows));
+    if (sportLines.length) blocks.push(sportLines.map(escHtml));
+  }
+  const sevenBlock = lastDaysBlock(rows7, windowDays);
+  const sevenLines = lastDaysLines(sevenBlock);
+  if (sevenLines.length) blocks.push(sevenLines.map(escHtml));
+
+  const body = [`<b>${title}</b> · ${dayLabel(localDate)}`, "", ...blocks.flatMap((b, i) => (i === 0 ? b : ["", ...b]))].join(
+    "\n",
+  );
   return { text: body, replyMarkup: menuKeyboard() };
 }
 

@@ -35,9 +35,9 @@ already present:
 
 1. **Country prefix on league** (`"England • Premier League"`) — `picks` has no `country` column. Pick lines show the league alone. Confirmed via the shared golden fixture that output is byte-identical to production for the country-absent case; a country column would be the smallest necessary schema addition to close this, not done here per "smallest necessary change" and because it's cosmetic.
 2. **Live started/finished marker** (`🔴` / `· Finished`) — ported using production's exact `DURATION_H` table, but this is a best-effort estimate on both sides already (not a live feed), so there's nothing to further verify against.
-3. **/stats and /yesterday**: ported the yesterday settled-results block (counts, hit rate, ROI, best win) exactly, scoped to the correct tracked pool — **only predictions with a `top` or `daily` prediction_memberships row**, matching production's `predbot/storage/db.py picks_where(..., published_only=True)` exactly (derived tier: `top` if the row has a `top` membership, else `daily`, else `all`; a row is kept only when that derived tier isn't `all`; since this is one row per prediction id, a leg published into both Top and Daily is never double-counted). All Predictions never contributes. (An earlier version of this port incorrectly scoped these two views to the whole `all` collection — fixed; see `workers/tests/all_and_stats_rendering.test.mjs` for the regression coverage: 100 All-Predictions-only rows proven not to move the numbers, a both-Top-and-Daily leg proven to count once, and the pending/void settlement gates proven to match `day_block`.) **Not ported**: the 7-day trend section, per-day result strip, win streak, by-sport breakdown, and the `/stats_top` / `/stats_daily` / `/stats_all` collection-specific sub-views and their `/results_<collection>` itemized settled-pick lists. These need multi-day aggregation queries and were out of scope for this pass's budget — current output is correct and non-fake, just narrower than production's full stats surface.
+3. **/stats and /yesterday**: ported the yesterday settled-results block (counts, hit rate, ROI, best win), the **by-sport breakdown**, and the **7-day trend** (settled-only hit rate/ROI, current win/loss streak, per-day strip of result marks, window capped to how long the engine has actually been running — `predbot/jobs/stats.py sports_day()`/`last_days()`/`_streak_of()`), all scoped to the correct tracked pool — **only predictions with a `top` or `daily` prediction_memberships row**, matching production's `predbot/storage/db.py picks_where(..., published_only=True)` exactly. All Predictions never contributes anywhere in this, including the by-sport/7-day additions (see `workers/tests/all_and_stats_rendering.test.mjs`: 100 All-Predictions-only rows proven not to move either section, a both-Top-and-Daily leg proven to count once in the by-sport breakdown too, the window-capping proven not to claim "Last 7 days" on an engine 2 days old). **Simplified, not ported**: the per-day strip's within-day ordering is kickoff time only (production additionally sorts Top legs before Daily within a day — needs a resolved-tier column this query doesn't carry); the 7-day Top-ticket hit-rate line (`top_ticket_7d`); the `/stats_top` / `/stats_daily` / `/stats_all` collection-specific sub-views and their `/results_<collection>` itemized settled-pick lists; the 30-day/all-time blocks. None of these fabricate anything — they're simply not computed yet.
 4. **`/yesterday` currently renders the same aggregate block as `/stats`** rather than production's per-pick itemized list (✅/❌ per leg, grouped by Top/Daily tier, its own pagination). Documented simplification, not a redesign of what exists — no itemized listing existed in staging before either.
-5. **Deep-link features** (`✨ Custom Picks`, `🔍 Ticket Audit`) and **admin commands** (`/run`, `/settle`, `/recap`, `/lastrun`, `/menu`) are out of scope — staging has no equivalent subsystem and none was invented. (Ticket Audit is disabled in production itself too, via `ticket_audit_switch.ENABLED = False`, so there's nothing live to port there.)
+5. **Admin commands** `/run`, `/settle`, `/recap`, `/lastrun` are out of scope — staging has no generation/settlement subsystem to trigger from a command (that's GitHub Actions' job here). `/menu` **is now ported** (see below). Ticket Audit is disabled in production itself too (`ticket_audit_switch.ENABLED = False`), so there's nothing live to port there.
 6. **Live match notifications** (`live_match_message`) — not a Telegram command, not ported; staging has no live-match push pipeline.
 7. **Fixture grouping key** for /all uses `(home, away, start_utc)` rather than a canonical fixture/event id column; this is a close but not guaranteed-exact substitute if the same two teams play twice on the same date (not currently possible in the data, but noting the assumption).
 8. **Per-subscriber timezone** is not modeled in the Worker's `subscribers` table in a way the views read — all times render in fixed Africa/Lagos (WAT), whereas production can localize to each subscriber's own saved timezone. Matches the Worker's existing (pre-port) behavior; not a regression, not newly introduced.
@@ -165,3 +165,46 @@ Added both tables to the `--tables` list (`d1_sync.py`'s `write_policy`/
 `key_columns` already supported them structurally — this was a one-line
 workflow config gap, not a missing schema or a missing sync-engine
 feature).
+
+## Group entry point correction (this pass)
+
+The previous pass's Custom Picks port got the entry point wrong. Verified
+directly against `predbot/bot/callbacks.py` and `predbot/jobs/daily_picks.py`:
+
+- The "✨ Custom Picks" button is **never** in the private welcome/view-switch
+  menu. It appears in exactly two places, both reusing the same
+  `?start=custom_picks` deep link: (a) the group's automatic Top Picks post,
+  but **only** when that day's Top is genuinely empty (`top_empty_markup`);
+  (b) the group's community menu card, posted only via the admin `/menu`
+  command (`community_menu_markup`). `telegram.ts`'s `customPicksButton()`/
+  `topEmptyKeyboard()`/`communityMenuKeyboard()` now match this exactly;
+  `topEmptyKeyboard()`/`communityMenuKeyboard()` take the bot's username and
+  omit the button (never a dead link) if `TELEGRAM_BOT_USERNAME` isn't set,
+  mirroring production's own `tg.get_bot_username()` guard.
+- **`/menu` is now ported** (`index.ts`): admin-only (`TELEGRAM_ADMIN_IDS`,
+  comma-separated numeric ids — new, matches `cfg.telegram_admin_ids`),
+  posts the community menu to the configured group regardless of which
+  chat `/menu` was typed in, exactly like `_post_community_menu`.
+- **Found and fixed a second bug while correcting this**: the automatic
+  group post (`cron.ts postGroupPicks`) was reusing the *paginated*
+  interactive `/top`/`/daily` view. Production's automatic post
+  (`predbot/bot/broadcast.py picks_messages`/`summary_card`) is always the
+  **whole ticket in one message, never paginated** — a Daily ticket with
+  more legs than `PICKS_PER_PAGE` (5) would have been posted to the group
+  showing only its first page, with a stray "Page 1 of N" footer production
+  never has. Added `renderGroupCard()` (`views.ts`) for this unpaginated
+  path; `postGroupPicks`/`postGroupRecap` now also send with **no keyboard
+  at all** except the genuinely-empty-Top case, matching
+  `daily_picks.run`'s `markup = None` default exactly (the Worker
+  previously always attached the interactive pager/switch keyboard to
+  every automatic group post). See `workers/tests/group_posting_card.test.mjs`
+  for the regression coverage of both bugs.
+
+## Custom Picks — still not full parity (see the dedicated section above)
+
+The request-parsing and ticket-construction simplifications documented in
+the "Custom Picks (partial port)" section above are unchanged by this
+pass. Production's `custom_intent.py` NLP grammar and `custom_picks.py`
+beam search were not re-attempted at full fidelity — this remains the
+single largest acknowledged gap, called out explicitly in the final
+report rather than claimed as done.

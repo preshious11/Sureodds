@@ -193,7 +193,12 @@ describe("/stats and /yesterday real settlement data", () => {
     try {
       const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
       assert.match(stats.text, /1 of 2 settled · final card after the last result/);
-      assert.doesNotMatch(stats.text, /🎯/); // no hit rate until the day is fully settled
+      // Yesterday's OWN hit rate is withheld until its day is fully settled;
+      // the separate 7-day trend section legitimately has its own 🎯 (it
+      // covers whichever days in the window ARE fully settled), so assert
+      // on the yesterday block specifically, not the whole message.
+      const yesterdayBlock = stats.text.split("📈 Last")[0];
+      assert.doesNotMatch(yesterdayBlock, /🎯/);
     } finally {
       sql.close();
     }
@@ -210,6 +215,64 @@ describe("/stats and /yesterday real settlement data", () => {
       const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
       assert.match(stats.text, /✅ 1  ❌ 0  ➖ 1/);
       assert.match(stats.text, /🎯 100%/); // decided = won+lost = 1, hit rate on decided legs only
+    } finally {
+      sql.close();
+    }
+  });
+
+  it("By-sport breakdown and 7-day trend are also scoped to Top+Daily only — 100 All-only rows don't move them", async () => {
+    const sql = baseSchema();
+    const today = "2026-10-14";
+    const yesterday = "2026-10-13";
+    setCache(sql, today);
+    insertPick(sql, 1, yesterday, "won", 2.0); addMembership(sql, 1, "all"); addMembership(sql, 1, "top");
+    insertPick(sql, 2, yesterday, "lost", 1.5); addMembership(sql, 2, "all"); addMembership(sql, 2, "daily");
+    const before = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+    for (let id = 100; id < 200; id += 1) {
+      insertPick(sql, id, yesterday, id % 2 === 0 ? "won" : "lost", 3.0);
+      addMembership(sql, id, "all"); // no top/daily membership: must never count
+    }
+    try {
+      const after = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      assert.equal(after.text, before.text, "All Predictions must never change by-sport or 7-day figures either");
+      assert.match(after.text, /⚽ Football 1\/2/); // 1 won of 2 settled (tracked legs only)
+      assert.match(after.text, /📈 Last 1 day/);
+      assert.match(after.text, /✅ 1  ❌ 1  ➖ 0  ·  🎯 50%/);
+    } finally {
+      sql.close();
+    }
+  });
+
+  it("the 7-day window is capped to how long the engine has actually run, never claims a full week early", async () => {
+    const sql = baseSchema();
+    const today = "2026-10-14";
+    const yesterday = "2026-10-13";
+    setCache(sql, today);
+    // The engine's very first pick_date is yesterday — a 2-day-old table,
+    // so the trend section must say "Last 1 day", never "Last 7 days".
+    insertPick(sql, 1, yesterday, "won", 2.0); addMembership(sql, 1, "all"); addMembership(sql, 1, "top");
+    try {
+      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      assert.match(stats.text, /📈 Last 1 day\b/);
+      assert.doesNotMatch(stats.text, /📈 Last 7 days/);
+    } finally {
+      sql.close();
+    }
+  });
+
+  it("a leg promoted into BOTH Top and Daily is counted once in the by-sport breakdown too", async () => {
+    const sql = baseSchema();
+    const today = "2026-10-14";
+    const yesterday = "2026-10-13";
+    setCache(sql, today);
+    insertPick(sql, 1, yesterday, "won", 2.0);
+    addMembership(sql, 1, "all");
+    addMembership(sql, 1, "top");
+    addMembership(sql, 1, "daily");
+    try {
+      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      assert.match(stats.text, /⚽ Football 1\/1/);
+      assert.doesNotMatch(stats.text, /⚽ Football 2\/2/);
     } finally {
       sql.close();
     }

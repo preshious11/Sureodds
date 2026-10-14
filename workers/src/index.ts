@@ -20,6 +20,7 @@ import {
 import { BUSY, INTRO, respond as customPicksRespond } from "./custom_picks.ts";
 import {
   commandToView,
+  communityMenuKeyboard,
   isAuthorized,
   menuKeyboard,
   normalizeCommand,
@@ -34,6 +35,8 @@ const WELCOME_COMMANDS =
   "<b>📚 /all</b> – All predictions\n" +
   "<b>📋 /daily</b> – Daily picks · Accumulator slip\n" +
   "<b>📊 /stats</b> – See prediction results";
+
+const COMMUNITY_MENU_TEXT = "⚽ Predictions\n\nToday's picks, results and more.";
 
 function welcomeMessage(firstName: string): string {
   const safe = firstName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -177,6 +180,37 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       parse_mode: "HTML",
       reply_markup: menuKeyboard(),
     });
+    return;
+  }
+
+  // /menu (admin-only): posts the community menu — including the Custom
+  // Picks deep-link button — to the GROUP, regardless of which chat /menu
+  // was typed in (predbot/bot/commands.py:542-545, _post_community_menu).
+  // This is the group's normal (non-empty-Top-card) Custom Picks entry
+  // point; the empty-Top-card keyboard (above) is the other one.
+  if (text.trim() === "/menu") {
+    const adminIds = (env.TELEGRAM_ADMIN_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!adminIds.includes(String(from.id ?? ""))) {
+      await tgApi(env, "sendMessage", { chat_id: chatId, text: "Not allowed." });
+      return;
+    }
+    if (!env.TELEGRAM_CHAT_ID) {
+      await tgApi(env, "sendMessage", { chat_id: chatId, text: "Community destination is not configured. Set TELEGRAM_CHAT_ID." });
+      return;
+    }
+    if (!env.TELEGRAM_BOT_USERNAME) {
+      await tgApi(env, "sendMessage", {
+        chat_id: chatId,
+        text: "Could not resolve this bot's username. Community menu was not posted. Try /menu again.",
+      });
+      return;
+    }
+    await tgApi(env, "sendMessage", {
+      chat_id: env.TELEGRAM_CHAT_ID,
+      text: COMMUNITY_MENU_TEXT,
+      reply_markup: communityMenuKeyboard(env.TELEGRAM_BOT_USERNAME),
+    });
+    await tgApi(env, "sendMessage", { chat_id: chatId, text: "Community menu posted." });
     return;
   }
 

@@ -24,7 +24,8 @@ import {
   setJobResult,
   type Env,
 } from "./db.ts";
-import { lagosDateString, renderView } from "./views.ts";
+import { lagosDateString, renderGroupCard, renderView } from "./views.ts";
+import { topEmptyKeyboard } from "./telegram.ts";
 
 export const BROADCAST_PER_SECOND = 25;
 export const CHAT_PER_SECOND = 1;
@@ -205,12 +206,20 @@ export async function postGroupPicks(
   // fires twice (or overlapping invocations) can send at most once — the
   // loser's markPosted is a no-op, mirroring production's post_done/mark_post.
   if (await hasPosted(env.DB, kind, localDate)) return "skipped";
-  const { text, replyMarkup } = await renderView(env, kind, 0, localDate);
+  // The WHOLE ticket in one message, never paginated (predbot/bot/
+  // broadcast.py picks_messages/summary_card) — renderView()'s paginated
+  // /top /daily output is for interactive replies, not this automatic post.
+  const { text, isEmpty } = await renderGroupCard(env, kind, localDate);
+  // predbot/jobs/daily_picks.py: markup is None for every automatic group
+  // card EXCEPT the genuinely-empty Top card, which swaps in the Custom
+  // Picks deep-link keyboard (top_empty_markup). Never shown without a
+  // configured bot username (never a dead link).
+  const replyMarkup = kind === "top" && isEmpty && env.TELEGRAM_BOT_USERNAME ? topEmptyKeyboard(env.TELEGRAM_BOT_USERNAME) : undefined;
   const { ok, messageId } = await sender(env, "sendMessage", {
     chat_id: env.TELEGRAM_CHAT_ID,
     text,
     parse_mode: "HTML",
-    reply_markup: replyMarkup,
+    ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
   });
   if (!ok) {
     await setJobResult(env.DB, "post", `${kind} ${localDate}: send failed, will retry next sweep`);
@@ -235,12 +244,13 @@ export async function postGroupRecap(
   if (lagosMinutes(nowMs) < gate) return "waiting";
   const localDate = lagosDateString(nowMs);
   if (await hasPosted(env.DB, "recap", localDate)) return "skipped";
-  const { text, replyMarkup } = await renderView(env, "yesterday", 0, localDate);
+  // predbot/jobs/recap.py: tg.send(text) — no keyboard on the automatic
+  // group recap, same as the picks cards above.
+  const { text } = await renderView(env, "yesterday", 0, localDate);
   const { ok, messageId } = await sender(env, "sendMessage", {
     chat_id: env.TELEGRAM_CHAT_ID,
     text,
     parse_mode: "HTML",
-    reply_markup: replyMarkup,
   });
   if (!ok) {
     await setJobResult(env.DB, "post", `recap ${localDate}: send failed, will retry next sweep`);

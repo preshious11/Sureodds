@@ -17,6 +17,9 @@ POST_TIME = "09:00"
 DELIVERY_TIME = "09:30"
 RECAP_TIME = "07:45"
 PAGE_SIZE = "5"
+# Public (not a secret): the Custom Picks deep-link button (empty-Top card)
+# is omitted entirely until this is set — never a dead link.
+# TELEGRAM_BOT_USERNAME = "YourProductionBot"
 
 # Secrets (never in this file):
 #   wrangler secret put TELEGRAM_BOT_TOKEN

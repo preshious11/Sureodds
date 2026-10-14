@@ -99,6 +99,45 @@ function seedPool(sql, { day = "2026-10-14", generatedAt = "2026-10-14T06:00:00Z
   );
 }
 
+describe("/menu admin command — the group's Custom Picks entry point", () => {
+  it("a non-admin typing /menu in the group gets 'Not allowed.', nothing posted to the group", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetch();
+    const envWithAdmin = { ...env(db), TELEGRAM_CHAT_ID: "group-1", TELEGRAM_BOT_USERNAME: "SureOddsBot", TELEGRAM_ADMIN_IDS: "999" };
+    await withFetch(fetchImpl, () => handleUpdate(envWithAdmin, textMessage(1, "group-1", "u1", "/menu", "supergroup")));
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.equal(fetchImpl.calls[0].body.chat_id, "group-1");
+    assert.match(fetchImpl.calls[0].body.text, /Not allowed/);
+  });
+  it("an admin typing /menu (from anywhere) posts the community menu with the Custom Picks button to the configured group", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetch();
+    const envWithAdmin = { ...env(db), TELEGRAM_CHAT_ID: "group-1", TELEGRAM_BOT_USERNAME: "SureOddsBot", TELEGRAM_ADMIN_IDS: "7" };
+    await withFetch(fetchImpl, () => handleUpdate(envWithAdmin, textMessage(1, "private-7", "7", "/menu")));
+    assert.equal(fetchImpl.calls.length, 2);
+    const posted = fetchImpl.calls.find((c) => c.body.chat_id === "group-1");
+    assert.ok(posted, "menu must be posted to the group, not the admin's own chat");
+    const kb = JSON.stringify(posted.body.reply_markup);
+    assert.match(kb, /✨ Custom Picks/);
+    assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=custom_picks/);
+    const ack = fetchImpl.calls.find((c) => c.body.chat_id === "private-7");
+    assert.match(ack.body.text, /posted/);
+  });
+  it("refuses to post without a configured group destination or bot username", async () => {
+    const db = realDb();
+    const noChat = { ...env(db), TELEGRAM_BOT_USERNAME: "SureOddsBot", TELEGRAM_ADMIN_IDS: "7" };
+    const f1 = stubFetch();
+    await withFetch(f1, () => handleUpdate(noChat, textMessage(1, "private-7", "7", "/menu")));
+    assert.equal(f1.calls.length, 1);
+    assert.match(f1.calls[0].body.text, /not configured/);
+    const noUsername = { ...env(db), TELEGRAM_CHAT_ID: "group-1", TELEGRAM_ADMIN_IDS: "7" };
+    const f2 = stubFetch();
+    await withFetch(f2, () => handleUpdate(noUsername, textMessage(2, "private-7", "7", "/menu")));
+    assert.equal(f2.calls.length, 1);
+    assert.match(f2.calls[0].body.text, /username/);
+  });
+});
+
 describe("Custom Picks private-chat access rules (index.ts routing)", () => {
   it("/start custom_picks sends the exact production INTRO text, private chat only", async () => {
     const db = realDb();

@@ -8,6 +8,8 @@ export interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_WEBHOOK_SECRET: string;
   TELEGRAM_CHAT_ID?: string;
+  TELEGRAM_BOT_USERNAME?: string;
+  TELEGRAM_ADMIN_IDS?: string;
   TIMEZONE?: string;
   PAGE_SIZE?: string;
   POST_TIME?: string;
@@ -299,6 +301,41 @@ export async function getStatsRowsForDate(db: D1Database, pickDate: string): Pro
     .bind(pickDate)
     .all<StatsRow>();
   return results ?? [];
+}
+
+export interface DayStatsRow extends StatsRow {
+  pick_date: string;
+  sport: string;
+  start_utc: string;
+}
+
+/**
+ * Same Top/Daily-only scoping as getStatsRowsForDate, over a date RANGE
+ * (`[sinceDate, beforeDate)`, both YYYY-MM-DD) — backs the 7-day trend and
+ * by-sport breakdown (predbot/jobs/stats.py compute()'s `rows7`/
+ * `rows_y_all`).
+ */
+export async function getStatsRowsForRange(
+  db: D1Database,
+  sinceDate: string,
+  beforeDate: string,
+): Promise<DayStatsRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT pick_date, sport, status, price, label, home, away, start_utc, result_json FROM picks
+       WHERE pick_date >= ?1 AND pick_date < ?2 AND EXISTS (
+         SELECT 1 FROM prediction_memberships m WHERE m.prediction_id = picks.id AND m.collection IN ('top', 'daily')
+       )`,
+    )
+    .bind(sinceDate, beforeDate)
+    .all<DayStatsRow>();
+  return results ?? [];
+}
+
+/** predbot/jobs/stats.py compute(): window_days = min(7, days since the first ever pick_date). */
+export async function getFirstPickDate(db: D1Database): Promise<string | null> {
+  const row = await db.prepare("SELECT MIN(pick_date) AS d FROM picks").bind().first<{ d: string | null }>();
+  return row?.d ?? null;
 }
 
 export async function hasPosted(db: D1Database, kind: string, postDate: string): Promise<boolean> {

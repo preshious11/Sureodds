@@ -19,6 +19,10 @@ POST_TIME = "09:00"
 DELIVERY_TIME = "09:30"
 RECAP_TIME = "07:45"
 PAGE_SIZE = "5"
+# Public (not a secret, same as production's tg.get_bot_username()):
+# the Custom Picks deep-link button (empty-Top card) is omitted entirely
+# until this is set, same as production refuses to show a dead link.
+# TELEGRAM_BOT_USERNAME = "YourStagingBot"
 # STAGE3_CRON_ENABLED is deliberately ABSENT (defaults off). Set to "1" via
 # `wrangler secret`... no — via [vars] edit + deploy, only with approval:
 # STAGE3_CRON_ENABLED = "1"

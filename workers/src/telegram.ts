@@ -131,7 +131,30 @@ export function sportsBackRow(day: string): KeyboardRow {
   return [{ text: "◀️ Sports", callback_data: encodeCallback("all", 0, day) }];
 }
 
-/** predbot/bot/callbacks.py top_empty_markup, minus the Custom Picks deep-link (not ported). */
-export function topEmptyKeyboard(): Record<string, unknown> {
-  return { inline_keyboard: [[viewButton("daily"), viewButton("all")]] };
+/** predbot/bot/callbacks.py custom_picks_button — same deep link for the empty-Top card and the community menu. */
+export function customPicksButton(botUsername: string): { text: string; url: string } {
+  return { text: "✨ Custom Picks", url: `https://t.me/${botUsername}?start=custom_picks` };
+}
+
+/**
+ * predbot/bot/callbacks.py top_empty_markup. `botUsername` is required to
+ * build the deep link (production defers/retries the whole publication
+ * rather than ever showing a dead link when the username isn't known yet —
+ * callers here must do the same: omit this card, don't send it with no
+ * button, if the username isn't configured).
+ */
+export function topEmptyKeyboard(botUsername: string): Record<string, unknown> {
+  return { inline_keyboard: [[viewButton("daily"), viewButton("all")], [customPicksButton(botUsername)]] };
+}
+
+/** predbot/bot/callbacks.py community_menu_markup — posted to the group only via the /menu admin command. */
+export function communityMenuKeyboard(botUsername: string): Record<string, unknown> {
+  return {
+    inline_keyboard: [
+      [viewButton("top"), viewButton("daily")],
+      [viewButton("all")],
+      [viewButton("stats"), viewButton("yesterday")],
+      [customPicksButton(botUsername)],
+    ],
+  };
 }
