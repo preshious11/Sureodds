@@ -291,12 +291,12 @@ describe("/pinmenu admin command — private-chat only, posts + pins the group m
     assert.equal(pin.body.chat_id, "group-1");
     assert.equal(pin.body.message_id, posted.body.message_id ?? 500);
     const ack = fetchImpl.calls.find((c) => c.body.chat_id === "private-7" && /posted and pinned/.test(c.body.text));
-    assert.ok(ack, "the admin must get a private confirmation naming the result");
+    assert.ok(ack, "the admin must get a simple private confirmation");
     const row = db._sql.prepare("SELECT message_id, pinned_by FROM pinned_menu WHERE chat_id='group-1'").get();
     assert.equal(row.message_id, 500);
     assert.equal(row.pinned_by, "private-7");
   });
-  it("explains the missing 'Pin Messages' permission clearly when pinning fails, without crashing or losing the post", async () => {
+  it("gives a simple permission notice when pinning fails, without crashing or losing the post", async () => {
     const db = realDb();
     const fetchImpl = stubFetchForPin({ pinOk: false });
     await withFetch(fetchImpl, () => handleUpdate(pinEnv(db), textMessage(1, "private-7", "7", "/pinmenu")));
@@ -308,8 +308,11 @@ describe("/pinmenu admin command — private-chat only, posts + pins the group m
     const row = db._sql.prepare("SELECT 1 FROM pinned_menu WHERE chat_id='group-1'").get();
     assert.equal(row, undefined, "nothing was actually pinned, so nothing should be recorded as pinned");
   });
-  it("when the group post itself fails (e.g. bot not in that chat), explains Telegram's actual reason, not just a bare status", async () => {
+  it("gives a simple failure notice when the group post itself fails (e.g. bot not in that chat), and logs the real reason instead of showing it to the admin", async () => {
     const calls = [];
+    const errors = [];
+    const realConsoleError = console.error;
+    console.error = (...args) => errors.push(args.join(" "));
     const flaky = async (url, init) => {
       const body = init?.body ? JSON.parse(init.body) : null;
       calls.push({ url, body });
@@ -319,12 +322,15 @@ describe("/pinmenu admin command — private-chat only, posts + pins the group m
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
     };
     const db = realDb();
-    await withFetch(flaky, () => handleUpdate(pinEnv(db), textMessage(1, "private-7", "7", "/pinmenu")));
+    try {
+      await withFetch(flaky, () => handleUpdate(pinEnv(db), textMessage(1, "private-7", "7", "/pinmenu")));
+    } finally {
+      console.error = realConsoleError;
+    }
     const ack = calls.find((c) => c.body.chat_id === "private-7");
     assert.ok(ack, "the admin must still get a private explanation");
-    assert.match(ack.body.text, /Failed to post the menu to the group/);
-    assert.match(ack.body.text, /chat not found/, "Telegram's own error description must be surfaced, not swallowed");
-    assert.match(ack.body.text, /TELEGRAM_CHAT_ID/, "must point at the likely misconfiguration");
+    assert.equal(ack.body.text, "❌ Failed to post the menu.", "the admin-facing message stays short and simple");
+    assert.ok(errors.some((e) => e.includes("chat not found")), "the real Telegram error must still be logged for operators");
     const pinned = db._sql.prepare("SELECT 1 FROM pinned_menu WHERE chat_id='group-1'").get();
     assert.equal(pinned, undefined);
   });
@@ -341,8 +347,7 @@ describe("/pinmenu admin command — private-chat only, posts + pins the group m
     assert.equal(second.calls.some((c) => c.url.includes("sendMessage") && c.body.chat_id === "group-1"), false, "no duplicate posted to the group");
     assert.equal(second.calls.some((c) => c.url.includes("pinChatMessage")), false, "editing in place never needs a re-pin");
     const ack = second.calls.find((c) => c.body.chat_id === "private-7");
-    assert.match(ack.body.text, /already pinned/);
-    assert.match(ack.body.text, /No duplicate/);
+    assert.equal(ack.body.text, "✅ Menu refreshed.");
   });
   it("if the previously pinned message is gone, falls back to posting and pinning a fresh one", async () => {
     const db = realDb();

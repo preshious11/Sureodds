@@ -190,10 +190,7 @@ async function pinCommunityMenu(env: Env, adminChatId: string): Promise<void> {
         text: COMMUNITY_MENU_TEXT,
         reply_markup: communityMenuKeyboard(botUsername),
       });
-      await tgApi(env, "sendMessage", {
-        chat_id: adminChatId,
-        text: `Menu already pinned in the group — refreshed it in place (message ${previous.message_id}). No duplicate was posted.`,
-      });
+      await tgApi(env, "sendMessage", { chat_id: adminChatId, text: "✅ Menu refreshed." });
       return;
     } catch {
       // The previously pinned message is gone/unpinned/uneditable — fall
@@ -211,38 +208,26 @@ async function pinCommunityMenu(env: Env, adminChatId: string): Promise<void> {
     const body = (await res.json()) as { result?: { message_id?: number } };
     messageId = body.result?.message_id;
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    // Common causes: TELEGRAM_CHAT_ID isn't set to this group's real id
-    // (wrong/missing secret, or still the placeholder), or the bot isn't a
-    // member of that chat (never added, or removed/kicked since). The
-    // underlying Telegram error text (now included) names the actual
-    // reason instead of leaving it a guess.
-    await tgApi(env, "sendMessage", {
-      chat_id: adminChatId,
-      text:
-        `Failed to post the menu to the group: ${detail}. Nothing was pinned. ` +
-        "Check that TELEGRAM_CHAT_ID is set to this group's chat id and that the bot is still a member of it.",
-    });
+    // The detailed Telegram error (chat not found, bot not a member, etc.)
+    // is logged for operator visibility but kept out of the admin-facing
+    // message, which stays a short, simple failure notice.
+    console.error("pinCommunityMenu: group post failed:", err instanceof Error ? err.message : err);
+    await tgApi(env, "sendMessage", { chat_id: adminChatId, text: "❌ Failed to post the menu." });
     return;
   }
   if (messageId == null) {
-    await tgApi(env, "sendMessage", { chat_id: adminChatId, text: "Menu posted, but Telegram didn't return a message id, so it could not be pinned." });
+    await tgApi(env, "sendMessage", { chat_id: adminChatId, text: "❌ Failed to post the menu." });
     return;
   }
   try {
     await tgApi(env, "pinChatMessage", { chat_id: groupChatId, message_id: messageId, disable_notification: true });
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    await tgApi(env, "sendMessage", {
-      chat_id: adminChatId,
-      text:
-        `Menu posted to the group, but I couldn't pin it: ${detail}. I need the 'Pin Messages' admin permission there. ` +
-        "Grant it to the bot and try /pinmenu again.",
-    });
+    console.error("pinCommunityMenu: pin failed:", err instanceof Error ? err.message : err);
+    await tgApi(env, "sendMessage", { chat_id: adminChatId, text: "⚠️ Menu posted, but I need the 'Pin Messages' permission to pin it." });
     return;
   }
   await setPinnedMenu(env.DB, groupChatId, messageId, adminChatId, new Date().toISOString());
-  await tgApi(env, "sendMessage", { chat_id: adminChatId, text: `Menu posted and pinned in the group (message ${messageId}).` });
+  await tgApi(env, "sendMessage", { chat_id: adminChatId, text: "✅ Menu posted and pinned." });
 }
 
 /** Best-effort "⏳ Building your picks..." indicator; a failure here must never block the real result. */
