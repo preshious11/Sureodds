@@ -381,6 +381,122 @@ export async function markDelivery(
     .run();
 }
 
+export interface CustomPickPoolRow {
+  prediction_date: string;
+  timezone: string;
+  generated_at: string;
+  status: "COMPLETE" | "PARTIAL";
+}
+
+export async function getCustomPickPool(
+  db: D1Database,
+  predictionDate: string,
+  timezone: string,
+): Promise<CustomPickPoolRow | null> {
+  const row = await db
+    .prepare(
+      "SELECT prediction_date, timezone, generated_at, status FROM custom_pick_pools WHERE prediction_date = ?1 AND timezone = ?2",
+    )
+    .bind(predictionDate, timezone)
+    .first<CustomPickPoolRow>();
+  return row ?? null;
+}
+
+export interface CustomPickCandidateRow {
+  candidate_id: string;
+  canonical_event_id: string;
+  payload_json: string;
+  generated_at: string;
+}
+
+export async function getCustomPickCandidates(
+  db: D1Database,
+  predictionDate: string,
+  timezone: string,
+): Promise<CustomPickCandidateRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT candidate_id, canonical_event_id, payload_json, generated_at FROM custom_pick_candidates
+       WHERE prediction_date = ?1 AND timezone = ?2 ORDER BY canonical_event_id, candidate_id`,
+    )
+    .bind(predictionDate, timezone)
+    .all<CustomPickCandidateRow>();
+  return results ?? [];
+}
+
+/**
+ * Custom Picks session state. Production tracks "(user_id, chat_id) is in
+ * Custom Picks mode" and a request cooldown in in-memory dicts on one
+ * long-lived process (predbot/custom_recovery.py); a Worker has no memory
+ * shared across invocations, so this is the durable substitute (see
+ * migrations/0006_custom_sessions.sql). Tickets themselves are still never
+ * persisted, matching production.
+ */
+export async function isCustomSessionActive(db: D1Database, userId: string, chatId: string): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT active FROM custom_sessions WHERE user_id = ?1 AND chat_id = ?2")
+    .bind(userId, chatId)
+    .first<{ active: number }>();
+  return !!row && row.active === 1;
+}
+
+export async function enterCustomSession(db: D1Database, userId: string, chatId: string): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO custom_sessions (user_id, chat_id, active, last_request_at, updated_at)
+       VALUES (?1, ?2, 1, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+       ON CONFLICT(user_id, chat_id) DO UPDATE SET active = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+    )
+    .bind(userId, chatId)
+    .run();
+}
+
+export async function leaveCustomSession(db: D1Database, userId: string, chatId: string): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO custom_sessions (user_id, chat_id, active, last_request_at, updated_at)
+       VALUES (?1, ?2, 0, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+       ON CONFLICT(user_id, chat_id) DO UPDATE SET active = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+    )
+    .bind(userId, chatId)
+    .run();
+}
+
+/**
+ * Simplified stand-in for production's token-bucket work budget + 30/60s
+ * request counter + 16-slot queue (commands.py CUSTOM_WORK_LIMIT/
+ * CUSTOM_LIMIT/CUSTOM_QUEUE_LIMIT) — a Worker invocation can't share an
+ * in-process limiter across requests either. This is a flat per-chat
+ * cooldown: returns true (and does NOT update the timestamp) if the last
+ * request was within `cooldownMs`, so the caller can reject without
+ * spending a search. Call recordCustomRequest() only after a request is
+ * actually allowed to proceed.
+ */
+export async function isCustomOnCooldown(
+  db: D1Database,
+  userId: string,
+  chatId: string,
+  nowMs: number,
+  cooldownMs: number,
+): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT last_request_at FROM custom_sessions WHERE user_id = ?1 AND chat_id = ?2")
+    .bind(userId, chatId)
+    .first<{ last_request_at: string | null }>();
+  if (!row?.last_request_at) return false;
+  const lastMs = Date.parse(row.last_request_at);
+  return Number.isFinite(lastMs) && nowMs - lastMs < cooldownMs;
+}
+
+export async function recordCustomRequest(db: D1Database, userId: string, chatId: string, nowMs: number): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE custom_sessions SET last_request_at = ?3, updated_at = ?3 WHERE user_id = ?1 AND chat_id = ?2`,
+    )
+    .bind(userId, chatId, new Date(nowMs).toISOString().replace(/\.\d+Z$/, "Z"))
+    .run();
+}
+
 export async function setJobResult(
   db: D1Database,
   name: string,

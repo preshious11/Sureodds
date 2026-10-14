@@ -279,21 +279,46 @@ export async function detectMissedGeneration(env: Env, nowMs = Date.now()): Prom
   return missed;
 }
 
+// Cloudflare passes the exact matched Cron Trigger pattern as `event.cron` —
+// plain cron syntax (e.g. "*/5 8-11 * * *"), never a descriptive word. A
+// previous version of this dispatcher matched on `cron.includes("post")` /
+// `"recap"` / `"deliver"`, which can never match a real trigger string once
+// wrangler.staging.toml's `[[triggers.crons]]` is a list of several plain
+// patterns — every scheduled invocation would have silently no-op'd. Match
+// on the exact pattern instead, via the constants wrangler.staging.toml's
+// comment must use verbatim.
+//
+// POST/RECAP are READINESS SWEEPS, not one-shot fires: generation (GitHub
+// Actions, stage6-scheduled-staging.yml) and this Worker run on separate
+// infrastructure with no shared lock, so a single cron fire at exactly
+// 09:00 Lagos cannot be trusted to find a COMPLETE cache — a slow or
+// retried generation run would otherwise mean NOTHING ever posts that day
+// (one-shot, no second chance). Instead the Cron fires every 5 minutes
+// across a multi-hour window; postGroupPicks/postGroupRecap re-check
+// readiness (COMPLETE cache) and their own post_date receipt on every fire,
+// so repeated fires before readiness are safe no-ops ("waiting") and
+// repeated fires after the first successful send are safe no-ops
+// ("skipped") — across the whole window, each kind posts at most once.
+export const CRON_POST_SWEEP = "*/5 8-11 * * *"; // 08:00-11:55 UTC = 09:00-12:55 Lagos
+export const CRON_RECAP_SWEEP = "*/5 6-7 * * *"; // 06:00-07:55 UTC = 07:00-08:55 Lagos
+export const CRON_DELIVER_SWEEP = "*/5 * * * *"; // webhook-retry observability only, any time
+export const CRON_WATCH = "0 10 * * *"; // 11:00 Lagos: log a miss if generation never landed
+
 export async function handleScheduled(env: Env, cron: string, nowMs = Date.now()): Promise<void> {
   // Ships OFF: enable by setting STAGE3_CRON_ENABLED=1 in staging only.
   // No triggers are attached in wrangler.toml yet (Stage 4).
   if ((env as Record<string, unknown>).STAGE3_CRON_ENABLED !== "1") return;
-  if (cron.includes("post")) {
+  if (cron === CRON_POST_SWEEP) {
     // Group-only (production model). Never calls sweepDeliveries here —
     // individual-subscriber broadcasting stays disabled, matching
     // production's SUBSCRIBER_DELIVERY_ENABLED=false.
     await postGroupPicks(env, "top", nowMs);
     await postGroupPicks(env, "daily", nowMs);
-  } else if (cron.includes("deliver")) {
+  } else if (cron === CRON_DELIVER_SWEEP) {
     await reportFailedUpdates(env);
-  } else if (cron.includes("recap")) {
+  } else if (cron === CRON_RECAP_SWEEP) {
     await postGroupRecap(env, nowMs);
-  } else if (cron.includes("settle") || cron.includes("watch")) {
+  } else if (cron === CRON_WATCH) {
     await detectMissedGeneration(env, nowMs);
   }
 }

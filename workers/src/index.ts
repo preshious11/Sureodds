@@ -2,7 +2,22 @@
 // Intrusion surface is intentionally small: no provider calls, no generation,
 // no spending. Slow work belongs in GitHub Actions (Stage 2) or later Crons.
 
-import { QuotaExhausted, completeUpdate, failUpdate, tryClaimUpdate, upsertSubscriber, type Env } from "./db.ts";
+import {
+  QuotaExhausted,
+  completeUpdate,
+  enterCustomSession,
+  failUpdate,
+  getCustomPickCandidates,
+  getCustomPickPool,
+  isCustomOnCooldown,
+  isCustomSessionActive,
+  leaveCustomSession,
+  recordCustomRequest,
+  tryClaimUpdate,
+  upsertSubscriber,
+  type Env,
+} from "./db.ts";
+import { BUSY, INTRO, respond as customPicksRespond } from "./custom_picks.ts";
 import {
   commandToView,
   isAuthorized,
@@ -11,6 +26,8 @@ import {
   parseCallback,
 } from "./telegram.ts";
 import { lagosDateString, renderView } from "./views.ts";
+
+const CUSTOM_PICKS_COOLDOWN_MS = 3_000;
 
 const WELCOME_COMMANDS =
   "<b>🏆 /top</b> – Top picks of the day\n" +
@@ -23,18 +40,34 @@ function welcomeMessage(firstName: string): string {
   return `👋 Hi, ${safe}\n\nUse the menu below or these commands:\n\n${WELCOME_COMMANDS}`;
 }
 
+// Throws on a non-2xx response instead of returning it silently: previously
+// routeUpdate never inspected the Response it got back, so a failed
+// sendMessage/editMessageText (Telegram 5xx/4xx) was treated as success —
+// the update was marked `done` even though the user was never actually
+// messaged, and no retry ever happened. Throwing routes the failure through
+// handleUpdate's existing catch -> failUpdate path, so a transient Telegram
+// failure is retried exactly like a D1 failure already is.
 async function tgApi(env: Env, method: string, payload: Record<string, unknown>): Promise<Response> {
   const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
+  if (!res.ok) {
+    throw new Error(`telegram ${method} failed: ${res.status}`);
+  }
   return res;
 }
 
 async function answerCallback(env: Env, id: string, text?: string): Promise<void> {
   if (!id) return;
-  await tgApi(env, "answerCallbackQuery", { callback_query_id: id, text: text ?? undefined });
+  // Best-effort only: a failed toast must never fail the whole update (the
+  // page render/edit it accompanies may already have succeeded).
+  try {
+    await tgApi(env, "answerCallbackQuery", { callback_query_id: id, text: text ?? undefined });
+  } catch {
+    // swallowed deliberately
+  }
 }
 
 export async function handleUpdate(env: Env, update: Record<string, unknown>): Promise<void> {
@@ -115,10 +148,23 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   if (!chatId) return;
   const text = String((msg as Record<string, unknown>).text ?? "");
 
+  // /start custom_picks (the "✨ Custom Picks" deep link) enters a private,
+  // session-scoped mode (predbot/custom_recovery.py's Recovery) BEFORE the
+  // generic /start handling below — mirrors commands.py:378-390.
+  const userId = String(from.id ?? "");
+  if (text.startsWith("/start") && text.includes("custom_picks")) {
+    if (chatType !== "private" || !userId) return; // no group/channel path exists for Custom Picks.
+    await enterCustomSession(env.DB, userId, chatId);
+    await tgApi(env, "sendMessage", { chat_id: chatId, text: INTRO });
+    return;
+  }
+
   // /start subscribes (private) and always shows the menu; group /start
-  // shows the menu without subscribing the group.
+  // shows the menu without subscribing the group. Also leaves any active
+  // Custom Picks session (predbot's `_custom_leave` on plain /start).
   if (text.startsWith("/start")) {
     if (chatType === "private") {
+      if (userId) await leaveCustomSession(env.DB, userId, chatId);
       await upsertSubscriber(env.DB, chatId, {
         username: (from.username as string) ?? null,
         firstName: (from.first_name as string) ?? null,
@@ -132,6 +178,42 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       reply_markup: menuKeyboard(),
     });
     return;
+  }
+
+  // /stop leaves any active Custom Picks session (production also
+  // unsubscribes from group broadcasts via db.subscriber_remove — not
+  // ported here since this Worker's group delivery isn't subscriber-based).
+  if (text.trim() === "/stop") {
+    if (chatType === "private" && userId) await leaveCustomSession(env.DB, userId, chatId);
+    return;
+  }
+
+  // Free-text routing into an active Custom Picks session — private chat
+  // only, mirrors commands.py:356-358. Checked before the generic command
+  // lookup so a Custom Picks reply (e.g. "3 basketball picks") is never
+  // mistaken for an unknown command.
+  if (chatType === "private" && userId && text.trim() !== "" && !text.startsWith("/")) {
+    if (await isCustomSessionActive(env.DB, userId, chatId)) {
+      if (await isCustomOnCooldown(env.DB, userId, chatId, Date.now(), CUSTOM_PICKS_COOLDOWN_MS)) {
+        await tgApi(env, "sendMessage", { chat_id: chatId, text: BUSY });
+        return;
+      }
+      await recordCustomRequest(env.DB, userId, chatId, Date.now());
+      const zone = env.TIMEZONE ?? "Africa/Lagos";
+      const day = lagosDateString(Date.now());
+      const result = await customPicksRespond(
+        {
+          getPool: (d, z) => getCustomPickPool(env.DB, d, z),
+          getCandidates: (d, z) => getCustomPickCandidates(env.DB, d, z),
+        },
+        text,
+        zone,
+        day,
+        Date.now(),
+      );
+      await tgApi(env, "sendMessage", { chat_id: chatId, text: result.text, parse_mode: "HTML" });
+      return;
+    }
   }
 
   const cmd = normalizeCommand(text);

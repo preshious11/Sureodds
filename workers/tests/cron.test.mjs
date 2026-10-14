@@ -1,6 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  CRON_DELIVER_SWEEP,
+  CRON_POST_SWEEP,
+  CRON_RECAP_SWEEP,
+  CRON_WATCH,
   TokenBucket,
   detectMissedGeneration,
   handleScheduled,
@@ -17,9 +21,16 @@ const BEFORE_GATE = Date.UTC(2026, 9, 11, 7, 0);
 
 function cronDb({ cache = null, subs = [], delivered = new Set(), posted = new Set() } = {}) {
   const jobs = {};
+  const state = { cache };
   return {
     jobs,
     posted,
+    get cache() {
+      return state.cache;
+    },
+    set cache(value) {
+      state.cache = value;
+    },
     prepare(sql) {
       return {
         _sql: sql,
@@ -29,7 +40,7 @@ function cronDb({ cache = null, subs = [], delivered = new Set(), posted = new S
           return this;
         },
         async first() {
-          if (this._sql.includes("FROM prediction_cache")) return cache;
+          if (this._sql.includes("FROM prediction_cache")) return state.cache;
           if (this._sql.includes("FROM job_state")) return null;
           if (this._sql.includes("FROM posts")) {
             const [kind, postDate] = this._args;
@@ -199,8 +210,17 @@ describe("group posting (production model: single group, never per-subscriber)",
   });
 });
 
-describe("handleScheduled dispatch never uses per-subscriber broadcast for recap", () => {
-  it("'post' cron tag posts top and daily to the group; 'recap' tag posts group recap", async () => {
+describe("handleScheduled dispatches on the exact Cron Trigger pattern, never a substring tag", () => {
+  it("only the configured pattern strings trigger anything; an unrelated pattern is a silent no-op", async () => {
+    const db = cronDb({ cache: { status: "COMPLETE", payload_json: "{}" } });
+    const env = { DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5", TELEGRAM_CHAT_ID: "-100123", STAGE3_CRON_ENABLED: "1" };
+    // A real Cloudflare Cron Trigger pattern never contains the word "post" —
+    // a dispatcher relying on cron.includes("post") would never fire.
+    await handleScheduled(env, "0 8 * * *", AFTER_GATE); // looks post-ish, is NOT the registered pattern
+    assert.equal(db.posted.size, 0);
+    assert.equal(db.jobs.last, undefined);
+  });
+  it("CRON_POST_SWEEP posts top and daily to the group; CRON_RECAP_SWEEP posts group recap", async () => {
     const db = cronDb({ cache: { status: "COMPLETE", payload_json: "{}" } });
     const env = {
       DB: db,
@@ -216,11 +236,46 @@ describe("handleScheduled dispatch never uses per-subscriber broadcast for recap
       return { ok: true, status: 200, json: async () => ({ result: { message_id: 1 } }) };
     };
     try {
-      await handleScheduled(env, "0 8 * * * post", AFTER_GATE);
+      await handleScheduled(env, CRON_POST_SWEEP, AFTER_GATE);
       assert.equal(calls, 2); // top + daily, never a per-subscriber loop
       const RECAP_AFTER = Date.UTC(2026, 9, 11, 6, 50);
-      await handleScheduled(env, "0 7 * * * recap", RECAP_AFTER);
+      await handleScheduled(env, CRON_RECAP_SWEEP, RECAP_AFTER);
       assert.equal(calls, 3);
+      // CRON_DELIVER_SWEEP and CRON_WATCH are distinct patterns that must
+      // not re-trigger a post even though they can fire in the same minute.
+      await handleScheduled(env, CRON_DELIVER_SWEEP, AFTER_GATE);
+      await handleScheduled(env, CRON_WATCH, AFTER_GATE);
+      assert.equal(calls, 3);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+  it("readiness sweep: a slow generation run still gets posted exactly once, not skipped for the whole day", async () => {
+    // Simulates the real race this fixes: generation (GitHub Actions) and
+    // posting (this Worker) run on separate infra with no shared lock. The
+    // first few sweep fires land before the cache goes COMPLETE; a later
+    // fire after it lands must still post; every fire after THAT must be a
+    // no-op, never a duplicate.
+    const db = cronDb({ cache: null });
+    const env = { DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5", TELEGRAM_CHAT_ID: "-100123", STAGE3_CRON_ENABLED: "1" };
+    const realFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return { ok: true, status: 200, json: async () => ({ result: { message_id: 1 } }) };
+    };
+    try {
+      // Two sweep fires while generation is still running (no COMPLETE cache yet).
+      await handleScheduled(env, CRON_POST_SWEEP, AFTER_GATE);
+      await handleScheduled(env, CRON_POST_SWEEP, AFTER_GATE + 5 * 60_000);
+      assert.equal(calls, 0, "must not post stale/missing data");
+      // Generation lands.
+      db.cache = { status: "COMPLETE", payload_json: "{}" };
+      await handleScheduled(env, CRON_POST_SWEEP, AFTER_GATE + 10 * 60_000);
+      assert.equal(calls, 2, "posts top+daily exactly once generation is ready");
+      // Further sweep fires that day must never duplicate.
+      await handleScheduled(env, CRON_POST_SWEEP, AFTER_GATE + 15 * 60_000);
+      assert.equal(calls, 2, "no duplicate group messages on later sweep fires");
     } finally {
       globalThis.fetch = realFetch;
     }

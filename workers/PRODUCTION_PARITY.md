@@ -77,3 +77,91 @@ variable `STAGE6_LIVE_ENABLED` is set to `"true"` — a single Actions-settings
 toggle, no code change, no redeploy. `allow_telegram_posts` stays `false` on
 every scheduled call regardless, since Worker-side Telegram posting is a
 separate, still-inert gate (above).
+
+**Readiness-sweep fix (this pass, for the 09:00 Lagos race)**: generation
+(GitHub Actions, stage6) and posting (this Worker) run on separate
+infrastructure with no shared lock. A one-shot Cron fire at exactly 09:00
+Lagos could not be trusted to find a COMPLETE cache if generation ran
+long — and worse, the previous dispatcher matched on
+`cron.includes("post")`/`"recap"`/`"deliver"`, which can never match a real
+Cloudflare Cron Trigger pattern (plain cron syntax carries no descriptive
+word), so once multiple `[[triggers.crons]]` entries were attached none of
+them would have dispatched at all. Fixed: `handleScheduled()` now matches
+the exact pattern via exported constants (`CRON_POST_SWEEP`,
+`CRON_RECAP_SWEEP`, `CRON_DELIVER_SWEEP`, `CRON_WATCH`, in `cron.ts`), and
+POST/RECAP are sweeps (fire every 5 minutes across a multi-hour window) —
+`postGroupPicks`/`postGroupRecap`'s own COMPLETE-cache check and
+`post_date` receipt make every repeat fire before and after the one real
+send a safe no-op, so a slow or retried generation run still gets posted
+exactly once instead of being silently skipped for the whole day. See
+`workers/tests/cron.test.mjs`'s "readiness sweep" test for the exact race
+this fixes.
+
+## Custom Picks (this pass — partial port, not full parity)
+
+Production's `predbot/custom_picks.py` + `custom_recovery.py` +
+`custom_intent.py` is a private-chat, free-text request → beam-searched
+ticket feature. Ported to `workers/src/custom_picks.ts` and wired into
+`workers/src/index.ts`. **Faithful**: the four canned copy strings
+(INTRO/UNAVAILABLE/TODAY_ONLY/HELP, verbatim), the candidate validation
+rules (`normalizeCandidate` ~ `custom_picks.py normalize()` — same
+cancelled/live/started/stale-evaluation/price-probability-range/
+market-selection/line checks), the ticket text shape (`formatTicket` ~
+`format_ticket()`, reusing the already-ported `combinedOdds`/`SPORT_ICON`),
+and the access rules (private-chat only at every entry point; `/start
+custom_picks` deep-link entry sends INTRO directly, bypassing the parser,
+exactly like production; plain `/start`/`/stop` leave the session).
+
+**Simplified, not faked** (every gap below fails safe — HELP/UNAVAILABLE/no-
+ticket — rather than fabricating a pick or a ticket that violates the same
+constraints production enforces):
+1. **Request parsing** (`parseSimpleRequest`): recognizes explicit sport
+   name/alias, "`N odds`"/"`odds of N`", and "`N picks/games/legs`" patterns
+   only. Production's `custom_intent.py parse()` is a much larger NLP
+   grammar (ambiguity detection, competition/market filters, conflicting-
+   constraint detection, off-topic detection). Anything outside the
+   recognized patterns gets HELP, never a guess.
+2. **Ticket construction** (`buildTicket`): one leg per fixture, candidates
+   tried in probability-descending order, kept if within the target-odds
+   tolerance band (±10%, same `TOLERANCE` as production). This is a greedy
+   selection, not production's per-fixture beam search with market-family
+   diversity and odds-bucketed retention (`custom_picks.py search()`). It
+   can return a worse (or no) ticket where production's search would find
+   one, but it never returns a ticket that fails the same leg-count/odds
+   checks production itself re-verifies (`valid_ticket`).
+3. **No alternative-suggestion buttons on failure** — production's
+   `prepare()`/`Recovery.ready` builds up to 3 tappable alternative requests
+   when a ticket can't be built; not ported. A failure here is a plain text
+   reply with no buttons.
+4. **Session/rate-limit storage**: production holds "(user_id, chat_id) is
+   in Custom Picks mode", conversation refinement context, and a
+   token-bucket work budget + 30-requests/60s counter + 16-slot queue in
+   plain in-memory dicts on one long-lived process
+   (`predbot/custom_recovery.py`, `commands.py` `_custom_executor`). A
+   Cloudflare Worker has no memory shared across invocations, so this port
+   uses a new D1 table (`migrations/0006_custom_sessions.sql`,
+   `custom_sessions`) for session membership, and a flat 3-second per-chat
+   cooldown (`isCustomOnCooldown`/`recordCustomRequest`) in place of the
+   token-bucket/counter/queue system. Tickets are still never persisted
+   (same as production), only session membership and the cooldown
+   timestamp are.
+5. **Conversation refinement is not ported**: production merges a new
+   message into a stored prior `Request` when classified as a
+   "refinement" (e.g. "no, tennis instead"). Every message here is parsed
+   independently; a follow-up message is a fresh request, not a refinement
+   of the last one.
+6. **No inline "✨ Custom Picks" button** added to the welcome/menu keyboard
+   yet — the `/start custom_picks` deep-link entry point itself works
+   (what the button would link to), but nothing in the Worker's own UI
+   currently surfaces that link. Minor, cosmetic, not done this pass.
+
+**Data contract (was missing, fixed this pass)**: the archive data Custom
+Picks reads (`custom_pick_candidates`, `custom_pick_pools` — schema already
+present in `migrations/0003_engine_state.sql`, matching production's
+SQLite schema exactly) was never included in `stage5-acceptance.yml`'s
+sync `--tables` list, so even though the D1 schema and the Worker's read
+code now exist, no row would ever have reached staging D1 without this.
+Added both tables to the `--tables` list (`d1_sync.py`'s `write_policy`/
+`key_columns` already supported them structurally — this was a one-line
+workflow config gap, not a missing schema or a missing sync-engine
+feature).

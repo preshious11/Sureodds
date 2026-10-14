@@ -24,10 +24,21 @@ PAGE_SIZE = "5"
 # STAGE3_CRON_ENABLED = "1"
 
 # Stage-4 Cron triggers (DO NOT UNCOMMENT without approval — also requires
-# STAGE3_CRON_ENABLED = "1" above; both gates must be lifted together):
+# STAGE3_CRON_ENABLED = "1" above; both gates must be lifted together).
+# These four strings MUST match src/cron.ts's CRON_POST_SWEEP/CRON_RECAP_SWEEP/
+# CRON_DELIVER_SWEEP/CRON_WATCH exactly — handleScheduled() dispatches by
+# exact string match on the Cron Trigger pattern Cloudflare hands it (plain
+# cron syntax carries no descriptive word, so substring matching like
+# cron.includes("post") can never work here). POST/RECAP are readiness
+# sweeps (fire every 5 min across a window, not once) so a slow or retried
+# generation run still gets posted once it's ready, instead of being
+# silently skipped for the whole day — postGroupPicks/postGroupRecap's own
+# COMPLETE-cache check and post_date receipt make every repeat fire a safe
+# no-op before and after the single real send.
 # [[triggers.crons]]
 # crons = [
-#   "0 8 * * *",    # post: Top+Daily to the group (09:00 Lagos; handler re-checks the clock)
-#   "45 6 * * *",   # recap: yesterday's settled results to the group (07:45 Lagos)
-#   "*/5 * * * *",  # deliver: webhook-retry observability (no provider/Telegram calls)
+#   "*/5 8-11 * * *",  # post sweep: Top+Daily to the group, 09:00-12:55 Lagos
+#   "*/5 6-7 * * *",   # recap sweep: yesterday's results to the group, 07:00-08:55 Lagos
+#   "*/5 * * * *",     # deliver: webhook-retry observability (no provider/Telegram calls)
+#   "0 10 * * *",      # watch: log MISSED generation if no COMPLETE cache by 11:00 Lagos
 # ]
