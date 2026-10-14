@@ -73,34 +73,65 @@ export function parseCallback(
   return { view, page, day };
 }
 
+// predbot/bot/pagination.py VIEW_ICON / VIEW_LABEL — button text is the icon
+// and label only; production never highlights the active view in-place.
+const VIEW_ICON: Record<string, string> = { all: "📚", top: "🔥", daily: "📋", stats: "📊", yesterday: "🗓" };
+const VIEW_LABEL: Record<string, string> = {
+  all: "All Predictions",
+  top: "Top Picks",
+  daily: "Daily Picks",
+  stats: "Stats",
+  yesterday: "Yesterday",
+};
+
+function viewButton(view: string): { text: string; callback_data: string } {
+  return { text: `${VIEW_ICON[view] ?? ""} ${VIEW_LABEL[view] ?? view}`.trim(), callback_data: encodeCallback(view, 0) };
+}
+
+// predbot/bot/pagination.py SWITCH_ROWS: ((all,), (top, daily), (stats, yesterday)).
+function switchRows(): { text: string; callback_data: string }[][] {
+  return [[viewButton("all")], [viewButton("top"), viewButton("daily")], [viewButton("stats"), viewButton("yesterday")]];
+}
+
+/** predbot/bot/callbacks.py menu_markup — identical rows to switchRows(), no pager. */
 export function menuKeyboard(): Record<string, unknown> {
+  return { inline_keyboard: switchRows() };
+}
+
+type KeyboardRow = { text: string; callback_data: string }[];
+
+/**
+ * predbot/bot/pagination.py build_keyboard: an optional pager row (shown
+ * only when there's more than one page; ◀️ omitted on page 0, ▶️ omitted on
+ * the last page, middle button is a static "page/pages" no-op), any
+ * extra rows (e.g. a sport-menu back button), then the fixed view-switch
+ * rows. `day`, when given, is carried on page-turn buttons only, so an old
+ * message keeps paging the day it was opened for.
+ */
+export function buildKeyboard(
+  view: string,
+  page: number,
+  pages: number,
+  day: string | null = null,
+  extraRows: KeyboardRow[] = [],
+): Record<string, unknown> {
+  const pagerRow: KeyboardRow = [];
+  if (pages > 1) {
+    if (page > 0) pagerRow.push({ text: "◀️", callback_data: encodeCallback(view, page - 1, day ?? undefined) });
+    pagerRow.push({ text: `${page + 1}/${pages}`, callback_data: CALLBACK_NOOP });
+    if (page < pages - 1) pagerRow.push({ text: "▶️", callback_data: encodeCallback(view, page + 1, day ?? undefined) });
+  }
   return {
-    inline_keyboard: [
-      [
-        { text: "📚 All Predictions", callback_data: encodeCallback("all", 0) },
-        { text: "🔥 Top Picks", callback_data: encodeCallback("top", 0) },
-      ],
-      [
-        { text: "📋 Daily Picks", callback_data: encodeCallback("daily", 0) },
-        { text: "📊 Stats", callback_data: encodeCallback("stats", 0) },
-      ],
-      [{ text: "🗓 Yesterday", callback_data: encodeCallback("yesterday", 0) }],
-    ],
+    inline_keyboard: [...(pagerRow.length ? [pagerRow] : []), ...extraRows, ...switchRows()],
   };
 }
 
-export function switchRowKeyboard(view: string, page: number): Record<string, unknown> {
-  const btn = (v: string, label: string) => ({
-    text: v === view ? `• ${label} •` : label,
-    callback_data: encodeCallback(v, 0),
-  });
-  const prev = page > 0 ? [{ text: "◀ Prev", callback_data: encodeCallback(view, page - 1) }] : [];
-  const next = [{ text: "Next ▶", callback_data: encodeCallback(view, page + 1) }];
-  return {
-    inline_keyboard: [
-      [btn("all", "📚 All"), btn("top", "🔥 Top"), btn("daily", "📋 Daily")],
-      [btn("stats", "📊 Stats"), btn("yesterday", "🗓 Yesterday")],
-      [...prev, ...next],
-    ],
-  };
+/** predbot/bot/pagination.py _sports_back_row — the /all sport-page back button. */
+export function sportsBackRow(day: string): KeyboardRow {
+  return [{ text: "◀️ Sports", callback_data: encodeCallback("all", 0, day) }];
+}
+
+/** predbot/bot/callbacks.py top_empty_markup, minus the Custom Picks deep-link (not ported). */
+export function topEmptyKeyboard(): Record<string, unknown> {
+  return { inline_keyboard: [[viewButton("daily"), viewButton("all")]] };
 }

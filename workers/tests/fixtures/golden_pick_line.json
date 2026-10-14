@@ -1,0 +1,20 @@
+{
+  "description": "Shared golden fixture: predictions-bot/tests/test_bot_format_golden.py and workers/tests/format.test.mjs both render this input independently and must produce byte-identical Telegram text. No country field (current D1 schema has none), so this exercises the common case both sides actually support.",
+  "input": {
+    "sport_key": "football",
+    "sport_label": "Football",
+    "league": "Premier League",
+    "home": "Chelsea",
+    "away": "Man United",
+    "outcome": "Chelsea to Win",
+    "price": 1.31,
+    "confidence": 0.76,
+    "start_utc": "2026-10-10T23:30:00Z",
+    "now_utc": "2026-10-10T20:00:00Z"
+  },
+  "expected_lines": [
+    "⚽ Premier League · Chelsea vs Man United",
+    "🎯 Chelsea to Win",
+    "💰 1.31  ·  📊 76%  ·  🕘 12:30 AM"
+  ]
+}

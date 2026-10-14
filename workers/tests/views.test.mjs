@@ -77,8 +77,10 @@ describe("views never touch providers", () => {
   });
   it("renders cached picks with pagination, empty page stays honest", async () => {
     const picks = [
-      { id: 1, home: "Arsenal", away: "Chelsea", label: "Home Win", price: 2.1 },
-      { id: 2, home: "Barca", away: "Real", label: "Over 2.5", price: 1.9 },
+      { id: 1, sport: "football", league: "Premier League", home: "Arsenal", away: "Chelsea",
+        label: "Home Win", price: 2.1, prob: 0.5, start_utc: "2026-10-11T18:00:00Z" },
+      { id: 2, sport: "football", league: "La Liga", home: "Barca", away: "Real",
+        label: "Over 2.5", price: 1.9, prob: 0.6, start_utc: "2026-10-11T20:00:00Z" },
     ];
     const env = {
       DB: stubDb({ cache: { status: "COMPLETE", payload_json: "{}" }, picks }),
@@ -87,9 +89,12 @@ describe("views never touch providers", () => {
     };
     const page0 = await renderView(env, "top", 0, "2026-10-11");
     assert.match(page0.text, /Arsenal/);
+    assert.match(page0.text, /🎟 Combined odds/); // ticket header carries the combined-odds line
     const emptyDb = stubDb({ cache: { status: "COMPLETE", payload_json: "{}" }, picks: [] });
-    const empty = await renderView({ DB: emptyDb, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "top", 0, "2026-10-11");
-    assert.match(empty.text, /honest empty|No qualified/);
+    const emptyTop = await renderView({ DB: emptyDb, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "top", 0, "2026-10-11");
+    assert.match(emptyTop.text, /No Top Picks for today/); // production's exact Top empty-state text
+    const emptyDaily = await renderView({ DB: emptyDb, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "daily", 0, "2026-10-11");
+    assert.match(emptyDaily.text, /No selections qualified today/); // production's exact Daily empty-state text
   });
   it("duplicate Telegram update is claimed once (dedupe contract)", async () => {
     // Contract test: tryClaimUpdate uses INSERT OR IGNORE; second claim of a

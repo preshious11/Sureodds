@@ -223,6 +223,18 @@ export interface CachedPick {
   status: string;
 }
 
+const PICKS_PAGE_SQL = `SELECT p.id, m.collection AS tier, m.rank AS rank, p.sport, p.league, p.home, p.away,
+              p.start_utc, p.market, p.selection, p.label, p.price, p.prob, p.status
+       FROM picks p JOIN prediction_memberships m ON m.prediction_id = p.id
+       WHERE p.pick_date = ?1 AND m.collection = ?2
+       UNION ALL
+       SELECT p.id, ?2 AS tier, p.rank AS rank, p.sport, p.league, p.home, p.away,
+              p.start_utc, p.market, p.selection, p.label, p.price, p.prob, p.status
+       FROM picks p
+       WHERE p.pick_date = ?1 AND (?2 = 'all' OR p.tier = ?2)
+         AND NOT EXISTS (SELECT 1 FROM prediction_memberships m WHERE m.prediction_id = p.id)
+       ORDER BY rank ASC, id ASC`;
+
 export async function getPicksPage(
   db: D1Database,
   pickDate: string,
@@ -233,21 +245,45 @@ export async function getPicksPage(
   const safeLimit = Math.min(Math.max(limit, 1), 25);
   const safeOffset = Math.max(offset, 0);
   const { results } = await db
-    .prepare(
-      `SELECT p.id, m.collection AS tier, m.rank AS rank, p.sport, p.league, p.home, p.away,
-              p.start_utc, p.market, p.selection, p.label, p.price, p.prob, p.status
-       FROM picks p JOIN prediction_memberships m ON m.prediction_id = p.id
-       WHERE p.pick_date = ?1 AND m.collection = ?2
-       UNION ALL
-       SELECT p.id, ?2 AS tier, p.rank AS rank, p.sport, p.league, p.home, p.away,
-              p.start_utc, p.market, p.selection, p.label, p.price, p.prob, p.status
-       FROM picks p
-       WHERE p.pick_date = ?1 AND (?2 = 'all' OR p.tier = ?2)
-         AND NOT EXISTS (SELECT 1 FROM prediction_memberships m WHERE m.prediction_id = p.id)
-       ORDER BY rank ASC, id ASC LIMIT ?3 OFFSET ?4`,
-    )
+    .prepare(`${PICKS_PAGE_SQL} LIMIT ?3 OFFSET ?4`)
     .bind(pickDate, collection, safeLimit, safeOffset)
     .all<CachedPick>();
+  return results ?? [];
+}
+
+/**
+ * Every pick in a collection for a day, unpaged. Ticket headers (combined
+ * odds, pick count) and the /all sport menu need the WHOLE collection, not
+ * one page of it — mirrors predbot/bot/pagination.py pulling the full item
+ * list before slicing a page.
+ */
+export async function getAllPicksForCollection(
+  db: D1Database,
+  pickDate: string,
+  collection: "top" | "daily" | "all",
+): Promise<CachedPick[]> {
+  const { results } = await db.prepare(PICKS_PAGE_SQL).bind(pickDate, collection).all<CachedPick>();
+  return results ?? [];
+}
+
+export interface StatsRow {
+  status: string;
+  price: number;
+  label: string;
+  home: string;
+  away: string;
+  result_json: string | null;
+}
+
+/** Every pick issued for a day, for settlement stats (not collection-scoped). */
+export async function getStatsRowsForDate(db: D1Database, pickDate: string): Promise<StatsRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT status, price, label, home, away, result_json FROM picks
+       WHERE pick_date = ?1 AND EXISTS (SELECT 1 FROM prediction_memberships m WHERE m.prediction_id = picks.id AND m.collection = 'all')`,
+    )
+    .bind(pickDate)
+    .all<StatsRow>();
   return results ?? [];
 }
 
