@@ -17,8 +17,10 @@ import {
   deliveriesDone,
   getDayCache,
   getFailedUpdates,
+  hasPosted,
   listActiveSubscribers,
   markDelivery,
+  markPosted,
   setJobResult,
   type Env,
 } from "./db.ts";
@@ -63,11 +65,16 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
 }
 
+export interface SendResult {
+  ok: boolean;
+  messageId?: number;
+}
+
 export async function sendTelegram(
   env: Env,
   method: string,
   payload: Record<string, unknown>,
-): Promise<boolean> {
+): Promise<SendResult> {
   // One Retry-After honour + one retry; a second 429 is recorded as failure
   // (receipt NOT written) so the next sweep retries — never a silent drop.
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -89,9 +96,16 @@ export async function sendTelegram(
       await sleep(waitS * 1000);
       continue;
     }
-    return res.ok;
+    if (!res.ok) return { ok: false };
+    try {
+      const body = (await res.json()) as { result?: { message_id?: number } };
+      const messageId = body.result?.message_id;
+      return { ok: true, messageId: typeof messageId === "number" ? messageId : undefined };
+    } catch {
+      return { ok: true };
+    }
   }
-  return false;
+  return { ok: false };
 }
 
 export interface SweepResult {
@@ -139,7 +153,7 @@ export async function sweepDeliveries(
         await sleep(1100);
       }
       const { text, replyMarkup } = await renderView(env, view, 0, localDate);
-      const ok = await sender(env, "sendMessage", {
+      const { ok } = await sender(env, "sendMessage", {
         chat_id: sub.chat_id,
         text,
         parse_mode: "HTML",
@@ -157,6 +171,84 @@ export async function sweepDeliveries(
   }
   await setJobResult(env.DB, "deliver", `${kind} ${localDate}: sent=${out.sent} skipped=${out.skipped} failed=${out.failed}`);
   return out;
+}
+
+export type GroupPostOutcome = "sent" | "skipped" | "waiting" | "no-chat" | "failed";
+
+/**
+ * Posts Top/Daily Picks to the single configured Telegram group
+ * (TELEGRAM_CHAT_ID) — the production model (predbot/jobs/daily_picks.py:
+ * one group send, gated by a post_done receipt under a publication lock).
+ * Individual-subscriber broadcasting is intentionally NOT used here: that
+ * is sweepDeliveries(), which production keeps disabled via
+ * SUBSCRIBER_DELIVERY_ENABLED=false and this Worker never calls from the
+ * scheduler for the same reason (see handleScheduled).
+ */
+export async function postGroupPicks(
+  env: Env,
+  kind: "top" | "daily",
+  nowMs = Date.now(),
+  sender: typeof sendTelegram = sendTelegram,
+): Promise<GroupPostOutcome> {
+  if (!env.TELEGRAM_CHAT_ID) return "no-chat";
+  const gate = parseHhmm(env.POST_TIME ?? "09:00");
+  if (lagosMinutes(nowMs) < gate) return "waiting";
+  const localDate = lagosDateString(nowMs);
+  const timezone = env.TIMEZONE ?? "Africa/Lagos";
+  const cache = await getDayCache(env.DB, localDate, timezone);
+  if (!cache || cache.status !== "COMPLETE") {
+    await setJobResult(env.DB, "post", `waiting: no COMPLETE cache for ${localDate}`);
+    return "waiting"; // Generation (Actions) hasn't landed — never fabricate.
+  }
+  // Receipt check IS the lock: posts.(kind,post_date) is a UNIQUE key, and
+  // markPosted below uses INSERT ... ON CONFLICT DO NOTHING, so a Cron that
+  // fires twice (or overlapping invocations) can send at most once — the
+  // loser's markPosted is a no-op, mirroring production's post_done/mark_post.
+  if (await hasPosted(env.DB, kind, localDate)) return "skipped";
+  const { text, replyMarkup } = await renderView(env, kind, 0, localDate);
+  const { ok, messageId } = await sender(env, "sendMessage", {
+    chat_id: env.TELEGRAM_CHAT_ID,
+    text,
+    parse_mode: "HTML",
+    reply_markup: replyMarkup,
+  });
+  if (!ok) {
+    await setJobResult(env.DB, "post", `${kind} ${localDate}: send failed, will retry next sweep`);
+    return "failed";
+  }
+  await markPosted(env.DB, kind, localDate, messageId != null ? String(messageId) : null);
+  await setJobResult(env.DB, "post", `${kind} ${localDate}: posted message=${messageId ?? "?"}`);
+  return "sent";
+}
+
+/**
+ * Posts yesterday's settled recap to the group — production equivalent is
+ * predbot/jobs/recap.py (single group send, post_done("recap", date) gate).
+ */
+export async function postGroupRecap(
+  env: Env,
+  nowMs = Date.now(),
+  sender: typeof sendTelegram = sendTelegram,
+): Promise<GroupPostOutcome> {
+  if (!env.TELEGRAM_CHAT_ID) return "no-chat";
+  const gate = parseHhmm(env.RECAP_TIME ?? "07:45");
+  if (lagosMinutes(nowMs) < gate) return "waiting";
+  const localDate = lagosDateString(nowMs);
+  if (await hasPosted(env.DB, "recap", localDate)) return "skipped";
+  const { text, replyMarkup } = await renderView(env, "yesterday", 0, localDate);
+  const { ok, messageId } = await sender(env, "sendMessage", {
+    chat_id: env.TELEGRAM_CHAT_ID,
+    text,
+    parse_mode: "HTML",
+    reply_markup: replyMarkup,
+  });
+  if (!ok) {
+    await setJobResult(env.DB, "post", `recap ${localDate}: send failed, will retry next sweep`);
+    return "failed";
+  }
+  await markPosted(env.DB, "recap", localDate, messageId != null ? String(messageId) : null);
+  await setJobResult(env.DB, "post", `recap ${localDate}: posted message=${messageId ?? "?"}`);
+  return "sent";
 }
 
 export async function reportFailedUpdates(env: Env): Promise<number> {
@@ -191,10 +283,16 @@ export async function handleScheduled(env: Env, cron: string, nowMs = Date.now()
   // Ships OFF: enable by setting STAGE3_CRON_ENABLED=1 in staging only.
   // No triggers are attached in wrangler.toml yet (Stage 4).
   if ((env as Record<string, unknown>).STAGE3_CRON_ENABLED !== "1") return;
-  if (cron.includes("deliver")) {
+  if (cron.includes("post")) {
+    // Group-only (production model). Never calls sweepDeliveries here —
+    // individual-subscriber broadcasting stays disabled, matching
+    // production's SUBSCRIBER_DELIVERY_ENABLED=false.
+    await postGroupPicks(env, "top", nowMs);
+    await postGroupPicks(env, "daily", nowMs);
+  } else if (cron.includes("deliver")) {
     await reportFailedUpdates(env);
   } else if (cron.includes("recap")) {
-    await sweepDeliveries(env, "recap", nowMs);
+    await postGroupRecap(env, nowMs);
   } else if (cron.includes("settle") || cron.includes("watch")) {
     await detectMissedGeneration(env, nowMs);
   }

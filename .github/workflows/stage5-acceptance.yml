@@ -1,5 +1,9 @@
 # Stage 5 acceptance: fresh current-day predictions to staging D1.
-# MANUAL DISPATCH ONLY. No schedule, no production target, no broadcasts.
+# No production target, no broadcasts. Two entry points: manual
+# workflow_dispatch (this file), and stage6-scheduled-staging.yml calling in
+# via workflow_call once a day — that caller forces offline/dry_run unless a
+# repo variable is explicitly flipped, so this file itself still never runs
+# live except by one of those two explicit paths.
 # Two modes:
 #   dry_run=true (default): reads + offline planning only, zero D1 writes,
 #     zero provider calls. Safe to run any time.
@@ -35,6 +39,32 @@ on:
       write_budget:
         description: "Max D1 row writes for the plan"
         required: false
+        default: "5000"
+  # Reusable-workflow entry point only, for stage6-scheduled-staging.yml. This
+  # workflow still has no `schedule:` trigger of its own — the scheduled
+  # workflow decides operation/dry_run/live_confirm (forced offline unless a
+  # repo variable is explicitly flipped) and calls in via `uses:`.
+  workflow_call:
+    inputs:
+      operation:
+        required: true
+        type: string
+        default: "fixture-replay"
+      dry_run:
+        required: false
+        type: boolean
+        default: true
+      live_confirm:
+        required: false
+        type: string
+        default: ""
+      allow_telegram_posts:
+        required: false
+        type: boolean
+        default: false
+      write_budget:
+        required: false
+        type: string
         default: "5000"
 
 env:

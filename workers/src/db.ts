@@ -10,6 +10,9 @@ export interface Env {
   TELEGRAM_CHAT_ID?: string;
   TIMEZONE?: string;
   PAGE_SIZE?: string;
+  POST_TIME?: string;
+  DELIVERY_TIME?: string;
+  RECAP_TIME?: string;
 }
 
 /// Two-phase update claim (Stage 2 reliability).

@@ -1,0 +1,28 @@
+# Automatic daily staging generation, so the pipeline runs without anyone's
+# computer. SAFE BY DEFAULT: a schedule-triggered fire always calls into
+# stage5-acceptance.yml with operation=fixture-replay, dry_run=true (offline
+# planning only — zero provider calls, zero D1 writes) UNLESS the repository
+# variable STAGE6_LIVE_ENABLED is set to exactly "true" (Settings > Secrets
+# and variables > Actions > Variables). That is the single activation step;
+# no workflow file edit or redeploy is needed to go live.
+#
+# Even once live, this still only touches staging D1 (stage5-acceptance's
+# own "Staging target guard" step enforces that) and never posts to
+# Telegram (allow_telegram_posts stays false here).
+name: stage6-scheduled-staging
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # 08:00 UTC = 09:00 Africa/Lagos (no DST), matches POST_TIME
+  workflow_dispatch: {} # manual smoke-test of the scheduling wiring itself; same safe-by-default rule applies
+
+jobs:
+  scheduled:
+    uses: ./.github/workflows/stage5-acceptance.yml
+    with:
+      operation: ${{ vars.STAGE6_LIVE_ENABLED == 'true' && 'live-generate' || 'fixture-replay' }}
+      dry_run: ${{ vars.STAGE6_LIVE_ENABLED != 'true' }}
+      live_confirm: ${{ vars.STAGE6_LIVE_ENABLED == 'true' && 'RUN-LIVE' || '' }}
+      allow_telegram_posts: false
+      write_budget: "5000"
+    secrets: inherit

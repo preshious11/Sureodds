@@ -23,6 +23,11 @@ PAGE_SIZE = "5"
 # `wrangler secret`... no — via [vars] edit + deploy, only with approval:
 # STAGE3_CRON_ENABLED = "1"
 
-# Stage-4 Cron triggers (DO NOT UNCOMMENT without approval):
+# Stage-4 Cron triggers (DO NOT UNCOMMENT without approval — also requires
+# STAGE3_CRON_ENABLED = "1" above; both gates must be lifted together):
 # [[triggers.crons]]
-# crons = ["*/5 * * * *"]   # delivery sweep (Lagos-gated inside the handler)
+# crons = [
+#   "0 8 * * *",    # post: Top+Daily to the group (09:00 Lagos; handler re-checks the clock)
+#   "45 6 * * *",   # recap: yesterday's settled results to the group (07:45 Lagos)
+#   "*/5 * * * *",  # deliver: webhook-retry observability (no provider/Telegram calls)
+# ]
