@@ -90,17 +90,48 @@ function viewButton(view: string): { text: string; callback_data: string } {
   return { text: `${VIEW_ICON[view] ?? ""} ${VIEW_LABEL[view] ?? view}`.trim(), callback_data: encodeCallback(view, 0) };
 }
 
+type SwitchButton = { text: string; callback_data?: string; url?: string };
+type KeyboardRow = SwitchButton[];
+
+/**
+ * All Predictions is a private-chat-only experience (the list is too long
+ * for a broadcast group). Every keyboard that would otherwise carry the
+ * callback-based All switch button into a group must instead use this to
+ * decide what (if anything) to render there:
+ *   - "callback": private chat — normal in-app pagination, unchanged.
+ *   - { url }: group chat with TELEGRAM_BOT_USERNAME configured — a deep
+ *     link to the private bot (never a callback that could publish the
+ *     full list into the group).
+ *   - "omit": group chat with no configured bot username — no dead link,
+ *     no callback either; the button is simply left out.
+ */
+export type AllButtonMode = "callback" | { url: string } | "omit";
+
+export function allButtonModeFor(chatType: string, botUsername: string | undefined): AllButtonMode {
+  if (chatType === "private") return "callback";
+  return botUsername ? { url: `https://t.me/${botUsername}?start=all` } : "omit";
+}
+
+function allButton(mode: AllButtonMode): SwitchButton | null {
+  if (mode === "omit") return null;
+  if (mode === "callback") return viewButton("all");
+  return { text: `${VIEW_ICON.all} ${VIEW_LABEL.all}`, url: mode.url };
+}
+
 // predbot/bot/pagination.py SWITCH_ROWS: ((all,), (top, daily), (stats, yesterday)).
-function switchRows(): { text: string; callback_data: string }[][] {
-  return [[viewButton("all")], [viewButton("top"), viewButton("daily")], [viewButton("stats"), viewButton("yesterday")]];
+function switchRows(allMode: AllButtonMode = "callback"): KeyboardRow[] {
+  const all = allButton(allMode);
+  return [
+    ...(all ? [[all]] : []),
+    [viewButton("top"), viewButton("daily")],
+    [viewButton("stats"), viewButton("yesterday")],
+  ];
 }
 
 /** predbot/bot/callbacks.py menu_markup — identical rows to switchRows(), no pager. */
-export function menuKeyboard(): Record<string, unknown> {
-  return { inline_keyboard: switchRows() };
+export function menuKeyboard(allMode: AllButtonMode = "callback"): Record<string, unknown> {
+  return { inline_keyboard: switchRows(allMode) };
 }
-
-type KeyboardRow = { text: string; callback_data: string }[];
 
 /**
  * predbot/bot/pagination.py build_keyboard: an optional pager row (shown
@@ -116,6 +147,7 @@ export function buildKeyboard(
   pages: number,
   day: string | null = null,
   extraRows: KeyboardRow[] = [],
+  allMode: AllButtonMode = "callback",
 ): Record<string, unknown> {
   const pagerRow: KeyboardRow = [];
   if (pages > 1) {
@@ -124,7 +156,7 @@ export function buildKeyboard(
     if (page < pages - 1) pagerRow.push({ text: "▶️", callback_data: encodeCallback(view, page + 1, day ?? undefined) });
   }
   return {
-    inline_keyboard: [...(pagerRow.length ? [pagerRow] : []), ...extraRows, ...switchRows()],
+    inline_keyboard: [...(pagerRow.length ? [pagerRow] : []), ...extraRows, ...switchRows(allMode)],
   };
 }
 
@@ -145,16 +177,22 @@ export function customPicksButton(botUsername: string): { text: string; url: str
  * callers here must do the same: omit this card, don't send it with no
  * button, if the username isn't configured).
  */
-export function topEmptyKeyboard(botUsername: string): Record<string, unknown> {
-  return { inline_keyboard: [[viewButton("daily"), viewButton("all")], [customPicksButton(botUsername)]] };
+export function topEmptyKeyboard(botUsername: string, allMode: AllButtonMode = "callback"): Record<string, unknown> {
+  const all = allButton(allMode);
+  const topRow = all ? [viewButton("daily"), all] : [viewButton("daily")];
+  return { inline_keyboard: [topRow, [customPicksButton(botUsername)]] };
 }
 
-/** predbot/bot/callbacks.py community_menu_markup — posted to the group only via the /menu admin command. */
+/**
+ * predbot/bot/callbacks.py community_menu_markup — posted to the group only
+ * via the /menu admin command, so the All button here is always the
+ * private deep link, never the in-group callback.
+ */
 export function communityMenuKeyboard(botUsername: string): Record<string, unknown> {
   return {
     inline_keyboard: [
       [viewButton("top"), viewButton("daily")],
-      [viewButton("all")],
+      [allButton({ url: `https://t.me/${botUsername}?start=all` })!],
       [viewButton("stats"), viewButton("yesterday")],
       [customPicksButton(botUsername)],
     ],

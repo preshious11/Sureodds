@@ -125,6 +125,10 @@ describe("automatic group post renders the whole ticket, never paginated", () =>
     const kb = JSON.stringify(sentPayload.reply_markup);
     assert.match(kb, /✨ Custom Picks/);
     assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=custom_picks/);
+    // This card is posted to the group; its All button must be the private
+    // deep link too, never the in-group callback (pg|all|0).
+    assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=all/);
+    assert.doesNotMatch(kb, /"callback_data":"pg\|all\|0"/);
   });
   it("without a configured bot username, the empty Top card is sent with no keyboard rather than a dead link", async () => {
     const sql = fixture();

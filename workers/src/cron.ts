@@ -25,7 +25,7 @@ import {
   type Env,
 } from "./db.ts";
 import { lagosDateString, renderGroupCard, renderView } from "./views.ts";
-import { topEmptyKeyboard } from "./telegram.ts";
+import { allButtonModeFor, topEmptyKeyboard } from "./telegram.ts";
 
 export const BROADCAST_PER_SECOND = 25;
 export const CHAT_PER_SECOND = 1;
@@ -213,8 +213,13 @@ export async function postGroupPicks(
   // predbot/jobs/daily_picks.py: markup is None for every automatic group
   // card EXCEPT the genuinely-empty Top card, which swaps in the Custom
   // Picks deep-link keyboard (top_empty_markup). Never shown without a
-  // configured bot username (never a dead link).
-  const replyMarkup = kind === "top" && isEmpty && env.TELEGRAM_BOT_USERNAME ? topEmptyKeyboard(env.TELEGRAM_BOT_USERNAME) : undefined;
+  // configured bot username (never a dead link). This card is always
+  // posted to the group, so its All button is the private deep link too
+  // (allButtonModeFor("group", ...)), never the in-group callback.
+  const replyMarkup =
+    kind === "top" && isEmpty && env.TELEGRAM_BOT_USERNAME
+      ? topEmptyKeyboard(env.TELEGRAM_BOT_USERNAME, allButtonModeFor("group", env.TELEGRAM_BOT_USERNAME))
+      : undefined;
   const { ok, messageId } = await sender(env, "sendMessage", {
     chat_id: env.TELEGRAM_CHAT_ID,
     text,

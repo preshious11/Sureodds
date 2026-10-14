@@ -37,6 +37,7 @@ import {
   validTicket,
 } from "./custom_picks.ts";
 import {
+  allButtonModeFor,
   commandToView,
   communityMenuKeyboard,
   isAuthorized,
@@ -47,6 +48,15 @@ import {
 import { lagosDateString, lagosDayBounds, renderView } from "./views.ts";
 
 const CUSTOM_PICKS_COOLDOWN_MS = 3_000;
+
+// All Predictions is a private-chat-only experience: the group is for
+// broadcasts, not a long paginated list. This is the single redirect used
+// everywhere a group would otherwise have rendered it — the /all command,
+// a tapped pg|all*|... callback (new or from a pre-existing group message),
+// all funnel through sendGroupAllRedirect below.
+const ALL_GROUP_TEXT = "📚 All Predictions is a lot to show here — tap below to see it privately.";
+const ALL_GROUP_TEXT_NO_LINK = "📚 All Predictions is available in a private chat with me — open a DM and send /all.";
+const LOADING_TEXT = "⏳ Building your picks...";
 
 const WELCOME_COMMANDS =
   "<b>🏆 /top</b> – Top picks of the day\n" +
@@ -86,6 +96,55 @@ async function answerCallback(env: Env, id: string, text?: string): Promise<void
   // page render/edit it accompanies may already have succeeded).
   try {
     await tgApi(env, "answerCallbackQuery", { callback_query_id: id, text: text ?? undefined });
+  } catch {
+    // swallowed deliberately
+  }
+}
+
+function allRedirectKeyboard(botUsername: string | undefined): Record<string, unknown> | undefined {
+  if (!botUsername) return undefined;
+  return { inline_keyboard: [[{ text: "📚 Open All Predictions", url: `https://t.me/${botUsername}?start=all` }]] };
+}
+
+/**
+ * The single group-facing exit for All Predictions: never renders the
+ * prediction list itself. `messageId`, when given, is an existing group
+ * message (a /all command's own message has none; a tapped pg|all*|...
+ * callback's message does) — edited in place so a stale group message with
+ * old pagination buttons turns into the redirect rather than spawning a new
+ * message every time it's tapped again. Falls back to a fresh message if
+ * the edit fails (message too old/deleted/not the bot's own).
+ */
+async function sendGroupAllRedirect(env: Env, chatId: string, messageId?: unknown): Promise<void> {
+  const replyMarkup = allRedirectKeyboard(env.TELEGRAM_BOT_USERNAME);
+  const text = replyMarkup ? ALL_GROUP_TEXT : ALL_GROUP_TEXT_NO_LINK;
+  if (messageId != null) {
+    try {
+      await tgApi(env, "editMessageText", { chat_id: chatId, message_id: messageId, text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) });
+      return;
+    } catch {
+      // Fall through to a fresh message.
+    }
+  }
+  await tgApi(env, "sendMessage", { chat_id: chatId, text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) });
+}
+
+/** Best-effort "⏳ Building your picks..." indicator; a failure here must never block the real result. */
+async function sendLoadingIndicator(env: Env, chatId: string): Promise<number | undefined> {
+  try {
+    const res = await tgApi(env, "sendMessage", { chat_id: chatId, text: LOADING_TEXT });
+    const body = (await res.json()) as { result?: { message_id?: number } };
+    return body.result?.message_id;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Best-effort cleanup; an already-gone/edited loading message must never block the real result. */
+async function clearLoadingIndicator(env: Env, chatId: string, messageId: number | undefined): Promise<void> {
+  if (messageId == null) return;
+  try {
+    await tgApi(env, "deleteMessage", { chat_id: chatId, message_id: messageId });
   } catch {
     // swallowed deliberately
   }
@@ -133,11 +192,22 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       await answerCallback(env, cbId);
       return;
     }
+    const chatType = String((msg?.chat as Record<string, unknown> | undefined)?.type ?? "private");
+
+    // All Predictions never renders in a group — whether this is a brand
+    // new tap (shouldn't happen once the keyboard itself is fixed, see
+    // telegram.ts allButtonModeFor) or a tap on an OLD group message from
+    // before this redirect existed, still carrying a live pg|all*|... button.
+    if (chatType !== "private" && (parsed.view === "all" || parsed.view.startsWith("all_"))) {
+      await answerCallback(env, cbId);
+      if (chatId) await sendGroupAllRedirect(env, chatId, (msg as Record<string, unknown> | undefined)?.message_id);
+      return;
+    }
+
     // Group taps on paged views are acknowledged without re-render spam;
     // private chats get the page edit. (Closest clean alternative to
     // per-member group welcomes, which read-only groups cannot do.)
-    const chatType = String((msg?.chat as Record<string, unknown> | undefined)?.type ?? "private");
-    const { text, replyMarkup } = await renderView(env, parsed.view, parsed.page, parsed.day);
+    const { text, replyMarkup } = await renderView(env, parsed.view, parsed.page, parsed.day, chatType);
     await answerCallback(env, cbId);
     if (!chatId) return;
     if (chatType !== "private") {
@@ -184,6 +254,27 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
     return;
   }
 
+  // /start all (the group-facing All Predictions deep link,
+  // https://t.me/<bot>?start=all) — Telegram always sends this as a plain
+  // text message in the private chat it just opened, whether or not the
+  // user had ever started the bot before (deep links don't need a prior
+  // /start). Shows today's All Predictions immediately, same pagination/
+  // formatting as typing /all directly.
+  if (text.startsWith("/start")) {
+    const startParam = text.trim().split(/\s+/)[1];
+    if (startParam === "all") {
+      if (chatType !== "private") return; // this deep link only ever opens a private chat.
+      if (userId) await leaveCustomSession(env.DB, userId, chatId);
+      await upsertSubscriber(env.DB, chatId, {
+        username: (from.username as string) ?? null,
+        firstName: (from.first_name as string) ?? null,
+      });
+      const { text: body, replyMarkup } = await renderView(env, "all", 0, null, chatType);
+      await tgApi(env, "sendMessage", { chat_id: chatId, text: body, parse_mode: "HTML", reply_markup: replyMarkup });
+      return;
+    }
+  }
+
   // /start subscribes (private) and always shows the menu; group /start
   // shows the menu without subscribing the group. Also leaves any active
   // Custom Picks session (predbot's `_custom_leave` on plain /start).
@@ -200,7 +291,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       chat_id: chatId,
       text: welcomeMessage(name),
       parse_mode: "HTML",
-      reply_markup: menuKeyboard(),
+      reply_markup: menuKeyboard(allButtonModeFor(chatType, env.TELEGRAM_BOT_USERNAME)),
     });
     return;
   }
@@ -260,28 +351,40 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       const day = lagosDateString(nowMs);
       const previousJson = await getConversationRequest(env.DB, userId, chatId, nowMs);
       const previous = previousJson ? deserializeRequest(JSON.parse(previousJson)) : null;
-      const { result, request } = await customPicksRespond(
-        {
-          getPool: (d, z) => getCustomPickPool(env.DB, d, z),
-          getCandidates: (d, z) => getCustomPickCandidates(env.DB, d, z),
-        },
-        text,
-        zone,
-        day,
-        nowMs,
-        previous,
-      );
-      if (request) {
-        const expiresAtMs = Math.min(nowMs + CUSTOM_PICKS_TTL_MS, lagosDayBounds(day).endUtcMs);
-        await setConversationRequest(env.DB, userId, chatId, JSON.stringify(serializeRequest(request)), expiresAtMs);
+      // A visible "building your picks" status while the request is
+      // processed — best-effort (see sendLoadingIndicator): a failure here
+      // must never block the real ticket. Cleaned up on both the success
+      // and error paths so a crashed/retried attempt never leaves a stuck
+      // "⏳ Building..." message sitting in the chat.
+      const loadingMessageId = await sendLoadingIndicator(env, chatId);
+      try {
+        const { result, request } = await customPicksRespond(
+          {
+            getPool: (d, z) => getCustomPickPool(env.DB, d, z),
+            getCandidates: (d, z) => getCustomPickCandidates(env.DB, d, z),
+          },
+          text,
+          zone,
+          day,
+          nowMs,
+          previous,
+        );
+        if (request) {
+          const expiresAtMs = Math.min(nowMs + CUSTOM_PICKS_TTL_MS, lagosDayBounds(day).endUtcMs);
+          await setConversationRequest(env.DB, userId, chatId, JSON.stringify(serializeRequest(request)), expiresAtMs);
+        }
+        const replyMarkup = await storeAndBuildSuggestionKeyboard(env, result.suggestions, userId, chatId, nowMs, day);
+        await clearLoadingIndicator(env, chatId, loadingMessageId);
+        await tgApi(env, "sendMessage", {
+          chat_id: chatId,
+          text: result.text,
+          parse_mode: "HTML",
+          ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+        });
+      } catch (err) {
+        await clearLoadingIndicator(env, chatId, loadingMessageId);
+        throw err;
       }
-      const replyMarkup = await storeAndBuildSuggestionKeyboard(env, result.suggestions, userId, chatId, nowMs, day);
-      await tgApi(env, "sendMessage", {
-        chat_id: chatId,
-        text: result.text,
-        parse_mode: "HTML",
-        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
-      });
       return;
     }
   }
@@ -293,13 +396,19 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   const cmd = normalizeCommand(text);
   if (cmd) {
     const view = commandToView(cmd) ?? "top";
+    // /all typed directly in a group: redirect to the private bot instead
+    // of rendering the (long) prediction list into the group.
+    if (view === "all" && chatType !== "private") {
+      await sendGroupAllRedirect(env, chatId);
+      return;
+    }
     if (chatType === "private") {
       await upsertSubscriber(env.DB, chatId, {
         username: (from.username as string) ?? null,
         firstName: (from.first_name as string) ?? null,
       });
     }
-    const { text: body, replyMarkup } = await renderView(env, view, 0, null);
+    const { text: body, replyMarkup } = await renderView(env, view, 0, null, chatType);
     await tgApi(env, "sendMessage", {
       chat_id: chatId,
       text: body,

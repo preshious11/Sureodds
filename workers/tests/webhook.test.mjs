@@ -1,13 +1,17 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  allButtonModeFor,
+  buildKeyboard,
   commandToView,
+  communityMenuKeyboard,
   encodeCallback,
   isAuthorized,
   menuKeyboard,
   normalizeCommand,
   parseCallback,
   timingSafeEqual,
+  topEmptyKeyboard,
 } from "../src/telegram.ts";
 
 describe("webhook auth", () => {
@@ -52,6 +56,46 @@ describe("commands (mirror of callbacks.py COMMANDS)", () => {
     assert.match(kb, /Top Picks/);
     assert.match(kb, /Daily Picks/);
     assert.doesNotMatch(kb, /t\.me\//);
+  });
+});
+
+describe("All Predictions group-to-private keyboards", () => {
+  it("allButtonModeFor: private stays callback-based; group uses the deep link when a username is configured", () => {
+    assert.equal(allButtonModeFor("private", "SureOddsBot"), "callback");
+    assert.deepEqual(allButtonModeFor("group", "SureOddsBot"), { url: "https://t.me/SureOddsBot?start=all" });
+    assert.deepEqual(allButtonModeFor("supergroup", "SureOddsBot"), { url: "https://t.me/SureOddsBot?start=all" });
+    // Never a dead link: no configured username means the button is omitted, not a broken URL or a callback.
+    assert.equal(allButtonModeFor("group", undefined), "omit");
+  });
+  it("menuKeyboard/buildKeyboard swap the All switch button for a group's deep link (never a callback there)", () => {
+    const groupMode = allButtonModeFor("group", "SureOddsBot");
+    const menuKb = JSON.stringify(menuKeyboard(groupMode));
+    assert.match(menuKb, /https:\/\/t\.me\/SureOddsBot\?start=all/);
+    assert.doesNotMatch(menuKb, /"callback_data":"pg\|all\|0"/);
+    const built = JSON.stringify(buildKeyboard("top", 0, 1, "2026-10-14", [], groupMode));
+    assert.match(built, /https:\/\/t\.me\/SureOddsBot\?start=all/);
+    assert.doesNotMatch(built, /"callback_data":"pg\|all\|0"/);
+  });
+  it("menuKeyboard/buildKeyboard omit the All button entirely in a group with no configured username", () => {
+    const omitMode = allButtonModeFor("group", undefined);
+    const menuKb = JSON.parse(JSON.stringify(menuKeyboard(omitMode)));
+    const flat = JSON.stringify(menuKb);
+    assert.doesNotMatch(flat, /All Predictions/);
+    assert.doesNotMatch(flat, /"callback_data":"pg\|all\|0"/);
+  });
+  it("communityMenuKeyboard's All button is always the private deep link, never a callback", () => {
+    const kb = JSON.stringify(communityMenuKeyboard("SureOddsBot"));
+    assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=all/);
+    assert.doesNotMatch(kb, /"callback_data":"pg\|all\|0"/);
+  });
+  it("topEmptyKeyboard (the empty-Top card) also swaps All for the group deep link", () => {
+    const groupMode = allButtonModeFor("supergroup", "SureOddsBot");
+    const kb = JSON.stringify(topEmptyKeyboard("SureOddsBot", groupMode));
+    assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=all/);
+    assert.doesNotMatch(kb, /"callback_data":"pg\|all\|0"/);
+    // Private mode (default) keeps the original callback-based All button.
+    const privateKb = JSON.stringify(topEmptyKeyboard("SureOddsBot"));
+    assert.match(privateKb, /"callback_data":"pg\|all\|0"/);
   });
 });
 

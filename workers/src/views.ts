@@ -16,10 +16,12 @@ import {
   type CachedPick,
 } from "./db.ts";
 import {
+  allButtonModeFor,
   buildKeyboard,
   menuKeyboard,
   sportsBackRow,
   topEmptyKeyboard,
+  type AllButtonMode,
 } from "./telegram.ts";
 import {
   ALL_TITLE,
@@ -128,6 +130,7 @@ async function renderTicket(
   view: "top" | "daily",
   page: number,
   localDate: string,
+  allMode: AllButtonMode,
 ): Promise<{ text: string; replyMarkup: Record<string, unknown> }> {
   const all = await getAllPicksForCollection(env.DB, localDate, view);
   const title = view === "top" ? TOP_TITLE : DAILY_TITLE;
@@ -142,8 +145,8 @@ async function renderTicket(
     // silently unanswered).
     const keyboard =
       view === "top" && env.TELEGRAM_BOT_USERNAME
-        ? topEmptyKeyboard(env.TELEGRAM_BOT_USERNAME)
-        : buildKeyboard(view, 0, 1, localDate);
+        ? topEmptyKeyboard(env.TELEGRAM_BOT_USERNAME, allMode)
+        : buildKeyboard(view, 0, 1, localDate, [], allMode);
     return { text: wrapTitleHtml(body, title), replyMarkup: keyboard };
   }
   const pages = totalPages(all.length, PICKS_PER_PAGE);
@@ -163,7 +166,7 @@ async function renderTicket(
     page: safePage + 1,
     pages,
   });
-  return { text: wrapTitleHtml(body, title), replyMarkup: buildKeyboard(view, safePage, pages, localDate) };
+  return { text: wrapTitleHtml(body, title), replyMarkup: buildKeyboard(view, safePage, pages, localDate, [], allMode) };
 }
 
 // picksCard() returns plain text with the title as its first line's leading
@@ -179,6 +182,7 @@ function wrapTitleHtml(body: string, title: string): string {
 async function renderAllSportMenu(
   env: Env,
   localDate: string,
+  allMode: AllButtonMode,
 ): Promise<{ text: string; replyMarkup: Record<string, unknown> }> {
   const rows = await getAllPicksForCollection(env.DB, localDate, "all");
   if (rows.length === 0) {
@@ -186,7 +190,7 @@ async function renderAllSportMenu(
       text: `<b>${ALL_TITLE}</b> — ${localDate}\n\n` +
         `No qualified all picks for ${localDate} — the model found nothing above the quality floor. ` +
         `This is an honest empty, not an error; thresholds were not lowered to fill the card.`,
-      replyMarkup: buildKeyboard("all", 0, 1, localDate),
+      replyMarkup: buildKeyboard("all", 0, 1, localDate, [], allMode),
     };
   }
   const bySport = new Map<string, { count: number; fixtures: Set<string> }>();
@@ -220,7 +224,7 @@ async function renderAllSportMenu(
   }
   return {
     text: lines.join("\n"),
-    replyMarkup: { inline_keyboard: [...buttonRows, ...(menuKeyboard().inline_keyboard as unknown[][])] },
+    replyMarkup: { inline_keyboard: [...buttonRows, ...(menuKeyboard(allMode).inline_keyboard as unknown[][])] },
   };
 }
 
@@ -229,13 +233,14 @@ async function renderAllSportPages(
   sport: string,
   page: number,
   localDate: string,
+  allMode: AllButtonMode,
 ): Promise<{ text: string; replyMarkup: Record<string, unknown> }> {
   const all = (await getAllPicksForCollection(env.DB, localDate, "all")).filter((r) => r.sport === sport);
   const view = `all_${sport}`;
   if (all.length === 0) {
     return {
       text: `<b>${ALL_TITLE}</b> — ${localDate}\n\nNo ${SPORT_LABEL[sport] ?? sport} predictions today.`,
-      replyMarkup: { inline_keyboard: [sportsBackRow(localDate), ...(menuKeyboard().inline_keyboard as unknown[][])] },
+      replyMarkup: { inline_keyboard: [sportsBackRow(localDate), ...(menuKeyboard(allMode).inline_keyboard as unknown[][])] },
     };
   }
   const groups = new Map<string, CachedPick[]>();
@@ -260,7 +265,7 @@ async function renderAllSportPages(
   const lines = [...header, ...blocks.flatMap((b) => ["", b])];
   if (pages > 1) lines.push("", `Page ${safePage + 1} of ${pages}`);
   const body = lines.join("\n");
-  const keyboard = buildKeyboard(view, safePage, pages, localDate, [sportsBackRow(localDate)]);
+  const keyboard = buildKeyboard(view, safePage, pages, localDate, [sportsBackRow(localDate)], allMode);
   return { text: wrapTitleHtml(body, ALL_TITLE), replyMarkup: keyboard };
 }
 
@@ -308,11 +313,12 @@ async function renderStatsLike(
   title: string,
   localDate: string,
   kind: "stats" | "yesterday" | "top" | "daily" = "stats",
+  allMode: AllButtonMode = "callback",
 ): Promise<{ text: string; replyMarkup: Record<string, unknown> }> {
   const yesterday = shiftDate(localDate, -1);
   const rows = kind === "top" || kind === "daily" ? await getStatsRowsForDateByCollection(env.DB, yesterday, kind) : await getStatsRowsForDate(env.DB, yesterday);
   if (rows.length === 0) {
-    return { text: `<b>${title}</b>\n\n${NO_RESULTS_YET}`, replyMarkup: menuKeyboard() };
+    return { text: `<b>${title}</b>\n\n${NO_RESULTS_YET}`, replyMarkup: menuKeyboard(allMode) };
   }
   const block = computeStatsBlock(rows);
   const issued = rows.length;
@@ -367,7 +373,7 @@ async function renderStatsLike(
   const body = [`<b>${title}</b> · ${dayLabel(localDate)}`, "", ...blocks.flatMap((b, i) => (i === 0 ? b : ["", ...b]))].join(
     "\n",
   );
-  return { text: body, replyMarkup: menuKeyboard() };
+  return { text: body, replyMarkup: menuKeyboard(allMode) };
 }
 
 export async function renderView(
@@ -375,27 +381,29 @@ export async function renderView(
   view: string,
   page: number,
   day: string | null,
+  chatType = "private",
 ): Promise<{ text: string; replyMarkup: Record<string, unknown> }> {
   const timezone = env.TIMEZONE ?? "Africa/Lagos";
   const localDate = day ?? lagosDateString();
   const cache = await getDayCache(env.DB, localDate, timezone);
+  const allMode = allButtonModeFor(chatType, env.TELEGRAM_BOT_USERNAME);
 
   if (!cache || cache.status !== "COMPLETE") {
-    const keyboard = view === "all" || view.startsWith("all_") ? menuKeyboard() : buildKeyboard(view, 0, 1, localDate);
+    const keyboard = view === "all" || view.startsWith("all_") ? menuKeyboard(allMode) : buildKeyboard(view, 0, 1, localDate, [], allMode);
     return { text: notReadyText(view.startsWith("all_") ? "all" : view, localDate), replyMarkup: keyboard };
   }
 
-  if (view === "stats") return renderStatsLike(env, "📊 STATS", localDate, "stats");
-  if (view === "yesterday") return renderStatsLike(env, "🗓 YESTERDAY", localDate, "yesterday");
-  if (view === "stats_top") return renderStatsLike(env, "🔥 TOP STATS", localDate, "top");
-  if (view === "stats_daily") return renderStatsLike(env, "📋 DAILY STATS", localDate, "daily");
+  if (view === "stats") return renderStatsLike(env, "📊 STATS", localDate, "stats", allMode);
+  if (view === "yesterday") return renderStatsLike(env, "🗓 YESTERDAY", localDate, "yesterday", allMode);
+  if (view === "stats_top") return renderStatsLike(env, "🔥 TOP STATS", localDate, "top", allMode);
+  if (view === "stats_daily") return renderStatsLike(env, "📋 DAILY STATS", localDate, "daily", allMode);
 
-  if (view === "top" || view === "daily") return renderTicket(env, view, page, localDate);
+  if (view === "top" || view === "daily") return renderTicket(env, view, page, localDate, allMode);
 
-  if (view === "all") return renderAllSportMenu(env, localDate);
-  if (view.startsWith("all_")) return renderAllSportPages(env, view.slice(4), page, localDate);
+  if (view === "all") return renderAllSportMenu(env, localDate, allMode);
+  if (view.startsWith("all_")) return renderAllSportPages(env, view.slice(4), page, localDate, allMode);
 
   // Unroutable collection falls back to /all's current day, matching the
   // previous Stage 1 default.
-  return renderAllSportMenu(env, localDate);
+  return renderAllSportMenu(env, localDate, allMode);
 }

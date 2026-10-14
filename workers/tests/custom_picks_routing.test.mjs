@@ -143,9 +143,11 @@ describe("Custom Picks: group button -> private deep link -> request -> failure 
     //    insufficient_count, with a proven, tappable alternative attached.
     const requestFetch = stubFetch();
     await withFetch(requestFetch, () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "5 picks")));
-    assert.equal(requestFetch.calls.length, 1);
-    assert.match(requestFetch.calls[0].body.text, /Try these instead/);
-    const keyboard = requestFetch.calls[0].body.reply_markup;
+    // calls[0] is the "⏳ Building your picks..." loading indicator; calls[1] is the real result.
+    assert.equal(requestFetch.calls.length, 2);
+    assert.match(requestFetch.calls[0].body.text, /Building your picks/);
+    assert.match(requestFetch.calls[1].body.text, /Try these instead/);
+    const keyboard = requestFetch.calls[1].body.reply_markup;
     assert.ok(keyboard?.inline_keyboard?.length, "a real alternative must be offered, not a dead end");
     const token = keyboard.inline_keyboard[0][0].callback_data;
     assert.match(token, /^cp\|/);
@@ -170,7 +172,7 @@ describe("Custom Picks: group button -> private deep link -> request -> failure 
     await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c1", "u1", "/start custom_picks")));
     const requestFetch = stubFetch();
     await withFetch(requestFetch, () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "5 picks")));
-    const token = requestFetch.calls[0].body.reply_markup.inline_keyboard[0][0].callback_data;
+    const token = requestFetch.calls[1].body.reply_markup.inline_keyboard[0][0].callback_data;
     const tapFetch = stubFetch();
     await withFetch(tapFetch, () => handleUpdate(theEnv, callbackQuery(3, "cbq-1", "c1", "u2", token)));
     const toast = tapFetch.calls.find((c) => c.url.includes("answerCallbackQuery"));
@@ -267,16 +269,19 @@ describe("Custom Picks private-chat access rules (index.ts routing)", () => {
     await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
     const fetchImpl = stubFetch();
     await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(2, "c1", "u1", "1 picks"), ));
-    assert.equal(fetchImpl.calls.length, 1);
-    assert.match(fetchImpl.calls[0].body.text, /🔥/);
-    assert.match(fetchImpl.calls[0].body.text, /Arsenal vs Chelsea/);
+    assert.equal(fetchImpl.calls.length, 2);
+    assert.match(fetchImpl.calls[0].body.text, /Building your picks/);
+    assert.match(fetchImpl.calls[1].body.text, /🔥/);
+    assert.match(fetchImpl.calls[1].body.text, /Arsenal vs Chelsea/);
   });
   it("UNAVAILABLE (not a fabricated ticket) when no pool has been captured for today", async () => {
     const db = realDb(); // no seedPool
     await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
     const fetchImpl = stubFetch();
     await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(2, "c1", "u1", "3 picks")));
-    assert.match(fetchImpl.calls[0].body.text, /Still cooking/);
+    assert.equal(fetchImpl.calls.length, 2);
+    assert.match(fetchImpl.calls[0].body.text, /Building your picks/);
+    assert.match(fetchImpl.calls[1].body.text, /Still cooking/);
   });
   it("rapid repeat requests are throttled by the cooldown, not silently dropped or double-charged", async () => {
     const db = realDb();
@@ -287,9 +292,11 @@ describe("Custom Picks private-chat access rules (index.ts routing)", () => {
       await handleUpdate(env(db), textMessage(2, "c1", "u1", "1 picks"));
       await handleUpdate(env(db), textMessage(3, "c1", "u1", "1 picks"));
     });
-    assert.equal(fetchImpl.calls.length, 2);
-    assert.match(fetchImpl.calls[0].body.text, /🔥/);
-    assert.match(fetchImpl.calls[1].body.text, /Still working on your last request/);
+    // request 1: loading indicator + ticket; request 2 (on cooldown): BUSY only, no loading step.
+    assert.equal(fetchImpl.calls.length, 3);
+    assert.match(fetchImpl.calls[0].body.text, /Building your picks/);
+    assert.match(fetchImpl.calls[1].body.text, /🔥/);
+    assert.match(fetchImpl.calls[2].body.text, /Still working on your last request/);
   });
 });
 
@@ -369,9 +376,9 @@ describe("Custom Picks production archive shape end-to-end (2026-10-14 regressio
       await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
       const fetchImpl = stubFetch();
       await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(2, "c1", "u1", "give me 5 odds")));
-      assert.equal(fetchImpl.calls.length, 1);
-      assert.match(fetchImpl.calls[0].body.text, /🔥/);
-      assert.match(fetchImpl.calls[0].body.text, /Arsenal vs Chelsea/);
+      assert.equal(fetchImpl.calls.length, 2);
+      assert.match(fetchImpl.calls[1].body.text, /🔥/);
+      assert.match(fetchImpl.calls[1].body.text, /Arsenal vs Chelsea/);
     });
   });
   it("a production-shaped pool answers 30 odds honestly (unreachable) instead of an empty-pool message", async () => {
@@ -385,9 +392,231 @@ describe("Custom Picks production archive shape end-to-end (2026-10-14 regressio
       await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
       const fetchImpl = stubFetch();
       await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(2, "c1", "u1", "Give me 30 odds")));
-      assert.equal(fetchImpl.calls.length, 1);
-      assert.doesNotMatch(fetchImpl.calls[0].body.text, /Nothing made the cut/);
+      assert.equal(fetchImpl.calls.length, 2);
+      assert.doesNotMatch(fetchImpl.calls[1].body.text, /Nothing made the cut/);
     });
+  });
+});
+
+describe("All Predictions: group-to-private flow", () => {
+  function seedAllPick(sql, day) {
+    sql.exec(
+      `INSERT INTO picks (pick_date,tier,rank,provider,provider_event_id,sport,league,home,away,start_utc,
+        market,period,stat,entity,selection,label,price,prob,ev,status,created_at)
+       VALUES ('${day}','all',1,'sgo','ev-1','football','Premier League','Arsenal','Chelsea','${day}T18:00:00Z',
+        'result2','full','points','all','home','Arsenal to Win',1.8,0.6,0.05,'pending','${day}T06:00:00Z')`,
+    );
+    sql.exec(
+      `INSERT INTO prediction_cache (cache_key,local_date,timezone,status,payload_json,generated_at,updated_at,expires_at)
+       VALUES ('daily_predictions:Africa/Lagos:${day}','${day}','Africa/Lagos','COMPLETE','{}','${day}T06:00:00Z','${day}T06:00:00Z','${day}T23:59:59Z')`,
+    );
+  }
+  it("/all typed directly in a group redirects to the private bot instead of rendering the list", async () => {
+    const db = realDb();
+    const theEnv = { ...env(db), TELEGRAM_BOT_USERNAME: "SureOddsBot" };
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () => handleUpdate(theEnv, textMessage(1, "g1", "u1", "/all", "supergroup")));
+    assert.equal(fetchImpl.calls.length, 1, "only the redirect, never the prediction list");
+    assert.match(fetchImpl.calls[0].url, /sendMessage/);
+    assert.doesNotMatch(fetchImpl.calls[0].body.text, /ALL PREDICTIONS/);
+    const kb = JSON.stringify(fetchImpl.calls[0].body.reply_markup);
+    assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=all/);
+  });
+  it("/all in a group with no configured bot username: a plain redirect, never a dead link", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(1, "g1", "u1", "/all", "supergroup")));
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.equal(fetchImpl.calls[0].body.reply_markup, undefined, "no dead-link button without a configured username");
+    assert.match(fetchImpl.calls[0].body.text, /private chat/);
+  });
+  it("/all in a private chat is unaffected: still renders the sport menu, not a redirect", async () => {
+    const db = realDb();
+    const day = "2026-10-14";
+    seedAllPick(db._sql, day);
+    const fetchImpl = stubFetch();
+    const FROZEN_NOW = Date.UTC(2026, 9, 14, 8, 0);
+    const realNow = Date.now;
+    Date.now = () => FROZEN_NOW;
+    try {
+      await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/all")));
+    } finally {
+      Date.now = realNow;
+    }
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.match(fetchImpl.calls[0].body.text, /ALL PREDICTIONS/);
+    assert.match(fetchImpl.calls[0].body.text, /Pick a sport/);
+  });
+  it("a legacy group message's old pg|all|0 pagination button, tapped now, edits into the redirect (no new message, no list)", async () => {
+    const db = realDb();
+    const theEnv = { ...env(db), TELEGRAM_BOT_USERNAME: "SureOddsBot" };
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () =>
+      handleUpdate(theEnv, {
+        update_id: 1,
+        callback_query: {
+          id: "cbq-1",
+          data: "pg|all|0",
+          from: { id: "u1" },
+          message: { message_id: 55, chat: { id: "g1", type: "supergroup" } },
+        },
+      }),
+    );
+    const toast = fetchImpl.calls.find((c) => c.url.includes("answerCallbackQuery"));
+    assert.ok(toast, "the tap must still be acknowledged");
+    const edit = fetchImpl.calls.find((c) => c.url.includes("editMessageText"));
+    assert.ok(edit, "the stale message must be edited in place, not replaced");
+    assert.equal(edit.body.message_id, 55);
+    assert.doesNotMatch(edit.body.text, /ALL PREDICTIONS/);
+    assert.equal(fetchImpl.calls.filter((c) => c.url.includes("sendMessage")).length, 0, "no fresh message, no list");
+  });
+  it("a legacy group pg|all_<sport>|... sub-page callback is redirected the same way", async () => {
+    const db = realDb();
+    const theEnv = { ...env(db), TELEGRAM_BOT_USERNAME: "SureOddsBot" };
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () =>
+      handleUpdate(theEnv, {
+        update_id: 1,
+        callback_query: {
+          id: "cbq-1",
+          data: "pg|all_football|0|20261014",
+          from: { id: "u1" },
+          message: { message_id: 56, chat: { id: "g1", type: "supergroup" } },
+        },
+      }),
+    );
+    const edit = fetchImpl.calls.find((c) => c.url.includes("editMessageText"));
+    assert.ok(edit, "sport sub-pages must redirect too, not just the top-level all view");
+    assert.doesNotMatch(edit.body.text, /football/i);
+  });
+  it("a private-chat pg|all|0 tap is unaffected: still edits in the real sport menu", async () => {
+    const db = realDb();
+    const day = "2026-10-14";
+    seedAllPick(db._sql, day);
+    const fetchImpl = stubFetch();
+    const FROZEN_NOW = Date.UTC(2026, 9, 14, 8, 0);
+    const realNow = Date.now;
+    Date.now = () => FROZEN_NOW;
+    try {
+      await withFetch(fetchImpl, () => handleUpdate(env(db), callbackQuery(1, "cbq-1", "c1", "u1", "pg|all|0")));
+    } finally {
+      Date.now = realNow;
+    }
+    const edit = fetchImpl.calls.find((c) => c.url.includes("editMessageText") || c.url.includes("sendMessage"));
+    assert.match(edit.body.text, /ALL PREDICTIONS/);
+  });
+  it("/start all (the group button's deep link) immediately shows today's All Predictions in the private chat", async () => {
+    const db = realDb();
+    const day = "2026-10-14";
+    seedAllPick(db._sql, day);
+    const fetchImpl = stubFetch();
+    const FROZEN_NOW = Date.UTC(2026, 9, 14, 8, 0);
+    const realNow = Date.now;
+    Date.now = () => FROZEN_NOW;
+    try {
+      await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start all")));
+    } finally {
+      Date.now = realNow;
+    }
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.match(fetchImpl.calls[0].body.text, /ALL PREDICTIONS/);
+    assert.match(fetchImpl.calls[0].body.text, /Pick a sport/);
+  });
+  it("/start all in a group is a no-op: deep links only ever open a private chat", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(1, "g1", "u1", "/start all", "supergroup")));
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+});
+
+describe("Custom Picks loading-state lifecycle", () => {
+  function stubFetchWithMessageIds() {
+    const calls = [];
+    let nextId = 1000;
+    const fn = async (url, init) => {
+      const body = init?.body ? JSON.parse(init.body) : null;
+      calls.push({ url, body });
+      if (url.includes("sendMessage")) {
+        return { ok: true, status: 200, json: async () => ({ ok: true, result: { message_id: nextId++ } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+    fn.calls = calls;
+    return fn;
+  }
+  it("sends a loading indicator, deletes it once a real message_id comes back, then delivers the ticket", async () => {
+    const db = realDb();
+    seedPool(db._sql);
+    await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
+    const fetchImpl = stubFetchWithMessageIds();
+    await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(2, "c1", "u1", "1 picks")));
+    assert.equal(fetchImpl.calls.length, 3, "loading sendMessage, deleteMessage, final sendMessage");
+    assert.match(fetchImpl.calls[0].url, /sendMessage/);
+    assert.match(fetchImpl.calls[0].body.text, /Building your picks/);
+    assert.match(fetchImpl.calls[1].url, /deleteMessage/);
+    assert.equal(fetchImpl.calls[1].body.message_id, 1000);
+    assert.match(fetchImpl.calls[2].url, /sendMessage/);
+    assert.match(fetchImpl.calls[2].body.text, /🔥/);
+  });
+  it("a failed loading-indicator send never blocks the real ticket (Telegram failure handled safely)", async () => {
+    const db = realDb();
+    seedPool(db._sql);
+    await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
+    let first = true;
+    const flaky = async (url, init) => {
+      if (first && url.includes("sendMessage")) {
+        first = false;
+        return { ok: false, status: 500, json: async () => ({}) };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+    const calls = [];
+    const wrapped = async (url, init) => {
+      calls.push({ url, body: init?.body ? JSON.parse(init.body) : null });
+      return flaky(url, init);
+    };
+    await withFetch(wrapped, () => handleUpdate(env(db), textMessage(2, "c1", "u1", "1 picks")));
+    const delivered = calls.find((c) => c.url.includes("sendMessage") && /🔥/.test(c.body?.text ?? ""));
+    assert.ok(delivered, "the ticket must still be delivered even though the loading indicator failed to send");
+  });
+  it("a failed delete of the loading indicator never blocks the real ticket", async () => {
+    const db = realDb();
+    seedPool(db._sql);
+    await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
+    const calls = [];
+    const flakyDelete = async (url, init) => {
+      const body = init?.body ? JSON.parse(init.body) : null;
+      calls.push({ url, body });
+      if (url.includes("deleteMessage")) return { ok: false, status: 400, json: async () => ({}) };
+      if (url.includes("sendMessage")) return { ok: true, status: 200, json: async () => ({ ok: true, result: { message_id: 42 } }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+    await withFetch(flakyDelete, () => handleUpdate(env(db), textMessage(2, "c1", "u1", "1 picks")));
+    const delivered = calls.find((c) => c.url.includes("sendMessage") && /🔥/.test(c.body?.text ?? ""));
+    assert.ok(delivered, "the ticket must still be delivered even though deleting the loading indicator failed");
+  });
+  it("the loading indicator is also cleaned up when delivering the final result fails, never left stuck", async () => {
+    const db = realDb();
+    seedPool(db._sql);
+    await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
+    const calls = [];
+    // Everything succeeds except the final ticket send, which 5xxs — proving
+    // the loading indicator is still torn down before the failure is
+    // re-thrown (and the update left retryable), never stuck on screen.
+    const failOnFinalSend = async (url, init) => {
+      const body = init?.body ? JSON.parse(init.body) : null;
+      calls.push({ url, body });
+      if (url.includes("sendMessage") && body?.text === "⏳ Building your picks...") {
+        return { ok: true, status: 200, json: async () => ({ ok: true, result: { message_id: 77 } }) };
+      }
+      if (url.includes("sendMessage")) return { ok: false, status: 500, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+    await assert.rejects(() => withFetch(failOnFinalSend, () => handleUpdate(env(db), textMessage(2, "c1", "u1", "1 picks"))));
+    const deleteCall = calls.find((c) => c.url.includes("deleteMessage"));
+    assert.ok(deleteCall, "the loading indicator must be cleaned up even when the final send fails");
+    assert.equal(deleteCall.body.message_id, 77);
   });
 });
 
