@@ -308,6 +308,26 @@ describe("/pinmenu admin command — private-chat only, posts + pins the group m
     const row = db._sql.prepare("SELECT 1 FROM pinned_menu WHERE chat_id='group-1'").get();
     assert.equal(row, undefined, "nothing was actually pinned, so nothing should be recorded as pinned");
   });
+  it("when the group post itself fails (e.g. bot not in that chat), explains Telegram's actual reason, not just a bare status", async () => {
+    const calls = [];
+    const flaky = async (url, init) => {
+      const body = init?.body ? JSON.parse(init.body) : null;
+      calls.push({ url, body });
+      if (url.includes("sendMessage") && body?.chat_id === "group-1") {
+        return { ok: false, status: 400, json: async () => ({ ok: false, description: "Bad Request: chat not found" }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+    const db = realDb();
+    await withFetch(flaky, () => handleUpdate(pinEnv(db), textMessage(1, "private-7", "7", "/pinmenu")));
+    const ack = calls.find((c) => c.body.chat_id === "private-7");
+    assert.ok(ack, "the admin must still get a private explanation");
+    assert.match(ack.body.text, /Failed to post the menu to the group/);
+    assert.match(ack.body.text, /chat not found/, "Telegram's own error description must be surfaced, not swallowed");
+    assert.match(ack.body.text, /TELEGRAM_CHAT_ID/, "must point at the likely misconfiguration");
+    const pinned = db._sql.prepare("SELECT 1 FROM pinned_menu WHERE chat_id='group-1'").get();
+    assert.equal(pinned, undefined);
+  });
   it("repeating /pinmenu after a success edits the SAME message in place — no duplicate post, no re-pin needed", async () => {
     const db = realDb();
     const first = stubFetchForPin();

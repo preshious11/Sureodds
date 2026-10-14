@@ -22,6 +22,9 @@ _*.py
 *_diagnostic*.json
 !__init__.py
 
+# ---- pytest --basetemp scratch dirs (tools/verify_release_suite.py --scratch) ----
+/phase3*_tmp/
+
 # ---- Editor / agent workspaces: may hold deployment credentials (.vscode/mcp.json held one) ----
 .vscode/
 .idea/

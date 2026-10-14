@@ -93,7 +93,22 @@ async function tgApi(env: Env, method: string, payload: Record<string, unknown>)
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    throw new Error(`telegram ${method} failed: ${res.status}`);
+    // Telegram's error body (e.g. "Bad Request: chat not found", "Forbidden:
+    // bot was kicked from the group chat") is far more actionable than the
+    // bare HTTP status — surfaced here so every caller's failure message
+    // (admin confirmations in particular) can explain WHY, not just that it
+    // failed. Reading the body can itself throw on a malformed response;
+    // that's swallowed, falling back to the status alone.
+    let description = "";
+    try {
+      const body = (await res.json()) as { description?: string };
+      description = body.description ?? "";
+    } catch {
+      // not JSON — fall back to the status code alone. (Safe to read here:
+      // tgApi throws immediately after, so nothing downstream still needs
+      // this response's body.)
+    }
+    throw new Error(`telegram ${method} failed: ${res.status}${description ? ` (${description})` : ""}`);
   }
   return res;
 }
@@ -195,8 +210,19 @@ async function pinCommunityMenu(env: Env, adminChatId: string): Promise<void> {
     });
     const body = (await res.json()) as { result?: { message_id?: number } };
     messageId = body.result?.message_id;
-  } catch {
-    await tgApi(env, "sendMessage", { chat_id: adminChatId, text: "Failed to post the menu to the group. Nothing was pinned." });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    // Common causes: TELEGRAM_CHAT_ID isn't set to this group's real id
+    // (wrong/missing secret, or still the placeholder), or the bot isn't a
+    // member of that chat (never added, or removed/kicked since). The
+    // underlying Telegram error text (now included) names the actual
+    // reason instead of leaving it a guess.
+    await tgApi(env, "sendMessage", {
+      chat_id: adminChatId,
+      text:
+        `Failed to post the menu to the group: ${detail}. Nothing was pinned. ` +
+        "Check that TELEGRAM_CHAT_ID is set to this group's chat id and that the bot is still a member of it.",
+    });
     return;
   }
   if (messageId == null) {
@@ -205,11 +231,12 @@ async function pinCommunityMenu(env: Env, adminChatId: string): Promise<void> {
   }
   try {
     await tgApi(env, "pinChatMessage", { chat_id: groupChatId, message_id: messageId, disable_notification: true });
-  } catch {
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
     await tgApi(env, "sendMessage", {
       chat_id: adminChatId,
       text:
-        "Menu posted to the group, but I couldn't pin it — I need the 'Pin Messages' admin permission there. " +
+        `Menu posted to the group, but I couldn't pin it: ${detail}. I need the 'Pin Messages' admin permission there. ` +
         "Grant it to the bot and try /pinmenu again.",
     });
     return;

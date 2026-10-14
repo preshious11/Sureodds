@@ -21,7 +21,7 @@ PAGE_SIZE = "5"
 # is omitted entirely until this is set — never a dead link.
 # TELEGRAM_BOT_USERNAME = "BETTSUREbot"
 TELEGRAM_BOT_USERNAME = "BETTSUREbot"
-TELEGRAM_ADMIN_IDS = "1004474554436"
+TELEGRAM_ADMIN_IDS = "8606823551"
 STAGE3_CRON_ENABLED = "0"
 
 # Secrets (never in this file):
