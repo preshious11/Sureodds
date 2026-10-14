@@ -293,6 +293,104 @@ describe("Custom Picks private-chat access rules (index.ts routing)", () => {
   });
 });
 
+describe("Custom Picks production archive shape end-to-end (2026-10-14 regression)", () => {
+  // The production D1 payload_json never carries prediction_date/timezone/
+  // generated_at (capture_candidate serializes evaluated fields only); the
+  // row columns do. Seed exactly that shape: before the row-merge fix this
+  // test replied "Nothing made the cut" with a COMPLETE pool and usable
+  // fixtures. The clock is frozen so the Lagos day/timezone derivation in
+  // index.ts (lagosDateString + TIMEZONE) is asserted deterministically.
+  const FROZEN_NOW = Date.UTC(2026, 9, 14, 8, 0); // 09:00 Africa/Lagos
+  function seedProductionRow(sql, day, generatedAt, overrides = {}) {
+    const payload = JSON.stringify({
+      provider: "sgo",
+      provider_event_id: "ev-1",
+      sport: "football",
+      league: "Premier League",
+      home: "Arsenal",
+      away: "Chelsea",
+      start_utc: `${day}T20:00:00Z`,
+      league_id: "epl",
+      extra: {},
+      event_sources: ["sgo"],
+      canonical_event_id: "fx-1",
+      canonical_competition_id: "epl",
+      home_id: "ars",
+      away_id: "che",
+      market: "result2",
+      selection: "home",
+      price: 1.8,
+      period: "full",
+      stat: "points",
+      entity: "all",
+      line: null,
+      market_label: "Home",
+      p_market: 0.55,
+      p_model: 0.7,
+      sources: { sgo: 0.7 },
+      agreement: 0.8,
+      ev: 0.05,
+      edge: 0.15,
+      label: "Arsenal to Win",
+      liquidity: 0.9,
+      edge_ev: 0.03,
+      bookmaker_count: 5,
+      provider_count: 1,
+      rank_score: null,
+      quality: null,
+      se: null,
+      p_lcb: null,
+      ...overrides,
+    }).replace(/'/g, "''");
+    const id = overrides.canonical_event_id ?? "fx-1";
+    sql.exec(
+      `INSERT INTO custom_pick_candidates VALUES('${day}','Africa/Lagos','cand-${id}','${id}','${payload}','${generatedAt}','${generatedAt}',1)`,
+    );
+  }
+  async function withFrozenClock(fn) {
+    const realNow = Date.now;
+    Date.now = () => FROZEN_NOW;
+    try {
+      return await fn();
+    } finally {
+      Date.now = realNow;
+    }
+  }
+  it("a production-shaped pool serves a real ticket, proving the handler derives the Lagos day/zone correctly", async () => {
+    const db = realDb();
+    const day = "2026-10-14";
+    const generatedAt = "2026-10-14T06:00:00Z";
+    db._sql.exec(`INSERT INTO custom_pick_pools VALUES('${day}','Africa/Lagos','${generatedAt}','COMPLETE','{}')`);
+    // 1.8 × 1.6 × 1.9 = 5.47, inside the ±10% band around 5.
+    seedProductionRow(db._sql, day, generatedAt);
+    seedProductionRow(db._sql, day, generatedAt, { canonical_event_id: "fx-2", home: "Barca", away: "Real", price: 1.6, p_model: 0.65 });
+    seedProductionRow(db._sql, day, generatedAt, { canonical_event_id: "fx-3", home: "Bayern", away: "Dortmund", price: 1.9, p_model: 0.68 });
+    await withFrozenClock(async () => {
+      await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
+      const fetchImpl = stubFetch();
+      await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(2, "c1", "u1", "give me 5 odds")));
+      assert.equal(fetchImpl.calls.length, 1);
+      assert.match(fetchImpl.calls[0].body.text, /🔥/);
+      assert.match(fetchImpl.calls[0].body.text, /Arsenal vs Chelsea/);
+    });
+  });
+  it("a production-shaped pool answers 30 odds honestly (unreachable) instead of an empty-pool message", async () => {
+    const db = realDb();
+    const day = "2026-10-14";
+    const generatedAt = "2026-10-14T06:00:00Z";
+    db._sql.exec(`INSERT INTO custom_pick_pools VALUES('${day}','Africa/Lagos','${generatedAt}','COMPLETE','{}')`);
+    seedProductionRow(db._sql, day, generatedAt);
+    seedProductionRow(db._sql, day, generatedAt, { canonical_event_id: "fx-2", home: "Barca", away: "Real", price: 1.6, p_model: 0.65 });
+    await withFrozenClock(async () => {
+      await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
+      const fetchImpl = stubFetch();
+      await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(2, "c1", "u1", "Give me 30 odds")));
+      assert.equal(fetchImpl.calls.length, 1);
+      assert.doesNotMatch(fetchImpl.calls[0].body.text, /Nothing made the cut/);
+    });
+  });
+});
+
 describe("failed Telegram sends during webhook processing", () => {
   it("a 5xx from the Telegram API fails the update and leaves it retryable, never silently dropped", async () => {
     const db = realDb();

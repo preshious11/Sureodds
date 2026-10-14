@@ -8,6 +8,7 @@ import {
   failureReason,
   formatTicket,
   normalizeCandidate,
+  normalizeCandidateWithReason,
   parseRequest,
   prepareAlternatives,
   refine,
@@ -324,6 +325,136 @@ describe("respond() end-to-end contract", () => {
     const { result } = await respond(deps(pool, rows), "1 picks", ZONE, DAY, NOW, null);
     assert.notEqual(result.reason, "success");
   });
+  // Production-archive shape: capture_candidate() serializes ONLY the
+  // evaluated event/market/score fields into payload_json. prediction_date,
+  // timezone and generated_at live exclusively in the D1 row columns (see
+  // predbot/storage/db.py get_custom_pick_candidates, which merges the
+  // columns over the parsed JSON). These fixtures reproduce that exact
+  // shape — any test embedding the scoping keys inside payload_json is NOT
+  // production-compatible and masks the 2026-10-14 empty-pool defect.
+  function productionPayload(overrides = {}) {
+    return {
+      provider: "sgo",
+      provider_event_id: "ev-1",
+      sport: "football",
+      league: "Premier League",
+      home: "Arsenal",
+      away: "Chelsea",
+      start_utc: "2026-10-14T18:00:00Z",
+      league_id: "epl",
+      extra: {},
+      event_sources: ["sgo"],
+      canonical_event_id: "fx-1",
+      canonical_competition_id: "epl",
+      home_id: "ars",
+      away_id: "che",
+      market: "result2",
+      selection: "home",
+      price: 1.8,
+      period: "full",
+      stat: "points",
+      entity: "all",
+      line: null,
+      market_label: "Home",
+      p_market: 0.55,
+      p_model: 0.7,
+      sources: { sgo: 0.7 },
+      agreement: 0.8,
+      ev: 0.05,
+      edge: 0.15,
+      label: "Arsenal to Win",
+      liquidity: 0.9,
+      edge_ev: 0.03,
+      bookmaker_count: 5,
+      provider_count: 1,
+      rank_score: null,
+      quality: null,
+      se: null,
+      p_lcb: null,
+      ...overrides,
+    };
+  }
+  function productionRow(overrides = {}, rowOverrides = {}) {
+    return {
+      payload_json: JSON.stringify(productionPayload(overrides)),
+      generated_at: "2026-10-14T06:00:00Z",
+      prediction_date: DAY,
+      timezone: ZONE,
+      ...rowOverrides,
+    };
+  }
+  describe("production archive shape (row columns merged over payload_json)", () => {
+    const POOL = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
+    function deps(rows) {
+      return { getPool: async () => POOL, getCandidates: async () => rows };
+    }
+    it("accepts a production-shaped row: scoping comes from the row columns, not the payload", async () => {
+      assert.ok(!("prediction_date" in productionPayload()), "fixture must not embed scoping keys in payload_json");
+      assert.ok(!("timezone" in productionPayload()), "fixture must not embed scoping keys in payload_json");
+      assert.ok(!("generated_at" in productionPayload()), "fixture must not embed scoping keys in payload_json");
+      const rows = [
+        productionRow(),
+        productionRow({ canonical_event_id: "fx-2", home: "Barca", away: "Real" }),
+      ];
+      const { result } = await respond(deps(rows), "2 picks", ZONE, DAY, NOW, null);
+      assert.equal(result.reason, "success");
+      assert.match(result.text, /🔥/);
+    });
+    it("reports day_zone_mismatch (not silent empty) when the row columns are missing entirely", () => {
+      const { candidate, reason } = normalizeCandidateWithReason(
+        productionPayload(), DAY, ZONE, NOW, Date.parse("2026-10-14T06:30:00Z"), true, "2026-10-14T06:00:00Z",
+      );
+      assert.equal(candidate, null);
+      assert.equal(reason, "day_zone_mismatch");
+    });
+    it("rejects a stale evaluation whose Lagos day differs from the pool day", () => {
+      const { candidate, reason } = normalizeCandidateWithReason(
+        { ...productionPayload(), prediction_date: DAY, timezone: ZONE, generated_at: "2026-10-13T22:00:00Z" },
+        DAY, ZONE, NOW, Date.parse("2026-10-14T06:30:00Z"),
+      );
+      assert.equal(candidate, null);
+      assert.equal(reason, "stale_evaluated_day");
+    });
+    it("rejects a dead fixture reported only inside the nested extra dict", () => {
+      const { candidate, reason } = normalizeCandidateWithReason(
+        { ...productionPayload(), prediction_date: DAY, timezone: ZONE, generated_at: "2026-10-14T06:00:00Z", extra: { status: "final" } },
+        DAY, ZONE, NOW, Date.parse("2026-10-14T06:30:00Z"),
+      );
+      assert.equal(candidate, null);
+      assert.equal(reason, "bad_status");
+    });
+    it("reaches the ticket builder for odds targets: 30 odds fails honestly as unreachable, never below_quality_floor", async () => {
+      const rows = [
+        productionRow(),
+        productionRow({ canonical_event_id: "fx-2", home: "Barca", away: "Real", price: 1.6, p_model: 0.65 }),
+      ];
+      const { result } = await respond(deps(rows), "Give me 30 odds", ZONE, DAY, NOW, null);
+      assert.notEqual(result.reason, "below_quality_floor", "pool must be non-empty so the builder is actually reached");
+      assert.equal(result.reason, "target_unreachable");
+    });
+    it("builds a real ticket for an attainable odds target from production-shaped rows", async () => {
+      // 1.8 × 1.6 × 1.9 = 5.47, inside the ±10% band around 5.
+      const rows = [
+        productionRow({ price: 1.8, p_model: 0.7 }),
+        productionRow({ canonical_event_id: "fx-2", home: "Barca", away: "Real", price: 1.6, p_model: 0.65 }),
+        productionRow({ canonical_event_id: "fx-3", home: "Bayern", away: "Dortmund", price: 1.9, p_model: 0.68 }),
+      ];
+      const { result } = await respond(deps(rows), "give me 5 odds", ZONE, DAY, NOW, null);
+      assert.equal(result.reason, "success");
+      assert.match(result.text, /🔥/);
+    });
+    it("parses both reported Telegram messages as target-odds requests", () => {
+      for (const text of ["Give me 30 odds", "give me 5 odds"]) {
+        const parsed = parseRequest(text);
+        assert.ok(parsed.ok, `${text} must parse`);
+        assert.equal(parsed.request.pickCount, null);
+        assert.equal(parsed.request.refinement, false);
+      }
+      assert.equal(parseRequest("Give me 30 odds").request.targetOdds, 30);
+      assert.equal(parseRequest("give me 5 odds").request.targetOdds, 5);
+    });
+  });
+
   it("a refinement follow-up merges into the previous request", async () => {
     const rows = [
       { payload_json: JSON.stringify(candidatePayload()) },

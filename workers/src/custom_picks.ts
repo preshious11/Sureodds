@@ -126,7 +126,19 @@ export interface Candidate {
   referenceEv: number;
 }
 
-/** ~ custom_picks.py normalize(): validate an archived candidate row without altering the stored evaluation. */
+/**
+ * ~ custom_picks.py normalize(): validate an archived candidate row without altering the stored evaluation.
+ *
+ * NOTE on row vs payload fields: production's archive writer
+ * (predbot/model/candidates.py capture_candidate) serializes ONLY the
+ * evaluated event/market/score fields into payload_json. prediction_date,
+ * timezone and generated_at live exclusively in the D1 row's own columns
+ * (mirrored by predbot/storage/db.py get_custom_pick_candidates, which
+ * merges the columns over the parsed JSON). Callers MUST therefore merge
+ * the row columns in before calling this — see loadPool(). A payload that
+ * already carries these keys (older test fixtures) keeps working because
+ * the row values are applied only when present, payload-first otherwise.
+ */
 export function normalizeCandidate(
   payload: Record<string, unknown>,
   day: string,
@@ -136,11 +148,31 @@ export function normalizeCandidate(
   includeStarted = false,
   rowGeneratedAt?: string,
 ): Candidate | null {
-  if (payload.prediction_date !== day || payload.timezone !== zone) return null;
-  const statuses = ["status", "event_status", "fixture_status"].map((k) => String(payload[k] ?? "").toLowerCase());
+  return normalizeCandidateWithReason(payload, day, zone, nowMs, poolTimeMs, includeStarted, rowGeneratedAt).candidate;
+}
+
+/** Same validation as normalizeCandidate, plus a machine-readable rejection reason for diagnostics. */
+export function normalizeCandidateWithReason(
+  payload: Record<string, unknown>,
+  day: string,
+  zone: string,
+  nowMs: number,
+  poolTimeMs: number,
+  includeStarted = false,
+  rowGeneratedAt?: string,
+): { candidate: Candidate | null; reason: string } {
+  if (payload.prediction_date !== day || payload.timezone !== zone) return { candidate: null, reason: "day_zone_mismatch" };
+  // ~ custom_picks.py normalize(): statuses live on the row AND on its
+  // nested `extra` dict (event.extra) — either may report a dead fixture.
+  const extra = (payload.extra as Record<string, unknown> | null) ?? null;
+  const extraObj = extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {};
+  const statuses = [payload, extraObj]
+    .flatMap((source) => ["status", "event_status", "fixture_status"].map((k) => String(source[k] ?? "").toLowerCase()));
   const badStatuses = new Set(["cancelled", "canceled", "postponed", "abandoned", "final", "finished", "completed", "live", "in_progress", "suspended"]);
-  if (statuses.some((s) => badStatuses.has(s))) return null;
-  if (["cancelled", "canceled", "postponed", "started", "finished", "is_live"].some((k) => payload[k] === true)) return null;
+  if (statuses.some((s) => badStatuses.has(s))) return { candidate: null, reason: "bad_status" };
+  if (["cancelled", "canceled", "postponed", "started", "finished", "is_live"].some((k) => payload[k] === true || extraObj[k] === true)) {
+    return { candidate: null, reason: "bad_status" };
+  }
 
   const startMs = Date.parse(String(payload.start_utc ?? ""));
   // Archived candidates may predate the payload carrying its own
@@ -151,28 +183,38 @@ export function normalizeCandidate(
   const payloadGeneratedAt = payload.generated_at;
   const hasPayloadTimestamp = payloadGeneratedAt != null && String(payloadGeneratedAt).trim() !== "";
   const evaluatedMs = Date.parse(hasPayloadTimestamp ? String(payloadGeneratedAt) : String(rowGeneratedAt ?? ""));
-  if (!Number.isFinite(startMs) || (startMs <= nowMs && !includeStarted)) return null;
-  if (!Number.isFinite(evaluatedMs) || evaluatedMs > poolTimeMs || evaluatedMs > nowMs) return null;
+  if (!Number.isFinite(startMs)) return { candidate: null, reason: "bad_start" };
+  if (startMs <= nowMs && !includeStarted) return { candidate: null, reason: "started" };
+  if (!Number.isFinite(evaluatedMs) || evaluatedMs > poolTimeMs || evaluatedMs > nowMs) {
+    return { candidate: null, reason: "bad_evaluated" };
+  }
+  // ~ custom_picks.py normalize(): the evaluation must belong to the
+  // request's Lagos day — a stale row (evaluated yesterday, read today)
+  // is never served as today's pick. Africa/Lagos is UTC+1 year-round.
+  const evaluatedDay = new Date(evaluatedMs + 60 * 60_000).toISOString().slice(0, 10);
+  if (evaluatedDay !== day) return { candidate: null, reason: "stale_evaluated_day" };
 
   const price = finite(payload.price);
   const probability = finite(payload.p_model);
-  if (price == null || price <= 1 || probability == null || probability <= 0 || probability >= 1) return null;
+  if (price == null || price <= 1 || probability == null || probability <= 0 || probability >= 1) {
+    return { candidate: null, reason: "bad_price_prob" };
+  }
 
   const fixtureId = String(payload.canonical_event_id ?? payload.fixture_key ?? "");
   const sport = String(payload.sport ?? "");
-  if (!fixtureId.trim() || !SUPPORTED_SPORTS.has(sport)) return null;
+  if (!fixtureId.trim() || !SUPPORTED_SPORTS.has(sport)) return { candidate: null, reason: "bad_fixture_sport" };
 
   const market = String(payload.market ?? "");
   const selection = String(payload.selection ?? "");
-  if (!validSelection(market, selection)) return null;
+  if (!validSelection(market, selection)) return { candidate: null, reason: "bad_market_selection" };
 
   const home = String(payload.home ?? "");
   const away = String(payload.away ?? "");
-  if (!home.trim() || !away.trim()) return null;
+  if (!home.trim() || !away.trim()) return { candidate: null, reason: "bad_teams" };
 
   const line = payload.line == null ? null : finite(payload.line);
-  if (payload.line != null && line == null) return null;
-  if ((market === "total" || market === "handicap") && line == null) return null;
+  if (payload.line != null && line == null) return { candidate: null, reason: "bad_line" };
+  if ((market === "total" || market === "handicap") && line == null) return { candidate: null, reason: "bad_line" };
 
   const outcome = outcomeLabel(market, selection, home, away, line);
   const key = JSON.stringify([market, selection, line]);
@@ -183,7 +225,7 @@ export function normalizeCandidate(
       ? payload.canonical_competition_id
       : (competitionLabel && LEAGUES[competitionLabel.toLowerCase()]?.id) || null;
 
-  return {
+  const candidate: Candidate = {
     fixtureId, key, sport, market, selection, price, probability, startMs, home, away, outcome,
     competition, competitionLabel,
     agreement: Math.max(0, Math.min(1, finite(payload.agreement) ?? 0)),
@@ -191,6 +233,7 @@ export function normalizeCandidate(
     books: Math.max(0, Math.min(10, finite(payload.bookmaker_count) ?? 0)),
     referenceEv: Math.max(-0.1, Math.min(0.1, finite(payload.edge_ev) ?? -0.1)),
   };
+  return { candidate, reason: "accepted" };
 }
 
 export interface ParsedRequest {
@@ -689,31 +732,62 @@ export function refine(previous: ParsedRequest, current: ParsedRequest): ParsedR
 
 export interface CustomPicksDeps {
   getPool: (day: string, zone: string) => Promise<{ status: string; generated_at: string } | null>;
-  getCandidates: (day: string, zone: string) => Promise<{ payload_json: string; generated_at: string }[]>;
+  getCandidates: (day: string, zone: string) => Promise<{
+    payload_json: string; generated_at: string; prediction_date?: string; timezone?: string;
+  }[]>;
+}
+
+export interface PoolDiagnostics {
+  rows: number;
+  accepted: number;
+  jsonErrors: number;
+  rejectedByReason: Record<string, number>;
+}
+
+async function loadPool(
+  deps: CustomPicksDeps,
+  day: string,
+  zone: string,
+  nowMs: number,
+): Promise<{ candidates: Candidate[]; diagnostics: PoolDiagnostics; poolStatus: string; poolGeneratedAt: string } | null> {
+  const pool = await deps.getPool(day, zone);
+  if (!pool) return null;
+  const poolTimeMs = Date.parse(pool.generated_at);
+  const rows = await deps.getCandidates(day, zone);
+  const candidates: Candidate[] = [];
+  const diagnostics: PoolDiagnostics = { rows: rows.length, accepted: 0, jsonErrors: 0, rejectedByReason: {} };
+  for (const row of rows) {
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+    } catch {
+      diagnostics.jsonErrors += 1; // malformed archive row — skip, never fabricate.
+      continue;
+    }
+    // The archived JSON never carries the pool's scoping columns (see
+    // normalizeCandidate's docstring): merge the row's own columns over the
+    // payload, exactly as production's get_custom_pick_candidates does.
+    // generated_at keeps its fallback-only semantic (see normalizeCandidate).
+    const merged: Record<string, unknown> = {
+      ...payload,
+      prediction_date: row.prediction_date ?? payload.prediction_date,
+      timezone: row.timezone ?? payload.timezone,
+    };
+    const { candidate, reason } = normalizeCandidateWithReason(merged, day, zone, nowMs, poolTimeMs, true, row.generated_at);
+    if (candidate) {
+      candidates.push(candidate);
+      diagnostics.accepted += 1;
+    } else {
+      diagnostics.rejectedByReason[reason] = (diagnostics.rejectedByReason[reason] ?? 0) + 1;
+    }
+  }
+  return { candidates, diagnostics, poolStatus: pool.status, poolGeneratedAt: pool.generated_at };
 }
 
 export interface RespondResult {
   text: string;
   reason: string;
   suggestions: Suggestion[];
-}
-
-async function loadPool(deps: CustomPicksDeps, day: string, zone: string, nowMs: number): Promise<Candidate[] | null> {
-  const pool = await deps.getPool(day, zone);
-  if (!pool) return null;
-  const poolTimeMs = Date.parse(pool.generated_at);
-  const rows = await deps.getCandidates(day, zone);
-  const candidates: Candidate[] = [];
-  for (const row of rows) {
-    try {
-      const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
-      const c = normalizeCandidate(payload, day, zone, nowMs, poolTimeMs, true, row.generated_at);
-      if (c) candidates.push(c);
-    } catch {
-      continue; // malformed archive row — skip, never fabricate.
-    }
-  }
-  return candidates;
 }
 
 export async function respond(
@@ -729,11 +803,33 @@ export async function respond(
   let request = parsed.request;
   if (request.refinement && previous) request = refine(previous, request);
 
-  const pool = await loadPool(deps, day, zone, nowMs);
-  if (pool === null) return { result: { text: UNAVAILABLE, reason: "archive_unavailable", suggestions: [] }, request };
+  const loaded = await loadPool(deps, day, zone, nowMs);
+  if (loaded === null) return { result: { text: UNAVAILABLE, reason: "archive_unavailable", suggestions: [] }, request };
+  const { candidates: pool, diagnostics } = loaded;
 
   const matches = eligible(pool, request, nowMs);
   const ticket = matches.length ? search(matches, request) : null;
+  // Operational diagnostics only: pool/request shapes and funnel counts.
+  // Never the user's raw text, identity, or any secret.
+  console.log(JSON.stringify({
+    event: "custom_picks",
+    day,
+    zone,
+    poolStatus: loaded.poolStatus,
+    rows: diagnostics.rows,
+    accepted: diagnostics.accepted,
+    jsonErrors: diagnostics.jsonErrors,
+    rejectedByReason: diagnostics.rejectedByReason,
+    fixtures: new Set(pool.map((c) => c.fixtureId)).size,
+    targetOdds: request.targetOdds,
+    pickCount: request.pickCount,
+    sports: request.sports.size,
+    allowedMarkets: request.allowedMarkets.size,
+    excludedMarkets: request.excludedMarkets.size,
+    preference: request.preference,
+    matches: matches.length,
+    matchFixtures: new Set(matches.map((c) => c.fixtureId)).size,
+  }));
   if (validTicket(ticket, request, nowMs)) {
     return { result: { text: formatTicket(ticket!), reason: "success", suggestions: [] }, request };
   }

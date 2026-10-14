@@ -491,6 +491,8 @@ export interface CustomPickCandidateRow {
   canonical_event_id: string;
   payload_json: string;
   generated_at: string;
+  prediction_date: string;
+  timezone: string;
 }
 
 export async function getCustomPickCandidates(
@@ -498,9 +500,13 @@ export async function getCustomPickCandidates(
   predictionDate: string,
   timezone: string,
 ): Promise<CustomPickCandidateRow[]> {
+  // prediction_date/timezone are selected (not just filtered) because the
+  // archived payload_json never carries them — loadPool() in custom_picks.ts
+  // merges these row columns over the parsed JSON, mirroring production's
+  // get_custom_pick_candidates. Without them every row fails normalization.
   const { results } = await db
     .prepare(
-      `SELECT candidate_id, canonical_event_id, payload_json, generated_at FROM custom_pick_candidates
+      `SELECT candidate_id, canonical_event_id, payload_json, generated_at, prediction_date, timezone FROM custom_pick_candidates
        WHERE prediction_date = ?1 AND timezone = ?2 ORDER BY canonical_event_id, candidate_id`,
     )
     .bind(predictionDate, timezone)
