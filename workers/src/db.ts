@@ -309,6 +309,53 @@ export interface DayStatsRow extends StatsRow {
   start_utc: string;
 }
 
+export interface ItemizedStatsRow extends StatsRow {
+  tier: "top" | "daily";
+  start_utc: string;
+}
+
+/**
+ * Per-leg rows for ONE day, with the resolved tier (top takes priority
+ * over daily, same as production's picks_where published_only derivation)
+ * — backs the itemized /yesterday listing production shows (✅/❌ per leg,
+ * grouped by tier). A COALESCE pair of EXISTS checks, not a JOIN, so a leg
+ * in both collections still returns exactly one row.
+ */
+export async function getItemizedStatsRowsForDate(db: D1Database, pickDate: string): Promise<ItemizedStatsRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT status, price, label, home, away, result_json, start_utc,
+         CASE WHEN EXISTS (SELECT 1 FROM prediction_memberships m WHERE m.prediction_id = picks.id AND m.collection = 'top')
+              THEN 'top' ELSE 'daily' END AS tier
+       FROM picks
+       WHERE pick_date = ?1 AND EXISTS (
+         SELECT 1 FROM prediction_memberships m WHERE m.prediction_id = picks.id AND m.collection IN ('top', 'daily')
+       )
+       ORDER BY tier ASC, start_utc ASC`,
+    )
+    .bind(pickDate)
+    .all<ItemizedStatsRow>();
+  return results ?? [];
+}
+
+/** Same Top/Daily-only scoping, restricted to ONE collection — backs /stats_top, /stats_daily. */
+export async function getStatsRowsForDateByCollection(
+  db: D1Database,
+  pickDate: string,
+  collection: "top" | "daily",
+): Promise<StatsRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT status, price, label, home, away, result_json FROM picks
+       WHERE pick_date = ?1 AND EXISTS (
+         SELECT 1 FROM prediction_memberships m WHERE m.prediction_id = picks.id AND m.collection = ?2
+       )`,
+    )
+    .bind(pickDate, collection)
+    .all<StatsRow>();
+  return results ?? [];
+}
+
 /**
  * Same Top/Daily-only scoping as getStatsRowsForDate, over a date RANGE
  * (`[sinceDate, beforeDate)`, both YYYY-MM-DD) — backs the 7-day trend and
@@ -532,6 +579,90 @@ export async function recordCustomRequest(db: D1Database, userId: string, chatId
     )
     .bind(userId, chatId, new Date(nowMs).toISOString().replace(/\.\d+Z$/, "Z"))
     .run();
+}
+
+/**
+ * Conversation refinement state (~ custom_recovery.py Recovery.conversations):
+ * the last parsed request, so a follow-up message classified as a
+ * "refinement" merges into it instead of starting over.
+ */
+export async function getConversationRequest(
+  db: D1Database,
+  userId: string,
+  chatId: string,
+  nowMs: number,
+): Promise<string | null> {
+  const row = await db
+    .prepare("SELECT request_json, request_expires_at FROM custom_sessions WHERE user_id = ?1 AND chat_id = ?2")
+    .bind(userId, chatId)
+    .first<{ request_json: string | null; request_expires_at: string | null }>();
+  if (!row?.request_json || !row.request_expires_at) return null;
+  return Date.parse(row.request_expires_at) > nowMs ? row.request_json : null;
+}
+
+export async function setConversationRequest(
+  db: D1Database,
+  userId: string,
+  chatId: string,
+  requestJson: string,
+  expiresAtMs: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE custom_sessions SET request_json = ?3, request_expires_at = ?4, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+       WHERE user_id = ?1 AND chat_id = ?2`,
+    )
+    .bind(userId, chatId, requestJson, new Date(expiresAtMs).toISOString())
+    .run();
+}
+
+/** ~ custom_recovery.py Recovery.ready: alternative-suggestion tokens a button tap can redeem. */
+export async function storeSuggestion(
+  db: D1Database,
+  token: string,
+  userId: string,
+  chatId: string,
+  label: string,
+  requestJson: string,
+  ticketJson: string,
+  nowMs: number,
+  expiresAtMs: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO custom_suggestions (token, user_id, chat_id, label, request_json, ticket_json, created_at, expires_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+    )
+    .bind(token, userId, chatId, label, requestJson, ticketJson, new Date(nowMs).toISOString(), new Date(expiresAtMs).toISOString())
+    .run();
+}
+
+export interface SuggestionRow {
+  token: string;
+  user_id: string;
+  chat_id: string;
+  label: string;
+  request_json: string;
+  ticket_json: string;
+  expires_at: string;
+}
+
+export async function getSuggestion(db: D1Database, token: string): Promise<SuggestionRow | null> {
+  const row = await db.prepare("SELECT * FROM custom_suggestions WHERE token = ?1").bind(token).first<SuggestionRow>();
+  return row ?? null;
+}
+
+export async function listActiveSuggestions(
+  db: D1Database,
+  userId: string,
+  chatId: string,
+  nowMs: number,
+): Promise<SuggestionRow[]> {
+  const { results } = await db
+    .prepare("SELECT * FROM custom_suggestions WHERE user_id = ?1 AND chat_id = ?2 AND expires_at > ?3 ORDER BY created_at DESC")
+    .bind(userId, chatId, new Date(nowMs).toISOString())
+    .all<SuggestionRow>();
+  return results ?? [];
 }
 
 export async function setJobResult(

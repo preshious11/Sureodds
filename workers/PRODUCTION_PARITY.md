@@ -200,11 +200,70 @@ directly against `predbot/bot/callbacks.py` and `predbot/jobs/daily_picks.py`:
   every automatic group post). See `workers/tests/group_posting_card.test.mjs`
   for the regression coverage of both bugs.
 
-## Custom Picks — still not full parity (see the dedicated section above)
+## Custom Picks — deep port (this pass, supersedes the earlier "partial port" section)
 
-The request-parsing and ticket-construction simplifications documented in
-the "Custom Picks (partial port)" section above are unchanged by this
-pass. Production's `custom_intent.py` NLP grammar and `custom_picks.py`
-beam search were not re-attempted at full fidelity — this remains the
-single largest acknowledged gap, called out explicitly in the final
-report rather than claimed as done.
+`workers/src/custom_picks.ts` was substantially rewritten from a greedy
+pattern-matcher into a much closer algorithmic port:
+- **`search()`**: the real bounded per-fixture beam search from
+  `custom_picks.py` — per-fixture candidate grouping, market-family
+  diversity in the option set, odds-bucketed beam retention when a target
+  is given, capped expansions. Not a greedy "take the best N" anymore.
+- **`parseRequest()`**: a much fuller `custom_intent.py` port — league/
+  competition detection (see below), sport aliases with "no/without X"
+  negation rejection, "all sports", an odds target OR a pick count with
+  conflicting-number rejection, market include/exclude scanned in TEXT
+  order with negation-carry-over (not object-iteration order — this was
+  a real bug caught and fixed mid-implementation, see
+  `workers/tests/custom_picks.test.mjs`), preference qualifiers, and
+  refinement/quality-upgrade intent detection.
+- **`refine()`**: conversation refinement — a follow-up message classified
+  as a refinement merges only its newly-specified fields into the stored
+  previous request (excluded markets accumulate rather than replace,
+  matching `custom_recovery.py refine()` exactly).
+- **`failureReason()` + `prepareAlternatives()`**: honest, non-generic
+  failure copy plus up to 3 *proven* alternative tickets (each
+  independently re-validated before being offered — never a label
+  promising a ticket that doesn't exist).
+- **Suggestion tokens are now real and durable**: `migrations/
+  0007_custom_picks_conversation.sql` adds `custom_suggestions` (replaces
+  production's in-memory `Recovery.ready` dict, which can't survive a
+  Worker's statelessness) and a `request_json`/`request_expires_at`
+  column on `custom_sessions` (replaces `Recovery.conversations`). A
+  button tap (`cp|<token>` callback, handled in `index.ts`) is
+  ownership-checked, re-validated, and — if the specific token has
+  expired — offers whichever other suggestions from the same prepare()
+  call are still valid, exactly like production, rather than a dead end.
+
+**Still simplified, not faked** (every gap fails to HELP/a generic
+alternative, never a wrong answer): the league/competition catalog
+(`LEAGUES` in custom_picks.ts) is a curated ~10-entry subset of
+production's full `BY_ID` catalog (~100 competitions with per-competition
+sport mapping) — an unrecognized league name falls through the same way
+an unrecognized one does in production. No fuzzy typo-correction pass
+(`custom_intent.py normalize_text`'s `difflib` step). The alternatives
+ladder covers the three most common failure shapes (relax pick count,
+step the odds-target ladder, drop all filters), not production's fuller
+per-market/per-sport branching. `claimed_count`/button-label richness is
+a reasonable equivalent, not byte-identical to production's `label_for`.
+
+## Stats: 30-day/all-time blocks, collection views, itemized /yesterday (this pass)
+
+Closing the remaining documented stats gaps:
+- **30-day and all-time blocks** appended to `/stats` (not `/yesterday`),
+  same `_block()` shape as the existing yesterday card, over wider
+  `getStatsRowsForRange()` windows. Same Top/Daily-only scoping, proven
+  unaffected by All-Predictions-only rows in
+  `workers/tests/all_and_stats_rendering.test.mjs`.
+- **`/stats_top` and `/stats_daily`** (new commands): the yesterday
+  aggregate block scoped to one collection only
+  (`getStatsRowsForDateByCollection`). The by-sport/7-day/30-day/all-time
+  sections are NOT included on these two views yet (kept to a single
+  aggregate, documented simplification, not fabricated) — `/stats_all`
+  and the `/results_<collection>` itemized sub-lists remain unported.
+- **`/yesterday` is now itemized**: one ✅/❌/➖/↩️/❔ line per tracked leg,
+  Top legs listed before Daily (`getItemizedStatsRowsForDate`, tier
+  resolved with the same top-priority-over-daily rule as everywhere
+  else), with still-pending legs called out separately rather than
+  silently included or excluded. `/stats` keeps the aggregate-only view
+  (counts/hit-rate/ROI/by-sport/7-day/30-day/all-time), matching
+  production's own `/stats` vs `/yesterday` split.

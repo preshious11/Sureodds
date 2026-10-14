@@ -278,3 +278,72 @@ describe("/stats and /yesterday real settlement data", () => {
     }
   });
 });
+
+describe("itemized /yesterday, 30-day/all-time blocks, and collection-specific stats views", () => {
+  const insertPick = (sql, id, day, status, price, home = "A", away = "B") =>
+    sql.prepare("INSERT INTO picks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, day, "all", id, "football", "L", home, away, `${day}T18:00:00Z`, "x", "y", `lbl-${id}`, price, 0.6, status, null);
+  const addMembership = (sql, id, collection) =>
+    sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)").run(id, collection, id);
+
+  it("/yesterday lists each leg's own ✅/❌ mark, Top legs before Daily, pending legs called out separately", async () => {
+    const sql = baseSchema();
+    const today = "2026-10-14";
+    const yesterday = "2026-10-13";
+    setCache(sql, today);
+    insertPick(sql, 1, yesterday, "won", 2.0, "Arsenal", "Chelsea"); addMembership(sql, 1, "top");
+    insertPick(sql, 2, yesterday, "lost", 1.5, "Barca", "Real"); addMembership(sql, 2, "daily");
+    insertPick(sql, 3, yesterday, "pending", 1.8, "Bayern", "Dortmund"); addMembership(sql, 3, "daily");
+    try {
+      const view = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "yesterday", 0, today);
+      assert.match(view.text, /🔥 Top\n✅ Arsenal vs Chelsea/);
+      assert.match(view.text, /📋 Daily\n❌ Barca vs Real/);
+      assert.match(view.text, /1 leg still pending/);
+      assert.doesNotMatch(view.text, /Bayern/); // the pending leg itself is never shown as if settled
+    } finally {
+      sql.close();
+    }
+  });
+
+  it("/stats includes 30-day and all-time blocks, unaffected by All-Predictions-only rows", async () => {
+    const sql = baseSchema();
+    const today = "2026-10-14";
+    const yesterday = "2026-10-13";
+    setCache(sql, today);
+    insertPick(sql, 1, yesterday, "won", 2.0); addMembership(sql, 1, "top");
+    insertPick(sql, 2, "2026-10-01", "lost", 1.5); addMembership(sql, 2, "daily");
+    for (let id = 100; id < 150; id++) {
+      insertPick(sql, id, yesterday, "won", 3.0);
+      addMembership(sql, id, "all");
+    }
+    try {
+      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      assert.match(stats.text, /📈 Last 30 days/);
+      assert.match(stats.text, /📈 All time/);
+      // All-time spans both tracked legs (won 2026-10-13 + lost 2026-10-01) -> 1/2, never counts the 50 noise rows.
+      const allTimeBlock = stats.text.split("📈 All time")[1];
+      assert.match(allTimeBlock, /✅ 1  ❌ 1  ➖ 0/);
+    } finally {
+      sql.close();
+    }
+  });
+
+  it("/stats_top and /stats_daily are scoped to their own collection only", async () => {
+    const sql = baseSchema();
+    const today = "2026-10-14";
+    const yesterday = "2026-10-13";
+    setCache(sql, today);
+    insertPick(sql, 1, yesterday, "won", 2.0); addMembership(sql, 1, "top");
+    insertPick(sql, 2, yesterday, "lost", 1.5); addMembership(sql, 2, "daily");
+    try {
+      const top = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats_top", 0, today);
+      assert.match(top.text, /🔥 TOP STATS/);
+      assert.match(top.text, /✅ 1  ❌ 0  ➖ 0/);
+      const daily = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats_daily", 0, today);
+      assert.match(daily.text, /📋 DAILY STATS/);
+      assert.match(daily.text, /✅ 0  ❌ 1  ➖ 0/);
+    } finally {
+      sql.close();
+    }
+  });
+});

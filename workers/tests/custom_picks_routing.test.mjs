@@ -13,7 +13,7 @@ function realDb() {
   // 0002 only ALTERs columns that 0001 already defines inline for a fresh
   // DB (see 0001's own comment) — applying both to a brand-new :memory: DB
   // would duplicate those columns, so 0002 is skipped here deliberately.
-  for (const file of ["0001_foundation.sql", "0003_engine_state.sql", "0006_custom_sessions.sql"]) {
+  for (const file of ["0001_foundation.sql", "0003_engine_state.sql", "0006_custom_sessions.sql", "0007_custom_picks_conversation.sql"]) {
     sql.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), "utf8"));
   }
   return {
@@ -98,6 +98,87 @@ function seedPool(sql, { day = "2026-10-14", generatedAt = "2026-10-14T06:00:00Z
     `INSERT INTO custom_pick_candidates VALUES('${day}','Africa/Lagos','cand-1','fx-1','${payload}','${generatedAt}','${generatedAt}',1)`,
   );
 }
+
+function seedCandidate(sql, day, generatedAt, overrides = {}) {
+  const base = {
+    prediction_date: day, timezone: "Africa/Lagos", canonical_event_id: "fx-1",
+    sport: "football", market: "result2", selection: "home", price: 1.8, p_model: 0.7,
+    start_utc: `${day}T20:00:00Z`, generated_at: generatedAt, home: "Arsenal", away: "Chelsea",
+    league: "Premier League", ...overrides,
+  };
+  const id = base.canonical_event_id;
+  const payload = JSON.stringify(base).replace(/'/g, "''");
+  sql.exec(
+    `INSERT INTO custom_pick_candidates VALUES('${day}','Africa/Lagos','cand-${id}','${id}','${payload}','${generatedAt}','${generatedAt}',1)`,
+  );
+}
+
+function callbackQuery(updateId, callbackId, chatId, userId, data) {
+  return {
+    update_id: updateId,
+    callback_query: {
+      id: callbackId,
+      data,
+      from: { id: userId },
+      message: { message_id: updateId, chat: { id: chatId, type: "private" } },
+    },
+  };
+}
+
+describe("Custom Picks: group button -> private deep link -> request -> failure -> alternative -> tap", () => {
+  it("a request with too high a pick count gets an honest failure plus a tappable alternative that delivers a real ticket", async () => {
+    const db = realDb();
+    const day = "2026-10-14";
+    const generatedAt = "2026-10-14T06:00:00Z";
+    db._sql.exec(`INSERT INTO custom_pick_pools VALUES('${day}','Africa/Lagos','${generatedAt}','COMPLETE','{}')`);
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", home: "Arsenal", away: "Chelsea" });
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-2", home: "Barca", away: "Real", price: 1.6, p_model: 0.65 });
+    const theEnv = { DB: db, TELEGRAM_BOT_TOKEN: "t", TELEGRAM_WEBHOOK_SECRET: "s", TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" };
+
+    // 1. The group button's deep link (?start=custom_picks) lands here as a
+    //    private /start custom_picks — the only way Telegram ever invokes it.
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c1", "u1", "/start custom_picks")));
+
+    // 2. Ask for more picks than the (2-fixture) archive can satisfy ->
+    //    insufficient_count, with a proven, tappable alternative attached.
+    const requestFetch = stubFetch();
+    await withFetch(requestFetch, () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "5 picks")));
+    assert.equal(requestFetch.calls.length, 1);
+    assert.match(requestFetch.calls[0].body.text, /Try these instead/);
+    const keyboard = requestFetch.calls[0].body.reply_markup;
+    assert.ok(keyboard?.inline_keyboard?.length, "a real alternative must be offered, not a dead end");
+    const token = keyboard.inline_keyboard[0][0].callback_data;
+    assert.match(token, /^cp\|/);
+
+    // 3. Tapping that button must deliver an actual ticket, not a promise.
+    const tapFetch = stubFetch();
+    await withFetch(tapFetch, () =>
+      handleUpdate(theEnv, callbackQuery(3, "cbq-1", "c1", "u1", token)),
+    );
+    const sent = tapFetch.calls.find((c) => c.url.includes("sendMessage"));
+    assert.ok(sent, "the tap must deliver a message");
+    assert.match(sent.body.text, /🔥/);
+  });
+  it("a tap from a different chat/user than the suggestion was prepared for is refused", async () => {
+    const db = realDb();
+    const day = "2026-10-14";
+    const generatedAt = "2026-10-14T06:00:00Z";
+    db._sql.exec(`INSERT INTO custom_pick_pools VALUES('${day}','Africa/Lagos','${generatedAt}','COMPLETE','{}')`);
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1" });
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-2", price: 1.6, p_model: 0.65 });
+    const theEnv = { DB: db, TELEGRAM_BOT_TOKEN: "t", TELEGRAM_WEBHOOK_SECRET: "s", TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" };
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c1", "u1", "/start custom_picks")));
+    const requestFetch = stubFetch();
+    await withFetch(requestFetch, () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "5 picks")));
+    const token = requestFetch.calls[0].body.reply_markup.inline_keyboard[0][0].callback_data;
+    const tapFetch = stubFetch();
+    await withFetch(tapFetch, () => handleUpdate(theEnv, callbackQuery(3, "cbq-1", "c1", "u2", token)));
+    const toast = tapFetch.calls.find((c) => c.url.includes("answerCallbackQuery"));
+    assert.match(toast.body.text, /Open your own Custom Picks/);
+    const sendMessageCalls = tapFetch.calls.filter((c) => c.url.includes("sendMessage"));
+    assert.equal(sendMessageCalls.length, 0, "no ticket must ever be delivered to the wrong user");
+  });
+});
 
 describe("/menu admin command — the group's Custom Picks entry point", () => {
   it("a non-admin typing /menu in the group gets 'Not allowed.', nothing posted to the group", async () => {

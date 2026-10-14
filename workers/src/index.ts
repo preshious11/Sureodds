@@ -7,17 +7,35 @@ import {
   completeUpdate,
   enterCustomSession,
   failUpdate,
+  getConversationRequest,
   getCustomPickCandidates,
   getCustomPickPool,
+  getSuggestion,
   isCustomOnCooldown,
   isCustomSessionActive,
   leaveCustomSession,
+  listActiveSuggestions,
   recordCustomRequest,
+  setConversationRequest,
+  storeSuggestion,
   tryClaimUpdate,
   upsertSubscriber,
   type Env,
+  type SuggestionRow,
 } from "./db.ts";
-import { BUSY, INTRO, respond as customPicksRespond } from "./custom_picks.ts";
+import {
+  BUSY,
+  COPY_EXPIRED,
+  COPY_EXPIRED_EMPTY,
+  CUSTOM_PICKS_TTL_MS,
+  INTRO,
+  deserializeRequest,
+  formatTicket,
+  respond as customPicksRespond,
+  serializeRequest,
+  type Suggestion,
+  validTicket,
+} from "./custom_picks.ts";
 import {
   commandToView,
   communityMenuKeyboard,
@@ -26,7 +44,7 @@ import {
   normalizeCommand,
   parseCallback,
 } from "./telegram.ts";
-import { lagosDateString, renderView } from "./views.ts";
+import { lagosDateString, lagosDayBounds, renderView } from "./views.ts";
 
 const CUSTOM_PICKS_COOLDOWN_MS = 3_000;
 
@@ -104,9 +122,13 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   if (cb) {
     const cbId = String(cb.id ?? "");
     const data = String((cb.data as string) ?? "");
-    const parsed = parseCallback(data);
     const msg = cb.message as Record<string, unknown> | undefined;
     const chatId = String((msg?.chat as Record<string, unknown> | undefined)?.id ?? (cb.from as Record<string, unknown> | undefined)?.id ?? "");
+    if (data.startsWith("cp|")) {
+      await handleCustomPicksSelect(env, cb, cbId, chatId, msg);
+      return;
+    }
+    const parsed = parseCallback(data);
     if (!parsed) {
       await answerCallback(env, cbId);
       return;
@@ -232,10 +254,13 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
         await tgApi(env, "sendMessage", { chat_id: chatId, text: BUSY });
         return;
       }
-      await recordCustomRequest(env.DB, userId, chatId, Date.now());
+      const nowMs = Date.now();
+      await recordCustomRequest(env.DB, userId, chatId, nowMs);
       const zone = env.TIMEZONE ?? "Africa/Lagos";
-      const day = lagosDateString(Date.now());
-      const result = await customPicksRespond(
+      const day = lagosDateString(nowMs);
+      const previousJson = await getConversationRequest(env.DB, userId, chatId, nowMs);
+      const previous = previousJson ? deserializeRequest(JSON.parse(previousJson)) : null;
+      const { result, request } = await customPicksRespond(
         {
           getPool: (d, z) => getCustomPickPool(env.DB, d, z),
           getCandidates: (d, z) => getCustomPickCandidates(env.DB, d, z),
@@ -243,12 +268,27 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
         text,
         zone,
         day,
-        Date.now(),
+        nowMs,
+        previous,
       );
-      await tgApi(env, "sendMessage", { chat_id: chatId, text: result.text, parse_mode: "HTML" });
+      if (request) {
+        const expiresAtMs = Math.min(nowMs + CUSTOM_PICKS_TTL_MS, lagosDayBounds(day).endUtcMs);
+        await setConversationRequest(env.DB, userId, chatId, JSON.stringify(serializeRequest(request)), expiresAtMs);
+      }
+      const replyMarkup = await storeAndBuildSuggestionKeyboard(env, result.suggestions, userId, chatId, nowMs, day);
+      await tgApi(env, "sendMessage", {
+        chat_id: chatId,
+        text: result.text,
+        parse_mode: "HTML",
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      });
       return;
     }
   }
+
+  // Custom Picks alternative-suggestion button tap (~ custom_recovery.py
+  // Recovery.select, callback_data "cp|<token>"). Handled here rather than
+  // the generic pg|view|... callback router, which is a different codec.
 
   const cmd = normalizeCommand(text);
   if (cmd) {
@@ -278,6 +318,100 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       reply_markup: menuKeyboard(),
     });
   }
+}
+
+const CALLBACK_PREFIX = "cp|";
+
+/** Persists each proven Suggestion as a redeemable button (~ custom_recovery.py prepare()'s token row). */
+async function storeAndBuildSuggestionKeyboard(
+  env: Env,
+  suggestions: Suggestion[],
+  userId: string,
+  chatId: string,
+  nowMs: number,
+  day: string,
+): Promise<Record<string, unknown> | undefined> {
+  if (!suggestions.length) return undefined;
+  const expiresAtMs = Math.min(
+    nowMs + CUSTOM_PICKS_TTL_MS,
+    lagosDayBounds(day).endUtcMs,
+    ...suggestions.flatMap((s) => s.ticket.picks.map((p) => p.startMs)),
+  );
+  const rows: { text: string; callback_data: string }[][] = [];
+  for (const s of suggestions) {
+    const token = crypto.randomUUID();
+    await storeSuggestion(
+      env.DB,
+      token,
+      userId,
+      chatId,
+      s.label,
+      JSON.stringify(serializeRequest(s.request)),
+      JSON.stringify(s.ticket),
+      nowMs,
+      expiresAtMs,
+    );
+    rows.push([{ text: s.label, callback_data: `${CALLBACK_PREFIX}${token}` }]);
+  }
+  return { inline_keyboard: rows };
+}
+
+/**
+ * ~ custom_recovery.py Recovery.select(): redeem a tapped suggestion
+ * button. Ownership-checked (private chat, same user+chat the button was
+ * prepared for), re-validated (never serves a ticket that's gone stale —
+ * e.g. a leg has since kicked off), and if the specific token is gone,
+ * offers whichever OTHER suggestions from the same prepare() call are
+ * still valid, exactly as production does, rather than silently
+ * substituting a different ticket.
+ */
+async function handleCustomPicksSelect(
+  env: Env,
+  cb: Record<string, unknown>,
+  cbId: string,
+  chatId: string,
+  msg: Record<string, unknown> | undefined,
+): Promise<void> {
+  const userId = String((cb.from as Record<string, unknown> | undefined)?.id ?? "");
+  const chatType = String((msg?.chat as Record<string, unknown> | undefined)?.type ?? "private");
+  const token = String((cb.data as string) ?? "").slice(CALLBACK_PREFIX.length);
+  const nowMs = Date.now();
+  if (chatType !== "private" || !userId || !chatId) {
+    await answerCallback(env, cbId, "Open your own Custom Picks options in a private chat with the bot.");
+    return;
+  }
+  const row = await getSuggestion(env.DB, token);
+  if (row && (row.user_id !== userId || row.chat_id !== chatId)) {
+    await answerCallback(env, cbId, "Open your own Custom Picks options in a private chat with the bot.");
+    return;
+  }
+  if (row && Date.parse(row.expires_at) > nowMs) {
+    const ticket = JSON.parse(row.ticket_json);
+    const request = deserializeRequest(JSON.parse(row.request_json));
+    if (validTicket(ticket, request, nowMs)) {
+      await answerCallback(env, cbId);
+      await tgApi(env, "sendMessage", { chat_id: chatId, text: formatTicket(ticket), parse_mode: "HTML" });
+      return;
+    }
+  }
+  // Token missing/expired/stale: offer any other still-valid suggestions
+  // from this same user+chat's last prepare() call instead of a dead end.
+  const replacements = (await listActiveSuggestions(env.DB, userId, chatId, nowMs)).filter((s: SuggestionRow) => {
+    try {
+      return validTicket(JSON.parse(s.ticket_json), deserializeRequest(JSON.parse(s.request_json)), nowMs);
+    } catch {
+      return false;
+    }
+  });
+  await answerCallback(env, cbId);
+  if (replacements.length) {
+    const keyboard = {
+      inline_keyboard: replacements.slice(0, 3).map((s) => [{ text: s.label, callback_data: `${CALLBACK_PREFIX}${s.token}` }]),
+    };
+    await tgApi(env, "sendMessage", { chat_id: chatId, text: COPY_EXPIRED, reply_markup: keyboard });
+    return;
+  }
+  await tgApi(env, "sendMessage", { chat_id: chatId, text: COPY_EXPIRED_EMPTY });
 }
 
 export default {

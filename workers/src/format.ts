@@ -351,7 +351,7 @@ export interface LastDaysBlock extends StatsBlock {
   windowDays: number;
 }
 
-const OUTCOME_MARK: Record<string, string> = { won: "✅", lost: "❌", void: "➖", push: "↩️", unresolved: "❔" };
+export const OUTCOME_MARK: Record<string, string> = { won: "✅", lost: "❌", void: "➖", push: "↩️", unresolved: "❔" };
 
 /**
  * ~ predbot/jobs/stats.py last_days(): settled-only block (hit rate on

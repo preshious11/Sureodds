@@ -1,0 +1,324 @@
+# Production generation + D1 sync — a deliberately SEPARATE file from
+# stage5-acceptance.yml, not a parameter on it. stage5-acceptance.yml's own
+# "Staging target guard" exists specifically so that pipeline can never be
+# pointed at production; weakening it to accept a target parameter would
+# undo the one thing that guard is for. This file is a parallel pipeline
+# with its own guard asserting PRODUCTION, pointed at wrangler.toml
+# (production) instead of wrangler.staging.toml.
+#
+# Two entry points: manual workflow_dispatch (this file), and
+# stage7-scheduled-production.yml calling in via workflow_call — that
+# caller forces offline/dry_run unless the repo variable
+# STAGE7_LIVE_ENABLED is explicitly set to "true", so this file itself
+# still never runs live except by one of those two explicit paths, and
+# the production schedule is NEVER enabled by this change alone.
+#
+# Two modes, same as staging's acceptance pipeline:
+#   dry_run=true (default): reads + offline planning only, zero D1 writes,
+#     zero provider calls. Safe to run any time, even against a
+#     not-yet-created production D1 (the pull/export step would simply
+#     fail loudly, not write anything).
+#   dry_run=false + live_confirm=RUN-LIVE: live providers + PRODUCTION
+#     writes. Requires explicit approval (this input) AND provider
+#     secrets AND that production D1 already exists (workers/CUTOVER.md
+#     steps 1-2).
+name: stage5-acceptance-production
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Engine source"
+        required: true
+        default: "fixture-replay"
+        type: choice
+        options: [live-generate, fixture-replay]
+      dry_run:
+        description: "Plan only, no D1 writes (default true)"
+        required: false
+        default: true
+        type: boolean
+      live_confirm:
+        description: "Type RUN-LIVE to allow live providers + PRODUCTION writes"
+        required: false
+        default: ""
+      allow_telegram_posts:
+        description: "Allow group posts during live runs (default false: views only)"
+        required: false
+        default: false
+        type: boolean
+      write_budget:
+        description: "Max D1 row writes for the plan"
+        required: false
+        default: "5000"
+  workflow_call:
+    inputs:
+      operation:
+        required: true
+        type: string
+        default: "fixture-replay"
+      dry_run:
+        required: false
+        type: boolean
+        default: true
+      live_confirm:
+        required: false
+        type: string
+        default: ""
+      allow_telegram_posts:
+        required: false
+        type: boolean
+        default: false
+      write_budget:
+        required: false
+        type: string
+        default: "5000"
+
+env:
+  PRODUCTION_DB_NAME: sureodds_production
+  TIMEZONE: Africa/Lagos
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: sureodds-production-sync
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install runtime dependency
+        run: pip install -r predictions-bot/requirements.txt
+      - name: Production target guard (never staging, never a placeholder id)
+        run: |
+          set -euo pipefail
+          test "${{ env.PRODUCTION_DB_NAME }}" = "sureodds_production"
+          grep -q 'database_name = "sureodds_production"' workers/wrangler.toml
+          grep -qv 'REPLACE_WITH_STAGING_D1_ID' workers/wrangler.toml || \
+            { echo "FAIL workers/wrangler.toml still has the placeholder database_id — run workers/CUTOVER.md step 2 first" >&2; exit 1; }
+          ! grep -q 'sureodds_staging' <(grep database_name workers/wrangler.toml)
+          echo "target=${{ env.PRODUCTION_DB_NAME }} only"
+      - name: Live-run authorization gate
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.dry_run }}" = "false" ]; then
+            test "${{ inputs.live_confirm }}" = "RUN-LIVE" || \
+              (echo "FAIL live run requires live_confirm=RUN-LIVE" >&2; exit 1)
+            for v in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID SHARPAPI_KEY TELEGRAM_BOT_TOKEN; do
+              if [ -z "${!v:-}" ]; then echo "missing secret: $v" >&2; exit 1; fi
+            done
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+          SHARPAPI_KEY: ${{ secrets.SHARPAPI_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
+      - name: Pull production base (export + load, timed)
+        id: pull
+        run: |
+          set -euo pipefail
+          cd workers
+          start=$SECONDS
+          npx -y wrangler@4 d1 export "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --output /tmp/prodacc_base.sql
+          python3 - <<'EOF'
+          import sqlite3, time
+          t0 = time.perf_counter()
+          con = sqlite3.connect("/tmp/prodacc_base.db")
+          con.executescript(open("/tmp/prodacc_base.sql", encoding="utf-8").read())
+          con.commit()
+          print("base picks:", con.execute("SELECT COUNT(*) FROM picks").fetchone()[0])
+          print("base load seconds: %.1f" % (time.perf_counter() - t0))
+          EOF
+          echo "pull_seconds=$((SECONDS - start))" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Acquire generation lease (or stop)
+        id: lease
+        run: |
+          set -euo pipefail
+          cd workers
+          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until='2099-01-01T00:00:00Z', attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='generate' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1
+          echo "acquired=true" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Resolve execution mode (single decision for all steps)
+        id: mode
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.operation }}" = "live-generate" ] && [ "${{ inputs.dry_run }}" = "false" ] && [ "${{ inputs.live_confirm }}" = "RUN-LIVE" ]; then
+            echo "mode=live" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=offline" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run engine (live only in live mode, else offline fixture)
+        run: |
+          set -euo pipefail
+          cd predictions-bot
+          if [ "${{ steps.mode.outputs.mode }}" = "live" ]; then
+            export PREDBOT_ALLOW_LIVE=1
+            export DB_PATH=/tmp/prodacc_live.db
+            if [ "${{ inputs.allow_telegram_posts }}" != "true" ]; then
+              export TELEGRAM_CHAT_ID=""
+              export SUBSCRIBER_DELIVERY_ENABLED=false
+            fi
+            python3 - <<'EOF'
+          import sqlite3
+          con = sqlite3.connect("/tmp/prodacc_live.db")
+          con.executescript(open("/tmp/prodacc_base.sql", encoding="utf-8").read())
+          con.commit()
+          print("live db ready, picks:", con.execute("SELECT COUNT(*) FROM picks").fetchone()[0])
+          EOF
+            python3 run_once.py generate --live --report /tmp/prodacc_gen.json
+            test -f /tmp/prodacc_live.db || { echo "FAIL expected /tmp/prodacc_live.db missing" >&2; exit 1; }
+          else
+            mkdir -p /tmp/prodacc_work
+            python3 - <<'EOF'
+          import sys, time
+          sys.path.insert(0, "tools"); sys.path.insert(0, ".")
+          import replay
+          t0 = time.perf_counter()
+          result = replay.run(send_delay=0.0, workdir="/tmp/prodacc_work")
+          print("replay seconds: %.1f" % (time.perf_counter() - t0))
+          print("date:", result["slate"].get("date"))
+          EOF
+            cp /tmp/prodacc_work/replay.db /tmp/prodacc_scratch.db
+            test -f /tmp/prodacc_scratch.db || { echo "FAIL expected /tmp/prodacc_scratch.db missing" >&2; exit 1; }
+          fi
+          cat /tmp/prodacc_gen.json 2>/dev/null || true
+        env:
+          SHARPAPI_KEY: ${{ secrets.SHARPAPI_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          SPORTSGAMEODDS_KEY: ${{ secrets.SPORTSGAMEODDS_KEY }}
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.PRODUCTION_TELEGRAM_CHAT_ID }}
+      - name: Prepare scratch (fixture rebase only; live uses native ids)
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.mode.outputs.mode }}" = "offline" ]; then
+            test -f /tmp/prodacc_scratch.db || { echo "FAIL offline mode needs /tmp/prodacc_scratch.db" >&2; exit 1; }
+            python3 workers/scripts/d1_sync.py rebase /tmp/prodacc_scratch.db \
+              --out /tmp/prodacc_rebased.db \
+              --rebase "picks:id:100000:prediction_memberships:prediction_id"
+          else
+            test -f /tmp/prodacc_live.db || { echo "FAIL live mode needs /tmp/prodacc_live.db" >&2; exit 1; }
+            cp /tmp/prodacc_live.db /tmp/prodacc_rebased.db
+          fi
+      - name: Build scoped plan with write budget
+        id: plan
+        run: |
+          set -euo pipefail
+          test -f /tmp/prodacc_rebased.db || { echo "FAIL expected /tmp/prodacc_rebased.db missing" >&2; exit 1; }
+          if [ "${{ steps.mode.outputs.mode }}" = "live" ]; then
+            deletes_flag=""
+          else
+            deletes_flag="--no-deletes"
+          fi
+          python3 workers/scripts/d1_sync.py plan /tmp/prodacc_base.db /tmp/prodacc_rebased.db \
+            --out /tmp/prodacc_plan \
+            --tables picks,prediction_memberships,ticket_candidates,prediction_cache,custom_pick_candidates,custom_pick_pools $deletes_flag \
+            --write-budget "${{ inputs.write_budget }}"
+          cat /tmp/prodacc_plan/plan.json
+      - name: Require COMPLETE current-day cache (live mode)
+        if: steps.mode.outputs.mode == 'live'
+        run: |
+          set -euo pipefail
+          today=$(TZ=Africa/Lagos date +%F)
+          echo "Lagos today: $today"
+          python3 workers/scripts/d1_sync.py require-complete /tmp/prodacc_rebased.db "$today"
+      - name: Apply to production D1 (skipped in dry-run)
+        if: inputs.dry_run == false
+        run: |
+          set -euo pipefail
+          cd workers
+          epoch=$(npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "SELECT epoch FROM sync_state WHERE id=1" | python3 scripts/d1_json.py --get 0.results.0.epoch)
+          : > /tmp/prodacc_applied.log
+          ok=0; total=0
+          for f in /tmp/prodacc_plan/p0_*.sql /tmp/prodacc_plan/p1_*.sql; do
+            [ -e "$f" ] || continue
+            total=$((total + 1))
+            base=$(basename "$f")
+            if grep -qx "$base" /tmp/prodacc_applied.log 2>/dev/null; then
+              echo "SKIP $base (already applied this run)"; ok=$((ok + 1)); continue
+            fi
+            if npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+              --config wrangler.toml --json --file "$f" > "/tmp/prodapplied_$base.json" 2>&1; then
+              if python3 scripts/d1_json.py --assert-success "/tmp/prodapplied_$base.json"; then
+                echo "$base" >> /tmp/prodacc_applied.log
+                ok=$((ok + 1))
+                echo "OK $base"
+              else
+                echo "FAIL $base (D1 reported failure):"; tail -20 "/tmp/prodapplied_$base.json"; exit 1
+              fi
+            else
+              echo "FAIL $base (wrangler error):"; tail -20 "/tmp/prodapplied_$base.json"; exit 1
+            fi
+          done
+          echo "applied $ok/$total batch files"
+          if [ -d /tmp/prodacc_plan/rest ] && [ -n "$(ls /tmp/prodacc_plan/rest/*.jsonl 2>/dev/null)" ]; then
+            DB_ID=$(grep -A2 'database_name = "sureodds_production"' wrangler.toml | grep database_id | sed -E 's/.*"([^"]+)".*/\1/')
+            python3 scripts/d1_sync.py rest-apply /tmp/prodacc_plan/rest \
+              --account-id "$CLOUDFLARE_ACCOUNT_ID" --database-id "$DB_ID" \
+              --api-token "$CLOUDFLARE_API_TOKEN"
+          else
+            echo "no rest batches pending"
+          fi
+          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE sync_state SET epoch=epoch+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=1 AND epoch=$epoch" | python3 scripts/d1_json.py --expect-changes 1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Release lease (always, if acquired)
+        if: always() && steps.lease.outputs.acquired == 'true'
+        run: |
+          cd workers
+          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE job_state SET lease_owner=NULL, lease_until=NULL WHERE name='generate' AND lease_owner='gha-${{ github.run_id }}'" || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Record run metadata (always, for post-mortems)
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json
+          meta = {
+            "repo": "${{ github.repository }}", "ref": "${{ github.ref }}", "sha": "${{ github.sha }}",
+            "run_id": "${{ github.run_id }}", "event": "${{ github.event_name }}",
+            "operation": "${{ inputs.operation }}", "dry_run": "${{ inputs.dry_run }}",
+            "live_confirm": "${{ inputs.live_confirm != '' }}", "write_budget": "${{ inputs.write_budget }}",
+          }
+          with open("/tmp/prodacc_run_meta.json", "w", encoding="utf-8") as fh:
+              json.dump(meta, fh, indent=2)
+          print(json.dumps(meta, indent=2))
+          EOF
+      - name: Upload sanitized report (plan only, never dumps)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-acceptance-production-plan
+          if-no-files-found: warn
+          path: |
+            /tmp/prodacc_plan/plan.json
+            /tmp/prodacc_gen.json
+            /tmp/prodacc_run_meta.json

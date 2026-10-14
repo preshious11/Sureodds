@@ -13,6 +13,8 @@ export const COMMAND_TO_VIEW: Record<string, string> = {
   "/today": "daily",
   "/stats": "stats",
   "/yesterday": "yesterday",
+  "/stats_top": "stats_top",
+  "/stats_daily": "stats_daily",
 };
 
 export const VIEW_COMMAND: Record<string, string> = {

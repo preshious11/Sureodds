@@ -1,0 +1,31 @@
+# Automatic daily PRODUCTION generation. SAFE BY DEFAULT, same pattern as
+# stage6-scheduled-staging.yml: a schedule-triggered fire always calls into
+# stage5-acceptance-production.yml with operation=fixture-replay,
+# dry_run=true (offline planning only — zero provider calls, zero D1
+# writes) UNLESS the repository variable STAGE7_LIVE_ENABLED is set to
+# exactly "true". That is the single activation step; no workflow file
+# edit or redeploy is needed to go live, and this change does NOT set
+# that variable — the production schedule stays disabled until you do.
+#
+# Even once live, this still only touches production D1 via
+# stage5-acceptance-production.yml's own "Production target guard" (which
+# refuses to run if wrangler.toml still has the placeholder database_id —
+# i.e. before workers/CUTOVER.md step 2 has been done for real), and never
+# posts to Telegram (allow_telegram_posts stays false here).
+name: stage7-scheduled-production
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # 08:00 UTC = 09:00 Africa/Lagos (no DST), matches POST_TIME
+  workflow_dispatch: {} # manual smoke-test of the scheduling wiring itself; same safe-by-default rule applies
+
+jobs:
+  scheduled:
+    uses: ./.github/workflows/stage5-acceptance-production.yml
+    with:
+      operation: ${{ vars.STAGE7_LIVE_ENABLED == 'true' && 'live-generate' || 'fixture-replay' }}
+      dry_run: ${{ vars.STAGE7_LIVE_ENABLED != 'true' }}
+      live_confirm: ${{ vars.STAGE7_LIVE_ENABLED == 'true' && 'RUN-LIVE' || '' }}
+      allow_telegram_posts: false
+      write_budget: "5000"
+    secrets: inherit

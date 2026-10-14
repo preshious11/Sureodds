@@ -8,7 +8,9 @@ import {
   getAllPicksForCollection,
   getDayCache,
   getFirstPickDate,
+  getItemizedStatsRowsForDate,
   getStatsRowsForDate,
+  getStatsRowsForDateByCollection,
   getStatsRowsForRange,
   type Env,
   type CachedPick,
@@ -27,14 +29,17 @@ import {
   SPORT_LABEL,
   TOP_TITLE,
   ZONE_LABEL,
+  OUTCOME_MARK,
   bySportLines,
   computeStatsBlock,
   dayLabel,
   escHtml,
   fixtureBlock,
+  hitRate,
   lastDaysBlock,
   lastDaysLines,
   nPicks,
+  outcomeOf,
   picksCard,
   shiftDate,
   sportsDayBlock,
@@ -259,13 +264,53 @@ async function renderAllSportPages(
   return { text: wrapTitleHtml(body, ALL_TITLE), replyMarkup: keyboard };
 }
 
+/** ~ production's itemized /yesterday: one ✅/❌/➖/↩️/❔ line per leg, Top legs before Daily. */
+function itemizedYesterdayLines(rows: { tier: string; home: string; away: string; label: string; status: string; result_json: string | null }[]): string[] {
+  const pending = rows.filter((r) => outcomeOf(r.status, r.result_json) === null);
+  const settled = rows.filter((r) => outcomeOf(r.status, r.result_json) !== null);
+  const lines: string[] = [];
+  let currentTier: string | null = null;
+  for (const r of settled) {
+    if (r.tier !== currentTier) {
+      currentTier = r.tier;
+      lines.push(currentTier === "top" ? "🔥 Top" : "📋 Daily");
+    }
+    const mark = OUTCOME_MARK[outcomeOf(r.status, r.result_json) as string];
+    lines.push(`${mark} ${escHtml(r.home)} vs ${escHtml(r.away)} — ${escHtml(r.label)}`);
+  }
+  if (pending.length) lines.push("", `⏳ ${pending.length} leg${pending.length === 1 ? "" : "s"} still pending`);
+  return lines;
+}
+
+/**
+ * 30-day / all-time blocks (~ predbot/jobs/stats.py compute()'s `last30`/
+ * `all` — same `_block()` shape as the yesterday card, just over a wider
+ * range). Appended only to /stats, not /yesterday (which gets the itemized
+ * per-leg list instead) or the collection-specific views (kept to their
+ * single aggregate for now — see PRODUCTION_PARITY.md).
+ */
+function historicalLines(label: string, block: ReturnType<typeof computeStatsBlock>): string[] {
+  if (block.n === 0 && block.won + block.lost + block.push + block.void + block.unresolved === 0) return [];
+  const rate = hitRate(block);
+  const parts = [countsLineSafe(block)];
+  if (rate !== null) parts.push(`🎯 ${Math.round(rate)}%`);
+  if (block.n) parts.push(`💹 ROI ${block.roi >= 0 ? "+" : ""}${block.roi.toFixed(0)}%`);
+  return [label, parts.join("  ·  ")];
+}
+function countsLineSafe(b: ReturnType<typeof computeStatsBlock>): string {
+  const parts = [`✅ ${b.won}`, `❌ ${b.lost}`, `➖ ${b.void}`];
+  if (b.push) parts.push(`↩️ ${b.push}`);
+  return parts.join("  ");
+}
+
 async function renderStatsLike(
   env: Env,
   title: string,
   localDate: string,
+  kind: "stats" | "yesterday" | "top" | "daily" = "stats",
 ): Promise<{ text: string; replyMarkup: Record<string, unknown> }> {
   const yesterday = shiftDate(localDate, -1);
-  const rows = await getStatsRowsForDate(env.DB, yesterday);
+  const rows = kind === "top" || kind === "daily" ? await getStatsRowsForDateByCollection(env.DB, yesterday, kind) : await getStatsRowsForDate(env.DB, yesterday);
   if (rows.length === 0) {
     return { text: `<b>${title}</b>\n\n${NO_RESULTS_YET}`, replyMarkup: menuKeyboard() };
   }
@@ -273,28 +318,51 @@ async function renderStatsLike(
   const issued = rows.length;
   const settledYesterday = block.won + block.lost + block.push + block.void + block.unresolved;
 
-  // ~ predbot/jobs/stats.py compute(): 7-day window capped to how long the
-  // engine has actually been running (never claims "Last 7 days" on day 2).
-  const since7 = shiftDate(localDate, -7);
-  const [rows7, firstPickDate] = await Promise.all([
-    getStatsRowsForRange(env.DB, since7, localDate),
-    getFirstPickDate(env.DB),
-  ]);
-  let windowDays = 0;
-  if (firstPickDate) {
-    const days = Math.round((Date.parse(localDate) - Date.parse(firstPickDate)) / 86_400_000);
-    windowDays = Math.max(0, Math.min(7, days));
+  const blocks: string[][] = [yesterdayLines(yesterday, block, issued).map(escHtml)];
+
+  if (kind === "yesterday") {
+    const itemized = await getItemizedStatsRowsForDate(env.DB, yesterday);
+    const itemLines = itemizedYesterdayLines(itemized);
+    if (itemLines.length) blocks.push(itemLines); // already escHtml'd per-field inside
   }
 
-  const blocks: string[][] = [yesterdayLines(yesterday, block, issued).map(escHtml)];
-  if (settledYesterday > 0) {
-    const sportRows = rows7.filter((r) => r.pick_date === yesterday);
-    const sportLines = bySportLines(sportsDayBlock(sportRows));
-    if (sportLines.length) blocks.push(sportLines.map(escHtml));
+  if (kind === "stats" || kind === "yesterday") {
+    // ~ predbot/jobs/stats.py compute(): 7-day window capped to how long the
+    // engine has actually been running (never claims "Last 7 days" on day 2).
+    const since7 = shiftDate(localDate, -7);
+    const [rows7, firstPickDate] = await Promise.all([
+      getStatsRowsForRange(env.DB, since7, localDate),
+      getFirstPickDate(env.DB),
+    ]);
+    let windowDays = 0;
+    if (firstPickDate) {
+      const days = Math.round((Date.parse(localDate) - Date.parse(firstPickDate)) / 86_400_000);
+      windowDays = Math.max(0, Math.min(7, days));
+    }
+    if (settledYesterday > 0) {
+      const sportRows = rows7.filter((r) => r.pick_date === yesterday);
+      const sportLines = bySportLines(sportsDayBlock(sportRows));
+      if (sportLines.length) blocks.push(sportLines.map(escHtml));
+    }
+    const sevenBlock = lastDaysBlock(rows7, windowDays);
+    const sevenLines = lastDaysLines(sevenBlock);
+    if (sevenLines.length) blocks.push(sevenLines.map(escHtml));
   }
-  const sevenBlock = lastDaysBlock(rows7, windowDays);
-  const sevenLines = lastDaysLines(sevenBlock);
-  if (sevenLines.length) blocks.push(sevenLines.map(escHtml));
+
+  if (kind === "stats") {
+    const since30 = shiftDate(localDate, -30);
+    const [rows30, firstPickDate] = await Promise.all([
+      getStatsRowsForRange(env.DB, since30, localDate),
+      getFirstPickDate(env.DB),
+    ]);
+    const thirtyLines = historicalLines("📈 Last 30 days", computeStatsBlock(rows30));
+    if (thirtyLines.length) blocks.push(thirtyLines.map(escHtml));
+    if (firstPickDate) {
+      const allRows = await getStatsRowsForRange(env.DB, firstPickDate, shiftDate(localDate, 1));
+      const allLines = historicalLines("📈 All time", computeStatsBlock(allRows));
+      if (allLines.length) blocks.push(allLines.map(escHtml));
+    }
+  }
 
   const body = [`<b>${title}</b> · ${dayLabel(localDate)}`, "", ...blocks.flatMap((b, i) => (i === 0 ? b : ["", ...b]))].join(
     "\n",
@@ -317,8 +385,10 @@ export async function renderView(
     return { text: notReadyText(view.startsWith("all_") ? "all" : view, localDate), replyMarkup: keyboard };
   }
 
-  if (view === "stats") return renderStatsLike(env, "📊 STATS", localDate);
-  if (view === "yesterday") return renderStatsLike(env, "🗓 YESTERDAY", localDate);
+  if (view === "stats") return renderStatsLike(env, "📊 STATS", localDate, "stats");
+  if (view === "yesterday") return renderStatsLike(env, "🗓 YESTERDAY", localDate, "yesterday");
+  if (view === "stats_top") return renderStatsLike(env, "🔥 TOP STATS", localDate, "top");
+  if (view === "stats_daily") return renderStatsLike(env, "📋 DAILY STATS", localDate, "daily");
 
   if (view === "top" || view === "daily") return renderTicket(env, view, page, localDate);
 
