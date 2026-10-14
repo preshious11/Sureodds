@@ -134,6 +134,7 @@ export function normalizeCandidate(
   nowMs: number,
   poolTimeMs: number,
   includeStarted = false,
+  rowGeneratedAt?: string,
 ): Candidate | null {
   if (payload.prediction_date !== day || payload.timezone !== zone) return null;
   const statuses = ["status", "event_status", "fixture_status"].map((k) => String(payload[k] ?? "").toLowerCase());
@@ -142,7 +143,14 @@ export function normalizeCandidate(
   if (["cancelled", "canceled", "postponed", "started", "finished", "is_live"].some((k) => payload[k] === true)) return null;
 
   const startMs = Date.parse(String(payload.start_utc ?? ""));
-  const evaluatedMs = Date.parse(String(payload.generated_at ?? ""));
+  // Archived candidates may predate the payload carrying its own
+  // `generated_at` (production: 2,441 candidates, all missing it from the
+  // JSON). The D1 row always has its own `generated_at` column, set at
+  // archive time — use it ONLY when the payload field is absent, never to
+  // silently override a payload value that's present but fails to parse.
+  const payloadGeneratedAt = payload.generated_at;
+  const hasPayloadTimestamp = payloadGeneratedAt != null && String(payloadGeneratedAt).trim() !== "";
+  const evaluatedMs = Date.parse(hasPayloadTimestamp ? String(payloadGeneratedAt) : String(rowGeneratedAt ?? ""));
   if (!Number.isFinite(startMs) || (startMs <= nowMs && !includeStarted)) return null;
   if (!Number.isFinite(evaluatedMs) || evaluatedMs > poolTimeMs || evaluatedMs > nowMs) return null;
 
@@ -681,7 +689,7 @@ export function refine(previous: ParsedRequest, current: ParsedRequest): ParsedR
 
 export interface CustomPicksDeps {
   getPool: (day: string, zone: string) => Promise<{ status: string; generated_at: string } | null>;
-  getCandidates: (day: string, zone: string) => Promise<{ payload_json: string }[]>;
+  getCandidates: (day: string, zone: string) => Promise<{ payload_json: string; generated_at: string }[]>;
 }
 
 export interface RespondResult {
@@ -699,7 +707,7 @@ async function loadPool(deps: CustomPicksDeps, day: string, zone: string, nowMs:
   for (const row of rows) {
     try {
       const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
-      const c = normalizeCandidate(payload, day, zone, nowMs, poolTimeMs, true);
+      const c = normalizeCandidate(payload, day, zone, nowMs, poolTimeMs, true, row.generated_at);
       if (c) candidates.push(c);
     } catch {
       continue; // malformed archive row — skip, never fabricate.

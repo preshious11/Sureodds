@@ -19,7 +19,10 @@ RECAP_TIME = "07:45"
 PAGE_SIZE = "5"
 # Public (not a secret): the Custom Picks deep-link button (empty-Top card)
 # is omitted entirely until this is set — never a dead link.
-# TELEGRAM_BOT_USERNAME = "YourProductionBot"
+# TELEGRAM_BOT_USERNAME = "BETTSUREbot"
+TELEGRAM_BOT_USERNAME = "BETTSUREbot"
+TELEGRAM_ADMIN_IDS = "1004474554436"
+STAGE3_CRON_ENABLED = "0"
 
 # Secrets (never in this file):
 #   wrangler secret put TELEGRAM_BOT_TOKEN

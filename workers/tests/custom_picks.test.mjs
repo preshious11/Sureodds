@@ -70,6 +70,67 @@ describe("normalizeCandidate (~ custom_picks.py normalize)", () => {
     assert.ok(withLine);
     assert.equal(withLine.outcome, "Over 2.5");
   });
+
+  // Regression: production has 2,441 archived candidates whose payload_json
+  // never carried generated_at (older archive writer), even though the D1
+  // row's own generated_at column is always set. normalizeCandidate must
+  // fall back to the row's timestamp instead of rejecting these wholesale.
+  describe("generated_at fallback to the D1 row (production archive-writer gap)", () => {
+    function payloadWithoutGeneratedAt(overrides = {}) {
+      const payload = candidatePayload(overrides);
+      delete payload.generated_at;
+      return payload;
+    }
+    it("falls back to the row's generated_at when the payload lacks it entirely", () => {
+      const c = normalizeCandidate(
+        payloadWithoutGeneratedAt(),
+        DAY, ZONE, NOW, Date.parse("2026-10-14T06:30:00Z"), false,
+        "2026-10-14T06:00:00Z",
+      );
+      assert.ok(c, "candidate must be accepted using the row's generated_at as fallback");
+    });
+    it("still rejects when the row's fallback generated_at is itself after pool time or in the future", () => {
+      const afterPool = normalizeCandidate(
+        payloadWithoutGeneratedAt(),
+        DAY, ZONE, NOW, Date.parse("2026-10-14T06:30:00Z"), false,
+        "2026-10-14T07:00:00Z", // after poolTimeMs
+      );
+      assert.equal(afterPool, null);
+      const future = normalizeCandidate(
+        payloadWithoutGeneratedAt(),
+        DAY, ZONE, NOW, Date.parse("2026-10-14T09:00:00Z"), false,
+        "2026-10-14T09:00:00Z", // after nowMs
+      );
+      assert.equal(future, null);
+    });
+    it("rejects when neither the payload nor the row supplies a generated_at", () => {
+      const c = normalizeCandidate(
+        payloadWithoutGeneratedAt(),
+        DAY, ZONE, NOW, Date.parse("2026-10-14T06:30:00Z"), false,
+        undefined,
+      );
+      assert.equal(c, null);
+    });
+    it("never uses the row's generated_at to rescue a present-but-invalid payload timestamp", () => {
+      const c = normalizeCandidate(
+        candidatePayload({ generated_at: "not-a-date" }),
+        DAY, ZONE, NOW, Date.parse("2026-10-14T06:30:00Z"), false,
+        "2026-10-14T06:00:00Z", // valid row fallback, must NOT be used
+      );
+      assert.equal(c, null, "a present but malformed payload timestamp must reject, not silently fall back to the row");
+    });
+    it("prefers a valid payload timestamp over the row's when both are present", () => {
+      // Payload says generated after pool time (invalid); row says well before it
+      // (valid). The payload value must win since it IS present — this proves
+      // the fallback only engages on absence, not merely on availability.
+      const c = normalizeCandidate(
+        candidatePayload({ generated_at: "2026-10-14T07:00:00Z" }),
+        DAY, ZONE, NOW, Date.parse("2026-10-14T06:30:00Z"), false,
+        "2026-10-14T05:00:00Z",
+      );
+      assert.equal(c, null, "payload's own (invalid-for-this-pool) timestamp must be honored over the row fallback");
+    });
+  });
 });
 
 describe("parseRequest (~ custom_intent.py parse)", () => {
@@ -233,6 +294,35 @@ describe("respond() end-to-end contract", () => {
     const pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
     const { result } = await respond(deps(pool, rows), "1 picks", ZONE, DAY, NOW, null);
     assert.equal(result.reason, "success");
+  });
+  it("builds a ticket from production-shaped rows: payload lacks generated_at, row supplies it", async () => {
+    function payloadWithoutGeneratedAt(overrides = {}) {
+      const payload = candidatePayload(overrides);
+      delete payload.generated_at;
+      return payload;
+    }
+    const rows = [
+      { payload_json: JSON.stringify(payloadWithoutGeneratedAt()), generated_at: "2026-10-14T06:00:00Z" },
+      {
+        payload_json: JSON.stringify(payloadWithoutGeneratedAt({ canonical_event_id: "fx-2", home: "Barca", away: "Real" })),
+        generated_at: "2026-10-14T06:00:00Z",
+      },
+    ];
+    const pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
+    const { result } = await respond(deps(pool, rows), "2 picks", ZONE, DAY, NOW, null);
+    assert.equal(result.reason, "success");
+    assert.match(result.text, /🔥/);
+  });
+  it("excludes a production-shaped row whose row generated_at is stale/expired (after pool time)", async () => {
+    function payloadWithoutGeneratedAt(overrides = {}) {
+      const payload = candidatePayload(overrides);
+      delete payload.generated_at;
+      return payload;
+    }
+    const rows = [{ payload_json: JSON.stringify(payloadWithoutGeneratedAt()), generated_at: "2026-10-14T07:00:00Z" }];
+    const pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
+    const { result } = await respond(deps(pool, rows), "1 picks", ZONE, DAY, NOW, null);
+    assert.notEqual(result.reason, "success");
   });
   it("a refinement follow-up merges into the previous request", async () => {
     const rows = [
