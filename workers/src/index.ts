@@ -50,10 +50,16 @@ import { lagosDateString, lagosDayBounds, renderView } from "./views.ts";
 const CUSTOM_PICKS_COOLDOWN_MS = 3_000;
 
 // All Predictions is a private-chat-only experience: the group is for
-// broadcasts, not a long paginated list. This is the single redirect used
-// everywhere a group would otherwise have rendered it — the /all command,
-// a tapped pg|all*|... callback (new or from a pre-existing group message),
-// all funnel through sendGroupAllRedirect below.
+// broadcasts, not a long paginated list. Two distinct group-facing exits,
+// chosen so NEITHER ever edits/replaces an existing group message (editing
+// a shared message's keyboard previously wiped out the other switch
+// buttons sitting in it — see answerCallbackWithDeepLink below):
+//   - the /all command (plain text): sendGroupAllRedirect sends a fresh,
+//     brand-new message — nothing existing to disturb.
+//   - a pg|all*|... callback tap (new keyboards never carry one, see
+//     telegram.ts allButtonModeFor; legacy pre-deploy messages still can):
+//     answerCallbackWithDeepLink opens the private chat straight from the
+//     callback answer itself, touching no message at all.
 const ALL_GROUP_TEXT = "📚 All Predictions is a lot to show here — tap below to see it privately.";
 const ALL_GROUP_TEXT_NO_LINK = "📚 All Predictions is available in a private chat with me — open a DM and send /all.";
 const LOADING_TEXT = "⏳ Building your picks...";
@@ -101,31 +107,43 @@ async function answerCallback(env: Env, id: string, text?: string): Promise<void
   }
 }
 
+/**
+ * Opens a deep link directly from the callback answer, exactly like a URL
+ * inline button would (Telegram Bot API: answerCallbackQuery's own `url`
+ * field is documented for opening "t.me/your_bot?start=XXXX" links). This
+ * is the fix for the regression in 4135f81: that commit instead called
+ * editMessageText on the tapped group message to turn it into a redirect —
+ * which silently replaced that message's ENTIRE keyboard (Top/Daily/Stats/
+ * Yesterday sitting right alongside the All button), making the rest of
+ * the group menu vanish. Answering the callback this way touches nothing
+ * about the original message — same no-edit guarantee a plain URL button
+ * (e.g. the Custom Picks button) already gives for free.
+ */
+async function answerCallbackWithDeepLink(env: Env, id: string, startParam: string): Promise<void> {
+  if (!id) return;
+  try {
+    if (env.TELEGRAM_BOT_USERNAME) {
+      await tgApi(env, "answerCallbackQuery", {
+        callback_query_id: id,
+        url: `https://t.me/${env.TELEGRAM_BOT_USERNAME}?start=${startParam}`,
+      });
+    } else {
+      await tgApi(env, "answerCallbackQuery", { callback_query_id: id, text: ALL_GROUP_TEXT_NO_LINK, show_alert: true });
+    }
+  } catch {
+    // swallowed deliberately
+  }
+}
+
 function allRedirectKeyboard(botUsername: string | undefined): Record<string, unknown> | undefined {
   if (!botUsername) return undefined;
   return { inline_keyboard: [[{ text: "📚 Open All Predictions", url: `https://t.me/${botUsername}?start=all` }]] };
 }
 
-/**
- * The single group-facing exit for All Predictions: never renders the
- * prediction list itself. `messageId`, when given, is an existing group
- * message (a /all command's own message has none; a tapped pg|all*|...
- * callback's message does) — edited in place so a stale group message with
- * old pagination buttons turns into the redirect rather than spawning a new
- * message every time it's tapped again. Falls back to a fresh message if
- * the edit fails (message too old/deleted/not the bot's own).
- */
-async function sendGroupAllRedirect(env: Env, chatId: string, messageId?: unknown): Promise<void> {
+/** /all typed as a plain group command: a brand-new short message, never an edit — nothing to preserve yet. */
+async function sendGroupAllRedirect(env: Env, chatId: string): Promise<void> {
   const replyMarkup = allRedirectKeyboard(env.TELEGRAM_BOT_USERNAME);
   const text = replyMarkup ? ALL_GROUP_TEXT : ALL_GROUP_TEXT_NO_LINK;
-  if (messageId != null) {
-    try {
-      await tgApi(env, "editMessageText", { chat_id: chatId, message_id: messageId, text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) });
-      return;
-    } catch {
-      // Fall through to a fresh message.
-    }
-  }
   await tgApi(env, "sendMessage", { chat_id: chatId, text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) });
 }
 
@@ -198,9 +216,13 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
     // new tap (shouldn't happen once the keyboard itself is fixed, see
     // telegram.ts allButtonModeFor) or a tap on an OLD group message from
     // before this redirect existed, still carrying a live pg|all*|... button.
+    // Answered via the callback's own deep link (never an edit/send into the
+    // group): editing the tapped message would also overwrite every OTHER
+    // button sharing that same keyboard (Top/Daily/Stats/Yesterday), which
+    // is exactly the menu-disappearing regression this fixes — the rest of
+    // the group menu, on that message and everywhere else, is left intact.
     if (chatType !== "private" && (parsed.view === "all" || parsed.view.startsWith("all_"))) {
-      await answerCallback(env, cbId);
-      if (chatId) await sendGroupAllRedirect(env, chatId, (msg as Record<string, unknown> | undefined)?.message_id);
+      await answerCallbackWithDeepLink(env, cbId, "all");
       return;
     }
 

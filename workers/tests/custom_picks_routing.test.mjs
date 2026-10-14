@@ -447,7 +447,14 @@ describe("All Predictions: group-to-private flow", () => {
     assert.match(fetchImpl.calls[0].body.text, /ALL PREDICTIONS/);
     assert.match(fetchImpl.calls[0].body.text, /Pick a sport/);
   });
-  it("a legacy group message's old pg|all|0 pagination button, tapped now, edits into the redirect (no new message, no list)", async () => {
+  // Regression (commit 4135f81): tapping an old group message's pg|all|0
+  // button used to editMessageText that message into a bare redirect,
+  // which also wiped out every OTHER button sharing that same keyboard
+  // (Top/Daily/Stats/Yesterday) — "the group menu disappeared". The fix
+  // answers the callback with a deep-link url (Telegram Bot API's own
+  // documented mechanism for answerCallbackQuery) and touches NOTHING
+  // about the original message: no edit, no delete, no replacement send.
+  it("a legacy group message's old pg|all|0 button opens the private deep link via the callback answer — the message itself is never touched", async () => {
     const db = realDb();
     const theEnv = { ...env(db), TELEGRAM_BOT_USERNAME: "SureOddsBot" };
     const fetchImpl = stubFetch();
@@ -462,15 +469,15 @@ describe("All Predictions: group-to-private flow", () => {
         },
       }),
     );
-    const toast = fetchImpl.calls.find((c) => c.url.includes("answerCallbackQuery"));
-    assert.ok(toast, "the tap must still be acknowledged");
-    const edit = fetchImpl.calls.find((c) => c.url.includes("editMessageText"));
-    assert.ok(edit, "the stale message must be edited in place, not replaced");
-    assert.equal(edit.body.message_id, 55);
-    assert.doesNotMatch(edit.body.text, /ALL PREDICTIONS/);
-    assert.equal(fetchImpl.calls.filter((c) => c.url.includes("sendMessage")).length, 0, "no fresh message, no list");
+    assert.equal(fetchImpl.calls.length, 1, "only the callback answer — no edit, no new message");
+    const [call] = fetchImpl.calls;
+    assert.match(call.url, /answerCallbackQuery/);
+    assert.equal(call.body.callback_query_id, "cbq-1");
+    assert.equal(call.body.url, "https://t.me/SureOddsBot?start=all");
+    assert.equal(fetchImpl.calls.some((c) => c.url.includes("editMessageText")), false, "the original message must never be edited");
+    assert.equal(fetchImpl.calls.some((c) => c.url.includes("sendMessage")), false, "no replacement/extra message either");
   });
-  it("a legacy group pg|all_<sport>|... sub-page callback is redirected the same way", async () => {
+  it("a legacy group pg|all_<sport>|... sub-page callback is redirected the same way — no edit, no new message", async () => {
     const db = realDb();
     const theEnv = { ...env(db), TELEGRAM_BOT_USERNAME: "SureOddsBot" };
     const fetchImpl = stubFetch();
@@ -485,9 +492,61 @@ describe("All Predictions: group-to-private flow", () => {
         },
       }),
     );
-    const edit = fetchImpl.calls.find((c) => c.url.includes("editMessageText"));
-    assert.ok(edit, "sport sub-pages must redirect too, not just the top-level all view");
-    assert.doesNotMatch(edit.body.text, /football/i);
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.equal(fetchImpl.calls[0].body.url, "https://t.me/SureOddsBot?start=all");
+    assert.equal(fetchImpl.calls.some((c) => c.url.includes("editMessageText") || c.url.includes("sendMessage")), false);
+  });
+  it("a legacy group All tap with no configured bot username falls back to an alert toast, still never touching the message", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () =>
+      handleUpdate(env(db), {
+        update_id: 1,
+        callback_query: {
+          id: "cbq-1",
+          data: "pg|all|0",
+          from: { id: "u1" },
+          message: { message_id: 55, chat: { id: "g1", type: "supergroup" } },
+        },
+      }),
+    );
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.match(fetchImpl.calls[0].url, /answerCallbackQuery/);
+    assert.equal(fetchImpl.calls[0].body.url, undefined);
+    assert.match(fetchImpl.calls[0].body.text, /private chat/);
+  });
+  it("tapping All on a group message does not disturb the Top/Daily/Stats/Yesterday buttons sharing that same keyboard", async () => {
+    // The exact scenario from the regression: a /top response in a group
+    // carries the full switch row (Top/Daily/Stats/Yesterday + All) in one
+    // message. Tapping All must leave that whole keyboard exactly as the
+    // group members already saw it — proven here by never issuing any
+    // edit/send against the message at all.
+    const db = realDb();
+    const theEnv = { ...env(db), TELEGRAM_BOT_USERNAME: "SureOddsBot" };
+    const originalKeyboard = {
+      inline_keyboard: [
+        [{ text: "📚 All Predictions", callback_data: "pg|all|0" }],
+        [{ text: "🔥 Top Picks", callback_data: "pg|top|0" }, { text: "📋 Daily Picks", callback_data: "pg|daily|0" }],
+        [{ text: "📊 Stats", callback_data: "pg|stats|0" }, { text: "🗓 Yesterday", callback_data: "pg|yesterday|0" }],
+      ],
+    };
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () =>
+      handleUpdate(theEnv, {
+        update_id: 1,
+        callback_query: {
+          id: "cbq-1",
+          data: "pg|all|0",
+          from: { id: "u1" },
+          message: { message_id: 55, chat: { id: "g1", type: "supergroup" }, reply_markup: originalKeyboard },
+        },
+      }),
+    );
+    // No editMessageText/editMessageReplyMarkup/deleteMessage/sendMessage of
+    // any kind was issued, so the message — and every button on it,
+    // including Top/Daily/Stats/Yesterday — is provably untouched.
+    const mutating = fetchImpl.calls.filter((c) => /editMessage|deleteMessage|sendMessage/.test(c.url));
+    assert.equal(mutating.length, 0, "the group menu message must not be edited, replaced, or deleted");
   });
   it("a private-chat pg|all|0 tap is unaffected: still edits in the real sport menu", async () => {
     const db = realDb();
