@@ -177,6 +177,32 @@ def test_real_promotion_preserves_all_view_history_and_exact_outcome_identity(tm
         pool.db.close()
 
 
+def test_top_and_daily_memberships_resolve_to_real_stored_picks(tmp_path):
+    """Regression for the 2026-10-14 incident: generation and D1 sync both
+    reported success (2 top, 5 daily memberships written) while the staging
+    bot's /top and /daily still rendered empty. The engine/D1 side turned
+    out fine on inspection; this locks in the invariant that would have
+    actually caused that symptom from the engine side — a 'top'/'daily'
+    membership row left pointing at a prediction_id with no matching `picks`
+    row (dangling, e.g. from a ticket-candidate id that was never resolved to
+    a stored pick). Note a promoted alternate CAN legitimately differ from
+    the fixture's 'all' representative (see the promotion test above), so
+    this checks against every stored pick, not just the 'all' collection."""
+    gen, cfg = evaluated_pool()
+    pool = PredictionPool(Database(str(tmp_path / 'pool2.db')), '2030-06-01')
+    try:
+        pool.store(PickSet(predictions=gen.predictions, ticket_predictions=gen.ticket_predictions))
+        diagnostics = pool.package(cfg, iso(dt()))
+        stored_ids = {r['id'] for r in pool.db.query('SELECT id FROM picks')}
+        for kind in ('top', 'daily'):
+            rows = pool.rows(kind)
+            assert rows, f'{kind} selection must not be empty for this fixture'
+            assert {r['id'] for r in rows} <= stored_ids, f'{kind} membership points at a nonexistent pick'
+            assert len(rows) == diagnostics[f'{kind}_selected']
+    finally:
+        pool.db.close()
+
+
 def test_model_exposes_strict_dnb_probability_and_unconditional_ev():
     db = Database(':memory:')
     try:
