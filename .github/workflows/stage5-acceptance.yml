@@ -317,20 +317,30 @@ jobs:
               json.dump(meta, fh, indent=2)
           print(json.dumps(meta, indent=2))
           EOF
+      # stage5-resume expects a flat directory (plan.json, *.sql, rest/*.jsonl
+      # at its root); upload-artifact would otherwise nest everything under
+      # acc_plan/ since these are scattered across /tmp.
+      - name: Flatten plan artifact for resume
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/acc_report/rest
+          cp /tmp/acc_plan/plan.json /tmp/acc_report/ 2>/dev/null || true
+          cp /tmp/acc_plan/delta-manifest.json /tmp/acc_report/ 2>/dev/null || true
+          for f in /tmp/acc_plan/p0_*.sql /tmp/acc_plan/p1_*.sql; do
+            [ -e "$f" ] || continue
+            case "$(basename "$f")" in
+              p1_deliveries_*.sql|p1_posts_*.sql|*subscribers*) continue ;;
+            esac
+            cp "$f" /tmp/acc_report/
+          done
+          cp /tmp/acc_plan/rest/*.jsonl /tmp/acc_report/rest/ 2>/dev/null || true
+          cp /tmp/acc_gen.json /tmp/acc_run_meta.json /tmp/acc_report/ 2>/dev/null || true
+          ls -la /tmp/acc_report
       - name: Upload sanitized report (plan only, never dumps)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stage5-acceptance-plan
           if-no-files-found: warn
-          path: |
-            /tmp/acc_plan/plan.json
-            /tmp/acc_plan/delta-manifest.json
-            /tmp/acc_plan/p0_*.sql
-            /tmp/acc_plan/p1_*.sql
-            /tmp/acc_plan/rest/*.jsonl
-            /tmp/acc_gen.json
-            /tmp/acc_run_meta.json
-            !/tmp/acc_plan/p1_deliveries_*.sql
-            !/tmp/acc_plan/p1_posts_*.sql
-            !**/*subscribers*
+          path: /tmp/acc_report
