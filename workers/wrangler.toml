@@ -1,5 +1,5 @@
-# Stage 1 foundation. Production bot is untouched: no `setWebhook` has been
-# called, the Railway poller remains the only live consumer.
+# Production activation (2026-10-15): the Telegram webhook points here and
+# the Worker's own Cron now owns posting/delivery. Justrunmyapp is retired.
 name = "sureodds-worker"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
@@ -22,7 +22,14 @@ PAGE_SIZE = "5"
 # TELEGRAM_BOT_USERNAME = "BETTSUREbot"
 TELEGRAM_BOT_USERNAME = "BETTSUREbot"
 TELEGRAM_ADMIN_IDS = "8606823551"
-STAGE3_CRON_ENABLED = "0"
+STAGE3_CRON_ENABLED = "1"
+
+# Matches workers/src/cron.ts's exported CRON_POST_SWEEP / CRON_RECAP_SWEEP /
+# CRON_DELIVER_SWEEP / CRON_WATCH exactly — handleScheduled dispatches on
+# exact string equality, never a substring, so these four strings must stay
+# byte-identical to those constants.
+[triggers]
+crons = ["*/5 8-11 * * *", "*/5 6-7 * * *", "*/5 * * * *", "0 10 * * *"]
 
 # Secrets (never in this file):
 #   wrangler secret put TELEGRAM_BOT_TOKEN
