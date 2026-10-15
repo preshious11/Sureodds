@@ -43,6 +43,20 @@ function setCache(sql, day) {
 }
 
 describe("/all sport menu and per-sport fixture pages", () => {
+  // Regression (UI-parity audit, 2026-10-15): the genuine-empty /all case
+  // used to say "the model found nothing above the quality floor... Thresholds
+  // were not lowered" — invented copy leaking internal selection-threshold
+  // concepts. Must match predbot/bot/pagination.py's own exact wording.
+  it("the genuinely-empty /all case matches Python's exact wording, with no internal selection details", async () => {
+    const sql = baseSchema();
+    const day = "2026-10-14";
+    setCache(sql, day);
+    const menu = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "all", 0, day);
+    assert.match(menu.text, /No valid model predictions were generated today\./);
+    for (const leak of [/quality floor/i, /threshold/i, /honest empty/i]) {
+      assert.doesNotMatch(menu.text, leak, `must never leak: ${leak}`);
+    }
+  });
   it("lists only sports with predictions, with correct counts and sport buttons", async () => {
     const sql = baseSchema();
     const day = "2026-10-14";
@@ -123,6 +137,35 @@ describe("/stats and /yesterday real settlement data", () => {
       const yview = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "yesterday", 0, today);
       assert.match(yview.text, /🗓 YESTERDAY/);
       assert.match(yview.text, /✅ 2  ❌ 1/);
+    } finally {
+      sql.close();
+    }
+  });
+
+  // Regression (SureOdds P0 production repair, 2026-10-15): Stats/Yesterday
+  // read a PAST, already-settled date — they must never depend on TODAY's
+  // generation having landed. Deliberately no setCache() call here: there
+  // is NO prediction_cache row for `today` at all (the exact state found
+  // live in production D1), proving these two views don't require it.
+  it("renders Stats and Yesterday from real settlement data even when today has no cache row at all", async () => {
+    const sql = baseSchema();
+    const today = "2026-10-14";
+    const yesterday = "2026-10-13";
+    const settled = [[1, "won", 2.0, "top"], [2, "lost", 1.5, "daily"]];
+    for (const [id, status, price, collection] of settled) {
+      insertPick(sql, id, yesterday, status, price);
+      addMembership(sql, id, collection);
+    }
+    try {
+      const db = stubDb(sql);
+      const stats = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      assert.match(stats.text, /📊 STATS/);
+      assert.doesNotMatch(stats.text, /not ready yet/i, "today's missing cache must never block yesterday's real results");
+      assert.match(stats.text, /✅ 1  ❌ 1/);
+      const yview = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "yesterday", 0, today);
+      assert.match(yview.text, /🗓 YESTERDAY/);
+      assert.doesNotMatch(yview.text, /not ready yet/i);
+      assert.match(yview.text, /✅ 1  ❌ 1/);
     } finally {
       sql.close();
     }

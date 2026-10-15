@@ -215,6 +215,65 @@ def test_subscriber_and_community_completion_are_independent(db, community, monk
     assert provider.calls == 1
 
 
+OWNER = "99"
+
+
+def test_owner_receives_live_start_and_end_alerts_alongside_community(db, community):
+    cfg, tg, provider, _ = community
+    cfg.telegram_admin_ids = [OWNER]
+    pick(db)
+    publish(db, cfg, tg)
+    tg.sends.clear()
+    provider.result = MatchResult("in_progress", source="espn")
+    poll(db, community)
+    assert {s["chat_id"] for s in tg.sends} == {COMMUNITY, OWNER}
+    owner_send = next(s for s in tg.sends if s["chat_id"] == OWNER)
+    community_send = next(s for s in tg.sends if s["chat_id"] == COMMUNITY)
+    assert owner_send["text"] == community_send["text"]
+
+    tg.sends.clear()
+    provider.result = MatchResult("final", {"full": (2., 1.)}, source="espn")
+    poll(db, community)
+    assert {s["chat_id"] for s in tg.sends} == {COMMUNITY, OWNER}
+    row = db.picks_for_date(DAY)[0]
+    assert db.live_state(DAY, row["fixture_key"])["notifications_done"]
+
+
+def test_owner_and_community_live_delivery_retry_independently(db, community):
+    cfg, tg, provider, _ = community
+    cfg.telegram_admin_ids = [OWNER]
+    pick(db)
+    publish(db, cfg, tg)
+    tg.sends.clear()
+    tg.fail.add(OWNER)
+    provider.result = MatchResult("final", {"full": (2., 1.)}, source="espn")
+    poll(db, community)
+    # Community succeeded, owner failed: the fixture must stay retryable
+    # (owner's failure alone blocks completion) without re-sending to the
+    # community, which already has its own receipt.
+    assert [s["chat_id"] for s in tg.sends] == [COMMUNITY]
+    row = db.picks_for_date(DAY)[0]
+    assert not db.live_state(DAY, row["fixture_key"])["notifications_done"]
+    tg.fail.clear()
+    poll(db, community)
+    assert [s["chat_id"] for s in tg.sends] == [COMMUNITY, OWNER]
+    assert db.live_state(DAY, row["fixture_key"])["notifications_done"]
+    assert provider.calls == 1  # settlement/provider lookup not repeated on retry
+
+
+def test_no_owner_configured_never_blocks_community_delivery(db, community):
+    cfg, tg, provider, _ = community
+    assert not cfg.telegram_admin_ids  # the default in this fixture
+    pick(db)
+    publish(db, cfg, tg)
+    tg.sends.clear()
+    provider.result = MatchResult("final", {"full": (2., 1.)}, source="espn")
+    poll(db, community)
+    assert [s["chat_id"] for s in tg.sends] == [COMMUNITY]
+    row = db.picks_for_date(DAY)[0]
+    assert db.live_state(DAY, row["fixture_key"])["notifications_done"]
+
+
 def test_changing_destination_does_not_repost_or_attribute_legacy_posts(db, community):
     cfg, tg, provider, _ = community
     pick(db)

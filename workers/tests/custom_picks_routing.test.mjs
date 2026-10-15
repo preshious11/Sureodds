@@ -4,6 +4,13 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { handleUpdate } from "../src/index.ts";
 
+// Every seed in this file archives day 2026-10-14, which the handler looks
+// up by CURRENT Lagos date — so a wall-clock rollover past midnight Lagos
+// would flip every ticket test to UNAVAILABLE. Freeze the clock file-wide
+// (all assertions here are about routing/content, never about time passing;
+// per-test withFrozenClock helpers below re-assert the same instant).
+Date.now = () => Date.UTC(2026, 9, 14, 8, 0); // 09:00 Africa/Lagos
+
 // Real SQLite, real migration files — the actual schema, not a hand-rolled
 // subset, so a column rename in a migration breaks this test instead of a
 // live chat. Supports .first()/.all()/.run(), unlike the lighter per-SQL
@@ -399,13 +406,14 @@ describe("Custom Picks private-chat access rules (index.ts routing)", () => {
     const row = db._sql.prepare("SELECT active FROM custom_sessions WHERE user_id='u1' AND chat_id='c1'").get();
     assert.equal(row.active, 1);
   });
-  it("/start custom_picks in a group is refused: no session created, nothing sent", async () => {
+  it("/start custom_picks in a group redirects to a private chat: no session created, one redirect sent", async () => {
     const db = realDb();
     const fetchImpl = stubFetch();
     await withFetch(fetchImpl, () =>
       handleUpdate(env(db), textMessage(1, "g1", "u1", "/start custom_picks", "supergroup")),
     );
-    assert.equal(fetchImpl.calls.length, 0);
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.match(fetchImpl.calls[0].body.text, /private chat/);
     const row = db._sql.prepare("SELECT 1 FROM custom_sessions WHERE chat_id='g1'").get();
     assert.equal(row, undefined);
   });
@@ -749,11 +757,12 @@ describe("All Predictions: group-to-private flow", () => {
     assert.match(fetchImpl.calls[0].body.text, /ALL PREDICTIONS/);
     assert.match(fetchImpl.calls[0].body.text, /Pick a sport/);
   });
-  it("/start all in a group is a no-op: deep links only ever open a private chat", async () => {
+  it("/start all in a group redirects instead of rendering: deep links only ever open a private chat", async () => {
     const db = realDb();
     const fetchImpl = stubFetch();
     await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(1, "g1", "u1", "/start all", "supergroup")));
-    assert.equal(fetchImpl.calls.length, 0);
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.doesNotMatch(fetchImpl.calls[0].body.text, /Pick a sport/);
   });
 });
 
@@ -878,5 +887,128 @@ describe("failed Telegram sends during webhook processing", () => {
     assert.equal(fetchImpl.calls.length, 1);
     const row = db._sql.prepare("SELECT status FROM telegram_updates WHERE update_id=1").get();
     assert.equal(row.status, "done");
+  });
+});
+
+describe("Phase A/B reliability: /stop, group /start redirects, @BotName, cooldown retry", () => {
+  const FROZEN_NOW = Date.UTC(2026, 9, 14, 8, 0); // 09:00 Africa/Lagos
+  async function withFrozenClock(fn) {
+    const realNow = Date.now;
+    Date.now = () => FROZEN_NOW;
+    try {
+      return await fn();
+    } finally {
+      Date.now = realNow;
+    }
+  }
+  function adminEnv(db, extra = {}) {
+    return {
+      DB: db, TELEGRAM_BOT_TOKEN: "t", TELEGRAM_WEBHOOK_SECRET: "s", TIMEZONE: "Africa/Lagos",
+      PAGE_SIZE: "5", TELEGRAM_BOT_USERNAME: "SureOddsBot", TELEGRAM_ADMIN_IDS: "7",
+      TELEGRAM_CHAT_ID: "group-1", ...extra,
+    };
+  }
+  it("/stop confirms, deactivates delivery, and leaves the Custom Picks session", async () => {
+    const db = realDb();
+    await withFrozenClock(async () => {
+      await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start")));
+      await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(2, "c1", "u1", "/start custom_picks")));
+      const fetchImpl = stubFetch();
+      await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(3, "c1", "u1", "/stop")));
+      assert.equal(fetchImpl.calls.length, 1);
+      assert.match(fetchImpl.calls[0].body.text, /Unsubscribed/);
+      const sub = db._sql.prepare("SELECT active FROM subscribers WHERE chat_id='c1'").get();
+      assert.equal(sub.active, 0, "delivery subscription must actually deactivate");
+      const session = db._sql.prepare("SELECT active FROM custom_sessions WHERE user_id='u1' AND chat_id='c1'").get();
+      assert.equal(session.active, 0, "custom session must be left");
+    });
+  });
+  it("/stop with no prior subscription still confirms instead of crashing", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(1, "c9", "u9", "/stop")));
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.match(fetchImpl.calls[0].body.text, /Unsubscribed/);
+  });
+  it("group /start custom_picks redirects to a private chat with a deep-link button, no session", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetch();
+    await withFrozenClock(async () => {
+      await withFetch(fetchImpl, () => handleUpdate(adminEnv(db), textMessage(1, "group-1", "u1", "/start custom_picks", "supergroup")));
+    });
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.match(fetchImpl.calls[0].body.text, /private chat/);
+    assert.match(JSON.stringify(fetchImpl.calls[0].body.reply_markup), /start=custom_picks/);
+    assert.equal(db._sql.prepare("SELECT 1 AS one FROM custom_sessions WHERE chat_id='group-1'").get(), undefined);
+  });
+  it("group /start custom_picks without a configured username sends plain text, never a dead link", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(1, "group-1", "u1", "/start custom_picks", "supergroup")));
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.match(fetchImpl.calls[0].body.text, /private chat/);
+    assert.equal(fetchImpl.calls[0].body.reply_markup, undefined);
+  });
+  it("group /start all redirects with the All deep link instead of rendering", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () => handleUpdate(adminEnv(db), textMessage(1, "group-1", "u1", "/start all", "supergroup")));
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.match(JSON.stringify(fetchImpl.calls[0].body.reply_markup ?? fetchImpl.calls[0].body.text), /start=all/);
+  });
+  it("@BotName suffix and case are normalized: /menu@Bot, /stop@Bot, /START all route correctly", async () => {
+    const db = realDb();
+    const menuFetch = stubFetch();
+    await withFetch(menuFetch, () => handleUpdate(adminEnv(db), textMessage(1, "private-7", "7", "/menu@SureOddsBot")));
+    assert.match(menuFetch.calls.find((c) => c.body.chat_id === "private-7").body.text, /posted/);
+    const stopFetch = stubFetch();
+    await withFetch(stopFetch, () => handleUpdate(adminEnv(db), textMessage(2, "c1", "u1", "/stop@SureOddsBot")));
+    assert.match(stopFetch.calls[0].body.text, /Unsubscribed/);
+    const startFetch = stubFetch();
+    await withFetch(startFetch, () => handleUpdate(env(db), textMessage(3, "c1", "u1", "/START")));
+    assert.match(startFetch.calls[0].body.text, /Use the menu below/);
+    const sub = db._sql.prepare("SELECT active FROM subscribers WHERE chat_id='c1'").get();
+    assert.equal(sub.active, 1, "/START must subscribe like /start");
+  });
+  it("a failed Custom Picks request does not poison the cooldown: the retry serves the ticket, not BUSY", async () => {
+    const db = realDb();
+    seedPool(db._sql);
+    await withFrozenClock(async () => {
+      await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
+      // Break the candidate read so respond() throws AFTER the cooldown
+      // check but BEFORE any timestamp could be recorded.
+      db._sql.exec("DROP TABLE custom_pick_candidates");
+      await assert.rejects(
+        withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(2, "c1", "u1", "1 picks"))),
+        "the broken read must fail the update (retryable), not answer BUSY",
+      );
+      // Restore the table exactly as the migrations define it, then reseed.
+      db._sql.exec(readFileSync(new URL("../migrations/0003_engine_state.sql", import.meta.url), "utf8"));
+      seedCandidate(db._sql, "2026-10-14", "2026-10-14T06:00:00Z", { canonical_event_id: "fx-1", home: "Arsenal", away: "Chelsea" });
+      const fetchImpl = stubFetch();
+      await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(3, "c1", "u1", "1 picks")));
+      // The retry sends the loading indicator plus the real ticket — and
+      // crucially no BUSY rejection.
+      const bodies = fetchImpl.calls.map((c) => c.body.text);
+      assert.ok(bodies.some((t) => /🔥/.test(t)), "retry must serve the ticket");
+      assert.ok(bodies.every((t) => !/Still working on your last request/.test(t)), "retry must not be throttled");
+    });
+  });
+  it("sequential rapid requests are still throttled: a served request stamps the cooldown", async () => {
+    const db = realDb();
+    seedPool(db._sql);
+    await withFrozenClock(async () => {
+      await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
+      const fetchImpl = stubFetch();
+      await withFetch(fetchImpl, async () => {
+        await handleUpdate(env(db), textMessage(2, "c1", "u1", "1 picks"));
+        await handleUpdate(env(db), textMessage(3, "c1", "u1", "1 picks"));
+      });
+      // First request: loading indicator + ticket. Second: BUSY throttle.
+      const bodies = fetchImpl.calls.map((c) => c.body.text);
+      assert.equal(bodies.length, 3);
+      assert.ok(/🔥/.test(bodies[1]), "first request serves the ticket");
+      assert.match(bodies[2], /Still working on your last request/);
+    });
   });
 });

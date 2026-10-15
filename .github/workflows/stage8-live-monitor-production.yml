@@ -1,0 +1,159 @@
+# Live match monitoring + settlement for PRODUCTION (SureOdds Cloudflare
+# migration, 2026-10-15). Reuses the existing, tested Python engine
+# (predbot/jobs/live_results.py + predbot/jobs/live_monitor_d1.py) against
+# a D1-synced scratch copy — never a persistent local SQLite database, and
+# NEVER sends Telegram messages. Detected match-start/match-end events are
+# written to the match_events table (0009_match_events.sql); the
+# Cloudflare Worker's own Cron sweep (sweepMatchEvents, workers/src/cron.ts)
+# is the only thing that ever delivers them, to the group and the owner
+# independently.
+#
+# SAFE BY DEFAULT, same pattern as stage7-scheduled-production.yml: a
+# schedule-triggered fire only PULLS and INSPECTS production D1
+# (dry_run=true) unless the repository variable STAGE8_LIVE_ENABLED is set
+# to exactly "true" — that is the single activation step; no workflow file
+# edit or redeploy is needed to go live, and this file does NOT set that
+# variable itself.
+name: stage8-live-monitor-production
+
+on:
+  schedule:
+    - cron: "*/5 * * * *" # matches predbot's own LIVE_POLL_MINUTES default
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Plan only, no D1 writes (default true)"
+        required: false
+        default: true
+        type: boolean
+
+env:
+  PRODUCTION_DB_NAME: sureodds_production
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: sureodds-production-sync
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install runtime dependency
+        run: pip install -r predictions-bot/requirements.txt
+      - name: Production target guard (never staging, never a placeholder id)
+        run: |
+          set -euo pipefail
+          grep -q 'database_name = "sureodds_production"' workers/wrangler.toml
+          grep -qv 'REPLACE_WITH_STAGING_D1_ID' workers/wrangler.toml || \
+            { echo "FAIL workers/wrangler.toml still has the placeholder database_id — run workers/CUTOVER.md step 2 first" >&2; exit 1; }
+          ! grep -q 'sureodds_staging' <(grep database_name workers/wrangler.toml)
+      - name: Resolve dry-run mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            live="${{ vars.STAGE8_LIVE_ENABLED == 'true' }}"
+          else
+            live="${{ vars.STAGE8_LIVE_ENABLED == 'true' && inputs.dry_run == false }}"
+          fi
+          echo "dry_run=$([ "$live" = "true" ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
+      - name: Live-run secrets check (skipped in dry-run)
+        if: steps.mode.outputs.dry_run == 'false'
+        run: |
+          set -euo pipefail
+          for v in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            if [ -z "${!v:-}" ]; then echo "missing secret: $v" >&2; exit 1; fi
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Pull production base (export + load)
+        run: |
+          set -euo pipefail
+          cd workers
+          npx -y wrangler@4 d1 export "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --output /tmp/livemon_base.sql
+          python3 - <<'EOF'
+          import sqlite3, shutil
+          con = sqlite3.connect("/tmp/livemon_base.db")
+          con.executescript(open("/tmp/livemon_base.sql", encoding="utf-8").read())
+          con.commit(); con.close()
+          shutil.copyfile("/tmp/livemon_base.db", "/tmp/livemon_scratch.db")
+          EOF
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Run live monitoring + settlement (writes only to the scratch copy)
+        run: |
+          cd predictions-bot
+          python3 -m predbot.jobs.live_monitor_d1 /tmp/livemon_scratch.db
+        env:
+          # Provider quotas/fallbacks are the existing predbot.config
+          # mechanism — never hardcoded here. No live sources configured
+          # means this step is a safe no-op (zero provider calls).
+          SPORTSGAMEODDS_KEY: ${{ secrets.SPORTSGAMEODDS_KEY }}
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      - name: Build scoped plan (settlement + live-tracking tables only)
+        run: |
+          set -euo pipefail
+          python3 workers/scripts/d1_sync.py plan /tmp/livemon_base.db /tmp/livemon_scratch.db \
+            --out /tmp/livemon_plan \
+            --tables match_events,picks,live_fixture_state,results_seen,ratings,calibration \
+            --write-budget 2000
+          cat /tmp/livemon_plan/plan.json
+      - name: Apply to production D1 (skipped in dry-run)
+        if: steps.mode.outputs.dry_run == 'false'
+        run: |
+          set -euo pipefail
+          cd workers
+          epoch=$(npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "SELECT epoch FROM sync_state WHERE id=1" | python3 scripts/d1_json.py --get 0.results.0.epoch)
+          ok=0; total=0
+          for f in /tmp/livemon_plan/p0_*.sql /tmp/livemon_plan/p1_*.sql; do
+            [ -e "$f" ] || continue
+            total=$((total + 1))
+            base=$(basename "$f")
+            if npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+              --config wrangler.toml --json --file "$f" > "/tmp/livemon_applied_$base.json" 2>&1; then
+              if python3 scripts/d1_json.py --assert-success "/tmp/livemon_applied_$base.json"; then
+                ok=$((ok + 1)); echo "OK $base"
+              else
+                echo "FAIL $base (D1 reported failure):"; tail -20 "/tmp/livemon_applied_$base.json"; exit 1
+              fi
+            else
+              echo "FAIL $base (wrangler error):"; tail -20 "/tmp/livemon_applied_$base.json"; exit 1
+            fi
+          done
+          echo "applied $ok/$total batch files"
+          if [ -d /tmp/livemon_plan/rest ] && [ -n "$(ls /tmp/livemon_plan/rest/*.jsonl 2>/dev/null)" ]; then
+            DB_ID=$(grep -A2 'database_name = "sureodds_production"' wrangler.toml | grep database_id | sed -E 's/.*"([^"]+)".*/\1/')
+            python3 scripts/d1_sync.py rest-apply /tmp/livemon_plan/rest \
+              --account-id "$CLOUDFLARE_ACCOUNT_ID" --database-id "$DB_ID" \
+              --api-token "$CLOUDFLARE_API_TOKEN"
+          fi
+          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE sync_state SET epoch=epoch+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=1 AND epoch=$epoch" | python3 scripts/d1_json.py --expect-changes 1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Upload sanitized plan (never a full DB dump)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage8-live-monitor-plan
+          if-no-files-found: warn
+          path: /tmp/livemon_plan/plan.json

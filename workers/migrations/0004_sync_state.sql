@@ -1,6 +1,7 @@
 -- Stage 3: sync epoch for stale-snapshot protection.
--- Fresh installs apply 0001 + 0003 + 0004. The single row advances on every
--- accepted engine push; a push built on an older epoch is refused.
+-- Fresh installs apply 0001 + 0003 through 0008 (skipping upgrade-only
+-- 0002). The single row advances on every accepted engine push; a push
+-- built on an older epoch is refused.
 CREATE TABLE IF NOT EXISTS sync_state (
   id INTEGER PRIMARY KEY CHECK(id = 1),
   epoch INTEGER NOT NULL DEFAULT 0,

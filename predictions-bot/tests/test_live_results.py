@@ -494,3 +494,78 @@ def test_overlapping_poll_is_skipped(db, env):
     finally:
         release.set()
         thread.join(2)
+
+
+# --- D1-event-sink mode (SureOdds Cloudflare migration, 2026-10-15) --------
+# GitHub Actions never sends Telegram directly; instead live_results.run()
+# is given a `sink` that records normalized events for the Cloudflare
+# Worker to deliver (group + owner, independently) later.
+
+def make_sink():
+    events = []
+
+    def sink(pick_date, fixture_key, event_type, text):
+        events.append((pick_date, fixture_key, event_type, text))
+
+    return sink, events
+
+
+def poll_sink(db, env, sink, now=NOW):
+    _, resolver, cfg, tg = env
+    live_results.run(resolver, db, cfg, tg, now=now, sink=sink)
+
+
+def test_sink_mode_records_start_and_end_events_without_ever_sending_telegram(db, env):
+    pick(db)
+    received(db)
+    sink, events = make_sink()
+    env[0].result = MatchResult("in_progress", source="espn")
+    poll_sink(db, env, sink)
+    assert not env[3].messages, "GitHub Actions must never send Telegram directly"
+    assert len(events) == 1
+    pick_date, fixture_key, event_type, text = events[0]
+    assert event_type == "start" and "Match Started" in text and "Chelsea to Win" in text
+
+    final(env)
+    poll_sink(db, env, sink)
+    assert not env[3].messages
+    assert len(events) == 2
+    assert events[1][2] == "end"
+    assert "Chelsea 2–1 Arsenal" in events[1][3] and "— WON" in events[1][3]
+    assert db.picks_for_date(DAY)[0]["status"] == "won"  # settlement still runs
+
+
+def test_sink_mode_repeated_polls_record_each_event_exactly_once(db, env):
+    pick(db)
+    received(db)
+    sink, events = make_sink()
+    env[0].result = MatchResult("in_progress", source="espn")
+    poll_sink(db, env, sink)
+    poll_sink(db, env, sink)
+    assert len(events) == 1, "status unchanged between polls — no duplicate 'start' event"
+    final(env)
+    poll_sink(db, env, sink)
+    poll_sink(db, env, sink)
+    assert len(events) == 2, "exactly one 'end' event, even after further polls"
+
+
+def test_sink_failure_leaves_the_fixture_retryable_without_resettling(db, env, monkeypatch):
+    pick(db)
+    received(db)
+    final(env)
+    refit = Mock()
+    monkeypatch.setattr(live_results.Calibrator, "refit", refit)
+
+    def failing_sink(*_args):
+        raise RuntimeError("D1 write failed")
+
+    poll_sink(db, env, failing_sink)
+    assert db.picks_for_date(DAY)[0]["status"] == "won"  # settlement is independent of the sink
+    assert not db.live_state(DAY, db.picks_for_date(DAY)[0]["fixture_key"])["notifications_done"]
+    refit.assert_called_once()
+
+    sink, events = make_sink()
+    poll_sink(db, env, sink)
+    assert len(events) == 1 and events[0][2] == "end"
+    assert db.live_state(DAY, db.picks_for_date(DAY)[0]["fixture_key"])["notifications_done"]
+    refit.assert_called_once()  # not re-settled on the retry

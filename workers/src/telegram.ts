@@ -47,6 +47,18 @@ export function normalizeCommand(text: string | undefined | null): string | null
   return COMMAND_TO_VIEW[bare] ? bare : null;
 }
 
+/**
+ * ~ predbot/bot/commands.py split_command(): `"/top@MyBot extra"` ->
+ * `{ cmd: "/top", args: ["extra"] }` (Telegram appends @bot in groups).
+ * Only the command token is lowercased; args keep their original case.
+ */
+export function splitCommand(text: string | undefined | null): { cmd: string; args: string[] } {
+  const parts = (text ?? "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return { cmd: "", args: [] };
+  const cmd = (parts[0] ?? "").split("@")[0]?.toLowerCase() ?? "";
+  return { cmd, args: parts.slice(1) };
+}
+
 export function commandToView(cmd: string): string | null {
   return COMMAND_TO_VIEW[cmd.toLowerCase()] ?? null;
 }
@@ -56,21 +68,36 @@ export function encodeCallback(view: string, page: number, day?: string): string
   return day ? `${base}|${day.replace(/-/g, "")}` : base;
 }
 
+import { SPORT_ICON } from "./format.ts";
+
+// Every view this Worker can actually render (mirrors renderView in
+// views.ts). Anything else — including Python-only `results_*` views — is
+// rejected so a forged/legacy button can never render an unrelated menu.
+const CALLBACK_VIEWS = new Set([
+  "all", "top", "daily", "stats", "yesterday", "stats_top", "stats_daily",
+  ...Object.keys(SPORT_ICON).filter((s) => s !== "other").map((s) => `all_${s}`),
+]);
+
 export function parseCallback(
   data: string | undefined | null,
 ): { view: string; page: number; day: string | null } | null {
   if (!data || data === CALLBACK_NOOP) return null;
   const parts = data.split("|");
-  if (parts[0] !== CALLBACK_PREFIX || parts.length < 3) return null;
+  // ~ pagination.py parse_callback(): exactly 3-4 segments; anything else
+  // (extra segments, unknown view) is malformed and rejected outright.
+  if (parts[0] !== CALLBACK_PREFIX || parts.length < 3 || parts.length > 4) return null;
   const view = parts[1] ?? "";
-  const page = Number.parseInt(parts[2] ?? "", 10);
-  if (!view || !Number.isFinite(page) || page < 0) return null;
+  if (!CALLBACK_VIEWS.has(view)) return null;
+  // Number.parseInt("3abc") === 3 — a forged page must not parse, so pure
+  // digits are required (negative pages are rejected outright rather than
+  // clamped, matching the long-standing Worker contract).
+  if (!/^\d+$/.test((parts[2] ?? "").trim())) return null;
+  const page = Number.parseInt((parts[2] ?? "").trim(), 10);
   let day: string | null = null;
-  if (parts[3]) {
-    const d = parts[3];
-    if (/^\d{8}$/.test(d)) {
-      day = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
-    }
+  if (parts.length === 4) {
+    const d = parts[3] ?? "";
+    if (!/^\d{8}$/.test(d)) return null;
+    day = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
   }
   return { view, page, day };
 }

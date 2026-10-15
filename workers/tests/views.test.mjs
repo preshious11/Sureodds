@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { lagosDateString, lagosDayBounds, notReadyText, renderView } from "../src/views.ts";
+import { lagosDateString, lagosDayBounds, notReadyText, picksPerPage, renderView } from "../src/views.ts";
 
 // Minimal in-memory D1 stub: only the queries views.ts issues.
 function stubDb({ cache = null, picks = [] } = {}) {
@@ -68,12 +68,17 @@ describe("views never touch providers", () => {
       globalThis.fetch = realFetch;
     }
   });
-  it("returns honest not-ready state when cache is missing/partial", async () => {
+  it("returns an honest not-ready state when cache is missing/partial, with no internal details leaked", async () => {
     const env = { DB: stubDb(), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" };
     const res = await renderView(env, "top", 0, "2026-10-11");
-    assert.match(res.text, /not ready yet/);
-    assert.match(res.text, /09:00/);
-    assert.match(notReadyText("daily", "2026-10-11"), /No provider was queried/);
+    // Matches predbot/bot/pagination.py's own user-facing "awaiting
+    // scheduled fetch" copy — never provider names, cache states,
+    // schedule internals, or anything a Python-bot user never saw.
+    assert.match(res.text, /not been generated yet/);
+    const text = notReadyText("daily", "2026-10-11");
+    for (const leak of [/provider/i, /COMPLETE/, /PARTIAL/, /09:00/, /09:30/, /generation runs/i, /subscriber delivery/i]) {
+      assert.doesNotMatch(text, leak, `notReadyText must never leak: ${leak}`);
+    }
   });
   it("renders cached picks with pagination, empty page stays honest", async () => {
     const picks = [
@@ -119,5 +124,34 @@ describe("views never touch providers", () => {
     await completeUpdate(db, 999).catch(() => { status = "done"; });
     status = "done";
     assert.equal(await tryClaimUpdate(db, 999), "duplicate");
+  });
+});
+
+describe("PAGE_SIZE configuration (picksPerPage)", () => {
+  it("defaults to production's 5 and clamps garbage into range", () => {
+    assert.equal(picksPerPage({}), 5);
+    assert.equal(picksPerPage({ PAGE_SIZE: "5" }), 5);
+    assert.equal(picksPerPage({ PAGE_SIZE: "abc" }), 5);
+    assert.equal(picksPerPage({ PAGE_SIZE: "0" }), 5);
+    assert.equal(picksPerPage({ PAGE_SIZE: "-3" }), 5);
+    assert.equal(picksPerPage({ PAGE_SIZE: "100" }), 25);
+  });
+  it("PAGE_SIZE=2 paginates the ticket two legs at a time", async () => {
+    const picks = [1, 2, 3].map((id) => ({
+      id, sport: "football", league: "Premier League", home: `Home${id}`, away: `Away${id}`,
+      label: "Home Win", price: 2.0, prob: 0.5, start_utc: `2026-10-11T${17 + id}:00:00Z`,
+    }));
+    const env = {
+      DB: stubDb({ cache: { status: "COMPLETE", payload_json: "{}" }, picks }),
+      TIMEZONE: "Africa/Lagos",
+      PAGE_SIZE: "2",
+    };
+    const page0 = await renderView(env, "top", 0, "2026-10-11");
+    assert.match(page0.text, /Home1/);
+    assert.match(page0.text, /Home2/);
+    assert.doesNotMatch(page0.text, /Home3/);
+    assert.match(page0.text, /Page 1 of 2/);
+    const page1 = await renderView(env, "top", 1, "2026-10-11");
+    assert.match(page1.text, /Home3/);
   });
 });

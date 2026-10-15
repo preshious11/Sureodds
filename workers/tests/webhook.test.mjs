@@ -110,4 +110,33 @@ describe("callback codec (mirror of pagination.py pg|view|page|day)", () => {
     assert.equal(parseCallback("pg|daily"), null);
     assert.equal(parseCallback("pg|daily|-1"), null);
   });
+  it("rejects forged/legacy callbacks instead of rendering an unrelated menu", () => {
+    // Unknown view: previously fell through to the All Predictions menu.
+    assert.equal(parseCallback("pg|evil|0"), null);
+    // Python-only views this Worker cannot render.
+    assert.equal(parseCallback("pg|results_top|0"), null);
+    // Unknown sport suffix.
+    assert.equal(parseCallback("pg|all_evil|0"), null);
+    // Extra segments: previously silently ignored.
+    assert.equal(parseCallback("pg|top|0|20261014|extra"), null);
+    // Non-numeric page: Number.parseInt("3abc") === 3, so digits are required.
+    assert.equal(parseCallback("pg|top|3abc"), null);
+    assert.equal(parseCallback("pg|top|"), null);
+    // Malformed day segment.
+    assert.equal(parseCallback("pg|top|0|notadate"), null);
+  });
+  it("still parses every callback shape the Worker itself encodes", () => {
+    assert.deepEqual(parseCallback(encodeCallback("top", 0)), { view: "top", page: 0, day: null });
+    assert.deepEqual(parseCallback(encodeCallback("all_football", 1, "2026-10-14")), {
+      view: "all_football", page: 1, day: "2026-10-14",
+    });
+    assert.deepEqual(parseCallback(encodeCallback("stats_top", 2)), { view: "stats_top", page: 2, day: null });
+  });
+  it("splitCommand mirrors production: @BotName stripped, command lowercased, args raw", async () => {
+    const { splitCommand } = await import("../src/telegram.ts");
+    assert.deepEqual(splitCommand("/top@MyBot extra"), { cmd: "/top", args: ["extra"] });
+    assert.deepEqual(splitCommand("/START custom_picks"), { cmd: "/start", args: ["custom_picks"] });
+    assert.deepEqual(splitCommand("/stop@MyBot"), { cmd: "/stop", args: [] });
+    assert.deepEqual(splitCommand("  "), { cmd: "", args: [] });
+  });
 });

@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 // copy of 0001 that predated those inline columns; it must never run
 // against a fresh database. This test is the "fresh local D1/SQLite
 // database" check: the documented fresh-database sequence (0001, then
-// 0003-0007, skipping 0002) must apply cleanly end to end, and the
+// 0003-0008, skipping 0002) must apply cleanly end to end, and the
 // WRONG sequence (blindly including 0002) must fail exactly the way
 // production did, so this stays caught here instead of in a live cutover.
 
@@ -29,10 +29,11 @@ const FRESH_DB_SEQUENCE = [
   "0006_custom_sessions.sql",
   "0007_custom_picks_conversation.sql",
   "0008_pinned_menu.sql",
+  "0009_match_events.sql",
 ];
 
 describe("migration chain against a fresh database (workers/CUTOVER.md step 2)", () => {
-  it("the documented fresh-database sequence (0001, 3-7) applies cleanly end to end", () => {
+  it("the documented fresh-database sequence (0001, 3-8) applies cleanly end to end", () => {
     const sql = new DatabaseSync(":memory:");
     for (const name of FRESH_DB_SEQUENCE) {
       assert.doesNotThrow(
@@ -64,6 +65,24 @@ describe("migration chain against a fresh database (workers/CUTOVER.md step 2)",
       () => sql.exec(readFileSync(migrationPath("0002_update_retry.sql"), "utf8")),
       /duplicate column name/i,
       "0002 must still fail this way on a fresh DB — if this ever stops throwing, 0001 and 0002 have silently diverged",
+    );
+  });
+
+  it("0005's unique index is safely repeatable (IF NOT EXISTS)", () => {
+    const sql = new DatabaseSync(":memory:");
+    for (const name of FRESH_DB_SEQUENCE) {
+      sql.exec(readFileSync(migrationPath(name), "utf8"));
+    }
+    // Only the index statement is re-run here: the file's ALTER TABLE is
+    // inherently one-shot (as with every other migration), but the index
+    // — the statement that previously broke re-application — must tolerate
+    // a resumed/interrupted run.
+    const indexStmt = readFileSync(migrationPath("0005_ticket_candidates.sql"), "utf8")
+      .split(";")
+      .find((s) => s.includes("uq_prediction_event_family_day") && s.includes("CREATE")) + ";";
+    assert.doesNotThrow(
+      () => sql.exec(indexStmt),
+      "re-creating 0005's unique index must not error",
     );
   });
 

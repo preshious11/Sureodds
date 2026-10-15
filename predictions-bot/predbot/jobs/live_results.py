@@ -7,7 +7,7 @@ import time
 from collections import defaultdict
 from datetime import timedelta
 
-from predbot.bot.broadcast import deliver_community_live, deliver_live
+from predbot.bot.broadcast import deliver_community_live, deliver_live, deliver_match_event, deliver_owner_live
 from predbot.jobs import settle
 from predbot.markets.competitions import lookup
 from predbot.markets.settlement import PENDING, VOID, grade
@@ -173,7 +173,15 @@ def _settle_fixture(resolver, db, rows, result, now, cache, begun, clock=None):
     return counts
 
 
-def run(resolver, db, cfg, tg, now=None):
+def run(resolver, db, cfg, tg, now=None, sink=None):
+    """``sink``, when given, switches delivery to D1-event-sink mode (the
+    Cloudflare/GitHub-Actions path, SureOdds migration 2026-10-15): status
+    detection and settlement are unchanged, but instead of calling
+    deliver_live/deliver_community_live/deliver_owner_live (which send
+    Telegram directly — never done from GitHub Actions), each start/end
+    transition calls ``deliver_match_event`` to record the event for the
+    Cloudflare Worker to deliver. See predbot/jobs/live_monitor_d1.py.
+    """
     if not cfg.live_updates_enabled:
         return
     # IntervalJob is threaded and can overlap a slow previous poll. Skip that tick;
@@ -181,12 +189,12 @@ def run(resolver, db, cfg, tg, now=None):
     if not resolver.run_lock.acquire(blocking=False):
         return
     try:
-        _run(resolver, db, cfg, tg, now or utcnow())
+        _run(resolver, db, cfg, tg, now or utcnow(), sink=sink)
     finally:
         resolver.run_lock.release()
 
 
-def _run(resolver, db, cfg, tg, now):
+def _run(resolver, db, cfg, tg, now, sink=None):
     # Subscriber pushes can be disabled independently of configured community
     # delivery. Result tracking and settlement are unchanged in either mode.
     notify = getattr(cfg, "subscriber_delivery_enabled", True)
@@ -248,20 +256,34 @@ def _run(resolver, db, cfg, tg, now):
                     _settle_fixture(resolver, db, picks, result, now, cache, begun, clock)
                 if result.status == "final":
                     fresh = db.picks_where("p.pick_date=? AND p.fixture_key=?", (pick_date, fixture_key))
-                    complete = True
-                    if notify:
-                        _, complete = deliver_live(db, tg, pick_date, fixture_key, fresh, result, ended=True)
-                    _, community_complete = deliver_community_live(
-                        db, tg, pick_date, fixture_key, fresh, result, ended=True)
-                    if complete and community_complete:
+                    if sink is not None:
+                        # D1-event-sink mode: one durable event record stands
+                        # in for all three legacy destinations — the Worker
+                        # owns group/owner delivery and its own receipts.
+                        complete = community_complete = owner_complete = deliver_match_event(
+                            db, sink, pick_date, fixture_key, fresh, result, reference=picks[0], ended=True)
+                    else:
+                        complete = True
+                        if notify:
+                            _, complete = deliver_live(db, tg, pick_date, fixture_key, fresh, result, ended=True)
+                        _, community_complete = deliver_community_live(
+                            db, tg, pick_date, fixture_key, fresh, result, ended=True)
+                        _, owner_complete = deliver_owner_live(
+                            db, tg, cfg, pick_date, fixture_key, fresh, result, reference=picks[0], ended=True)
+                    if complete and community_complete and owner_complete:
                         # Disabled subscriber pushes are treated as handled;
-                        # failed community delivery still keeps the final retryable.
+                        # a failed community or owner delivery still keeps
+                        # the final retryable, independently of the other.
                         db.complete_live_notifications(pick_date, fixture_key)
                 else:
                     db.complete_live_notifications(pick_date, fixture_key)
             elif result.status == "in_progress":
-                if notify:
-                    deliver_live(db, tg, pick_date, fixture_key, picks, result)
-                deliver_community_live(db, tg, pick_date, fixture_key, picks, result)
+                if sink is not None:
+                    deliver_match_event(db, sink, pick_date, fixture_key, picks, result, reference=picks[0])
+                else:
+                    if notify:
+                        deliver_live(db, tg, pick_date, fixture_key, picks, result)
+                    deliver_community_live(db, tg, pick_date, fixture_key, picks, result)
+                    deliver_owner_live(db, tg, cfg, pick_date, fixture_key, picks, result, reference=picks[0])
         except settle.PICK_ERRORS:
             log.exception("live: fixture processing failed; will retry")

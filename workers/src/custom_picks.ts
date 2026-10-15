@@ -66,7 +66,7 @@ const LEAGUES: Record<string, { id: string; sport: string }> = {
 const MARKET_ALIASES: Record<string, string> = {
   result2: "result2", result3: "result3", dc: "dc", dnb: "dnb", btts: "btts", total: "total", handicap: "handicap",
   "double chance": "dc", "draw no bet": "dnb", moneyline: "result2", "money line": "result2", ml: "result2",
-  totals: "total", total: "total", "over under": "total", "over/under": "total", "both teams to score": "btts",
+  totals: "total", "over under": "total", "over/under": "total", "both teams to score": "btts",
   handicaps: "handicap", spread: "handicap", spreads: "handicap", "1x2": "result3", "match result": "result3",
 };
 

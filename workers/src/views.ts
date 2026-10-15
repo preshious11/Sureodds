@@ -50,7 +50,17 @@ import {
 } from "./format.ts";
 
 export const LAGOS_OFFSET_MINUTES = 60; // Africa/Lagos is UTC+1 year-round (no DST)
-const PICKS_PER_PAGE = 5; // predbot/bot/pagination.py PAGE_SIZE_DEFAULT
+
+/**
+ * Interactive page size, from PAGE_SIZE (wrangler.toml) with production's
+ * PAGE_SIZE_DEFAULT as the fallback. Clamped to the same 1–25 range the D1
+ * reads use so a misconfigured value can neither unpage nor explode.
+ */
+export function picksPerPage(env: { PAGE_SIZE?: string }): number {
+  const n = Number.parseInt(env.PAGE_SIZE ?? "", 10);
+  if (!Number.isFinite(n) || n < 1) return 5; // predbot/bot/pagination.py PAGE_SIZE_DEFAULT
+  return Math.min(n, 25);
+}
 
 export function lagosDateString(nowMs = Date.now()): string {
   const lagos = new Date(nowMs + LAGOS_OFFSET_MINUTES * 60_000);
@@ -77,14 +87,15 @@ const VIEW_TITLE: Record<string, string> = {
   yesterday: "🗓 YESTERDAY",
 };
 
+// Matches predbot/bot/pagination.py empty_view_message's "awaiting scheduled
+// fetch" copy exactly (UI-parity review, 2026-10-15) — the previous text
+// here ("Generation runs at 09:00...", "No provider was queried...") leaked
+// internal scheduling/provider details the Python bot's own user-facing
+// text never mentions. Ordinary users only ever see this friendly line;
+// cache/provider/generation state stays in logs and admin tooling only.
 export function notReadyText(view: string, localDate: string): string {
   const title = VIEW_TITLE[view] ?? "📋 PICKS";
-  return (
-    `<b>${title}</b> — ${localDate}\n\n` +
-    `Today's picks are not ready yet. Generation runs at <b>09:00 Africa/Lagos</b>; ` +
-    `subscriber delivery follows at <b>09:30</b>.\n\n` +
-    `No provider was queried for this response — please check back after generation.`
-  );
+  return `<b>${title}</b> — ${localDate}\n\n` + "📋 Today's predictions have not been generated yet.";
 }
 
 function toPickLineInput(p: CachedPick): PickLineInput {
@@ -149,8 +160,9 @@ async function renderTicket(
         : buildKeyboard(view, 0, 1, localDate, [], allMode);
     return { text: wrapTitleHtml(body, title), replyMarkup: keyboard };
   }
-  const pages = totalPages(all.length, PICKS_PER_PAGE);
-  const safePage = clampPage(page, all.length, PICKS_PER_PAGE);
+  const pageSize = picksPerPage(env);
+  const pages = totalPages(all.length, pageSize);
+  const safePage = clampPage(page, all.length, pageSize);
   // The combined-odds/pick-count header must reflect the WHOLE ticket, not
   // just this page (predbot/bot/pagination.py passes total_prices for the
   // same reason). picksCard() sorts by kickoff internally for the header's
@@ -159,7 +171,7 @@ async function renderTicket(
   const sorted = all
     .map(toPickLineInput)
     .sort((a, b) => new Date(a.startUtc).getTime() - new Date(b.startUtc).getTime());
-  const slice = sorted.slice(safePage * PICKS_PER_PAGE, (safePage + 1) * PICKS_PER_PAGE);
+  const slice = sorted.slice(safePage * pageSize, (safePage + 1) * pageSize);
   const body = picksCard(slice, localDate, title, {
     totalPrices: all.map((p) => p.price),
     zone: ZONE_LABEL,
@@ -186,10 +198,13 @@ async function renderAllSportMenu(
 ): Promise<{ text: string; replyMarkup: Record<string, unknown> }> {
   const rows = await getAllPicksForCollection(env.DB, localDate, "all");
   if (rows.length === 0) {
+    // Matches predbot/bot/pagination.py empty_view_message's genuine-empty
+    // case exactly (UI-parity review, 2026-10-15) — the previous text here
+    // ("the model found nothing above the quality floor", "thresholds were
+    // not lowered") invented new copy that exposed internal selection-
+    // threshold concepts no Python-bot user ever saw.
     return {
-      text: `<b>${ALL_TITLE}</b> — ${localDate}\n\n` +
-        `No qualified all picks for ${localDate} — the model found nothing above the quality floor. ` +
-        `This is an honest empty, not an error; thresholds were not lowered to fill the card.`,
+      text: `<b>${ALL_TITLE}</b> — ${localDate}\n\nNo valid model predictions were generated today.`,
       replyMarkup: buildKeyboard("all", 0, 1, localDate, [], allMode),
     };
   }
@@ -253,9 +268,10 @@ async function renderAllSportPages(
   const fixtures = [...groups.values()].sort(
     (a, b) => new Date(a[0].start_utc).getTime() - new Date(b[0].start_utc).getTime(),
   );
-  const pages = totalPages(fixtures.length, PICKS_PER_PAGE);
-  const safePage = clampPage(page, fixtures.length, PICKS_PER_PAGE);
-  const pageFixtures = fixtures.slice(safePage * PICKS_PER_PAGE, (safePage + 1) * PICKS_PER_PAGE);
+  const pageSize = picksPerPage(env);
+  const pages = totalPages(fixtures.length, pageSize);
+  const safePage = clampPage(page, fixtures.length, pageSize);
+  const pageFixtures = fixtures.slice(safePage * pageSize, (safePage + 1) * pageSize);
   const matches = fixtures.length;
   const header = [
     `${ALL_TITLE} · ${dayLabel(localDate)}`,
@@ -376,6 +392,18 @@ async function renderStatsLike(
   return { text: body, replyMarkup: menuKeyboard(allMode) };
 }
 
+/**
+ * The automatic group recap — predbot/jobs/recap.py's recap_message() uses
+ * "📊 RESULTS" as its title (_results_card("📊 RESULTS", s,
+ * describes_yesterday=True)), distinct from the interactive /yesterday
+ * button's "🗓 YESTERDAY" card, even though both describe the same day's
+ * results. Fixed (UI-parity audit, 2026-10-15): the automatic post used to
+ * reuse the interactive view's title verbatim.
+ */
+export async function renderGroupRecap(env: Env, localDate: string): Promise<{ text: string }> {
+  return renderStatsLike(env, "📊 RESULTS", localDate, "yesterday");
+}
+
 export async function renderView(
   env: Env,
   view: string,
@@ -385,18 +413,26 @@ export async function renderView(
 ): Promise<{ text: string; replyMarkup: Record<string, unknown> }> {
   const timezone = env.TIMEZONE ?? "Africa/Lagos";
   const localDate = day ?? lagosDateString();
-  const cache = await getDayCache(env.DB, localDate, timezone);
   const allMode = allButtonModeFor(chatType, env.TELEGRAM_BOT_USERNAME);
 
-  if (!cache || cache.status !== "COMPLETE") {
-    const keyboard = view === "all" || view.startsWith("all_") ? menuKeyboard(allMode) : buildKeyboard(view, 0, 1, localDate, [], allMode);
-    return { text: notReadyText(view.startsWith("all_") ? "all" : view, localDate), replyMarkup: keyboard };
-  }
-
+  // Stats/Yesterday read PAST, already-settled dates (yesterday + rolling
+  // windows) from their own tables (picks/prediction_memberships/stats
+  // rows) — never today's prediction_cache. Gating them on today's cache
+  // being COMPLETE (as every other view correctly is) meant a slow/missed
+  // generation for TODAY made yesterday's already-settled results
+  // unreachable too, even though nothing about them was actually pending.
+  // renderStatsLike() already answers its own genuinely-empty case
+  // (NO_RESULTS_YET) honestly — it never fabricates data.
   if (view === "stats") return renderStatsLike(env, "📊 STATS", localDate, "stats", allMode);
   if (view === "yesterday") return renderStatsLike(env, "🗓 YESTERDAY", localDate, "yesterday", allMode);
   if (view === "stats_top") return renderStatsLike(env, "🔥 TOP STATS", localDate, "top", allMode);
   if (view === "stats_daily") return renderStatsLike(env, "📋 DAILY STATS", localDate, "daily", allMode);
+
+  const cache = await getDayCache(env.DB, localDate, timezone);
+  if (!cache || cache.status !== "COMPLETE") {
+    const keyboard = view === "all" || view.startsWith("all_") ? menuKeyboard(allMode) : buildKeyboard(view, 0, 1, localDate, [], allMode);
+    return { text: notReadyText(view.startsWith("all_") ? "all" : view, localDate), replyMarkup: keyboard };
+  }
 
   if (view === "top" || view === "daily") return renderTicket(env, view, page, localDate, allMode);
 

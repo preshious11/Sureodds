@@ -158,6 +158,88 @@ def deliver_community_live(db: Database, tg: Telegram, pick_date: str, fixture_k
     return 1, True
 
 
+def deliver_owner_live(db: Database, tg: Telegram, cfg, pick_date: str, fixture_key: str,
+                       rows, result, reference=None, ended: bool = False):
+    """Private match start/end alert to the bot owner (production repair,
+    2026-10-15): subscriber-wide DM broadcasts are discontinued, but the
+    owner should still be alerted privately alongside the community post.
+
+    Uses its own delivery-receipt namespace ("owner_" prefix) so a failure
+    here is retried independently of the community send — neither
+    destination blocks or duplicates the other (``_run`` only marks the
+    whole fixture's notifications complete once every destination it
+    attempted has succeeded).
+    """
+    from predbot.bot.format import live_match_message
+    from predbot.jobs.live_results import orient_result
+
+    owner_ids = getattr(cfg, "telegram_admin_ids", None) or []
+    if not owner_ids or not tg or not tg.token or not rows:
+        return 0, True
+    chat_id = str(owner_ids[0])
+    kind = f"owner_{live_delivery_kind(fixture_key, ended)}"
+    if db.delivery_done(kind, pick_date, chat_id):
+        return 0, True
+    # `rows` may come from a fresh DB query (e.g. the "final" path's
+    # db.picks_where) whose first row isn't guaranteed to share `result`'s
+    # original orientation. The caller passes `reference` — the row
+    # `result` is actually known to be oriented against — so this re-proves
+    # it the same way deliver_community_live does for its own subset,
+    # rather than assuming rows[0] still matches.
+    text = live_match_message(rows, orient_result(result, reference or rows[0], rows[0]), ended)
+    try:
+        success = tg.send(text, chat_id=chat_id)
+    except Exception:  # one destination failure must remain retryable
+        log.warning("live: owner notification send failed; will retry")
+        return 0, False
+    if not success:
+        return 0, False
+    db.mark_delivery(kind, pick_date, chat_id)
+    log.info("live: %s notification delivered to owner", "end" if ended else "start")
+    return 1, True
+
+
+def deliver_match_event(db: Database, sink, pick_date: str, fixture_key: str,
+                        rows, result, reference=None, ended: bool = False) -> bool:
+    """D1-event-sink mode (SureOdds Cloudflare migration, 2026-10-15):
+    GitHub Actions never sends Telegram messages directly. Instead of
+    calling deliver_live/deliver_community_live/deliver_owner_live, this
+    renders the exact same tested message (``live_match_message``) and
+    hands it to ``sink(pick_date, fixture_key, event_type, text)`` — which
+    the live-monitoring workflow wires to an idempotent INSERT OR IGNORE
+    into the scratch DB's ``match_events`` table (synced to D1 and
+    delivered, to the group AND the owner independently, only by the
+    Cloudflare Worker's own Cron sweep).
+
+    Returns True once the event is durably recorded (not once it's been
+    delivered to Telegram — that's the Worker's job and its own receipts).
+    A sink failure returns False so the caller's ``_run`` leaves the
+    fixture's notifications retryable, exactly like a failed tg.send would.
+    """
+    from predbot.bot.format import live_match_message
+    from predbot.jobs.live_results import orient_result
+
+    if not rows:
+        return True
+    # Same per-status idempotency as every other delivery kind here (a
+    # repeated "in_progress" poll must record the 'start' event at most
+    # once) — there's no per-chat destination in sink mode, so "d1" stands
+    # in as the single logical recipient of this receipt.
+    kind = f"event_{live_delivery_kind(fixture_key, ended)}"
+    if db.delivery_done(kind, pick_date, "d1"):
+        return True
+    text = live_match_message(rows, orient_result(result, reference or rows[0], rows[0]), ended)
+    event_type = "end" if ended else "start"
+    try:
+        sink(pick_date, fixture_key, event_type, text)
+    except Exception:  # the sink's own write failed — retry next run
+        log.warning("live: match-event sink failed; will retry")
+        return False
+    db.mark_delivery(kind, pick_date, "d1")
+    log.info("live: %s event recorded for D1 delivery | fixture=%s", event_type, fixture_key)
+    return True
+
+
 #: Resolves the canonical card to deliver; ``UnifiedFetcher.published_snapshot``.
 SnapshotProvider = Callable[[], Optional[DailySnapshot]]
 

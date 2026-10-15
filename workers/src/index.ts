@@ -5,6 +5,7 @@
 import {
   QuotaExhausted,
   completeUpdate,
+  deactivateSubscriber,
   enterCustomSession,
   failUpdate,
   getConversationRequest,
@@ -42,10 +43,12 @@ import {
   allButtonModeFor,
   commandToView,
   communityMenuKeyboard,
+  customPicksButton,
   isAuthorized,
   menuKeyboard,
   normalizeCommand,
   parseCallback,
+  splitCommand,
 } from "./telegram.ts";
 import { lagosDateString, lagosDayBounds, renderView } from "./views.ts";
 
@@ -74,7 +77,7 @@ const WELCOME_COMMANDS =
 
 const COMMUNITY_MENU_TEXT = "⚽ Predictions\n\nToday's picks, results and more.";
 
-function welcomeMessage(firstName: string): string {
+export function welcomeMessage(firstName: string): string {
   const safe = firstName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return `👋 Hi, ${safe}\n\nUse the menu below or these commands:\n\n${WELCOME_COMMANDS}`;
 }
@@ -162,6 +165,31 @@ async function sendGroupAllRedirect(env: Env, chatId: string): Promise<void> {
   const replyMarkup = allRedirectKeyboard(env.TELEGRAM_BOT_USERNAME);
   const text = replyMarkup ? ALL_GROUP_TEXT : ALL_GROUP_TEXT_NO_LINK;
   await tgApi(env, "sendMessage", { chat_id: chatId, text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) });
+}
+
+const PRIVATE_CHAT_TEXT = "Use this command in a private chat with the bot.";
+
+/**
+ * A group-typed private-only deep link (/start custom_picks): a short,
+ * fresh redirect message — never an edit, never a session. Mirrors
+ * production's "Use this command in a private chat with the bot." reply,
+ * plus the Custom Picks deep-link button when the username is configured
+ * (plain text otherwise, so no dead link is ever shown).
+ */
+async function sendPrivateChatRedirect(env: Env, chatId: string, startParam: string): Promise<void> {
+  if (env.TELEGRAM_BOT_USERNAME) {
+    const button =
+      startParam === "custom_picks"
+        ? customPicksButton(env.TELEGRAM_BOT_USERNAME)
+        : { text: "📚 Open All Predictions", url: `https://t.me/${env.TELEGRAM_BOT_USERNAME}?start=${startParam}` };
+    await tgApi(env, "sendMessage", {
+      chat_id: chatId,
+      text: PRIVATE_CHAT_TEXT,
+      reply_markup: { inline_keyboard: [[button]] },
+    });
+    return;
+  }
+  await tgApi(env, "sendMessage", { chat_id: chatId, text: PRIVATE_CHAT_TEXT });
 }
 
 /**
@@ -351,9 +379,19 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   // /start custom_picks (the "✨ Custom Picks" deep link) enters a private,
   // session-scoped mode (predbot/custom_recovery.py's Recovery) BEFORE the
   // generic /start handling below — mirrors commands.py:378-390.
+  // splitCommand normalizes @BotName suffixes and case, exactly like
+  // production's split_command(); the deep-link parameter itself stays an
+  // exact match, as in production (`args == [CUSTOM_PICKS_START_PARAMETER]`).
   const userId = String(from.id ?? "");
-  if (text.startsWith("/start") && text.includes("custom_picks")) {
-    if (chatType !== "private" || !userId) return; // no group/channel path exists for Custom Picks.
+  const { cmd, args } = splitCommand(text);
+  if (cmd === "/start" && args.length === 1 && args[0] === "custom_picks") {
+    if (chatType !== "private" || !userId) {
+      // Custom Picks has no group path — redirect to a private chat instead
+      // of going silent (production: "Use this command in a private chat
+      // with the bot."). A fresh message; nothing existing is edited.
+      await sendPrivateChatRedirect(env, chatId, "custom_picks");
+      return;
+    }
     await enterCustomSession(env.DB, userId, chatId);
     await tgApi(env, "sendMessage", { chat_id: chatId, text: INTRO });
     return;
@@ -365,25 +403,25 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   // user had ever started the bot before (deep links don't need a prior
   // /start). Shows today's All Predictions immediately, same pagination/
   // formatting as typing /all directly.
-  if (text.startsWith("/start")) {
-    const startParam = text.trim().split(/\s+/)[1];
-    if (startParam === "all") {
-      if (chatType !== "private") return; // this deep link only ever opens a private chat.
-      if (userId) await leaveCustomSession(env.DB, userId, chatId);
-      await upsertSubscriber(env.DB, chatId, {
-        username: (from.username as string) ?? null,
-        firstName: (from.first_name as string) ?? null,
-      });
-      const { text: body, replyMarkup } = await renderView(env, "all", 0, null, chatType);
-      await tgApi(env, "sendMessage", { chat_id: chatId, text: body, parse_mode: "HTML", reply_markup: replyMarkup });
+  if (cmd === "/start" && args.length === 1 && args[0] === "all") {
+    if (chatType !== "private") {
+      await sendGroupAllRedirect(env, chatId);
       return;
     }
+    if (userId) await leaveCustomSession(env.DB, userId, chatId);
+    await upsertSubscriber(env.DB, chatId, {
+      username: (from.username as string) ?? null,
+      firstName: (from.first_name as string) ?? null,
+    });
+    const { text: body, replyMarkup } = await renderView(env, "all", 0, null, chatType);
+    await tgApi(env, "sendMessage", { chat_id: chatId, text: body, parse_mode: "HTML", reply_markup: replyMarkup });
+    return;
   }
 
   // /start subscribes (private) and always shows the menu; group /start
   // shows the menu without subscribing the group. Also leaves any active
   // Custom Picks session (predbot's `_custom_leave` on plain /start).
-  if (text.startsWith("/start")) {
+  if (cmd === "/start") {
     if (chatType === "private") {
       if (userId) await leaveCustomSession(env.DB, userId, chatId);
       await upsertSubscriber(env.DB, chatId, {
@@ -406,7 +444,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   // was typed in (predbot/bot/commands.py:542-545, _post_community_menu).
   // This is the group's normal (non-empty-Top-card) Custom Picks entry
   // point; the empty-Top-card keyboard (above) is the other one.
-  if (text.trim() === "/menu") {
+  if (cmd === "/menu" && args.length === 0) {
     const adminIds = (env.TELEGRAM_ADMIN_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     if (!adminIds.includes(String(from.id ?? ""))) {
       await tgApi(env, "sendMessage", { chat_id: chatId, text: "Not allowed." });
@@ -438,7 +476,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   // /menu already works from any chat and never pins, and the task that
   // asked for this explicitly said to preserve that existing behavior
   // untouched and add a new command instead of overloading it.
-  if (text.trim() === "/pinmenu") {
+  if (cmd === "/pinmenu" && args.length === 0) {
     if (chatType !== "private") return; // admin command, private chat only — silently ignored elsewhere.
     const adminIds = (env.TELEGRAM_ADMIN_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     if (!adminIds.includes(String(from.id ?? ""))) {
@@ -460,11 +498,20 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
     return;
   }
 
-  // /stop leaves any active Custom Picks session (production also
-  // unsubscribes from group broadcasts via db.subscriber_remove — not
-  // ported here since this Worker's group delivery isn't subscriber-based).
-  if (text.trim() === "/stop") {
+  // /stop unsubscribes from daily-pick delivery AND leaves any active
+  // Custom Picks session, with a confirmation — mirrors
+  // predbot/bot/commands.py handle("/stop") ("🛑 Unsubscribed — no more
+  // daily picks. Send /start whenever you want them back."). The subscriber
+  // row is deactivated in every chat type (group delivery is receipt-based,
+  // so deactivating a group chat_id is a harmless no-op there); the session
+  // leave is private-chat-only, where sessions exist.
+  if (cmd === "/stop" && args.length === 0) {
     if (chatType === "private" && userId) await leaveCustomSession(env.DB, userId, chatId);
+    await deactivateSubscriber(env.DB, chatId);
+    await tgApi(env, "sendMessage", {
+      chat_id: chatId,
+      text: "🛑 Unsubscribed — no more daily picks. Send /start whenever you want them back.",
+    });
     return;
   }
 
@@ -479,7 +526,6 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
         return;
       }
       const nowMs = Date.now();
-      await recordCustomRequest(env.DB, userId, chatId, nowMs);
       const zone = env.TIMEZONE ?? "Africa/Lagos";
       const day = lagosDateString(nowMs);
       const previousJson = await getConversationRequest(env.DB, userId, chatId, nowMs);
@@ -502,6 +548,15 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
           nowMs,
           previous,
         );
+        // The cooldown timestamp is recorded ONLY after the request was
+        // actually served: recording it up-front poisoned webhook retries —
+        // a throw during respond() left last_request_at set, so the
+        // redelivery was rejected with BUSY instead of doing the real work.
+        // Cooldown enforcement for sequential requests is unchanged (a
+        // completed request still stamps the time before any later message
+        // is checked), and simultaneous duplicates stay fenced by the
+        // update-claim dedupe above.
+        await recordCustomRequest(env.DB, userId, chatId, nowMs);
         if (request) {
           const expiresAtMs = Math.min(nowMs + CUSTOM_PICKS_TTL_MS, lagosDayBounds(day).endUtcMs);
           await setConversationRequest(env.DB, userId, chatId, JSON.stringify(serializeRequest(request)), expiresAtMs);
@@ -526,9 +581,9 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   // Recovery.select, callback_data "cp|<token>"). Handled here rather than
   // the generic pg|view|... callback router, which is a different codec.
 
-  const cmd = normalizeCommand(text);
-  if (cmd) {
-    const view = commandToView(cmd) ?? "top";
+  const viewCmd = normalizeCommand(text);
+  if (viewCmd) {
+    const view = commandToView(viewCmd) ?? "top";
     // /all typed directly in a group: redirect to the private bot instead
     // of rendering the (long) prediction list into the group.
     if (view === "all" && chatType !== "private") {

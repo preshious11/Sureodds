@@ -17,6 +17,7 @@ import {
   deliveriesDone,
   getDayCache,
   getFailedUpdates,
+  getRecentMatchEvents,
   hasPosted,
   listActiveSubscribers,
   markDelivery,
@@ -24,7 +25,7 @@ import {
   setJobResult,
   type Env,
 } from "./db.ts";
-import { lagosDateString, renderGroupCard, renderView } from "./views.ts";
+import { lagosDateString, renderGroupCard, renderGroupRecap, renderView } from "./views.ts";
 import { allButtonModeFor, topEmptyKeyboard } from "./telegram.ts";
 
 export const BROADCAST_PER_SECOND = 25;
@@ -125,7 +126,7 @@ export async function sweepDeliveries(
   // Gate on Lagos clock: no delivery before its time (DELIVERY 09:30 for
   // picks; recap follows RECAP 07:45). A late Cron still delivers — that IS
   // the missed-run recovery (receipts prevent duplicates).
-  const gate = kind === "picks" ? parseHhmm("09:30") : parseHhmm("07:45");
+  const gate = kind === "picks" ? parseHhmm(env.DELIVERY_TIME ?? "09:30") : parseHhmm(env.RECAP_TIME ?? "07:45");
   if (lagosMinutes(nowMs) < gate) {
     await setJobResult(env.DB, "deliver", `gated: Lagos time before ${kind} window`);
     return out;
@@ -176,6 +177,47 @@ export async function sweepDeliveries(
 
 export type GroupPostOutcome = "sent" | "skipped" | "waiting" | "no-chat" | "failed";
 
+/** The bot owner's private chat id — the first entry of TELEGRAM_ADMIN_IDS, same id /pinmenu's admin check uses. */
+function ownerChatId(env: Env): string | null {
+  const first = (env.TELEGRAM_ADMIN_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean)[0];
+  return first || null;
+}
+
+/**
+ * Sends the already-rendered group card to the owner's private chat too
+ * (production repair, 2026-10-15: subscriber-DM broadcasts are
+ * discontinued — every automated community message goes to exactly the
+ * group AND the owner, never other subscribers). Uses its own
+ * `${kind}_owner` receipt, completely independent of the group's: a
+ * group-already-sent day still retries the owner leg if it previously
+ * failed, and a failed owner send here never re-triggers or blocks the
+ * group message, which has already been marked posted by the caller.
+ */
+async function postToOwner(
+  env: Env,
+  kind: string,
+  localDate: string,
+  text: string,
+  replyMarkup: Record<string, unknown> | undefined,
+  sender: typeof sendTelegram,
+): Promise<void> {
+  const owner = ownerChatId(env);
+  if (!owner) return; // no admin configured — never a dead destination, just skipped
+  const ownerKind = `${kind}_owner`;
+  if (await hasPosted(env.DB, ownerKind, localDate)) return;
+  const { ok, messageId } = await sender(env, "sendMessage", {
+    chat_id: owner,
+    text,
+    parse_mode: "HTML",
+    ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+  });
+  if (!ok) {
+    await setJobResult(env.DB, "post", `${kind} ${localDate}: owner send failed, will retry next sweep`);
+    return;
+  }
+  await markPosted(env.DB, ownerKind, localDate, messageId != null ? String(messageId) : null);
+}
+
 /**
  * Posts Top/Daily Picks to the single configured Telegram group
  * (TELEGRAM_CHAT_ID) — the production model (predbot/jobs/daily_picks.py:
@@ -205,7 +247,10 @@ export async function postGroupPicks(
   // markPosted below uses INSERT ... ON CONFLICT DO NOTHING, so a Cron that
   // fires twice (or overlapping invocations) can send at most once — the
   // loser's markPosted is a no-op, mirroring production's post_done/mark_post.
-  if (await hasPosted(env.DB, kind, localDate)) return "skipped";
+  // The group leg's own receipt is checked independently further down, but
+  // rendering happens unconditionally here: even on a day the GROUP already
+  // received its card, the OWNER leg (postToOwner) may still need a retry.
+  const groupAlreadySent = await hasPosted(env.DB, kind, localDate);
   // The WHOLE ticket in one message, never paginated (predbot/bot/
   // broadcast.py picks_messages/summary_card) — renderView()'s paginated
   // /top /daily output is for interactive replies, not this automatic post.
@@ -220,6 +265,10 @@ export async function postGroupPicks(
     kind === "top" && isEmpty && env.TELEGRAM_BOT_USERNAME
       ? topEmptyKeyboard(env.TELEGRAM_BOT_USERNAME, allButtonModeFor("group", env.TELEGRAM_BOT_USERNAME))
       : undefined;
+  if (groupAlreadySent) {
+    await postToOwner(env, kind, localDate, text, replyMarkup, sender);
+    return "skipped";
+  }
   const { ok, messageId } = await sender(env, "sendMessage", {
     chat_id: env.TELEGRAM_CHAT_ID,
     text,
@@ -228,10 +277,14 @@ export async function postGroupPicks(
   });
   if (!ok) {
     await setJobResult(env.DB, "post", `${kind} ${localDate}: send failed, will retry next sweep`);
+    // The group itself never went out this attempt — retry it next sweep
+    // rather than racing ahead to the owner with a card the group hasn't
+    // seen yet (the ordering the requirement implies: group, then owner).
     return "failed";
   }
   await markPosted(env.DB, kind, localDate, messageId != null ? String(messageId) : null);
   await setJobResult(env.DB, "post", `${kind} ${localDate}: posted message=${messageId ?? "?"}`);
+  await postToOwner(env, kind, localDate, text, replyMarkup, sender);
   return "sent";
 }
 
@@ -248,10 +301,16 @@ export async function postGroupRecap(
   const gate = parseHhmm(env.RECAP_TIME ?? "07:45");
   if (lagosMinutes(nowMs) < gate) return "waiting";
   const localDate = lagosDateString(nowMs);
-  if (await hasPosted(env.DB, "recap", localDate)) return "skipped";
+  const groupAlreadySent = await hasPosted(env.DB, "recap", localDate);
   // predbot/jobs/recap.py: tg.send(text) — no keyboard on the automatic
-  // group recap, same as the picks cards above.
-  const { text } = await renderView(env, "yesterday", 0, localDate);
+  // group recap, same as the picks cards above. renderGroupRecap (not the
+  // generic renderView) titles this "📊 RESULTS", matching recap_message()
+  // exactly — distinct from the interactive /yesterday button's own title.
+  const { text } = await renderGroupRecap(env, localDate);
+  if (groupAlreadySent) {
+    await postToOwner(env, "recap", localDate, text, undefined, sender);
+    return "skipped";
+  }
   const { ok, messageId } = await sender(env, "sendMessage", {
     chat_id: env.TELEGRAM_CHAT_ID,
     text,
@@ -263,6 +322,7 @@ export async function postGroupRecap(
   }
   await markPosted(env.DB, "recap", localDate, messageId != null ? String(messageId) : null);
   await setJobResult(env.DB, "post", `recap ${localDate}: posted message=${messageId ?? "?"}`);
+  await postToOwner(env, "recap", localDate, text, undefined, sender);
   return "sent";
 }
 
@@ -280,12 +340,72 @@ export async function reportFailedUpdates(env: Env): Promise<number> {
   return failed.length;
 }
 
+// How far back to look for events each sweep. This bounds a table scan,
+// not correctness: a missed/delayed Cron fire (the whole point of a
+// sweep) still catches up as long as it resumes within this window.
+// Review (SureOdds verification pass, 2026-10-15): 48h was too tight —
+// any Cron outage longer than that would have permanently stranded an
+// event (match_events rows never expire, but getRecentMatchEvents would
+// stop returning them, so they'd never be re-attempted). match_events
+// stays small (one row per fixture per event type per day), so widening
+// this to 30 days is cheap and makes "permanently missed" require an
+// outage an order of magnitude longer than anything else in this system
+// tolerates — not eliminated in theory, but no longer the weak link.
+const MATCH_EVENT_LOOKBACK_MS = 30 * 24 * 3_600_000;
+
+/**
+ * Delivers persisted match-start/match-end events (written by the
+ * GitHub Actions live-monitoring workflow into match_events,
+ * 0009_match_events.sql) to the group AND the owner, independently.
+ *
+ * This Worker sweep is the ONLY thing that ever sends these to Telegram —
+ * GitHub Actions only detects/settles and writes the event row. Reuses the
+ * exact same posts-table receipt pattern as postGroupPicks/postToOwner:
+ * `evt_<fixture>_<type>` (group) and `evt_<fixture>_<type>_owner` (owner)
+ * are independent (kind, post_date) keys on the same UNIQUE-constrained
+ * posts table, so a fire that sends one but not the other retries only
+ * the missing leg next sweep, and a duplicate fire for an already-sent
+ * event is a safe no-op.
+ */
+export async function sweepMatchEvents(env: Env, nowMs = Date.now(), sender: typeof sendTelegram = sendTelegram): Promise<number> {
+  const since = new Date(nowMs - MATCH_EVENT_LOOKBACK_MS).toISOString();
+  const events = await getRecentMatchEvents(env.DB, since);
+  const owner = ownerChatId(env);
+  let delivered = 0;
+  for (const evt of events) {
+    // Natural identity (no surrogate id — see 0009_match_events.sql): each
+    // (fixture, event_type) combination gets its own receipt pair.
+    const eventKey = `evt_${evt.fixture_key}_${evt.event_type}`;
+    const groupKind = eventKey;
+    if (env.TELEGRAM_CHAT_ID && !(await hasPosted(env.DB, groupKind, evt.pick_date))) {
+      const { ok, messageId } = await sender(env, "sendMessage", { chat_id: env.TELEGRAM_CHAT_ID, text: evt.text, parse_mode: "HTML" });
+      if (ok) {
+        await markPosted(env.DB, groupKind, evt.pick_date, messageId != null ? String(messageId) : null);
+        delivered += 1;
+      } else {
+        await setJobResult(env.DB, "post", `match event ${evt.fixture_key}/${evt.event_type}: group send failed, will retry`);
+      }
+    }
+    const ownerKind = `${eventKey}_owner`;
+    if (owner && !(await hasPosted(env.DB, ownerKind, evt.pick_date))) {
+      const { ok, messageId } = await sender(env, "sendMessage", { chat_id: owner, text: evt.text, parse_mode: "HTML" });
+      if (ok) {
+        await markPosted(env.DB, ownerKind, evt.pick_date, messageId != null ? String(messageId) : null);
+        delivered += 1;
+      } else {
+        await setJobResult(env.DB, "post", `match event ${evt.fixture_key}/${evt.event_type}: owner send failed, will retry`);
+      }
+    }
+  }
+  return delivered;
+}
+
 export async function detectMissedGeneration(env: Env, nowMs = Date.now()): Promise<boolean> {
   // Generation is Actions-owned (09:00 Lagos). If we are past delivery time
   // with no COMPLETE cache, record the miss for the operator — the Worker
   // must NOT generate (no providers, no CPU budget for it).
   const localDate = lagosDateString(nowMs);
-  if (lagosMinutes(nowMs) < parseHhmm("09:30")) return false;
+  if (lagosMinutes(nowMs) < parseHhmm(env.DELIVERY_TIME ?? "09:30")) return false;
   const cache = await getDayCache(env.DB, localDate, env.TIMEZONE ?? "Africa/Lagos");
   const missed = !cache || cache.status !== "COMPLETE";
   if (missed) {
@@ -316,7 +436,7 @@ export async function detectMissedGeneration(env: Env, nowMs = Date.now()): Prom
 // ("skipped") — across the whole window, each kind posts at most once.
 export const CRON_POST_SWEEP = "*/5 8-11 * * *"; // 08:00-11:55 UTC = 09:00-12:55 Lagos
 export const CRON_RECAP_SWEEP = "*/5 6-7 * * *"; // 06:00-07:55 UTC = 07:00-08:55 Lagos
-export const CRON_DELIVER_SWEEP = "*/5 * * * *"; // webhook-retry observability only, any time
+export const CRON_DELIVER_SWEEP = "*/5 * * * *"; // webhook-retry observability + match-event delivery, any time
 export const CRON_WATCH = "0 10 * * *"; // 11:00 Lagos: log a miss if generation never landed
 
 export async function handleScheduled(env: Env, cron: string, nowMs = Date.now()): Promise<void> {
@@ -331,6 +451,9 @@ export async function handleScheduled(env: Env, cron: string, nowMs = Date.now()
     await postGroupPicks(env, "daily", nowMs);
   } else if (cron === CRON_DELIVER_SWEEP) {
     await reportFailedUpdates(env);
+    // Match-start/match-end events: written by GitHub Actions, delivered
+    // only here (group + owner, independent receipts — see sweepMatchEvents).
+    await sweepMatchEvents(env, nowMs);
   } else if (cron === CRON_RECAP_SWEEP) {
     await postGroupRecap(env, nowMs);
   } else if (cron === CRON_WATCH) {

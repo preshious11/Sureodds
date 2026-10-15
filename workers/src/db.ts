@@ -190,6 +190,24 @@ export async function upsertSubscriber(
   }
 }
 
+/**
+ * ~ predbot/storage/db.py subscriber_remove(): /stop deactivates daily-pick
+ * delivery (cron's listActiveSubscribers only serves active = 1). UPDATE
+ * only — never inserts a row for a chat that never subscribed, mirroring
+ * production. The Custom Picks session is left separately by the caller.
+ */
+export async function deactivateSubscriber(db: D1Database, chatId: string): Promise<void> {
+  try {
+    await db
+      .prepare("UPDATE subscribers SET active = 0 WHERE chat_id = ?1")
+      .bind(chatId)
+      .run();
+  } catch (err) {
+    throwIfQuota(err);
+    throw err;
+  }
+}
+
 export interface DayCache {
   cache_key: string;
   local_date: string;
@@ -723,4 +741,33 @@ export async function setPinnedMenu(db: D1Database, chatId: string, messageId: n
     )
     .bind(chatId, messageId, pinnedBy, pinnedAt)
     .run();
+}
+
+export interface MatchEventRow {
+  pick_date: string;
+  fixture_key: string;
+  event_type: "start" | "end";
+  text: string;
+  created_at: string;
+}
+
+/**
+ * Recent match-start/match-end events written by the GitHub Actions live-
+ * monitoring workflow (0009_match_events.sql) — the Worker's own Cron sweep
+ * is the only thing that ever delivers these to Telegram. Bounded by
+ * `sinceIso` (not "undelivered", since each event needs independently
+ * checked group/owner receipts, done per-row by the caller via the
+ * existing posts table) so this never scans unbounded history. Rows are
+ * identified by the natural (pick_date, fixture_key, event_type) key — no
+ * surrogate id exists to collide across the GitHub Actions scratch copy
+ * and D1's own rows.
+ */
+export async function getRecentMatchEvents(db: D1Database, sinceIso: string, limit = 200): Promise<MatchEventRow[]> {
+  const { results } = await db
+    .prepare(
+      "SELECT pick_date, fixture_key, event_type, text, created_at FROM match_events WHERE created_at >= ?1 ORDER BY created_at ASC LIMIT ?2",
+    )
+    .bind(sinceIso, limit)
+    .all<MatchEventRow>();
+  return results ?? [];
 }
