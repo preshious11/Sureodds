@@ -76,12 +76,54 @@ describe("normalizeCandidate (~ custom_picks.py normalize)", () => {
     assert.equal(candidate({ market: "total", selection: "over" }), null);
     const withLine = candidate({ market: "total", selection: "over", line: 2.5 });
     assert.ok(withLine);
-    assert.equal(withLine.outcome, "Over 2.5 Points");
+    assert.equal(withLine.outcome, "Over 2.5 Total Goals");
     const teamTotal = candidate({ market: "total", selection: "over", line: 1.5, entity: "home" });
-    assert.equal(teamTotal.outcome, "Arsenal Over 1.5 Points");
+    assert.equal(teamTotal.outcome, "Arsenal Over 1.5 Goals");
     const handicap = candidate({ market: "handicap", selection: "home", line: -1.5 });
     assert.equal(handicap.outcome, "Handicap: Arsenal -1.5");
     assert.equal(candidate({ market: "total", selection: "over", line: 2.5, entity: "player" }), null);
+  });
+
+  // Regression: 2026-10-15 live screenshot. A football total/handicap rendered
+  // with "Points" instead of "Goals", and a 1st-quarter basketball total
+  // dropped its "Total" scope word, both traced to outcomeLabel/statWord bugs
+  // in this file (not the archived payload, which already carries the correct
+  // label — these assert the WORKER recomputes it correctly from raw fields).
+  describe("sport-specific market units and period scope (2026-10-15 screenshot)", () => {
+    it('FK Riga vs Kairat Almaty: a football total/handicap says "Goals", never "Points"', () => {
+      const base = { sport: "football", home: "FK Riga", away: "Kairat Almaty", stat: "points" };
+      const total = candidate({ ...base, market: "total", selection: "under", line: 1.5, entity: "home" });
+      assert.equal(total.outcome, "FK Riga Under 1.5 Goals");
+      const matchTotal = candidate({ ...base, market: "total", selection: "over", line: 2.5, entity: "all" });
+      assert.equal(matchTotal.outcome, "Over 2.5 Total Goals");
+      assert.ok(!total.outcome.includes("Points"));
+      assert.ok(!matchTotal.outcome.includes("Points"));
+    });
+    it("a 1st-quarter basketball total keeps its explicit Total scope, never collapsing to a bare line", () => {
+      const c = candidate({
+        sport: "basketball", home: "Vilniaus Kibirkstis-MRU Women", away: "Athinaikos Women",
+        market: "total", selection: "under", line: 37.5, entity: "all", period: "1q", stat: "points",
+      });
+      assert.equal(c.outcome, "Under 37.5 Total Points (1st Qtr)");
+    });
+    it("a quarter-scoped team handicap still names the team, the signed line and the period", () => {
+      const c = candidate({
+        sport: "basketball", home: "Vilniaus Kibirkstis-MRU Women", away: "Athinaikos Women",
+        market: "handicap", selection: "home", line: 2.5, period: "1q", stat: "points",
+      });
+      assert.equal(c.outcome, "Handicap: Vilniaus Kibirkstis-MRU Women +2.5 (1st Qtr)");
+    });
+    it("a period-scoped prop names the side, line, stat and period - never a bare fragment", () => {
+      const c = candidate({
+        sport: "basketball", home: "Lakers", away: "Bulls",
+        market: "prop", selection: "over", line: 12.5, period: "1q", stat: "points", entity: "home",
+      });
+      assert.equal(c.outcome, "Lakers Over 12.5 Points (1st Qtr)");
+    });
+    it("an unresolvable prop (no attributable side, or no line) is rejected rather than shown as a bare fragment", () => {
+      assert.equal(candidate({ market: "prop", selection: "over", line: 12.5, entity: "neither" }), null);
+      assert.equal(candidate({ market: "prop", selection: "over", entity: "home" }), null);
+    });
   });
 
   // Regression: production has 2,441 archived candidates whose payload_json

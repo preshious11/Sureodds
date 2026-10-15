@@ -162,20 +162,22 @@ def prop_outcome(ml: MarketLine, home: str = "", away: str = "") -> str:
     entity = str(ml.entity or "").strip()
     who = team.get(entity, entity)
     word = readable_stat(ml.stat)
+    per = PERIOD_NAMES.get(ml.period, ml.period)
+    suffix = f" ({per})" if per else ""
     if s in ("over", "under"):
         if ml.line is None or not word or not who:
             return ""
         if entity in ("home", "away") and word.lower() == "hits":
             word = "Team Hits"          # a team's hit total, not a single player's
-        return f"{who} {s.title()} {_fmt_line(ml.line)} {word}".strip()
+        return f"{who} {s.title()} {_fmt_line(ml.line)} {word}".strip() + suffix
     if s in ("yes", "no"):
         if not word and ml.label:
             word = readable_stat(ml.label)
         if not word or not who:
             return ""
-        return f"{who} {word} {s.title()}"
+        return f"{who} {word} {s.title()}" + suffix
     if s in ("even", "odd") and word and who:
-        return f"{who} {word} {s.title()}"
+        return f"{who} {word} {s.title()}" + suffix
     return ""
 
 

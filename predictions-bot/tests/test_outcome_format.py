@@ -35,13 +35,13 @@ WAT = "Africa/Lagos"
 
 def rec(pick_id=1, tier="top", sport="football", home="Chelsea", away="Arsenal",
         label="", market="result3", selection="home", line=None, stat="points",
-        entity="all", price=1.85, prob=0.7, kickoff="2030-06-01T18:00:00Z"):
+        entity="all", price=1.85, prob=0.7, kickoff="2030-06-01T18:00:00Z", period="full"):
     return PickRecord(pick_id=pick_id, tier=tier, rank=pick_id, sport=sport,
                       league="Premier League" if sport == "football" else "MLB",
                       home=home, away=away, kickoff_utc=kickoff, label=label,
                       market=market, selection=selection, line=line, stat=stat,
                       entity=entity, price=price, prob=prob, ev=0.05,
-                      pick_date="2030-06-01")
+                      pick_date="2030-06-01", period=period)
 
 
 # ============================================================ 1-6: outcome wording
@@ -101,6 +101,19 @@ def test_basketball_prop_and_team_total():
     t = rec(sport="basketball", home="Lakers", away="Celtics", market="total",
             selection="over", line=110.5)
     assert format_outcome(t) == "Over 110.5 Total Points"
+
+
+# Regression: a period-scoped prop (e.g. a 1st-quarter player/team points
+# prop) silently dropped its period, unlike every other market branch of
+# selection_label(). "Lakers Over 12.5 Points" with no "(1st Qtr)" is
+# indistinguishable from a full-game prop.
+def test_prop_outcome_keeps_its_period_scope():
+    p = rec(sport="basketball", home="Lakers", away="Celtics", market="prop",
+            selection="over", line=12.5, stat="points", entity="home", period="1q")
+    assert format_outcome(p) == "Lakers Over 12.5 Points (1st Qtr)"
+    full = rec(sport="basketball", home="Lakers", away="Celtics", market="prop",
+               selection="over", line=12.5, stat="points", entity="home")
+    assert format_outcome(full) == "Lakers Over 12.5 Points"
 
 
 # ================================================================ 7: ambiguity

@@ -88,6 +88,7 @@ const VALID_SELECTIONS: Record<string, Set<string>> = {
   total: new Set(["over", "under"]),
   handicap: new Set(["home", "away"]),
   odd_even: new Set(["odd", "even"]),
+  prop: new Set(["over", "under", "yes", "no", "odd", "even"]),
 };
 
 function validSelection(market: string, selection: string): boolean {
@@ -149,8 +150,13 @@ function outcomeLabel(
     if (line == null || (entity !== "all" && entity !== "home" && entity !== "away")) return "";
     let core: string;
     if (entity === "all") {
+      // ~ catalog.py selection_label(): "Over 0.5 Goals" alone doesn't say
+      // whose goals - a match total must keep the explicit "Total" word
+      // (previously stripped here right after being built, which is the
+      // "Basketball first-quarter totals missing team/market scope" bug:
+      // "Under 37.5 Total Points (1st Qtr)" rendered as the ambiguous
+      // "Under 37.5 Points (1st Qtr)").
       core = `${selection === "over" ? "Over" : "Under"} ${fmtLine(line)} Total ${word}`.trim();
-      core = core.replace(" Total ", " ", 1);
     } else {
       core = `${team[entity]} ${selection === "over" ? "Over" : "Under"} ${fmtLine(line)} ${word}`.trim();
     }
@@ -165,7 +171,43 @@ function outcomeLabel(
   if (market === "odd_even") {
     return `${word} ${selection === "odd" ? "Odd" : "Even"}`;
   }
-  return `${market}: ${selection}`;
+  if (market === "prop") {
+    return propOutcome(selection, home, away, line, period, stat, entity);
+  }
+  return "";
+}
+
+/** ~ catalog.py prop_outcome(): ONE canonical outcome builder for prop markets
+ * (player props AND period-scoped team/match props, e.g. a 1st-quarter
+ * basketball total modeled as entity="home"/"away", stat="points",
+ * period="1q"). Every branch names the explicit side/player, the line and
+ * the stat, and — unlike catalog.py's current prop_outcome — the period, so
+ * a quarter/half total is never shown as if it were full-game. Returns ""
+ * when the coordinates can't produce an unambiguous outcome (no line, no
+ * recognizable side, no stat): the caller drops such a candidate rather than
+ * ever rendering a bare "Over"/"Yes" or a raw entity key. */
+function propOutcome(
+  selection: string, home: string, away: string,
+  line: number | null, period: string, stat: string, entity: string,
+): string {
+  const s = selection.trim().toLowerCase();
+  const team: Record<string, string> = { home, away };
+  const who = entity in team ? team[entity] : "";
+  const word = readableStat(stat);
+  const suffix = periodSuffix(period);
+  if (s === "over" || s === "under") {
+    if (line == null || !word || !who) return "";
+    const finalWord = entity in team && word.toLowerCase() === "hits" ? "Team Hits" : word;
+    return `${who} ${s === "over" ? "Over" : "Under"} ${fmtLine(line)} ${finalWord}`.trim() + suffix;
+  }
+  if (s === "yes" || s === "no") {
+    if (!word || !who) return "";
+    return `${who} ${word} ${s === "yes" ? "Yes" : "No"}` + suffix;
+  }
+  if ((s === "even" || s === "odd") && word && who) {
+    return `${who} ${word} ${s === "even" ? "Even" : "Odd"}` + suffix;
+  }
+  return "";
 }
 
 export interface Candidate {
@@ -248,8 +290,16 @@ function fmtLine(line: number | null, signed = false): string {
   return signed && line > 0 ? "+" + s : s;
 }
 
+/** ~ catalog.py selection_label(): `STAT_NAMES.get(ml.stat, readable_stat(ml.stat)) or pts`.
+ * dict.get() only falls through to readable_stat when the key is MISSING, not
+ * when its value is falsy — "points" IS a key (value ""), so it must resolve
+ * straight to the sport word, never through readableStat()'s own
+ * PROP_STAT_WORDS["points"] = "Points", which would silently defeat the
+ * sport-specific unit for every non-basketball sport (the "Under 1.5 Points"
+ * on a football total bug). */
 function statWord(stat: string, sport: string): string {
-  return STAT_NAMES[stat] || readableStat(stat) || SPORT_POINTS_WORD[sport] || "Points";
+  const named = stat in STAT_NAMES ? STAT_NAMES[stat] : readableStat(stat);
+  return named || SPORT_POINTS_WORD[sport] || "Points";
 }
 
 function periodSuffix(period: string): string {
