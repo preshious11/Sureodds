@@ -865,6 +865,37 @@ describe("failed Telegram sends during webhook processing", () => {
     assert.equal(row.status, "failed");
     assert.equal(row.attempts, 1);
   });
+  // Regression (production incident, 2026-10-15, first real Cron-triggered
+  // traffic after activation): a user re-tapped a button whose re-render
+  // produced content identical to what was already shown. Telegram
+  // correctly rejects that edit with 400 "message is not modified" — this
+  // must complete the update, not retry it forever (retrying can never
+  // succeed: the content staying the same is exactly why it's rejected).
+  it("Telegram's 'message is not modified' on an edit is a harmless no-op, not a retryable failure", async () => {
+    const db = realDb();
+    const flaky = async (url, init) => {
+      if (url.includes("editMessageText")) {
+        return { ok: false, status: 400, json: async () => ({ ok: false, description: "Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message" }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+    await withFetch(flaky, () => handleUpdate(env(db), callbackQuery(1, "cbq-1", "c1", "u1", "pg|top|0")));
+    const row = db._sql.prepare("SELECT status, attempts, last_error FROM telegram_updates WHERE update_id=1").get();
+    assert.equal(row.status, "done", "must complete, not sit in a failed/retrying loop that can never resolve");
+    assert.equal(row.attempts, 0);
+    assert.equal(row.last_error, null);
+  });
+  it("any OTHER editMessageText failure (not 'not modified') still fails and retries normally", async () => {
+    const db = realDb();
+    const failing = async (url) => {
+      if (url.includes("editMessageText")) return { ok: false, status: 400, json: async () => ({ ok: false, description: "Bad Request: message to edit not found" }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+    await assert.rejects(() => withFetch(failing, () => handleUpdate(env(db), callbackQuery(1, "cbq-1", "c1", "u1", "pg|top|0"))));
+    const row = db._sql.prepare("SELECT status, attempts FROM telegram_updates WHERE update_id=1").get();
+    assert.equal(row.status, "failed");
+    assert.equal(row.attempts, 1);
+  });
   it("a duplicate delivery of an already-completed update is never reprocessed", async () => {
     const db = realDb();
     const fetchImpl = stubFetch();

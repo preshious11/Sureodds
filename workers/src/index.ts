@@ -116,6 +116,27 @@ async function tgApi(env: Env, method: string, payload: Record<string, unknown>)
   return res;
 }
 
+/**
+ * Production incident (2026-10-15, first real Cron-triggered traffic after
+ * activation): a user re-tapped a button whose re-render produced content
+ * byte-identical to what was already shown (e.g. re-tapping the current
+ * page). Telegram correctly rejects that edit with 400 "message is not
+ * modified" — but the update was then recorded as `failed` and retried,
+ * and every retry hit the exact same error forever, since the one thing
+ * that would fix it (the content changing) never happens on a retry.
+ * This is not a delivery failure: the user already sees the correct
+ * content. Treating it as success is what makes the update completable.
+ */
+async function editMessageTextIdempotent(env: Env, payload: Record<string, unknown>): Promise<void> {
+  try {
+    await tgApi(env, "editMessageText", payload);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/message is not modified/i.test(message)) return;
+    throw err;
+  }
+}
+
 async function answerCallback(env: Env, id: string, text?: string): Promise<void> {
   if (!id) return;
   // Best-effort only: a failed toast must never fail the whole update (the
@@ -212,7 +233,7 @@ async function pinCommunityMenu(env: Env, adminChatId: string): Promise<void> {
 
   if (previous) {
     try {
-      await tgApi(env, "editMessageText", {
+      await editMessageTextIdempotent(env, {
         chat_id: groupChatId,
         message_id: previous.message_id,
         text: COMMUNITY_MENU_TEXT,
@@ -354,7 +375,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
     }
     const messageId = (msg as Record<string, unknown> | undefined)?.message_id;
     if (messageId) {
-      await tgApi(env, "editMessageText", {
+      await editMessageTextIdempotent(env, {
         chat_id: chatId,
         message_id: messageId,
         text,
