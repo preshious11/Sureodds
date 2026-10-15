@@ -117,13 +117,17 @@ def eligible(candidates, request, now, zone='UTC'):
 
 def valid_ticket(ticket, request, now, zone='UTC'):
     """Independent promise check before storing a button or serving its ticket."""
-    if not ticket or not 1 <= len(ticket.picks) <= cp.MAX_LEGS:
+    cap = cp.max_legs_for(request) if request.target_odds and not request.pick_count else cp.MAX_LEGS
+    if not ticket or not 1 <= len(ticket.picks) <= cap:
         return False
     if len({c.fixture_id for c in ticket.picks}) != len(ticket.picks):
         return False
     if len({c.fixture_identity or c.fixture_id for c in ticket.picks}) != len(ticket.picks):
         return False
     if request.pick_count and len(ticket.picks) != request.pick_count:
+        return False
+    floor = cp.min_price_for(request)
+    if floor is not None and any(c.price < floor for c in ticket.picks):
         return False
     if len(eligible(ticket.picks, request, now, zone)) != len(ticket.picks):
         return False
@@ -165,16 +169,20 @@ def failure_reason(pool, request, now, matches, zone='UTC'):
     if request.pick_count and len({c.fixture_id for c in matches}) < request.pick_count:
         return 'insufficient_count'
     if request.target_odds:
+        floor = cp.min_price_for(request)
+        priced = [c for c in matches if floor is None or c.price >= floor]
+        if request.target_odds <= cp.LOW_TARGET_CEILING and not priced:
+            return 'search_failed'
         prices = {}
-        for c in matches:
+        for c in priced:
             prices[c.fixture_id] = min(prices.get(c.fixture_id, math.inf), c.price)
         minimum = math.prod(sorted(prices.values())[:request.pick_count or 1])
         if minimum > request.target_odds * (1 + cp.TOLERANCE):
             return 'target_too_low'
         maxima = {}
-        for c in matches:
+        for c in priced:
             maxima[c.fixture_id] = max(maxima.get(c.fixture_id, 0), c.price)
-        maximum = math.prod(sorted(maxima.values(), reverse=True)[:request.pick_count or cp.MAX_LEGS])
+        maximum = math.prod(sorted(maxima.values(), reverse=True)[:request.pick_count or cp.max_legs_for(request)])
         if maximum < request.target_odds * (1 - cp.TOLERANCE):
             return 'target_unreachable'
     return 'search_failed'

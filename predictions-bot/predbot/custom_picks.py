@@ -24,6 +24,13 @@ HELP = '😅 I didn\'t quite catch that\n\nWhat odds or how many games would you
 DEFAULT_COUNT, MAX_LEGS = 3, 8
 MAX_FIXTURES, ALTERNATIVES, BEAM_PER_COUNT, ODDS_BUCKETS = 60, 4, 48, 12
 MAX_EXPANSIONS = 100_000
+#: Compact tickets for low odds targets (e.g. a ~2.00 request): prefer 1-2
+#: legs with an absolute maximum of 3, and ignore extremely short prices.
+#: Higher targets keep MAX_LEGS (configurable below) so the 3-leg cap is
+#: never applied universally without evaluating feasibility.
+LOW_TARGET_CEILING = 2.5
+LOW_TARGET_MIN_PRICE = 1.25
+LOW_TARGET_MAX_LEGS = 3
 #: all searches one request may run together (the primary search plus every recovery search): a failing request
 #: used to be able to run 17 full searches; the primary search keeps its full MAX_EXPANSIONS, recovery shares the rest
 REQUEST_WORK_LIMIT = 400_000
@@ -225,6 +232,29 @@ def strength(state, request):
     return mean - (0 if request.allowed_markets else .02 * repetition / count)
 
 
+def is_compact_target(request):
+    """Low odds targets (e.g. ~2.00) that must stay compact: 1-2 legs preferred, 3 max."""
+    return request.target_odds is not None and request.pick_count is None and request.target_odds <= LOW_TARGET_CEILING
+
+
+def min_price_for(request):
+    """Minimum individual price for low-target tickets; None keeps every eligible price."""
+    if request.target_odds is not None and request.target_odds <= LOW_TARGET_CEILING:
+        return LOW_TARGET_MIN_PRICE
+    return None
+
+
+def max_legs_for(request):
+    """Effective leg cap: explicit counts win, low targets stay compact, higher targets stay configurable."""
+    if request.pick_count:
+        return request.pick_count
+    if request.target_odds is not None and request.target_odds <= LOW_TARGET_CEILING:
+        return LOW_TARGET_MAX_LEGS
+    if request.target_odds:
+        return MAX_LEGS
+    return DEFAULT_COUNT
+
+
 def state_rank(state, request):
     distance = abs(math.log(state.odds / request.target_odds)) if request.target_odds else 0
     # For odds requests, equally confident tickets prefer fewer fixtures before
@@ -246,11 +276,16 @@ def search(candidates, request, budget=None):
     cap = MAX_EXPANSIONS if budget is None else min(MAX_EXPANSIONS, budget.remaining)
     if cap <= 0:
         return None
+    floor = min_price_for(request)
+    if floor is not None:
+        # Extremely short prices would otherwise stack into excessive legs to
+        # reach a low target; they simply do not participate in such tickets.
+        candidates = [c for c in candidates if c.price >= floor]
     grouped = defaultdict(list)
     for candidate in sorted(candidates, key=Candidate.rank):
         grouped[candidate.fixture_identity or candidate.fixture_id].append(candidate)
     groups = sorted(grouped.values(), key=lambda rows: rows[0].rank())[:MAX_FIXTURES]
-    limit = request.pick_count or (MAX_LEGS if request.target_odds else DEFAULT_COUNT)
+    limit = max_legs_for(request)
     if len(groups) < (request.pick_count or 1):
         return None
     upper = request.target_odds * (1 + TOLERANCE) if request.target_odds else math.inf
@@ -299,6 +334,12 @@ def search(candidates, request, budget=None):
             break
     if budget is not None:
         budget.remaining -= min(expansions, cap)
+    # Low targets stay compact via LOW_TARGET_MAX_LEGS + LOW_TARGET_MIN_PRICE.
+    # One- and two-leg states are retained per count throughout the beam and
+    # ranked here alongside three-leg states: estimated probability and market
+    # quality (agreement/liquidity/books/EV) come first via state_rank, then leg
+    # count, then target proximity -- so fewer legs win ties but confidence is
+    # never traded for fewer legs. Three legs serve purely as fallback.
     counts = [request.pick_count] if request.pick_count else (
         list(range(1, limit + 1)) if request.target_odds else [min(DEFAULT_COUNT, len(groups))])
     feasible = [state for count in counts for state in beams.get(count, []) if not request.target_odds or

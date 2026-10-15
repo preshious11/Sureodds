@@ -28,6 +28,9 @@ export const CUSTOM_PICKS_TTL_MS = 10 * 60_000; // ~ custom_recovery.py TTL = ti
 
 const DEFAULT_COUNT = 3;
 const MAX_LEGS = 8;
+const LOW_TARGET_CEILING = 2.5;
+const LOW_TARGET_MIN_PRICE = 1.25;
+const LOW_TARGET_MAX_LEGS = 3;
 const TOLERANCE = 0.1;
 const MAX_FIXTURES = 60;
 const ALTERNATIVES = 4;
@@ -501,21 +504,36 @@ function stateRank(s: SearchState, req: ParsedRequest): unknown[] {
   ];
 }
 
+function minPriceFor(req: ParsedRequest): number | null {
+  return req.targetOdds != null && req.targetOdds <= LOW_TARGET_CEILING ? LOW_TARGET_MIN_PRICE : null;
+}
+
+function maxLegsFor(req: ParsedRequest): number {
+  if (req.pickCount) return req.pickCount;
+  if (req.targetOdds != null && req.targetOdds <= LOW_TARGET_CEILING) return LOW_TARGET_MAX_LEGS;
+  if (req.targetOdds) return MAX_LEGS;
+  return DEFAULT_COUNT;
+}
+
 /**
  * ~ custom_picks.py search(): bounded per-fixture beam. Faithful port of
  * production's algorithm — one leg per fixture, beam retention per leg
  * count (odds-bucketed when a target is given), capped expansions.
+ * Low targets (~2.00) stay compact: prices below 1.25 are excluded and
+ * one-leg tickets are evaluated before two-leg, then three-leg fallback.
  */
 export function search(candidates: Candidate[], req: ParsedRequest): Ticket | null {
+  const floor = minPriceFor(req);
+  const pool = floor == null ? candidates : candidates.filter((c) => c.price >= floor);
   const grouped = new Map<string, Candidate[]>();
-  for (const c of [...candidates].sort((a, b) => cmp(rankKey(a), rankKey(b)))) {
+  for (const c of [...pool].sort((a, b) => cmp(rankKey(a), rankKey(b)))) {
     const key = c.fixtureId;
     const list = grouped.get(key) ?? [];
     list.push(c);
     grouped.set(key, list);
   }
   const groups = [...grouped.values()].sort((a, b) => cmp(rankKey(a[0]), rankKey(b[0]))).slice(0, MAX_FIXTURES);
-  const limit = req.pickCount ?? (req.targetOdds ? MAX_LEGS : DEFAULT_COUNT);
+  const limit = maxLegsFor(req);
   if (groups.length < (req.pickCount ?? 1)) return null;
 
   const upper = req.targetOdds ? req.targetOdds * (1 + TOLERANCE) : Infinity;
@@ -577,11 +595,21 @@ export function search(candidates: Candidate[], req: ParsedRequest): Ticket | nu
   }
 
   const counts = req.pickCount ? [req.pickCount] : req.targetOdds ? Array.from({ length: limit }, (_, i) => i + 1) : [Math.min(DEFAULT_COUNT, groups.length)];
+  const feasibleFor = (count: number): SearchState[] => {
+    const out: SearchState[] = [];
+    for (const s of beams.get(count) ?? []) {
+      if (!req.targetOdds || (req.targetOdds * (1 - TOLERANCE) <= s.odds && s.odds <= upper)) out.push(s);
+    }
+    return out;
+  };
+  // Low targets stay compact via the price floor + 3-leg cap above. One- and
+  // two-leg states are retained per count throughout the beam and ranked
+  // alongside three-leg states below (quality first, then leg count, then
+  // proximity), so three legs serve purely as fallback without ever trading
+  // confidence for fewer legs.
   const feasible: SearchState[] = [];
   for (const count of counts) {
-    for (const s of beams.get(count) ?? []) {
-      if (!req.targetOdds || (req.targetOdds * (1 - TOLERANCE) <= s.odds && s.odds <= upper)) feasible.push(s);
-    }
+    feasible.push(...feasibleFor(count));
   }
   if (!feasible.length) return null;
   const best = feasible.reduce((a, b) => (cmp(stateRank(a, req), stateRank(b, req)) <= 0 ? a : b));
@@ -590,9 +618,12 @@ export function search(candidates: Candidate[], req: ParsedRequest): Ticket | nu
 
 /** ~ custom_recovery.py valid_ticket(): independent re-verification before serving/storing. */
 export function validTicket(ticket: Ticket | null, req: ParsedRequest, nowMs: number): boolean {
-  if (!ticket || ticket.picks.length < 1 || ticket.picks.length > MAX_LEGS) return false;
+  const cap = req.targetOdds && !req.pickCount ? maxLegsFor(req) : MAX_LEGS;
+  if (!ticket || ticket.picks.length < 1 || ticket.picks.length > cap) return false;
   if (new Set(ticket.picks.map((c) => c.fixtureId)).size !== ticket.picks.length) return false;
   if (req.pickCount && ticket.picks.length !== req.pickCount) return false;
+  const floor = minPriceFor(req);
+  if (floor != null && ticket.picks.some((c) => c.price < floor)) return false;
   if (eligible(ticket.picks, req, nowMs).length !== ticket.picks.length) return false;
   const product = ticket.picks.reduce((a, c) => a * c.price, 1);
   if (!Number.isFinite(product) || Math.abs(product - ticket.odds) > 1e-6 * Math.max(1, Math.abs(ticket.odds))) return false;
@@ -643,13 +674,16 @@ export function failureReason(pool: Candidate[], req: ParsedRequest, nowMs: numb
   if (!matches.length) return "below_quality_floor";
   if (req.pickCount && new Set(matches.map((c) => c.fixtureId)).size < req.pickCount) return "insufficient_count";
   if (req.targetOdds) {
+    const floor = minPriceFor(req);
+    const priced = floor == null ? matches : matches.filter((c) => c.price >= floor);
+    if (floor != null && !priced.length) return "search_failed";
     const perFixtureMin = new Map<string, number>();
-    for (const c of matches) perFixtureMin.set(c.fixtureId, Math.min(perFixtureMin.get(c.fixtureId) ?? Infinity, c.price));
+    for (const c of priced) perFixtureMin.set(c.fixtureId, Math.min(perFixtureMin.get(c.fixtureId) ?? Infinity, c.price));
     const minimum = [...perFixtureMin.values()].sort((a, b) => a - b).slice(0, req.pickCount ?? 1).reduce((a, b) => a * b, 1);
     if (minimum > req.targetOdds * (1 + TOLERANCE)) return "target_too_low";
     const perFixtureMax = new Map<string, number>();
-    for (const c of matches) perFixtureMax.set(c.fixtureId, Math.max(perFixtureMax.get(c.fixtureId) ?? 0, c.price));
-    const maximum = [...perFixtureMax.values()].sort((a, b) => b - a).slice(0, req.pickCount ?? MAX_LEGS).reduce((a, b) => a * b, 1);
+    for (const c of priced) perFixtureMax.set(c.fixtureId, Math.max(perFixtureMax.get(c.fixtureId) ?? 0, c.price));
+    const maximum = [...perFixtureMax.values()].sort((a, b) => b - a).slice(0, req.pickCount ?? maxLegsFor(req)).reduce((a, b) => a * b, 1);
     if (maximum < req.targetOdds * (1 - TOLERANCE)) return "target_unreachable";
   }
   return "search_failed";
