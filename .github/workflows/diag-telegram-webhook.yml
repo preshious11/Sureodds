@@ -4,7 +4,7 @@
 name: diag-telegram-webhook
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 jobs:
   check:
@@ -16,14 +16,14 @@ jobs:
       - name: getWebhookInfo (token masked)
         run: |
           set -euo pipefail
-          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" \
-            | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-r = d.get('result', {})
-for k in ('url', 'pending_update_count', 'last_error_date', 'last_error_message', 'last_synchronization_error_date', 'max_connections'):
-    if k in r:
-        print(f'{k}: {r[k]}')
-"
+          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" > /tmp/webhook_info.json
+          python3 - <<'EOF'
+          import json
+          d = json.load(open("/tmp/webhook_info.json"))
+          r = d.get("result", {})
+          for k in ("url", "pending_update_count", "last_error_date", "last_error_message", "last_synchronization_error_date", "max_connections"):
+              if k in r:
+                  print(f"{k}: {r[k]}")
+          EOF
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
