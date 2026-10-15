@@ -115,19 +115,48 @@ def eligible(candidates, request, now, zone='UTC'):
             scoped(c, request, zone)]
 
 
+def market_complete(ticket):
+    """Every leg carries the market detail needed to display it accurately.
+
+    Totals/handicap-style markets without a line, or legs with an empty
+    outcome or missing market coordinates, can never be described
+    unambiguously, so such tickets are invalid -- they are excluded, never
+    guessed at.
+    """
+    for c in ticket.picks:
+        if c.market in ('total', 'handicap', 'result_total') and c.line is None:
+            return False
+        if c.market == 'total' and getattr(c, 'entity', 'all') not in ('all', 'home', 'away'):
+            return False
+        if not getattr(c, 'outcome', ''):
+            return False
+        if not all(isinstance(getattr(c, name, ''), str) and getattr(c, name, '').strip()
+                   for name in ('period', 'stat', 'entity')):
+            return False
+    return True
+
+
 def valid_ticket(ticket, request, now, zone='UTC'):
-    """Independent promise check before storing a button or serving its ticket."""
+    """Independent promise check before storing a button or serving its ticket.
+
+    Final delivery boundary: minimum individual odds, fixture identity, market
+    completeness, leg count, combined-odds maths, target tolerance, sport and
+    market constraints, and confidence requirements are all enforced here, for
+    normal generation, callbacks, recovery and personalized tickets alike.
+    """
     cap = cp.max_legs_for(request) if request.target_odds and not request.pick_count else cp.MAX_LEGS
     if not ticket or not 1 <= len(ticket.picks) <= cap:
         return False
     if len({c.fixture_id for c in ticket.picks}) != len(ticket.picks):
         return False
-    if len({c.fixture_identity or c.fixture_id for c in ticket.picks}) != len(ticket.picks):
+    if len({str(c.fixture_identity) if c.fixture_identity else c.fixture_id
+            for c in ticket.picks}) != len(ticket.picks):
         return False
     if request.pick_count and len(ticket.picks) != request.pick_count:
         return False
-    floor = cp.min_price_for(request)
-    if floor is not None and any(c.price < floor for c in ticket.picks):
+    if any(not math.isfinite(c.price) or c.price < cp.min_price_for(request) for c in ticket.picks):
+        return False
+    if not market_complete(ticket):
         return False
     if len(eligible(ticket.picks, request, now, zone)) != len(ticket.picks):
         return False
@@ -169,18 +198,19 @@ def failure_reason(pool, request, now, matches, zone='UTC'):
     if request.pick_count and len({c.fixture_id for c in matches}) < request.pick_count:
         return 'insufficient_count'
     if request.target_odds:
-        floor = cp.min_price_for(request)
-        priced = [c for c in matches if floor is None or c.price >= floor]
-        if request.target_odds <= cp.LOW_TARGET_CEILING and not priced:
-            return 'search_failed'
+        priced = [c for c in matches if c.price >= cp.min_price_for(request)]
+        # Reachability is judged on usable (above-floor) legs. When the floor
+        # removes everything, fall back to the raw pool so the reason still
+        # describes the odds gap honestly instead of a generic failure.
+        usable = priced or matches
         prices = {}
-        for c in priced:
+        for c in usable:
             prices[c.fixture_id] = min(prices.get(c.fixture_id, math.inf), c.price)
         minimum = math.prod(sorted(prices.values())[:request.pick_count or 1])
         if minimum > request.target_odds * (1 + cp.TOLERANCE):
             return 'target_too_low'
         maxima = {}
-        for c in priced:
+        for c in usable:
             maxima[c.fixture_id] = max(maxima.get(c.fixture_id, 0), c.price)
         maximum = math.prod(sorted(maxima.values(), reverse=True)[:request.pick_count or cp.max_legs_for(request)])
         if maximum < request.target_odds * (1 - cp.TOLERANCE):
@@ -349,6 +379,40 @@ class Recovery:
         while len(self.conversations) > 512:
             del self.conversations[next(iter(self.conversations))]
 
+    #: recently served ticket signatures per (pseudonymous user, day, request):
+    #: bounded in-process rotation memory so identical requests need not serve
+    #: the same ticket every time. Never persisted, never logged; a restart
+    #: simply starts rotation over. Only the hash is kept, never raw ids.
+    _recent_limit = 512
+
+    def _user_hash(self, user_id):
+        return hmac.new(_LOG_KEY, str(user_id).encode(), hashlib.sha256).hexdigest()[:16]
+
+    def choose(self, options, user_id, day, request):
+        """Pick one shortlisted ticket with per-user rotation.
+
+        The shortlist is already ranked best-first under identical quality
+        rules, so rotation only moves within qualified tickets: confidence,
+        price floor, constraints and fixture validity are never sacrificed for
+        diversity. A lone qualified ticket is always served.
+        """
+        if not options:
+            return None
+        if not hasattr(self, '_recent'):
+            self._recent = {}
+        key = (self._user_hash(user_id), day, cp.request_key(request))
+        rotation = int(hashlib.sha256('|'.join(key).encode()).hexdigest(), 16)
+        recent = self._recent.get(key, [])
+        ordered = [options[(rotation + i) % len(options)] for i in range(len(options))]
+        ticket = next((t for t in ordered
+                       if hashlib.sha256(cp.ticket_signature(t).encode()).hexdigest() not in recent),
+                      ordered[0])
+        digest = hashlib.sha256(cp.ticket_signature(ticket).encode()).hexdigest()
+        self._recent[key] = (recent + [digest])[-4:]
+        while len(self._recent) > self._recent_limit:
+            del self._recent[next(iter(self._recent))]
+        return ticket
+
     def prune(self, now):
         for key, context in list(self.conversations.items()):
             if now >= context.expires_at:
@@ -429,7 +493,8 @@ class Recovery:
             budget = cp.WorkBudget()
             self.last_work = 0
             matches = eligible(pool.candidates, request, now, self.cfg.timezone) if pool else []
-            ticket = cp.search(matches, request, budget) if not reason and matches else None
+            options = cp.shortlist(matches, request, budget) if not reason and matches else []
+            ticket = self.choose(options, user_id, pool.prediction_date if pool else '', request) if options else None
             if ticket and valid_ticket(ticket, request, now, self.cfg.timezone):
                 result = Response(cp.format_ticket(ticket, pool.partial, self.cfg.timezone), 'success')
             else:

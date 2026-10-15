@@ -24,13 +24,21 @@ HELP = '😅 I didn\'t quite catch that\n\nWhat odds or how many games would you
 DEFAULT_COUNT, MAX_LEGS = 3, 8
 MAX_FIXTURES, ALTERNATIVES, BEAM_PER_COUNT, ODDS_BUCKETS = 60, 4, 48, 12
 MAX_EXPANSIONS = 100_000
+#: Strict minimum individual price for EVERY Custom Picks selection, at any
+#: target odds, in any sport, including fallback and recovery tickets. Never
+#: relaxed to complete a ticket; enforced in search(), valid_ticket() and the
+#: delivery boundary alike.
+MIN_PRICE = 1.25
 #: Compact tickets for low odds targets (e.g. a ~2.00 request): prefer 1-2
-#: legs with an absolute maximum of 3, and ignore extremely short prices.
-#: Higher targets keep MAX_LEGS (configurable below) so the 3-leg cap is
-#: never applied universally without evaluating feasibility.
+#: legs with an absolute maximum of 3. Higher targets keep MAX_LEGS
+#: (configurable below) so the 3-leg cap is never applied universally
+#: without evaluating feasibility.
 LOW_TARGET_CEILING = 2.5
-LOW_TARGET_MIN_PRICE = 1.25
 LOW_TARGET_MAX_LEGS = 3
+#: Shortlist size for ticket variety: the top-N distinct feasible tickets are
+#: ranked, then rotation picks one per user. search() still returns rank 0,
+#: so combination selection stays fully deterministic.
+SHORTLIST_LIMIT = 5
 #: all searches one request may run together (the primary search plus every recovery search): a failing request
 #: used to be able to run 17 full searches; the primary search keeps its full MAX_EXPANSIONS, recovery shares the rest
 REQUEST_WORK_LIMIT = 400_000
@@ -176,6 +184,12 @@ def normalize(row, day, zone, now, pool_time, supported_sports, *, include_start
     home, away = row.get('home'), row.get('away')
     if not isinstance(home, str) or not home.strip() or not isinstance(away, str) or not away.strip():
         return None
+    if home.strip().lower() == away.strip().lower():
+        return None  # A team cannot play itself: incorrectly mapped fixture.
+    home_id, away_id = row.get('home_id'), row.get('away_id')
+    if (isinstance(home_id, str) and home_id.strip() and isinstance(away_id, str) and away_id.strip()
+            and home_id.strip() == away_id.strip()):
+        return None  # Same participant on both sides: incorrectly mapped fixture.
     line = finite(row.get('line'))
     if (row.get('line') is not None and line is None) or (market in ('total', 'handicap', 'result_total') and line is None):
         return None
@@ -238,10 +252,13 @@ def is_compact_target(request):
 
 
 def min_price_for(request):
-    """Minimum individual price for low-target tickets; None keeps every eligible price."""
-    if request.target_odds is not None and request.target_odds <= LOW_TARGET_CEILING:
-        return LOW_TARGET_MIN_PRICE
-    return None
+    """Strict minimum individual price: 1.25 for every Custom Picks ticket.
+
+    Applies at all target odds, in all sports, with or without an explicit
+    pick count. Never relaxed to fill a ticket -- when nothing qualifies the
+    request honestly fails instead.
+    """
+    return MIN_PRICE
 
 
 def max_legs_for(request):
@@ -270,24 +287,18 @@ def state_rank(state, request):
             tuple((c.fixture_id, c.key) for c in state.picks))
 
 
-def search(candidates, request, budget=None):
-    """Bounded per-fixture beam; every branch processes a fixture at most once. ``budget`` (a WorkBudget) caps the
-    expansions further and is charged with what this search used; with nothing left the search returns None."""
-    cap = MAX_EXPANSIONS if budget is None else min(MAX_EXPANSIONS, budget.remaining)
-    if cap <= 0:
-        return None
-    floor = min_price_for(request)
-    if floor is not None:
-        # Extremely short prices would otherwise stack into excessive legs to
-        # reach a low target; they simply do not participate in such tickets.
-        candidates = [c for c in candidates if c.price >= floor]
+def _run_beam(candidates, request, cap):
+    """Shared beam expansion; returns (beams, upper, limit, groups, expansions).
+
+    Every branch processes a fixture at most once and one leg per fixture is
+    ever taken. Selections below the strict minimum price never participate.
+    """
+    priced = [c for c in candidates if c.price >= min_price_for(request)]
     grouped = defaultdict(list)
-    for candidate in sorted(candidates, key=Candidate.rank):
+    for candidate in sorted(priced, key=Candidate.rank):
         grouped[candidate.fixture_identity or candidate.fixture_id].append(candidate)
     groups = sorted(grouped.values(), key=lambda rows: rows[0].rank())[:MAX_FIXTURES]
     limit = max_legs_for(request)
-    if len(groups) < (request.pick_count or 1):
-        return None
     upper = request.target_odds * (1 + TOLERANCE) if request.target_odds else math.inf
     beams = {0: [State()]}
     expansions = 0
@@ -332,19 +343,86 @@ def search(candidates, request, budget=None):
             beams[count] = retained
         if expansions > cap:
             break
+    return beams, upper, limit, groups, expansions
+
+
+def _feasible_states(beams, upper, limit, groups, request):
+    counts = [request.pick_count] if request.pick_count else (
+        list(range(1, limit + 1)) if request.target_odds else [min(DEFAULT_COUNT, len(groups))])
+    return [state for count in counts for state in beams.get(count, []) if not request.target_odds or
+            request.target_odds * (1 - TOLERANCE) <= state.odds <= upper]
+
+
+def search(candidates, request, budget=None):
+    """Best ticket for a request, or None. ``budget`` (a WorkBudget) caps the
+    expansions further and is charged with what this search used; with nothing
+    left the search returns None. Fully deterministic for the same pool order
+    up to fixture sorting: the top-ranked feasible ticket always wins, so
+    ticket variety is layered on top via shortlist(), never inside search()."""
+    cap = MAX_EXPANSIONS if budget is None else min(MAX_EXPANSIONS, budget.remaining)
+    if cap <= 0:
+        return None
+    beams, upper, limit, groups, expansions = _run_beam(candidates, request, cap)
     if budget is not None:
         budget.remaining -= min(expansions, cap)
-    # Low targets stay compact via LOW_TARGET_MAX_LEGS + LOW_TARGET_MIN_PRICE.
+    if len(groups) < (request.pick_count or 1):
+        return None
     # One- and two-leg states are retained per count throughout the beam and
     # ranked here alongside three-leg states: estimated probability and market
     # quality (agreement/liquidity/books/EV) come first via state_rank, then leg
     # count, then target proximity -- so fewer legs win ties but confidence is
-    # never traded for fewer legs. Three legs serve purely as fallback.
-    counts = [request.pick_count] if request.pick_count else (
-        list(range(1, limit + 1)) if request.target_odds else [min(DEFAULT_COUNT, len(groups))])
-    feasible = [state for count in counts for state in beams.get(count, []) if not request.target_odds or
-                request.target_odds * (1 - TOLERANCE) <= state.odds <= upper]
+    # never traded for fewer legs.
+    feasible = _feasible_states(beams, upper, limit, groups, request)
     return min(feasible, key=lambda s: state_rank(s, request)) if feasible else None
+
+
+def shortlist(candidates, request, budget=None, limit=SHORTLIST_LIMIT):
+    """Top-N distinct feasible tickets, best first. Used for per-user rotation
+    so identical requests need not all serve the same ticket. Every entry
+    satisfies the same constraints search() enforces (price floor, one leg per
+    fixture, target tolerance, exact count when requested)."""
+    cap = MAX_EXPANSIONS if budget is None else min(MAX_EXPANSIONS, budget.remaining)
+    if cap <= 0 or limit <= 0:
+        return []
+    beams, upper, cap_limit, groups, expansions = _run_beam(candidates, request, cap)
+    if budget is not None:
+        budget.remaining -= min(expansions, cap)
+    if len(groups) < (request.pick_count or 1):
+        return []
+    feasible = sorted(_feasible_states(beams, upper, cap_limit, groups, request),
+                      key=lambda s: state_rank(s, request))
+    ranked, seen = [], set()
+    for state in feasible:
+        signature = ticket_signature(state)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        ranked.append(state)
+        if len(ranked) >= limit:
+            break
+    return ranked
+
+
+def ticket_signature(ticket):
+    """Stable identity of a ticket's fixture set and combined odds."""
+    parts = sorted(str(c.fixture_identity) if c.fixture_identity else c.fixture_id for c in ticket.picks)
+    return ','.join(parts) + f'@{ticket.odds:.2f}'
+
+
+def request_key(request):
+    """Stable identity of a request's constraints for variety rotation."""
+    return '|'.join((
+        f'{request.target_odds:g}' if request.target_odds else '',
+        str(request.pick_count or ''),
+        ','.join(sorted(request.sports)),
+        ','.join(sorted(request.allowed_markets)),
+        ','.join(sorted(request.excluded_markets)),
+        request.preference,
+        ','.join(sorted(request.competitions)),
+        request.market_selection or '',
+        f'{request.market_line:g}' if request.market_line is not None else '',
+        request.time_intent or '',
+    ))
 
 
 def compact(value, limit):

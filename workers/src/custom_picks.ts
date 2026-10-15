@@ -28,9 +28,15 @@ export const CUSTOM_PICKS_TTL_MS = 10 * 60_000; // ~ custom_recovery.py TTL = ti
 
 const DEFAULT_COUNT = 3;
 const MAX_LEGS = 8;
+/** Strict minimum individual price for EVERY Custom Picks selection, at any
+ * target odds, in any sport, including fallback and recovery tickets. Never
+ * relaxed to complete a ticket. */
+const MIN_PRICE = 1.25;
 const LOW_TARGET_CEILING = 2.5;
-const LOW_TARGET_MIN_PRICE = 1.25;
 const LOW_TARGET_MAX_LEGS = 3;
+/** Shortlist size for ticket variety: the top-N distinct feasible tickets are
+ * ranked, then rotation picks one per user. search() still returns rank 0. */
+const SHORTLIST_LIMIT = 5;
 const TOLERANCE = 0.1;
 const MAX_FIXTURES = 60;
 const ALTERNATIVES = 4;
@@ -93,20 +99,73 @@ function finite(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-const OUTCOME_LABELS: Record<string, (home: string, away: string) => Record<string, string>> = {
-  result3: (home, away) => ({ home: `${home} to Win`, draw: "Draw", away: `${away} to Win` }),
-  result2: (home, away) => ({ home: `${home} to Win`, away: `${away} to Win` }),
-  dnb: (home, away) => ({ home: `${home} (Draw No Bet)`, away: `${away} (Draw No Bet)` }),
-  dc: () => ({ home_draw: "Double Chance: 1X", away_draw: "Double Chance: X2", home_away: "Double Chance: 12" }),
-  btts: () => ({ yes: "BTTS: Yes", no: "BTTS: No" }),
-  total: () => ({ over: "Over", under: "Under" }),
-  handicap: (home, away) => ({ home: `Handicap: ${home}`, away: `Handicap: ${away}` }),
-  odd_even: () => ({ odd: "Odd", even: "Even" }),
+const RESULT2_LABELS = (home: string, away: string): Record<string, string> => ({
+  home: `${home} to Win`, away: `${away} to Win`,
+});
+const RESULT3_LABELS = (home: string, away: string): Record<string, string> => ({
+  home: `${home} to Win`, draw: "Draw", away: `${away} to Win`,
+});
+const DNB_LABELS = (home: string, away: string): Record<string, string> => ({
+  home: `${home} (Draw No Bet)`, away: `${away} (Draw No Bet)`,
+});
+const DC_LABELS: Record<string, string> = {
+  home_draw: "Double Chance: 1X", away_draw: "Double Chance: X2", home_away: "Double Chance: 12",
 };
+const BTTS_LABELS: Record<string, string> = { yes: "BTTS: Yes", no: "BTTS: No" };
 
-function outcomeLabel(market: string, selection: string, home: string, away: string, line: number | null): string {
-  const base = OUTCOME_LABELS[market]?.(home, away)[selection] ?? `${market}: ${selection}`;
-  return market === "total" && line != null ? `${base} ${line}` : base;
+/**
+ * ~ custom_picks.py normalize() + catalog.py selection_label(): every total
+ * names side + line + stat + scope, every handicap names side + signed line
+ * (+ stat/scope). Returns "" when the coordinates cannot be described
+ * accurately — the caller drops such candidates instead of guessing.
+ */
+function outcomeLabel(
+  market: string, selection: string, home: string, away: string,
+  line: number | null, period: string, stat: string, entity: string, sport: string,
+): string {
+  const team: Record<string, string> = { home, away };
+  const word = statWord(stat, sport);
+  const suffix = periodSuffix(period);
+  if (market === "result3" || market === "result2") {
+    const base = market === "result3" ? RESULT3_LABELS(home, away) : RESULT2_LABELS(home, away);
+    let core = base[selection] ?? `${market}: ${selection}`;
+    if (stat !== "points") core += ` (${word})`;
+    if (market === "result3" && selection === "draw") core = "Match Result: " + core;
+    return core + suffix;
+  }
+  if (market === "dnb") {
+    return (DNB_LABELS(home, away)[selection] ?? `${market}: ${selection}`) + (stat !== "points" ? ` (${word})` : "");
+  }
+  if (market === "dc") {
+    let core = DC_LABELS[selection] ?? `${market}: ${selection}`;
+    if (stat !== "points") core += ` (${readableStat(stat) || word})`;
+    if (period !== "full" && period !== "reg") core += periodSuffix(period);
+    return core;
+  }
+  if (market === "btts") {
+    return BTTS_LABELS[selection] ?? `${market}: ${selection}`;
+  }
+  if (market === "total") {
+    if (line == null || (entity !== "all" && entity !== "home" && entity !== "away")) return "";
+    let core: string;
+    if (entity === "all") {
+      core = `${selection === "over" ? "Over" : "Under"} ${fmtLine(line)} Total ${word}`.trim();
+      core = core.replace(" Total ", " ", 1);
+    } else {
+      core = `${team[entity]} ${selection === "over" ? "Over" : "Under"} ${fmtLine(line)} ${word}`.trim();
+    }
+    return core + suffix;
+  }
+  if (market === "handicap") {
+    if (line == null) return "";
+    let core = `${team[selection] ?? selection} ${fmtLine(line, true)}`;
+    if (stat !== "points") core += ` ${word}`;
+    return "Handicap: " + core + suffix;
+  }
+  if (market === "odd_even") {
+    return `${word} ${selection === "odd" ? "Odd" : "Even"}`;
+  }
+  return `${market}: ${selection}`;
 }
 
 export interface Candidate {
@@ -127,7 +186,78 @@ export interface Candidate {
   liquidity: number;
   books: number;
   referenceEv: number;
+  line: number | null;
+  period: string;
+  stat: string;
+  entity: string;
+  /** Stable fixture identity (ids when archived, else teams): one leg per
+   * real fixture even if fixture-id strings drift, and conflicting rows for
+   * one id are dropped before search. */
+  fixtureIdentity: string;
 }
+
+/** ~ predbot/markets/catalog.py STAT_NAMES / PERIOD_NAMES / SPORT_POINTS_WORD. */
+const STAT_NAMES: Record<string, string> = {
+  points: "", goals: "Goals", corners: "Corners", cards: "Cards", sets: "Sets",
+  games: "Games", rounds: "Rounds", hits: "Hits", shots: "Shots",
+};
+const PERIOD_NAMES: Record<string, string> = {
+  full: "", reg: "Regulation", "1h": "1st Half", "2h": "2nd Half",
+  "1q": "1st Qtr", "2q": "2nd Qtr", "3q": "3rd Qtr", "4q": "4th Qtr",
+  "1s": "1st Set", "2s": "2nd Set", "1i5": "First 5 Innings",
+};
+const SPORT_POINTS_WORD: Record<string, string> = {
+  football: "Goals", basketball: "Points", american_football: "Points",
+  baseball: "Runs", tennis: "Games", mma: "Rounds",
+};
+const PROP_STAT_WORDS: Record<string, string> = {
+  hits: "Hits", batting_hits: "Hits", total_bases: "Total Bases", totalbases: "Total Bases",
+  runs: "Runs", rbi: "RBIs", rbis: "RBIs", runs_batted_in: "RBIs", home_runs: "Home Runs",
+  homeruns: "Home Runs", strikeouts: "Strikeouts", strikeouts_thrown: "Strikeouts",
+  pitcher_strikeouts: "Strikeouts", batter_strikeouts: "Strikeouts", walks: "Walks",
+  doubles: "Doubles", triples: "Triples", earned_runs: "Earned Runs", points: "Points",
+  rebounds: "Rebounds", assists: "Assists", three_pointers: "Three-Pointers",
+  threepointers: "Three-Pointers", three_pointers_made: "Three-Pointers", steals: "Steals",
+  blocks: "Blocks", goals: "Goals", shots: "Shots", shots_on_target: "Shots on Target",
+  corners: "Corners", cards: "Cards", saves: "Saves", touchdowns: "Touchdowns",
+  passing_yards: "Passing Yards", rushing_yards: "Rushing Yards", receiving_yards: "Receiving Yards",
+  receptions: "Receptions", passing_tds: "Passing TDs", field_goals: "Field Goals",
+  made_field_goals: "Field Goals",
+};
+
+/** ~ catalog.py readable_stat(): a raw stat id as plain words, never underscores. */
+function readableStat(stat: string): string {
+  const s = String(stat ?? "").trim();
+  if (!s) return "";
+  const key = s.replace(/[\s-]+/g, "_").toLowerCase();
+  if (PROP_STAT_WORDS[key]) return PROP_STAT_WORDS[key];
+  if (STAT_NAMES[key]) return STAT_NAMES[key];
+  const words = s.replace(/(?<!^)(?=[A-Z])/g, " ").replace(/_/g, " ").split(/\s+/).filter(Boolean);
+  const out = words.join(" ").trim();
+  return out ? toTitle(out) : s;
+}
+
+function toTitle(out: string): string {
+  return out.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** ~ catalog.py _fmt_line(): 2.0 -> "2", -1.5 signed -> "-1.5", +4.5 -> "+4.5". */
+function fmtLine(line: number | null, signed = false): string {
+  if (line == null) return "";
+  const s = Number.isInteger(line) ? String(line) : String(line);
+  return signed && line > 0 ? "+" + s : s;
+}
+
+function statWord(stat: string, sport: string): string {
+  return STAT_NAMES[stat] || readableStat(stat) || SPORT_POINTS_WORD[sport] || "Points";
+}
+
+function periodSuffix(period: string): string {
+  const per = PERIOD_NAMES[period] ?? period;
+  return per ? ` (${per})` : "";
+}
+
+const DC_SHORT: Record<string, string> = { home_draw: "1X", away_draw: "X2", home_away: "12" };
 
 /**
  * ~ custom_picks.py normalize(): validate an archived candidate row without altering the stored evaluation.
@@ -214,19 +344,46 @@ export function normalizeCandidateWithReason(
   const home = String(payload.home ?? "");
   const away = String(payload.away ?? "");
   if (!home.trim() || !away.trim()) return { candidate: null, reason: "bad_teams" };
+  if (home.trim().toLowerCase() === away.trim().toLowerCase()) {
+    return { candidate: null, reason: "same_teams" }; // A team cannot play itself: incorrectly mapped fixture.
+  }
+  const homeId = typeof payload.home_id === "string" && payload.home_id.trim() ? payload.home_id.trim() : null;
+  const awayId = typeof payload.away_id === "string" && payload.away_id.trim() ? payload.away_id.trim() : null;
+  if (homeId && awayId && homeId === awayId) {
+    return { candidate: null, reason: "same_teams" };
+  }
 
   const line = payload.line == null ? null : finite(payload.line);
   if (payload.line != null && line == null) return { candidate: null, reason: "bad_line" };
   if ((market === "total" || market === "handicap") && line == null) return { candidate: null, reason: "bad_line" };
 
-  const outcome = outcomeLabel(market, selection, home, away, line);
-  const key = JSON.stringify([market, selection, line]);
+  // Market coordinates. Legacy rows may omit them; they default to the
+  // full-game match scope (as production's archive writer always records the
+  // real coordinates, an omitted field is a full-game row, not an unknown).
+  // A total attributed to anything other than a team or the match cannot be
+  // described accurately and is excluded rather than guessed at.
+  const rawPeriod = payload.period, rawStat = payload.stat, rawEntity = payload.entity;
+  const period = typeof rawPeriod === "string" && rawPeriod.trim() ? rawPeriod.trim() : "full";
+  const stat = typeof rawStat === "string" && rawStat.trim() ? rawStat.trim() : "points";
+  const entity = typeof rawEntity === "string" && rawEntity.trim() ? rawEntity.trim() : "all";
+  if (market === "total" && entity !== "all" && entity !== "home" && entity !== "away") {
+    return { candidate: null, reason: "bad_entity" };
+  }
+
+  const outcome = outcomeLabel(market, selection, home, away, line, period, stat, entity, sport);
+  if (!outcome) return { candidate: null, reason: "bad_outcome" };
+  const key = JSON.stringify([market, period, stat, entity, selection, line]);
   const leagueRaw = payload.league;
   const competitionLabel = typeof leagueRaw === "string" && leagueRaw.trim() && !/[_:]/.test(leagueRaw) ? leagueRaw.trim() : null;
   const competition =
     typeof payload.canonical_competition_id === "string"
       ? payload.canonical_competition_id
       : (competitionLabel && LEAGUES[competitionLabel.toLowerCase()]?.id) || null;
+  // Stable fixture identity (ids when archived, else teams + start + sport):
+  // one leg per real fixture even if fixture-id strings drift, and rows that
+  // disagree about a fixture's identity are dropped before search.
+  const idParts = homeId && awayId ? [homeId, awayId].sort() : [home.trim().toLowerCase(), away.trim().toLowerCase()].sort();
+  const fixtureIdentity = `${sport}|${competition ?? ""}|${startMs}|${idParts.join("~")}`;
 
   const candidate: Candidate = {
     fixtureId, key, sport, market, selection, price, probability, startMs, home, away, outcome,
@@ -235,8 +392,23 @@ export function normalizeCandidateWithReason(
     liquidity: Math.max(0, Math.min(1, finite(payload.liquidity) ?? 0)),
     books: Math.max(0, Math.min(10, finite(payload.bookmaker_count) ?? 0)),
     referenceEv: Math.max(-0.1, Math.min(0.1, finite(payload.edge_ev) ?? -0.1)),
+    line, period, stat, entity, fixtureIdentity,
   };
   return { candidate, reason: "accepted" };
+}
+
+/** Drop every candidate of a fixture id whose rows disagree about the real
+ * fixture (different teams/starts/competitions under one id) — a plausible
+ * wrong fixture must never be served. Distinct market alternatives for one
+ * fixture remain. ~ custom_recovery.py Recovery.load(). */
+export function dropConflictingIdentities(candidates: Candidate[]): Candidate[] {
+  const identities = new Map<string, Set<string>>();
+  for (const c of candidates) {
+    const set = identities.get(c.fixtureId) ?? new Set<string>();
+    set.add(c.fixtureIdentity);
+    identities.set(c.fixtureId, set);
+  }
+  return candidates.filter((c) => (identities.get(c.fixtureId)?.size ?? 0) === 1);
 }
 
 export interface ParsedRequest {
@@ -504,8 +676,8 @@ function stateRank(s: SearchState, req: ParsedRequest): unknown[] {
   ];
 }
 
-function minPriceFor(req: ParsedRequest): number | null {
-  return req.targetOdds != null && req.targetOdds <= LOW_TARGET_CEILING ? LOW_TARGET_MIN_PRICE : null;
+function minPriceFor(_req: ParsedRequest): number {
+  return MIN_PRICE;
 }
 
 function maxLegsFor(req: ParsedRequest): number {
@@ -516,26 +688,33 @@ function maxLegsFor(req: ParsedRequest): number {
 }
 
 /**
- * ~ custom_picks.py search(): bounded per-fixture beam. Faithful port of
- * production's algorithm — one leg per fixture, beam retention per leg
- * count (odds-bucketed when a target is given), capped expansions.
- * Low targets (~2.00) stay compact: prices below 1.25 are excluded and
- * one-leg tickets are evaluated before two-leg, then three-leg fallback.
+ * ~ custom_picks.py search(): the top-ranked feasible ticket, or null.
+ * Deterministic: the best ticket always wins, so per-user variety is layered
+ * on top via shortlist(), never inside search(). Selections below the strict
+ * minimum price never participate, at any target odds.
  */
 export function search(candidates: Candidate[], req: ParsedRequest): Ticket | null {
-  const floor = minPriceFor(req);
-  const pool = floor == null ? candidates : candidates.filter((c) => c.price >= floor);
+  const ranked = shortlist(candidates, req, SHORTLIST_LIMIT);
+  return ranked.length ? { picks: ranked[0].picks, odds: ranked[0].odds } : null;
+}
+
+interface BeamResult {
+  beams: Map<number, SearchState[]>;
+  upper: number;
+  limit: number;
+  groups: Candidate[][];
+}
+
+function runBeam(pool: Candidate[], req: ParsedRequest): BeamResult {
   const grouped = new Map<string, Candidate[]>();
   for (const c of [...pool].sort((a, b) => cmp(rankKey(a), rankKey(b)))) {
-    const key = c.fixtureId;
+    const key = c.fixtureIdentity || c.fixtureId;
     const list = grouped.get(key) ?? [];
     list.push(c);
     grouped.set(key, list);
   }
   const groups = [...grouped.values()].sort((a, b) => cmp(rankKey(a[0]), rankKey(b[0]))).slice(0, MAX_FIXTURES);
   const limit = maxLegsFor(req);
-  if (groups.length < (req.pickCount ?? 1)) return null;
-
   const upper = req.targetOdds ? req.targetOdds * (1 + TOLERANCE) : Infinity;
   let beams = new Map<number, SearchState[]>([[0, [{ picks: [], odds: 1 }]]]);
   let expansions = 0;
@@ -593,42 +772,146 @@ export function search(candidates: Candidate[], req: ParsedRequest): Ticket | nu
     beams = nextBeams;
     if (expansions > MAX_EXPANSIONS) break;
   }
+  return { beams, upper, limit, groups };
+}
 
+function feasibleStates(beams: Map<number, SearchState[]>, upper: number, limit: number, groups: Candidate[][], req: ParsedRequest): SearchState[] {
   const counts = req.pickCount ? [req.pickCount] : req.targetOdds ? Array.from({ length: limit }, (_, i) => i + 1) : [Math.min(DEFAULT_COUNT, groups.length)];
-  const feasibleFor = (count: number): SearchState[] => {
-    const out: SearchState[] = [];
+  const out: SearchState[] = [];
+  for (const count of counts) {
     for (const s of beams.get(count) ?? []) {
       if (!req.targetOdds || (req.targetOdds * (1 - TOLERANCE) <= s.odds && s.odds <= upper)) out.push(s);
     }
-    return out;
-  };
-  // Low targets stay compact via the price floor + 3-leg cap above. One- and
-  // two-leg states are retained per count throughout the beam and ranked
-  // alongside three-leg states below (quality first, then leg count, then
-  // proximity), so three legs serve purely as fallback without ever trading
-  // confidence for fewer legs.
-  const feasible: SearchState[] = [];
-  for (const count of counts) {
-    feasible.push(...feasibleFor(count));
   }
-  if (!feasible.length) return null;
-  const best = feasible.reduce((a, b) => (cmp(stateRank(a, req), stateRank(b, req)) <= 0 ? a : b));
-  return { picks: best.picks, odds: best.odds };
+  return out;
 }
 
-/** ~ custom_recovery.py valid_ticket(): independent re-verification before serving/storing. */
+/**
+ * ~ custom_picks.py shortlist(): the top-N distinct feasible tickets, best
+ * first. Every entry satisfies the same constraints search() enforces
+ * (price floor, one leg per fixture, target tolerance, exact count when
+ * requested). Low targets stay compact via the price floor + 3-leg cap;
+ * one- and two-leg states are ranked alongside three-leg states (quality
+ * first, then leg count, then proximity), so fewer legs win ties but
+ * confidence is never traded for fewer legs.
+ */
+export function shortlist(candidates: Candidate[], req: ParsedRequest, limit = SHORTLIST_LIMIT): Ticket[] {
+  if (limit <= 0) return [];
+  const pool = candidates.filter((c) => c.price >= minPriceFor(req));
+  const { beams, upper, limit: legLimit, groups } = runBeam(pool, req);
+  if (groups.length < (req.pickCount ?? 1)) return [];
+  const feasible = feasibleStates(beams, upper, legLimit, groups, req)
+    .sort((a, b) => cmp(stateRank(a, req), stateRank(b, req)));
+  const ranked: Ticket[] = [];
+  const seen = new Set<string>();
+  for (const s of feasible) {
+    const signature = ticketSignature({ picks: s.picks, odds: s.odds });
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    ranked.push({ picks: s.picks, odds: s.odds });
+    if (ranked.length >= limit) break;
+  }
+  return ranked;
+}
+
+/** Stable identity of a ticket's fixture set and combined odds. */
+export function ticketSignature(ticket: Ticket): string {
+  return [...ticket.picks].map((c) => c.fixtureIdentity || c.fixtureId).sort().join(",") + `@${ticket.odds.toFixed(2)}`;
+}
+
+/** Stable identity of a request's constraints for variety rotation. */
+export function requestKey(req: ParsedRequest): string {
+  return [
+    req.targetOdds ?? "", req.pickCount ?? "", [...req.sports].sort().join(","),
+    [...req.allowedMarkets].sort().join(","), [...req.excludedMarkets].sort().join(","),
+    req.preference, [...req.competitions].sort().join(","),
+    req.timeIntent ?? "",
+  ].join("|");
+}
+
+/** Synchronous 53-bit hash (cyrb53) for rotation indexes: no async crypto
+ * needed, and raw user ids never leave the request scope unhashed. */
+export function hash53(input: string): number {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+
+/** Recently served ticket signatures per (hashed user, day, request): bounded
+ * in-process rotation memory so identical requests need not serve the same
+ * ticket every time. Never persisted, never logged; a restart simply starts
+ * rotation over. Only hashes are kept, never raw ids. */
+const recentTickets = new Map<string, string[]>();
+const RECENT_LIMIT = 512;
+
+function recentKey(userHash: string, day: string, req: ParsedRequest): string {
+  return `${userHash}|${day}|${requestKey(req)}`;
+}
+
+/**
+ * Pick one shortlisted ticket with per-user rotation. The shortlist is
+ * already ranked best-first under identical quality rules, so rotation only
+ * moves within qualified tickets: confidence, price floor, constraints and
+ * fixture validity are never sacrificed for diversity. A lone qualified
+ * ticket is always served.
+ */
+export function chooseTicket(options: Ticket[], userId: string, day: string, req: ParsedRequest): Ticket | null {
+  if (!options.length) return null;
+  const userHash = hash53(`custom-picks|${userId}`).toString(36);
+  const key = recentKey(userHash, day, req);
+  const rotation = hash53(key) % options.length;
+  const recent = recentTickets.get(key) ?? [];
+  const ordered = options.map((_, i) => options[(rotation + i) % options.length]);
+  const ticket = ordered.find((t) => !recent.includes(hash53(ticketSignature(t)).toString(36))) ?? ordered[0];
+  recentTickets.set(key, [...recent, hash53(ticketSignature(ticket)).toString(36)].slice(-4));
+  while (recentTickets.size > RECENT_LIMIT) {
+    const oldest = recentTickets.keys().next();
+    if (oldest.done) break;
+    recentTickets.delete(oldest.value);
+  }
+  return ticket;
+}
+
+/** ~ custom_recovery.py valid_ticket() + market_complete(): the final
+ * delivery boundary before anything reaches Telegram — minimum individual
+ * odds, fixture identity, market completeness, leg count, combined-odds
+ * maths, target tolerance, sport/market constraints and confidence
+ * requirements. Applies to normal generation, callbacks, recovery and stored
+ * suggestions alike: legacy stored rows lacking market coordinates fail here
+ * and fall through to the expired-suggestion path, never to a guessed label. */
 export function validTicket(ticket: Ticket | null, req: ParsedRequest, nowMs: number): boolean {
   const cap = req.targetOdds && !req.pickCount ? maxLegsFor(req) : MAX_LEGS;
   if (!ticket || ticket.picks.length < 1 || ticket.picks.length > cap) return false;
   if (new Set(ticket.picks.map((c) => c.fixtureId)).size !== ticket.picks.length) return false;
+  if (new Set(ticket.picks.map((c) => c.fixtureIdentity || c.fixtureId)).size !== ticket.picks.length) return false;
   if (req.pickCount && ticket.picks.length !== req.pickCount) return false;
-  const floor = minPriceFor(req);
-  if (floor != null && ticket.picks.some((c) => c.price < floor)) return false;
+  if (ticket.picks.some((c) => !Number.isFinite(c.price) || c.price < minPriceFor(req))) return false;
+  if (!marketComplete(ticket)) return false;
   if (eligible(ticket.picks, req, nowMs).length !== ticket.picks.length) return false;
   const product = ticket.picks.reduce((a, c) => a * c.price, 1);
   if (!Number.isFinite(product) || Math.abs(product - ticket.odds) > 1e-6 * Math.max(1, Math.abs(ticket.odds))) return false;
   if (req.targetOdds && !(req.targetOdds * (1 - TOLERANCE) <= product && product <= req.targetOdds * (1 + TOLERANCE))) return false;
   return true;
+}
+
+/** Every leg carries the market detail needed to display it accurately.
+ * Totals/handicap-style markets without a line, legs with an empty outcome,
+ * an unattributable total entity, or missing market coordinates can never be
+ * described unambiguously — excluded, never guessed at. */
+export function marketComplete(ticket: Ticket): boolean {
+  return ticket.picks.every((c) => {
+    if ((c.market === "total" || c.market === "handicap") && c.line == null) return false;
+    if (c.market === "total" && c.entity !== "all" && c.entity !== "home" && c.entity !== "away") return false;
+    if (!c.outcome) return false;
+    if (!c.period?.trim() || !c.stat?.trim() || !c.entity?.trim()) return false;
+    return true;
+  });
 }
 
 /** ~ custom_picks.py format_ticket(). */
@@ -674,15 +957,17 @@ export function failureReason(pool: Candidate[], req: ParsedRequest, nowMs: numb
   if (!matches.length) return "below_quality_floor";
   if (req.pickCount && new Set(matches.map((c) => c.fixtureId)).size < req.pickCount) return "insufficient_count";
   if (req.targetOdds) {
-    const floor = minPriceFor(req);
-    const priced = floor == null ? matches : matches.filter((c) => c.price >= floor);
-    if (floor != null && !priced.length) return "search_failed";
+    const priced = matches.filter((c) => c.price >= minPriceFor(req));
+    // Reachability is judged on usable (above-floor) legs. When the floor
+    // removes everything, fall back to the raw pool so the reason still
+    // describes the odds gap honestly instead of a generic failure.
+    const usable = priced.length ? priced : matches;
     const perFixtureMin = new Map<string, number>();
-    for (const c of priced) perFixtureMin.set(c.fixtureId, Math.min(perFixtureMin.get(c.fixtureId) ?? Infinity, c.price));
+    for (const c of usable) perFixtureMin.set(c.fixtureId, Math.min(perFixtureMin.get(c.fixtureId) ?? Infinity, c.price));
     const minimum = [...perFixtureMin.values()].sort((a, b) => a - b).slice(0, req.pickCount ?? 1).reduce((a, b) => a * b, 1);
     if (minimum > req.targetOdds * (1 + TOLERANCE)) return "target_too_low";
     const perFixtureMax = new Map<string, number>();
-    for (const c of priced) perFixtureMax.set(c.fixtureId, Math.max(perFixtureMax.get(c.fixtureId) ?? 0, c.price));
+    for (const c of usable) perFixtureMax.set(c.fixtureId, Math.max(perFixtureMax.get(c.fixtureId) ?? 0, c.price));
     const maximum = [...perFixtureMax.values()].sort((a, b) => b - a).slice(0, req.pickCount ?? maxLegsFor(req)).reduce((a, b) => a * b, 1);
     if (maximum < req.targetOdds * (1 - TOLERANCE)) return "target_unreachable";
   }
@@ -707,13 +992,63 @@ function alternatives(req: ParsedRequest, reason: string): ParsedRequest[] {
   return out.slice(0, MAX_SUGGESTIONS);
 }
 
-function labelFor(req: ParsedRequest): string {
+/** Format an odds target the way Python's `:g` spec does: 15, never "15.0" or "15g". */
+export function formatOddsTarget(target: number): string {
+  return Number.isInteger(target) ? String(target) : String(target);
+}
+
+/**
+ * ~ custom_recovery.py claimed_count(): the number of picks a recovery
+ * button's label promises, or null when it promises none. The all-sports
+ * label always names a count ("3 Best Picks · All Sports" — DEFAULT_COUNT
+ * when the request has no explicit one) so that count must be exact.
+ */
+export function claimedCount(req: ParsedRequest): number | null {
+  if (req.pickCount) return req.pickCount;
+  if (req.targetOdds || sportName(req.sports) || req.preference === "best") return null;
+  return DEFAULT_COUNT;
+}
+
+function sportName(sports: Set<string>): string {
+  return [...sports].map((s) => SPORT_LABEL[s] ?? s).join(" / ");
+}
+
+function marketName(markets: Set<string>): string {
+  const names: Record<string, string> = {
+    result2: "To Win", result3: "Match Result", dc: "Double Chance",
+    dnb: "Draw No Bet", btts: "BTTS", total: "Over/Under", handicap: "Handicap",
+  };
+  return [...markets].map((m) => names[m] ?? m).join(" / ");
+}
+
+/** ~ custom_recovery.py label_for(): a grammatically correct label that always
+ * matches the request it advertises — odds targets never gain a stray
+ * suffix, and a promised pick count is pinned on the request itself (see
+ * prepareAlternatives) so the ticket behind the button always matches. */
+export function labelFor(req: ParsedRequest): string {
   const icon = req.preference === "safe" ? "🛡️" : req.preference === "strong" ? "⭐" : "🔥";
   const prefix = req.preference[0].toUpperCase() + req.preference.slice(1);
-  const sport = [...req.sports].map((s) => SPORT_LABEL[s] ?? s).join(" / ");
-  if (req.targetOdds) return `${icon} ${prefix} ${req.targetOdds}g Odds${sport ? ` · ${sport}` : ""}`;
-  if (sport) return `${icon} ${req.pickCount ?? DEFAULT_COUNT} ${sport} Picks`;
-  return `${icon} ${req.pickCount ?? DEFAULT_COUNT} ${prefix} Picks · All Sports`;
+  const sport = sportName(req.sports);
+  let label: string;
+  if (req.targetOdds) {
+    label = `${icon} ${prefix} ${formatOddsTarget(req.targetOdds)} Odds` + (sport ? ` · ${sport}` : "");
+    if (req.pickCount) label += ` · ${req.pickCount} Picks`;
+  } else if (sport) {
+    const firstSport = [...req.sports].sort()[0];
+    const sportIcon = SPORT_ICON[firstSport] ?? "🎯";
+    label = req.pickCount
+      ? `${sportIcon} ${req.pickCount} ${sport} Picks`
+      : `${sportIcon} ${prefix} ${sport} Picks`;
+    label += ` · ${prefix}`;
+  } else {
+    label = req.preference === "best" && !req.pickCount
+      ? "🌍 Best Across All Sports"
+      : `${icon} ${req.pickCount ?? DEFAULT_COUNT} ${prefix} Picks · All Sports`;
+  }
+  if (req.allowedMarkets.size) label += " · " + marketName(req.allowedMarkets);
+  if (req.excludedMarkets.size) label += " · No " + marketName(req.excludedMarkets);
+  if (req.timeIntent === "tonight") label += " · Tonight";
+  return label;
 }
 
 export interface Suggestion {
@@ -726,8 +1061,19 @@ export interface Suggestion {
 export function prepareAlternatives(pool: Candidate[], req: ParsedRequest, reason: string, nowMs: number): Suggestion[] {
   const proven: Suggestion[] = [];
   const seenFixtureSets = new Set<string>();
-  for (const option of alternatives(req, reason)) {
+  const seenRequests = new Set<string>();
+  for (const raw of alternatives(req, reason)) {
     if (proven.length >= MAX_SUGGESTIONS) break;
+    // A label that names a count is a promise of EXACTLY that many picks:
+    // pin it on the request, so the search must find that many (a shorter
+    // ticket is never prepared) and every later validation — the tap
+    // included — checks it. ~ custom_recovery.py prepare().
+    let option = raw;
+    const claimed = claimedCount(option);
+    if (claimed && !option.pickCount) option = { ...option, pickCount: claimed };
+    const key = requestKey(option);
+    if (seenRequests.has(key)) continue;
+    seenRequests.add(key);
     const ticket = search(eligible(pool, option, nowMs), option);
     if (!validTicket(ticket, option, nowMs)) continue;
     const signature = [...ticket!.picks.map((c) => c.fixtureId)].sort().join(",");
@@ -815,7 +1161,11 @@ async function loadPool(
       diagnostics.rejectedByReason[reason] = (diagnostics.rejectedByReason[reason] ?? 0) + 1;
     }
   }
-  return { candidates, diagnostics, poolStatus: pool.status, poolGeneratedAt: pool.generated_at };
+  const before = candidates.length;
+  const deduped = dropConflictingIdentities(candidates);
+  const dropped = before - deduped.length;
+  if (dropped) diagnostics.rejectedByReason["conflicting_identity"] = (diagnostics.rejectedByReason["conflicting_identity"] ?? 0) + dropped;
+  return { candidates: deduped, diagnostics, poolStatus: pool.status, poolGeneratedAt: pool.generated_at };
 }
 
 export interface RespondResult {
@@ -831,6 +1181,7 @@ export async function respond(
   day: string,
   nowMs: number,
   previous: ParsedRequest | null,
+  userId = "",
 ): Promise<{ result: RespondResult; request: ParsedRequest | null }> {
   const parsed = parseRequest(text);
   if (!parsed.ok) return { result: { text: parsed.text, reason: parsed.reason, suggestions: [] }, request: null };
@@ -842,7 +1193,8 @@ export async function respond(
   const { candidates: pool, diagnostics } = loaded;
 
   const matches = eligible(pool, request, nowMs);
-  const ticket = matches.length ? search(matches, request) : null;
+  const options = matches.length ? shortlist(matches, request) : [];
+  const ticket = chooseTicket(options, userId, day, request);
   // Operational diagnostics only: pool/request shapes and funnel counts.
   // Never the user's raw text, identity, or any secret.
   console.log(JSON.stringify({

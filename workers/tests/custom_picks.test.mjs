@@ -4,16 +4,23 @@ import {
   HELP,
   TODAY_ONLY,
   UNAVAILABLE,
+  chooseTicket,
+  claimedCount,
+  dropConflictingIdentities,
   eligible,
   failureReason,
   formatTicket,
+  labelFor,
   normalizeCandidate,
   normalizeCandidateWithReason,
   parseRequest,
   prepareAlternatives,
   refine,
+  requestKey,
   respond,
   search,
+  shortlist,
+  ticketSignature,
   validTicket,
 } from "../src/custom_picks.ts";
 
@@ -69,7 +76,12 @@ describe("normalizeCandidate (~ custom_picks.py normalize)", () => {
     assert.equal(candidate({ market: "total", selection: "over" }), null);
     const withLine = candidate({ market: "total", selection: "over", line: 2.5 });
     assert.ok(withLine);
-    assert.equal(withLine.outcome, "Over 2.5");
+    assert.equal(withLine.outcome, "Over 2.5 Points");
+    const teamTotal = candidate({ market: "total", selection: "over", line: 1.5, entity: "home" });
+    assert.equal(teamTotal.outcome, "Arsenal Over 1.5 Points");
+    const handicap = candidate({ market: "handicap", selection: "home", line: -1.5 });
+    assert.equal(handicap.outcome, "Handicap: Arsenal -1.5");
+    assert.equal(candidate({ market: "total", selection: "over", line: 2.5, entity: "player" }), null);
   });
 
   // Regression: production has 2,441 archived candidates whose payload_json
@@ -394,7 +406,7 @@ describe("respond() end-to-end contract", () => {
       assert.ok(!("generated_at" in productionPayload()), "fixture must not embed scoping keys in payload_json");
       const rows = [
         productionRow(),
-        productionRow({ canonical_event_id: "fx-2", home: "Barca", away: "Real" }),
+        productionRow({ canonical_event_id: "fx-2", home: "Barca", away: "Real", home_id: "bar", away_id: "rea" }),
       ];
       const { result } = await respond(deps(rows), "2 picks", ZONE, DAY, NOW, null);
       assert.equal(result.reason, "success");
@@ -426,7 +438,7 @@ describe("respond() end-to-end contract", () => {
     it("reaches the ticket builder for odds targets: 30 odds fails honestly as unreachable, never below_quality_floor", async () => {
       const rows = [
         productionRow(),
-        productionRow({ canonical_event_id: "fx-2", home: "Barca", away: "Real", price: 1.6, p_model: 0.65 }),
+        productionRow({ canonical_event_id: "fx-2", home: "Barca", away: "Real", home_id: "bar", away_id: "rea", price: 1.6, p_model: 0.65 }),
       ];
       const { result } = await respond(deps(rows), "Give me 30 odds", ZONE, DAY, NOW, null);
       assert.notEqual(result.reason, "below_quality_floor", "pool must be non-empty so the builder is actually reached");
@@ -436,8 +448,8 @@ describe("respond() end-to-end contract", () => {
       // 1.8 × 1.6 × 1.9 = 5.47, inside the ±10% band around 5.
       const rows = [
         productionRow({ price: 1.8, p_model: 0.7 }),
-        productionRow({ canonical_event_id: "fx-2", home: "Barca", away: "Real", price: 1.6, p_model: 0.65 }),
-        productionRow({ canonical_event_id: "fx-3", home: "Bayern", away: "Dortmund", price: 1.9, p_model: 0.68 }),
+        productionRow({ canonical_event_id: "fx-2", home: "Barca", away: "Real", home_id: "bar", away_id: "rea", price: 1.6, p_model: 0.65 }),
+        productionRow({ canonical_event_id: "fx-3", home: "Bayern", away: "Dortmund", home_id: "bay", away_id: "dor", price: 1.9, p_model: 0.68 }),
       ];
       const { result } = await respond(deps(rows), "give me 5 odds", ZONE, DAY, NOW, null);
       assert.equal(result.reason, "success");
@@ -467,5 +479,163 @@ describe("respond() end-to-end contract", () => {
     // stored previous request, it must still ask for 2 picks.
     const second = await respond(deps(pool, rows), "make it safer instead", ZONE, DAY, NOW, first.request);
     assert.equal(second.request.pickCount, 2);
+  });
+});
+
+describe("reported-issue regressions (strict floor, labels, counts, fixtures, variety)", () => {
+  function pricedPool(prices, startId = 1) {
+    return prices.map((price, i) =>
+      candidate({
+        canonical_event_id: `fx-${startId + i}`,
+        home: `Home${startId + i}`,
+        away: `Away${startId + i}`,
+        home_id: `h${startId + i}`,
+        away_id: `a${startId + i}`,
+        price,
+        p_model: 0.7,
+      }),
+    );
+  }
+
+  it("a 1.03 selection can never appear in a 15-odds ticket", () => {
+    const pool = [
+      ...pricedPool([1.03]),
+      ...pricedPool([1.5, 1.6, 1.7, 1.8, 1.9, 2.0], 2),
+    ];
+    const req = parseRequest("15 odds").request;
+    const ticket = search(pool, req);
+    assert.ok(ticket);
+    assert.ok(ticket.picks.every((c) => c.price >= 1.25));
+    assert.ok(!ticket.picks.some((c) => c.price === 1.03));
+  });
+
+  it("no selection below 1.25 appears at any target, count, or sport", () => {
+    for (const price of [1.0, 1.03, 1.08, 1.12, 1.19, 1.24]) {
+      const only = pricedPool([price, price + 0.01, price + 0.02]).filter(Boolean);
+      for (const text of ["15 odds", "5 odds", "2 odds", "3 picks", "2 basketball picks"]) {
+        const req = parseRequest(text).request;
+        if (!req) continue;
+        const ticket = search(eligible(only, req, NOW), req);
+        if (ticket) assert.ok(ticket.picks.every((c) => c.price >= 1.25), `${text} @ ${price}`);
+      }
+    }
+    // A pool of only sub-floor legs yields no ticket at all, never filler.
+    const lowOnly = pricedPool([1.12, 1.15, 1.19]);
+    assert.equal(search(lowOnly, parseRequest("2 odds").request), null);
+    const lowTicket = { picks: lowOnly.slice(0, 2), odds: 1.12 * 1.15 };
+    assert.equal(validTicket(lowTicket, parseRequest("2 odds").request, NOW), false);
+  });
+
+  it("the 15-odds button reads 'Best 15 Odds', never '15g'", () => {
+    assert.equal(labelFor(parseRequest("15 odds").request), "🔥 Best 15 Odds");
+    assert.equal(labelFor(parseRequest("safe 4 odds football").request), "🛡️ Safe 4 Odds · Football");
+    const both = parseRequest("15 odds").request;
+    assert.equal(labelFor({ ...both, pickCount: 2 }), "🔥 Best 15 Odds · 2 Picks");
+  });
+
+  it("a three-pick request returns exactly three picks with a matching heading", () => {
+    const pool = pricedPool([1.6, 1.6, 1.6, 1.6]);
+    const req = parseRequest("3 picks").request;
+    const ticket = search(pool, req);
+    assert.equal(ticket.picks.length, 3);
+    const text = formatTicket(ticket);
+    assert.match(text, /🔥 4\.10 ODDS/);
+    assert.equal((text.match(/Confidence:/g) ?? []).length, 3);
+  });
+
+  it("a 15-odds request is never mistaken for a 15-leg request", () => {
+    const pool = pricedPool([1.8, 1.7, 1.6, 1.5, 1.4, 1.9, 2.0, 2.1, 2.2]);
+    const req = parseRequest("15 odds").request;
+    assert.equal(req.pickCount, null);
+    assert.equal(req.targetOdds, 15);
+    const ticket = search(pool, req);
+    if (ticket) {
+      assert.ok(ticket.picks.length <= 8);
+      assert.ok(ticket.picks.length < 15);
+      assert.ok(ticket.picks.every((c) => c.price >= 1.25));
+    }
+  });
+
+  it("count-promising alternative buttons carry exactly that many picks", () => {
+    const pool = pricedPool([1.6, 1.6, 1.6, 1.6, 1.6]);
+    const req = parseRequest("100 odds").request;
+    const alts = prepareAlternatives(pool, req, "target_unreachable", NOW);
+    assert.ok(alts.length);
+    for (const alt of alts) {
+      assert.equal(validTicket(alt.ticket, alt.request, NOW), true);
+      const claimed = claimedCount(alt.request);
+      if (claimed) assert.equal(alt.ticket.picks.length, claimed, alt.label);
+    }
+  });
+
+  it("different users can receive different qualified tickets; repeats rotate", () => {
+    const pool = pricedPool([1.7, 1.7, 1.7, 1.7, 1.7]);
+    const req = parseRequest("5 odds").request;
+    const options = shortlist(pool, req);
+    assert.ok(options.length > 1);
+    const seen = new Set(options.map((t) => ticketSignature(t)));
+    assert.ok(seen.size > 1);
+    const picks = new Set();
+    for (let u = 0; u < 10; u++) picks.add(ticketSignature(chooseTicket(options, `user-${u}`, DAY, req)));
+    assert.ok(picks.size > 1, "rotation must spread users across qualified tickets");
+    const first = ticketSignature(chooseTicket(options, "repeat-user", DAY, req));
+    const second = ticketSignature(chooseTicket(options, "repeat-user", DAY, req));
+    assert.notEqual(second, first, "a repeat request avoids the just-served ticket when alternatives exist");
+    // A lone qualified ticket is still served to everyone.
+    const single = chooseTicket(options.slice(0, 1), "anyone", DAY, req);
+    assert.equal(ticketSignature(single), ticketSignature(options[0]));
+  });
+
+  it("conflicting fixture identities are dropped before search", () => {
+    const a = candidate({ home_id: "x", away_id: "y" });
+    const b = candidate({ home: "Brighton", away: "Kauno Zalgiris", home_id: "bri", away_id: "kau" });
+    assert.equal(dropConflictingIdentities([a, b]).length, 0);
+    const ok = candidate({ canonical_event_id: "fx-2", home: "Barca", away: "Real", home_id: "bar", away_id: "rea" });
+    assert.equal(dropConflictingIdentities([a, ok]).length, 2);
+  });
+
+  it("same-team and unattributable-market rows are rejected", () => {
+    assert.equal(candidate({ home: "Arsenal", away: "arsenal" }), null);
+    assert.equal(candidate({ home_id: "same", away_id: "same" }), null);
+    assert.equal(candidate({ market: "total", selection: "over", line: 2.5, entity: "player" }), null);
+  });
+
+  it("basketball totals and handicaps carry scope, line and side", () => {
+    const total = candidate({ sport: "basketball", market: "total", selection: "over", line: 220.5, home: "Lakers", away: "Bulls" });
+    assert.ok(total.outcome.includes("220.5") && total.outcome.includes("Points"));
+    const teamTotal = candidate({ market: "total", selection: "under", line: 1.5, entity: "home", stat: "goals" });
+    assert.equal(teamTotal.outcome, "Arsenal Under 1.5 Goals");
+    const half = candidate({ market: "total", selection: "over", line: 1.5, period: "1h", stat: "goals" });
+    assert.ok(half.outcome.includes("1st Half"));
+    const handicap = candidate({ market: "handicap", selection: "away", line: 4.5, home: "Lakers", away: "Bulls" });
+    assert.equal(handicap.outcome, "Handicap: Bulls +4.5");
+  });
+
+  it("a 50-odds request fails honestly with only proven, above-floor alternatives", async () => {
+    const rows = pricedPool([1.8, 1.6, 1.9]).map((c, i) => ({
+      payload_json: JSON.stringify({
+        prediction_date: DAY, timezone: ZONE, canonical_event_id: c.fixtureId,
+        sport: "football", market: "result2", selection: "home", price: c.price, p_model: 0.7,
+        start_utc: "2026-10-14T18:00:00Z", generated_at: "2026-10-14T06:00:00Z",
+        home: c.home, away: c.away, home_id: `h${i}`, away_id: `a${i}`, league: "Premier League",
+      }),
+      generated_at: "2026-10-14T06:00:00Z", prediction_date: DAY, timezone: ZONE,
+    }));
+    const pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
+    const deps = { getPool: async () => pool, getCandidates: async () => rows };
+    const { result } = await respond(deps, "50 odds", ZONE, DAY, NOW, null);
+    assert.notEqual(result.reason, "success");
+    for (const alt of result.suggestions) {
+      assert.equal(validTicket(alt.ticket, alt.request, NOW), true);
+      assert.ok(alt.ticket.picks.every((c) => c.price >= 1.25));
+    }
+  });
+
+  it("ticket headings always match the combined odds of the legs shown", () => {
+    const pool = pricedPool([1.6, 1.6, 1.6]);
+    const ticket = search(pool, parseRequest("3 picks").request);
+    const text = formatTicket(ticket);
+    const product = ticket.picks.reduce((a, c) => a * c.price, 1);
+    assert.ok(text.startsWith(`🔥 ${product.toFixed(2)} ODDS`));
   });
 });

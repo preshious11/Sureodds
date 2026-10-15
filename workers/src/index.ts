@@ -568,6 +568,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
           day,
           nowMs,
           previous,
+          userId,
         );
         // The cooldown timestamp is recorded ONLY after the request was
         // actually served: recording it up-front poisoned webhook retries —

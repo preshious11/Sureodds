@@ -195,6 +195,7 @@ def test_original_quality_is_not_lowered_and_alternative_is_explicit(private_bot
 
 def test_bounded_search_failure_is_not_silent_or_speculative(private_bot, db, monkeypatch):
     store(db, rows())
+    monkeypatch.setattr(cp, 'shortlist', Mock(return_value=[]))
     monkeypatch.setattr(cp, 'search', Mock(return_value=None))
     sent = request(private_bot, '3 picks')
     assert COPY['search_failed'] == sent['text'] and not buttons(sent)
@@ -209,7 +210,7 @@ def test_unexpected_local_errors_receive_safe_private_reply(private_bot, db, mon
     elif failure == 'respond':
         monkeypatch.setattr(private_bot._custom_picks, 'respond', broken)
     else:
-        monkeypatch.setattr(cp, 'search' if failure == 'search' else 'parse_request', broken)
+        monkeypatch.setattr(cp, 'shortlist' if failure == 'search' else 'parse_request', broken)
     sent = request(private_bot, '3 picks')
     assert sent['chat_id'] == '42' and sent['text'] == COPY['search_failed']
     assert 'secret' not in sent['text']

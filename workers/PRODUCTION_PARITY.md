@@ -243,8 +243,24 @@ an unrecognized one does in production. No fuzzy typo-correction pass
 (`custom_intent.py normalize_text`'s `difflib` step). The alternatives
 ladder covers the three most common failure shapes (relax pick count,
 step the odds-target ladder, drop all filters), not production's fuller
-per-market/per-sport branching. `claimed_count`/button-label richness is
-a reasonable equivalent, not byte-identical to production's `label_for`.
+per-market/per-sport branching. No per-request work-budget metering
+(`WorkBudget`/`MAX_RECOVERY_SEARCHES`); only the static
+`MAX_EXPANSIONS`/beam caps are ported.
+
+Closed this pass (with `predbot/custom_picks.py`, `custom_recovery.py`
+and `storage/db.py` changed in lockstep, plus regression tests on both
+sides): strict 1.25 minimum individual price everywhere (search filter,
+`validTicket`/`marketComplete` delivery boundary, reachability math);
+`labelFor` mirrors `label_for` (no stray "g" suffix — "Best 15 Odds",
+target+count combos, sport icons, market `No X` and Tonight suffixes)
+with `claimedCount` pinning so a count label always matches its ticket;
+market coordinates (`line`/`period`/`stat`/`entity`) with scoped total and
+signed-handicap labels, unattributable rows rejected; fixture identity
+(ids, else teams) with per-fixture grouping, identity-uniqueness checks,
+conflicting-identity drops at load, same-team rejection, and team ids in
+the archive `candidate_id`; ranked shortlist + per-user rotation (hash-
+keyed, bounded, in-memory only) so identical requests vary without ever
+weakening quality.
 
 ## Stats: 30-day/all-time blocks, collection views, itemized /yesterday (this pass)
 

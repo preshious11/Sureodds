@@ -428,7 +428,9 @@ class Database:
                 coordinates = [candidate['canonical_event_id'], candidate['market'], candidate['period'],
                                candidate['stat'], candidate['entity'],
                                None if candidate['line'] is None else float(candidate['line']) or 0.0,
-                               candidate['selection']]
+                               candidate['selection'], candidate.get('home_id') or '',
+                               candidate.get('away_id') or '', candidate.get('home') or '',
+                               candidate.get('away') or '']
                 identity = json.dumps(coordinates, separators=(',', ':'), ensure_ascii=True, allow_nan=False)
                 candidate_id = hashlib.sha256(identity.encode('utf-8')).hexdigest()
                 payload = json.dumps(clean(candidate), sort_keys=True, allow_nan=False)
