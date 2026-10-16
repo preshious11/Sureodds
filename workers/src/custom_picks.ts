@@ -1044,7 +1044,12 @@ function alternatives(req: ParsedRequest, reason: string): ParsedRequest[] {
 
 /** Format an odds target the way Python's `:g` spec does: 15, never "15.0" or "15g". */
 export function formatOddsTarget(target: number): string {
-  return Number.isInteger(target) ? String(target) : String(target);
+  if (!Number.isFinite(target) || Number.isInteger(target)) return String(target);
+  // Round to 6 significant digits (Python's "%g" default) and round-trip through
+  // Number so toPrecision's trailing zeros are dropped — without this, float noise
+  // from the odds-ladder/beam search (e.g. 2.1000000000000005) renders verbatim in
+  // a user-facing label instead of the clean "2.1".
+  return String(Number(target.toPrecision(6)));
 }
 
 /**

@@ -36,9 +36,20 @@ function eligibleContext(evt) {
 function cronDb({ cache = null, subs = [], delivered = new Set(), posted = new Set(), events = [], contextFor = null } = {}) {
   const jobs = {};
   const state = { cache };
+  // Models the real `posts` table: a row with message_id === null is an
+  // unconfirmed claim (claimPost), non-null is a confirmed send. Seed
+  // entries from the `posted` param (pre-existing receipts) as confirmed.
+  const postsTable = new Map();
+  for (const key of posted) postsTable.set(key, { message_id: "seed", created_at: "1970-01-01T00:00:00Z" });
+  const postedView = {
+    has: (key) => postsTable.has(key),
+    get size() {
+      return postsTable.size;
+    },
+  };
   return {
     jobs,
-    posted,
+    posted: postedView,
     events,
     get cache() {
       return state.cache;
@@ -65,7 +76,7 @@ function cronDb({ cache = null, subs = [], delivered = new Set(), posted = new S
           if (this._sql.includes("FROM job_state")) return null;
           if (this._sql.includes("FROM posts")) {
             const [kind, postDate] = this._args;
-            return posted.has(`${kind}|${postDate}`) ? { one: 1 } : null;
+            return postsTable.has(`${kind}|${postDate}`) ? { one: 1 } : null;
           }
           return null;
         },
@@ -88,9 +99,37 @@ function cronDb({ cache = null, subs = [], delivered = new Set(), posted = new S
           if (this._sql.includes("INTO deliveries")) {
             delivered.add(this._args[2]);
           }
-          if (this._sql.includes("INTO posts")) {
+          if (this._sql.includes("INTO posts") && this._sql.includes("DO UPDATE")) {
+            // claimPost: only wins (changes=1) on a fresh key or a stale
+            // unconfirmed claim — mirrors the real WHERE message_id IS NULL
+            // AND created_at < now-interval. Tests don't simulate elapsed
+            // time, so an existing row (claimed or confirmed) never
+            // qualifies as stale here, matching every current test's intent.
             const [kind, postDate] = this._args;
-            posted.add(`${kind}|${postDate}`);
+            const key = `${kind}|${postDate}`;
+            if (!postsTable.has(key)) {
+              postsTable.set(key, { message_id: null, created_at: "now" });
+              return { meta: { changes: 1 } };
+            }
+            return { meta: { changes: 0 } };
+          }
+          if (this._sql.includes("INTO posts")) {
+            // markPosted (legacy ON CONFLICT DO NOTHING path, e.g. expiredKind).
+            const [kind, postDate, messageId] = this._args;
+            const key = `${kind}|${postDate}`;
+            if (!postsTable.has(key)) postsTable.set(key, { message_id: messageId, created_at: "now" });
+          }
+          if (this._sql.startsWith("UPDATE posts SET message_id")) {
+            const [kind, postDate, messageId] = this._args;
+            const key = `${kind}|${postDate}`;
+            const row = postsTable.get(key);
+            if (row) row.message_id = messageId;
+          }
+          if (this._sql.startsWith("DELETE FROM posts")) {
+            const [kind, postDate] = this._args;
+            const key = `${kind}|${postDate}`;
+            const row = postsTable.get(key);
+            if (row && row.message_id === null) postsTable.delete(key);
           }
           if (this._sql.includes("INTO job_state")) {
             jobs[this._args[0]] = this._args[1];

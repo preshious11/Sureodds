@@ -89,7 +89,6 @@ def _request_summary(provider):
 
 
 def collect_persisted(chain, start, end):
-    from predbot.providers.chain import merge_events
     now = utcnow()
     day = to_local(now, chain.cfg.timezone).date().isoformat()
     day_start, midnight = day_bounds(now, chain.cfg.timezone)

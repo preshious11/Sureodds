@@ -17,14 +17,6 @@ export const COMMAND_TO_VIEW: Record<string, string> = {
   "/stats_daily": "stats_daily",
 };
 
-export const VIEW_COMMAND: Record<string, string> = {
-  all: "/all",
-  top: "/top",
-  daily: "/daily",
-  stats: "/stats",
-  yesterday: "/yesterday",
-};
-
 export function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;

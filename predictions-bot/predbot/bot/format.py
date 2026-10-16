@@ -286,7 +286,7 @@ TOP_TITLE = "🔥 TOP PICKS"
 DAILY_TITLE = "📋 DAILY PICKS"
 
 
-def no_selection_message(zone: str = "") -> str:
+def no_selection_message() -> str:
     """Post-evaluation empty card; pre-generation placeholders belong to the view."""
     return "No selections qualified today."
 
@@ -318,7 +318,7 @@ def picks_card(picks: List[PickLine], day: str, title: str = DAILY_TITLE,
     lines = card_header(title, day, prices if picks else [], zone)
     if not picks:
         lines.append("No Top Picks for today.\n\nSee other picks:" if title == TOP_TITLE
-                     else no_selection_message(zone))
+                     else no_selection_message())
     for p in picks:
         lines += ["", *pick_lines(p)]
     if pages and pages > 1 and page:

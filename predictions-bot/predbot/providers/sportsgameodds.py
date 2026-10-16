@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import math
 import os
 import time
 from collections import Counter
@@ -48,6 +49,14 @@ def _f(v) -> Optional[float]:
         return float(str(v).replace("+", ""))
     except (TypeError, ValueError):
         return None
+
+
+def _same_line(a: Optional[float], b: Optional[float]) -> bool:
+    """Whether two independently-parsed line values represent the same line - tolerant of
+    float noise from two separate str->float conversions, unlike a bare ``!=``."""
+    if a is None or b is None:
+        return a is b
+    return math.isclose(a, b, rel_tol=0, abs_tol=1e-6)
 
 
 def _merge_sport_state(current: str, state: str) -> str:
@@ -382,8 +391,8 @@ class SportsGameOddsProvider(BaseProvider):
         if self.sports and leagues and not getattr(self, '_league_sport', None):
             try:
                 self.available_leagues()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001 - sport filter degrades to "unfiltered", never a hard failure
+                log.warning("SGO: available_leagues() failed, sport filter skipped this run: %s", e, exc_info=True)
         avail_map = getattr(self, '_league_sport', None) or {}
         if avail_map and self.sports:
             sports_upper = {s.upper() for s in self.sports}
@@ -629,7 +638,7 @@ class SportsGameOddsProvider(BaseProvider):
             if side not in ("home", "away"):
                 self.parse_counts["UNKNOWN_SELECTION"] += 1
                 return None
-            if _f(o.get("fairSpread")) != line:
+            if not _same_line(_f(o.get("fairSpread")), line):
                 fair = None
             market, selection = "handicap", side
         elif bet == "ou":
@@ -640,7 +649,7 @@ class SportsGameOddsProvider(BaseProvider):
             if side not in ("over", "under"):
                 self.parse_counts["UNKNOWN_SELECTION"] += 1
                 return None
-            if _f(o.get("fairOverUnder")) != line:
+            if not _same_line(_f(o.get("fairOverUnder")), line):
                 fair = None
             if is_player:
                 market, selection = "prop", side

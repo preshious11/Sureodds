@@ -387,6 +387,9 @@ def _prefetch(resolver: ResultsResolver, rows, now: datetime, cache: Dict[str, M
             except PICK_ERRORS as e:
                 log.warning("result prefetch failed for pick %s: %s", r["id"], e)
                 res = None
+            except Exception as e:  # noqa: BLE001 - one bad pick must not stop the rest (see module docstring)
+                log.warning("result prefetch failed for pick %s: %s", r["id"], e, exc_info=True)
+                res = None
             cache.setdefault(ck, res)
 
     from concurrent.futures import ThreadPoolExecutor

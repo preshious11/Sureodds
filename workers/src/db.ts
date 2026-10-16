@@ -145,13 +145,6 @@ export async function failUpdate(db: D1Database, updateId: number, error: string
   }
 }
 
-/// Backwards-compatible single-phase claim (kept for existing callers/tests):
-/// true only when this delivery should be processed.
-export async function claimUpdate(db: D1Database, updateId: number): Promise<boolean> {
-  const outcome = await tryClaimUpdate(db, updateId);
-  return outcome !== "duplicate";
-}
-
 export async function upsertSubscriber(
   db: D1Database,
   chatId: string,
@@ -453,6 +446,65 @@ export async function markPosted(
     .run();
 }
 
+/// Seconds after which an unconfirmed claim (message_id still NULL — the
+/// Worker was evicted/crashed between claiming and sending) is considered
+/// abandoned and may be stolen by a later sweep. Comfortably longer than
+/// any single sendTelegram() call (bounded retries, each capped at 60s).
+export const CLAIM_POST_TIMEOUT_SECONDS = 300;
+
+/**
+ * Atomically claims the right to send `(kind, post_date)` — the fix for the
+ * overlapping-Cron-fire race: two sweeps calling this concurrently can never
+ * both win, because only one `INSERT`/`DO UPDATE` can report a changed row
+ * for the same unique key. Returns true iff THIS call won the claim (a
+ * fresh row, or reclaiming a stale unconfirmed one past
+ * CLAIM_POST_TIMEOUT_SECONDS) — only the winner may call sendTelegram.
+ * Confirm a successful send with `confirmPosted`; a failed send simply
+ * leaves the claim in place for the next sweep to retry or reclaim.
+ */
+export async function claimPost(db: D1Database, kind: string, postDate: string): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `INSERT INTO posts (kind, post_date, message_id, created_at)
+       VALUES (?1, ?2, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+       ON CONFLICT(kind, post_date) DO UPDATE SET created_at = excluded.created_at
+       WHERE posts.message_id IS NULL
+         AND posts.created_at < strftime('%Y-%m-%dT%H:%M:%SZ','now', ?3)`,
+    )
+    .bind(kind, postDate, `-${CLAIM_POST_TIMEOUT_SECONDS} seconds`)
+    .run();
+  return (result.meta?.changes ?? 0) > 0;
+}
+
+/** Confirms a claim made by `claimPost` once the Telegram send actually succeeded. */
+export async function confirmPosted(
+  db: D1Database,
+  kind: string,
+  postDate: string,
+  messageId: string | null,
+): Promise<void> {
+  await db
+    .prepare("UPDATE posts SET message_id = ?3 WHERE kind = ?1 AND post_date = ?2")
+    .bind(kind, postDate, messageId)
+    .run();
+}
+
+/**
+ * Releases a claim after a send that cleanly FAILED (sendTelegram returned,
+ * it just wasn't ok) so the very next sweep can retry immediately instead
+ * of waiting out CLAIM_POST_TIMEOUT_SECONDS. Only deletes the still-
+ * unconfirmed (message_id IS NULL) row this invocation itself claimed — a
+ * send that actually succeeded is always confirmed first and never reaches
+ * this call, and a crash before this line simply leaves the stale-claim
+ * path (claimPost's own timeout) to recover it instead.
+ */
+export async function releaseClaim(db: D1Database, kind: string, postDate: string): Promise<void> {
+  await db
+    .prepare("DELETE FROM posts WHERE kind = ?1 AND post_date = ?2 AND message_id IS NULL")
+    .bind(kind, postDate)
+    .run();
+}
+
 export async function getFailedUpdates(
   db: D1Database,
   limit = 50,
@@ -733,24 +785,6 @@ export async function setJobResult(
     .bind(name, result.slice(0, 500))
     .run();
 }
-export async function getJobState(
-  db: D1Database,
-  name: string,
-): Promise<{ name: string; due_at: string | null; lease_owner: string | null; attempts: number } | null> {
-  return await db.prepare("SELECT name, due_at, lease_owner, attempts FROM job_state WHERE name = ?1").bind(name).first();
-}
-
-export async function setJobDue(db: D1Database, name: string, dueAt: string | null): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO job_state (name, due_at, attempts, updated_at)
-       VALUES (?1, ?2, 0, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-       ON CONFLICT(name) DO UPDATE SET due_at = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
-    )
-    .bind(name, dueAt)
-    .run();
-}
-
 export interface PinnedMenuRow {
   chat_id: string;
   message_id: number;

@@ -95,7 +95,7 @@ def test_an_empty_daily_says_so_and_the_top_still_goes_out(db):
     tg = FakeTG()
     broadcast.deliver_picks(db, CFG, tg, snap, now=NOW)
     assert tg.sends[0]["text"].startswith("🔥 TOP PICKS") and "1 pick" in tg.sends[0]["text"]
-    assert tg.sends[1]["text"] == f"📋 DAILY PICKS · Sat 1 Jun\n{no_selection_message('UTC')}"
+    assert tg.sends[1]["text"] == f"📋 DAILY PICKS · Sat 1 Jun\n{no_selection_message()}"
 
 
 def test_nothing_at_all_sends_nothing(db):

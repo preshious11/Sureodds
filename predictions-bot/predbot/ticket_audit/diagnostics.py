@@ -24,6 +24,17 @@ REASONS = frozenset({
     'gemini_service_unavailable', 'gemini_request_rejected', 'gemini_timeout',
     'gemini_transport_or_json_failure', 'malformed_response', 'safety_refusal_or_incomplete_output',
     'empty_response', 'malformed_structured_output', 'extraction_type_mismatch',
+    # research.py / free_research.py (the research/fact-check path) - previously
+    # missing here, so every one of these legitimate failures logged as the
+    # opaque 'unknown_audit_reason' fallback instead of its real cause.
+    'unsupported_research_coordinates', 'research_coordinate_mismatch', 'empty_grounding_metadata',
+    'no_supported_sources', 'malformed_research_output', 'incomplete_or_started_fixture',
+    'research_busy', 'research_wait_timeout', 'invalid_research_time', 'ticket_audit_disabled',
+    'unsupported_free_research', 'unreviewed_public_source', 'malformed_public_source',
+    'malformed_or_unavailable_public_source', 'public_source_unavailable', 'public_source_timeout',
+    'public_source_too_large', 'public_source_budget_exhausted', 'public_source_budget_unavailable',
+    'public_fixture_missing', 'public_fixture_ambiguous', 'conflicting_public_results',
+    'insufficient_public_history', 'conflicting_source_routes',
 })
 # Provider messages can echo a submitted ticket or an image. Log a fixed summary,
 # never arbitrary provider text, even when its credentials have been redacted.

@@ -119,7 +119,10 @@ def grade(ml: MarketLine, res: MatchResult, sport: str = "football") -> str:
     if m in ("result3", "result2", "dnb", "dc", "ht_ft", "correct_score",
              "result_total", "result_btts", "clean_sheet", "win_to_nil", "winning_margin",
              "btts", "team_to_score") or (m in ("total", "handicap", "odd_even") and ml.stat == "points"):
-        sc = res.score(period)
+        # res.stat("points", period) is exactly res.score(period); using stat() here (instead
+        # of always reading the goal score) means a future corners/cards variant of any of
+        # these markets grades on the right count instead of silently reading goals.
+        sc = res.stat(ml.stat, period)
         if sc is None:
             return PENDING
         h, a = sc
@@ -173,7 +176,7 @@ def grade(ml: MarketLine, res: MatchResult, sport: str = "football") -> str:
         tot = int(st[0] + st[1]) if ml.entity == "all" else int(st[0] if ml.entity == "home" else st[1])
         return WON if (tot % 2 == 0) == (ml.selection == "even") else LOST
     if m == "ht_ft":
-        ht = res.score("1h")
+        ht = res.stat(ml.stat, "1h")
         if ht is None:
             return PENDING
         parts = ml.selection.split("/")

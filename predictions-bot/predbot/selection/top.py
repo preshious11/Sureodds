@@ -53,10 +53,6 @@ def promotion_reason(row, cfg, now_utc, top=False):
     return None
 
 
-# Legacy diagnostic constant; search now considers the whole eligible pool.
-TOP_SEARCH_K = 12
-
-
 def _event(row):
     return row.get('canonical_event_id') or row['fixture_key']
 
@@ -66,13 +62,6 @@ def _confidence(row):
     probability; kept positive so a product of them orders tickets."""
     score = row.get('rank_score') if row.get('rank_score') is not None else row['prob']
     return min(1.0, max(1e-6, float(score)))
-
-
-def best_combination(pool, cfg):
-    """Search fixture alternatives rather than freezing each fixture's first row."""
-    found, _ = search(pool, cfg.top_odds_target, cfg.top_odds_max,
-                      max(0, min(3, cfg.top_legs_max)))
-    return found
 
 
 def select_top(rows, cfg, now_utc):

@@ -14,6 +14,8 @@
 // enforced by the in-invocation token bucket plus Retry-After honouring.
 
 import {
+  claimPost,
+  confirmPosted,
   deliveriesDone,
   getDayCache,
   getFailedUpdates,
@@ -25,6 +27,7 @@ import {
   listActiveSubscribers,
   markDelivery,
   markPosted,
+  releaseClaim,
   setJobResult,
   type Env,
 } from "./db.ts";
@@ -32,7 +35,6 @@ import { lagosDateString, renderGroupCard, renderGroupRecap, renderView } from "
 import { allButtonModeFor, topEmptyKeyboard } from "./telegram.ts";
 
 export const BROADCAST_PER_SECOND = 25;
-export const CHAT_PER_SECOND = 1;
 
 export function lagosMinutes(nowMs = Date.now()): number {
   const lagos = new Date(nowMs + 60 * 60_000); // UTC+1, no DST
@@ -227,7 +229,7 @@ async function postToOwner(
   const owner = ownerChatId(env);
   if (!owner) return; // no admin configured — never a dead destination, just skipped
   const ownerKind = `${kind}_owner`;
-  if (await hasPosted(env.DB, ownerKind, localDate)) return;
+  if (!(await claimPost(env.DB, ownerKind, localDate))) return;
   const { ok, messageId } = await sender(env, "sendMessage", {
     chat_id: owner,
     text,
@@ -236,9 +238,10 @@ async function postToOwner(
   });
   if (!ok) {
     await recordDeliveryFailure(env, "owner", `${kind} ${localDate}`);
+    await releaseClaim(env.DB, ownerKind, localDate);
     return;
   }
-  await markPosted(env.DB, ownerKind, localDate, messageId != null ? String(messageId) : null);
+  await confirmPosted(env.DB, ownerKind, localDate, messageId != null ? String(messageId) : null);
 }
 
 /**
@@ -268,14 +271,14 @@ export async function postGroupPicks(
     await setJobResult(env.DB, "post", `waiting: no COMPLETE cache for ${localDate}`);
     return "waiting"; // Generation (Actions) hasn't landed — never fabricate.
   }
-  // Receipt check IS the lock: posts.(kind,post_date) is a UNIQUE key, and
-  // markPosted below uses INSERT ... ON CONFLICT DO NOTHING, so a Cron that
-  // fires twice (or overlapping invocations) can send at most once — the
-  // loser's markPosted is a no-op, mirroring production's post_done/mark_post.
-  // The group leg's own receipt is checked independently further down, but
-  // rendering happens unconditionally here: even on a day the GROUP already
-  // received its card, the OWNER leg (postToOwner) may still need a retry.
-  const groupAlreadySent = await hasPosted(env.DB, kind, localDate);
+  // Claim BEFORE sending: two overlapping Cron fires calling claimPost for
+  // the same (kind, localDate) can never both win, since only one atomic
+  // INSERT/DO UPDATE can report a changed row for the unique key — this
+  // closes the read-then-send-then-write race a plain hasPosted() check
+  // (read) followed by markPosted() (write) left open. The loser treats the
+  // group as already being handled by the winner and only retries the
+  // (independently-gated) owner leg.
+  const claimedGroup = await claimPost(env.DB, kind, localDate);
   // The WHOLE ticket in one message, never paginated (predbot/bot/
   // broadcast.py picks_messages/summary_card) — renderView()'s paginated
   // /top /daily output is for interactive replies, not this automatic post.
@@ -290,7 +293,7 @@ export async function postGroupPicks(
     kind === "top" && isEmpty && env.TELEGRAM_BOT_USERNAME
       ? topEmptyKeyboard(env.TELEGRAM_BOT_USERNAME, allButtonModeFor("group", env.TELEGRAM_BOT_USERNAME))
       : undefined;
-  if (groupAlreadySent) {
+  if (!claimedGroup) {
     await postToOwner(env, kind, localDate, text, replyMarkup, sender);
     return "skipped";
   }
@@ -302,12 +305,13 @@ export async function postGroupPicks(
   });
   if (!ok) {
     await recordDeliveryFailure(env, "group", `${kind} ${localDate}`);
-    // The group itself never went out this attempt — retry it next sweep
-    // rather than racing ahead to the owner with a card the group hasn't
-    // seen yet (the ordering the requirement implies: group, then owner).
+    // Release the claim so the very next sweep retries immediately rather
+    // than waiting out CLAIM_POST_TIMEOUT_SECONDS; a genuine crash (rather
+    // than this clean failure return) is still covered by that timeout.
+    await releaseClaim(env.DB, kind, localDate);
     return "failed";
   }
-  await markPosted(env.DB, kind, localDate, messageId != null ? String(messageId) : null);
+  await confirmPosted(env.DB, kind, localDate, messageId != null ? String(messageId) : null);
   await setJobResult(env.DB, "post", `${kind} ${localDate}: posted message=${messageId ?? "?"}`);
   await postToOwner(env, kind, localDate, text, replyMarkup, sender);
   return "sent";
@@ -326,13 +330,13 @@ export async function postGroupRecap(
   const gate = parseHhmm(env.RECAP_TIME ?? "07:45");
   if (lagosMinutes(nowMs) < gate) return "waiting";
   const localDate = lagosDateString(nowMs);
-  const groupAlreadySent = await hasPosted(env.DB, "recap", localDate);
+  const claimedGroup = await claimPost(env.DB, "recap", localDate);
   // predbot/jobs/recap.py: tg.send(text) — no keyboard on the automatic
   // group recap, same as the picks cards above. renderGroupRecap (not the
   // generic renderView) titles this "📊 RESULTS", matching recap_message()
   // exactly — distinct from the interactive /yesterday button's own title.
   const { text } = await renderGroupRecap(env, localDate);
-  if (groupAlreadySent) {
+  if (!claimedGroup) {
     await postToOwner(env, "recap", localDate, text, undefined, sender);
     return "skipped";
   }
@@ -343,9 +347,10 @@ export async function postGroupRecap(
   });
   if (!ok) {
     await recordDeliveryFailure(env, "group", `recap ${localDate}`);
+    await releaseClaim(env.DB, "recap", localDate);
     return "failed";
   }
-  await markPosted(env.DB, "recap", localDate, messageId != null ? String(messageId) : null);
+  await confirmPosted(env.DB, "recap", localDate, messageId != null ? String(messageId) : null);
   await setJobResult(env.DB, "post", `recap ${localDate}: posted message=${messageId ?? "?"}`);
   await postToOwner(env, "recap", localDate, text, undefined, sender);
   return "sent";
@@ -464,21 +469,26 @@ export async function sweepMatchEvents(env: Env, nowMs = Date.now(), sender: typ
       continue;
     }
 
-    if (!groupDone) {
+    // claimPost (not the groupDone/ownerDone read above) is what actually
+    // prevents two overlapping sweeps from both sending the same leg — the
+    // read above is only a cheap early-exit before the ctx/decision work.
+    if (!groupDone && (await claimPost(env.DB, groupKind, evt.pick_date))) {
       const { ok, messageId } = await sender(env, "sendMessage", { chat_id: env.TELEGRAM_CHAT_ID, text: evt.text, parse_mode: "HTML" });
       if (ok) {
-        await markPosted(env.DB, groupKind, evt.pick_date, messageId != null ? String(messageId) : null);
+        await confirmPosted(env.DB, groupKind, evt.pick_date, messageId != null ? String(messageId) : null);
         delivered += 1;
       } else {
         await recordDeliveryFailure(env, "group", `match event ${evt.fixture_key}/${evt.event_type}`);
+        await releaseClaim(env.DB, groupKind, evt.pick_date);
       }
     }
-    if (!ownerDone) {
+    if (!ownerDone && (await claimPost(env.DB, ownerKind, evt.pick_date))) {
       const { ok, messageId } = await sender(env, "sendMessage", { chat_id: owner, text: evt.text, parse_mode: "HTML" });
       if (ok) {
-        await markPosted(env.DB, ownerKind, evt.pick_date, messageId != null ? String(messageId) : null);
+        await confirmPosted(env.DB, ownerKind, evt.pick_date, messageId != null ? String(messageId) : null);
         delivered += 1;
       } else {
+        await releaseClaim(env.DB, ownerKind, evt.pick_date);
         await recordDeliveryFailure(env, "owner", `match event ${evt.fixture_key}/${evt.event_type}`);
       }
     }

@@ -294,7 +294,17 @@ monitoring on the first automatic run:
 
 ## 11. Activation of automatic generation and Cron triggers
 
-Only after steps 7–10 are all confirmed working:
+**Already done as of the 2026-10-15 production activation** (see
+`workers/wrangler.toml`'s own header comment): `STAGE3_CRON_ENABLED = "1"`
+and the `[[triggers.crons]]` block are both live in `wrangler.toml`, and
+the Worker has been deployed with them. `STAGE7_LIVE_ENABLED` must still
+be set to exactly `"true"` as a GitHub repo variable (Settings > Secrets
+and variables > Actions > Variables) for `stage7-scheduled-production.yml`
+to run live generation daily at 09:00 Lagos — confirm that variable
+separately; it is not set by anything in this repo.
+
+The steps below are kept for reference (e.g. standing up a fresh
+environment or rolling back to no-Cron) rather than as a pending action:
 
 ```powershell
 # Worker-side scheduling: edit workers/wrangler.toml, add under [vars]:

@@ -492,8 +492,11 @@ def _send_all(db: Database, tg: Telegram, date_str: str,
 
 
 def _get_last_fixture_end_time(db: Database, pick_date: str) -> Optional[datetime]:
-    """Get the latest fixture end time for a date (latest kickoff + 4 hour buffer for results)."""
-    rows = db.picks_for_date(pick_date)
+    """Get the latest fixture end time for a date (latest kickoff + 4 hour buffer for results).
+
+    Published (Top/Daily) fixtures only: an All-only fixture nobody was ever shown must not
+    delay the recap that describes what was actually published that day."""
+    rows = db.picks_for_date(pick_date, published_only=True)
     if not rows:
         return None
     latest_kickoff = None

@@ -328,7 +328,11 @@ class OddsApiProvider(BaseProvider):
             chosen.extend(live[:self.min_keys_per_sport])
         chosen = chosen[:max_keys]
         rest = sorted((k for k in rows_by_key if k not in chosen), key=rank)
-        chosen.extend(rest[:max_keys - len(chosen)])
+        # max(0, ...): per-sport minimums can already fill (or exceed, before the
+        # slice above) max_keys, and list[:negative_n] in Python means "all but
+        # the last n" rather than "none" - without the floor this would silently
+        # extend `chosen` with extra keys instead of stopping at the cap.
+        chosen.extend(rest[:max(0, max_keys - len(chosen))])
         log.info("OddsAPI: %d in-season keys, %d with events in window, spending <=%d credits "
                  "(%d/key) on %d keys: %s",
                  len(in_season), len(rows_by_key), max_keys * per_key, per_key,

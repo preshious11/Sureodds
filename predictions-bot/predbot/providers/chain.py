@@ -131,7 +131,10 @@ class ProviderChain:
                 continue
             except Exception as e:  # noqa: BLE001
                 self.last_report[name] = {"status": "failed", "error_type": type(e).__name__}
-                log.warning("provider %s crashed (%s)", name, type(e).__name__)
+                # exc_info=True here (unlike the ProviderError branch above, which is an
+                # expected/handled failure mode): this is an unexpected bug in the provider
+                # or its parsing, and it must not look identical to a routine network failure.
+                log.warning("provider %s crashed (%s)", name, type(e).__name__, exc_info=True)
                 continue
             counts: Dict[str, int] = {}
             events = filter_allowed([e for e in events if start <= e.start < end], self.cfg, counts)
