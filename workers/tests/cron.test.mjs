@@ -20,7 +20,20 @@ import {
 const AFTER_GATE = Date.UTC(2026, 9, 11, 8, 35);
 const BEFORE_GATE = Date.UTC(2026, 9, 11, 7, 0);
 
-function cronDb({ cache = null, subs = [], delivered = new Set(), posted = new Set(), events = [] } = {}) {
+// Persisted state the dispatcher re-verifies per event. Default: a published
+// Top fixture that kicked off "now" and is still live (start) / is final and
+// settled (end), so tests that are not about eligibility stay eligible.
+function eligibleContext(evt) {
+  return {
+    kickoff_utc: new Date(Date.now() - 60_000).toISOString(),
+    live_status: evt.event_type === "end" ? "final" : "in_progress",
+    settlement_done: evt.event_type === "end" ? 1 : 0,
+    published_open: 1,
+    published_total: 1,
+  };
+}
+
+function cronDb({ cache = null, subs = [], delivered = new Set(), posted = new Set(), events = [], contextFor = null } = {}) {
   const jobs = {};
   const state = { cache };
   return {
@@ -42,6 +55,12 @@ function cronDb({ cache = null, subs = [], delivered = new Set(), posted = new S
           return this;
         },
         async first() {
+          if (this._sql.includes("AS kickoff_utc")) {
+            const [pickDate, fixtureKey] = this._args;
+            const evt = events.find((e) => e.pick_date === pickDate && e.fixture_key === fixtureKey) ?? {};
+            // Both event types of one fixture share state; "end" context only when the caller asks via contextFor.
+            return (contextFor ?? eligibleContext)(evt, pickDate, fixtureKey);
+          }
           if (this._sql.includes("FROM prediction_cache")) return state.cache;
           if (this._sql.includes("FROM job_state")) return null;
           if (this._sql.includes("FROM posts")) {
@@ -73,7 +92,8 @@ function cronDb({ cache = null, subs = [], delivered = new Set(), posted = new S
             const [kind, postDate] = this._args;
             posted.add(`${kind}|${postDate}`);
           }
-          if (this._sql.includes("UPDATE job_state")) {
+          if (this._sql.includes("INTO job_state")) {
+            jobs[this._args[0]] = this._args[1];
             jobs.last = this._args[1];
           }
           return { meta: { changes: 1 } };
@@ -227,7 +247,7 @@ describe("group posting (production model: single group, never per-subscriber)",
     // Matches predbot/jobs/recap.py's recap_message() title exactly
     // ("📊 RESULTS") — distinct from the interactive /yesterday button's
     // own "🗓 YESTERDAY" title (UI-parity audit, 2026-10-15).
-    assert.match(texts[0], /^<b>📊 RESULTS<\/b>/);
+    assert.match(texts[0], /^<b>📊 SUREODDS RESULTS<\/b>/);
     assert.doesNotMatch(texts[0], /YESTERDAY/);
     const outcome2 = await postGroupRecap(env, RECAP_AFTER, async () => {
       throw new Error("must not post recap twice");

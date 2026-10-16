@@ -160,7 +160,7 @@ def expire_pending(db: Database, now: datetime, counts: Optional[Dict[str, int]]
     if counts is None:
         counts = {"settled": 0, "pending": 0, "void": 0, "errors": 0}
     fixtures = set()
-    for r in db.pending_picks(before_utc=iso(now)):
+    for r in db.pending_picks(before_utc=iso(now), published_only=True):
         start = parse_iso(r["start_utc"])
         if start is None or now < settlement_deadline(start, r["sport"]):
             continue
@@ -475,7 +475,7 @@ def _run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]
         begin = getattr(provider, "begin_run", None)      # per-run response caches (credits / rate limits)
         if callable(begin):
             begin()
-    rows = db.pending_picks(before_utc=iso(now))
+    rows = db.pending_picks(before_utc=iso(now), published_only=True)
     needs = _needs_by_event(rows)
     _prefetch(resolver, rows, now, cache, needs, db=db)
 

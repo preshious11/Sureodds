@@ -70,7 +70,7 @@ function seedDay(sql, day, { dailyCount = 8 } = {}) {
   );
 }
 
-const AFTER_GATE = Date.UTC(2026, 9, 14, 8, 10); // 09:10 Lagos, past POST_TIME 09:00
+const AFTER_GATE = Date.UTC(2026, 9, 14, 8, 40); // 09:40 Lagos, past DELIVERY_TIME 09:30
 
 describe("automatic group post renders the whole ticket, never paginated", () => {
   it("a Daily ticket with more legs than PICKS_PER_PAGE (5) is posted whole, no 'Page 1 of N' footer", async () => {

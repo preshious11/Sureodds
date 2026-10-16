@@ -17,6 +17,9 @@ import {
   deliveriesDone,
   getDayCache,
   getFailedUpdates,
+  getMatchEventContext,
+  type MatchEventContext,
+  type MatchEventRow,
   getRecentMatchEvents,
   hasPosted,
   listActiveSubscribers,
@@ -184,6 +187,26 @@ function ownerChatId(env: Env): string | null {
 }
 
 /**
+ * Records a failed send for ONE destination, separately from every other
+ * destination: a structured log line (visible in `wrangler tail`) plus a
+ * durable job_state row per destination, so "group failed, owner fine" is
+ * distinguishable after the fact instead of one overwritten generic message.
+ */
+export async function recordDeliveryFailure(
+  env: Env,
+  destination: "group" | "owner",
+  what: string,
+): Promise<void> {
+  console.error(JSON.stringify({ event: "delivery_failed", destination, what }));
+  try {
+    await setJobResult(env.DB, `post_${destination}`, `FAILED ${what}`);
+  } catch {
+    // observability must never break delivery
+  }
+  await setJobResult(env.DB, "post", `${what}: ${destination} send failed, will retry next sweep`);
+}
+
+/**
  * Sends the already-rendered group card to the owner's private chat too
  * (production repair, 2026-10-15: subscriber-DM broadcasts are
  * discontinued — every automated community message goes to exactly the
@@ -212,7 +235,7 @@ async function postToOwner(
     ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
   });
   if (!ok) {
-    await setJobResult(env.DB, "post", `${kind} ${localDate}: owner send failed, will retry next sweep`);
+    await recordDeliveryFailure(env, "owner", `${kind} ${localDate}`);
     return;
   }
   await markPosted(env.DB, ownerKind, localDate, messageId != null ? String(messageId) : null);
@@ -234,7 +257,9 @@ export async function postGroupPicks(
   sender: typeof sendTelegram = sendTelegram,
 ): Promise<GroupPostOutcome> {
   if (!env.TELEGRAM_CHAT_ID) return "no-chat";
-  const gate = parseHhmm(env.POST_TIME ?? "09:00");
+  // Generation runs from POST_TIME (09:00); the published cards go out from
+  // DELIVERY_TIME (09:30). A late sweep still delivers (receipts dedupe).
+  const gate = parseHhmm(env.DELIVERY_TIME ?? "09:30");
   if (lagosMinutes(nowMs) < gate) return "waiting";
   const localDate = lagosDateString(nowMs);
   const timezone = env.TIMEZONE ?? "Africa/Lagos";
@@ -276,7 +301,7 @@ export async function postGroupPicks(
     ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
   });
   if (!ok) {
-    await setJobResult(env.DB, "post", `${kind} ${localDate}: send failed, will retry next sweep`);
+    await recordDeliveryFailure(env, "group", `${kind} ${localDate}`);
     // The group itself never went out this attempt — retry it next sweep
     // rather than racing ahead to the owner with a card the group hasn't
     // seen yet (the ordering the requirement implies: group, then owner).
@@ -317,7 +342,7 @@ export async function postGroupRecap(
     parse_mode: "HTML",
   });
   if (!ok) {
-    await setJobResult(env.DB, "post", `recap ${localDate}: send failed, will retry next sweep`);
+    await recordDeliveryFailure(env, "group", `recap ${localDate}`);
     return "failed";
   }
   await markPosted(env.DB, "recap", localDate, messageId != null ? String(messageId) : null);
@@ -341,31 +366,78 @@ export async function reportFailedUpdates(env: Env): Promise<number> {
 }
 
 // How far back to look for events each sweep. This bounds a table scan,
-// not correctness: a missed/delayed Cron fire (the whole point of a
-// sweep) still catches up as long as it resumes within this window.
-// Review (SureOdds verification pass, 2026-10-15): 48h was too tight —
-// any Cron outage longer than that would have permanently stranded an
-// event (match_events rows never expire, but getRecentMatchEvents would
-// stop returning them, so they'd never be re-attempted). match_events
-// stays small (one row per fixture per event type per day), so widening
-// this to 30 days is cheap and makes "permanently missed" require an
-// outage an order of magnitude longer than anything else in this system
-// tolerates — not eliminated in theory, but no longer the weak link.
+// not correctness. Eligibility/expiry (decideMatchEvent) decides whether a
+// row inside that window is still worth sending.
 const MATCH_EVENT_LOOKBACK_MS = 30 * 24 * 3_600_000;
+
+/** A kickoff alert is valid from kickoff through this many minutes afterward (inclusive), never earlier or later. */
+export const DEFAULT_MATCH_START_WINDOW_MIN = 10;
+export const DEFAULT_MATCH_END_WINDOW_HOURS = 24;
+const NOT_PLAYED_STATUSES = new Set(["postponed", "cancelled", "canceled", "abandoned", "suspended"]);
+
+function positiveNumber(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+export type MatchEventDecision =
+  | { action: "send" }
+  | { action: "wait"; reason: string } // not decidable yet; re-evaluated next sweep, never sent now
+  | { action: "expire"; reason: string }; // permanently not worth sending; recorded so it is never retried
+
+/**
+ * Re-validates ONE persisted match event at dispatch time (a pure function of
+ * persisted state, so it is re-run on every sweep and after any Worker
+ * restart). The event row itself is never trusted to still be current.
+ *
+ *   start: only for a published Top/Daily fixture that has not finished, was
+ *          not postponed/cancelled, and is inside the configurable
+ *          window [kickoff, kickoff + window] (MATCH_START_WINDOW_MIN, default 10: kickoff through kickoff+10 min).
+ *   end:   only for a published Top/Daily fixture whose completion AND
+ *          settlement are confirmed (live_fixture_state final + settled),
+ *          and still inside MATCH_END_WINDOW_HOURS of being recorded.
+ */
+export function decideMatchEvent(env: Env, evt: MatchEventRow, ctx: MatchEventContext, nowMs: number): MatchEventDecision {
+  if (ctx.published_total <= 0) {
+    // Not in a POSTED Top/Daily card (All-only, unpublished, or removed).
+    return { action: "expire", reason: "fixture is not in a published Top/Daily selection" };
+  }
+  const status = (ctx.live_status ?? "").toLowerCase();
+  if (evt.event_type === "start") {
+    if (status === "final" || NOT_PLAYED_STATUSES.has(status)) {
+      return { action: "expire", reason: `fixture is ${status}` };
+    }
+    if (ctx.published_open <= 0) return { action: "expire", reason: "no open published selection (all void)" };
+    const kickoff = ctx.kickoff_utc ? Date.parse(ctx.kickoff_utc) : NaN;
+    if (!Number.isFinite(kickoff)) return { action: "wait", reason: "kickoff time unknown" };
+    if (nowMs < kickoff) return { action: "wait", reason: "before kickoff" };
+    const windowMs = positiveNumber(env.MATCH_START_WINDOW_MIN, DEFAULT_MATCH_START_WINDOW_MIN) * 60_000;
+    if (nowMs > kickoff + windowMs) return { action: "expire", reason: "kickoff window elapsed" };
+    return { action: "send" };
+  }
+  // end
+  if (NOT_PLAYED_STATUSES.has(status)) return { action: "expire", reason: `fixture is ${status}, not completed` };
+  if (status !== "final") return { action: "wait", reason: "completion not confirmed" };
+  if (!ctx.settlement_done) return { action: "wait", reason: "settlement not confirmed" };
+  const created = Date.parse(evt.created_at ?? "");
+  const windowMs = positiveNumber(env.MATCH_END_WINDOW_HOURS, DEFAULT_MATCH_END_WINDOW_HOURS) * 3_600_000;
+  if (Number.isFinite(created) && nowMs > created + windowMs) return { action: "expire", reason: "result window elapsed" };
+  return { action: "send" };
+}
 
 /**
  * Delivers persisted match-start/match-end events (written by the
  * GitHub Actions live-monitoring workflow into match_events,
  * 0009_match_events.sql) to the group AND the owner, independently.
  *
- * This Worker sweep is the ONLY thing that ever sends these to Telegram —
- * GitHub Actions only detects/settles and writes the event row. Reuses the
- * exact same posts-table receipt pattern as postGroupPicks/postToOwner:
- * `evt_<fixture>_<type>` (group) and `evt_<fixture>_<type>_owner` (owner)
- * are independent (kind, post_date) keys on the same UNIQUE-constrained
- * posts table, so a fire that sends one but not the other retries only
- * the missing leg next sweep, and a duplicate fire for an already-sent
- * event is a safe no-op.
+ * This Worker sweep is the ONLY thing that ever sends these to Telegram.
+ * Before EVERY dispatch the event is re-validated against persisted
+ * publication/fixture state (decideMatchEvent): a stale, ineligible or
+ * out-of-window event is expired (receipt `evt_<fixture>_<type>_expired`),
+ * never sent late. Duplicate protection is the posts receipts:
+ * `evt_<fixture>_<type>` (group) and `..._owner` are independent
+ * (kind, post_date) keys, so a fire that sends one leg but not the other
+ * retries only the missing leg, and a repeat/restart is a safe no-op.
  */
 export async function sweepMatchEvents(env: Env, nowMs = Date.now(), sender: typeof sendTelegram = sendTelegram): Promise<number> {
   const since = new Date(nowMs - MATCH_EVENT_LOOKBACK_MS).toISOString();
@@ -373,27 +445,41 @@ export async function sweepMatchEvents(env: Env, nowMs = Date.now(), sender: typ
   const owner = ownerChatId(env);
   let delivered = 0;
   for (const evt of events) {
-    // Natural identity (no surrogate id — see 0009_match_events.sql): each
-    // (fixture, event_type) combination gets its own receipt pair.
     const eventKey = `evt_${evt.fixture_key}_${evt.event_type}`;
     const groupKind = eventKey;
-    if (env.TELEGRAM_CHAT_ID && !(await hasPosted(env.DB, groupKind, evt.pick_date))) {
+    const ownerKind = `${eventKey}_owner`;
+    const expiredKind = `${eventKey}_expired`;
+    const groupDone = !env.TELEGRAM_CHAT_ID || (await hasPosted(env.DB, groupKind, evt.pick_date));
+    const ownerDone = !owner || (await hasPosted(env.DB, ownerKind, evt.pick_date));
+    if (groupDone && ownerDone) continue;
+    if (await hasPosted(env.DB, expiredKind, evt.pick_date)) continue;
+
+    const ctx = await getMatchEventContext(env.DB, evt.pick_date, evt.fixture_key);
+    const decision = decideMatchEvent(env, evt, ctx, nowMs);
+    if (decision.action === "wait") continue;
+    if (decision.action === "expire") {
+      await markPosted(env.DB, expiredKind, evt.pick_date, null);
+      console.warn(JSON.stringify({ event: "match_event_expired", fixture: evt.fixture_key, type: evt.event_type, reason: decision.reason }));
+      await setJobResult(env.DB, "match_events", `expired ${evt.fixture_key}/${evt.event_type}: ${decision.reason}`);
+      continue;
+    }
+
+    if (!groupDone) {
       const { ok, messageId } = await sender(env, "sendMessage", { chat_id: env.TELEGRAM_CHAT_ID, text: evt.text, parse_mode: "HTML" });
       if (ok) {
         await markPosted(env.DB, groupKind, evt.pick_date, messageId != null ? String(messageId) : null);
         delivered += 1;
       } else {
-        await setJobResult(env.DB, "post", `match event ${evt.fixture_key}/${evt.event_type}: group send failed, will retry`);
+        await recordDeliveryFailure(env, "group", `match event ${evt.fixture_key}/${evt.event_type}`);
       }
     }
-    const ownerKind = `${eventKey}_owner`;
-    if (owner && !(await hasPosted(env.DB, ownerKind, evt.pick_date))) {
+    if (!ownerDone) {
       const { ok, messageId } = await sender(env, "sendMessage", { chat_id: owner, text: evt.text, parse_mode: "HTML" });
       if (ok) {
         await markPosted(env.DB, ownerKind, evt.pick_date, messageId != null ? String(messageId) : null);
         delivered += 1;
       } else {
-        await setJobResult(env.DB, "post", `match event ${evt.fixture_key}/${evt.event_type}: owner send failed, will retry`);
+        await recordDeliveryFailure(env, "owner", `match event ${evt.fixture_key}/${evt.event_type}`);
       }
     }
   }

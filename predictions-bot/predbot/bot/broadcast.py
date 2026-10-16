@@ -200,7 +200,8 @@ def deliver_owner_live(db: Database, tg: Telegram, cfg, pick_date: str, fixture_
 
 
 def deliver_match_event(db: Database, sink, pick_date: str, fixture_key: str,
-                        rows, result, reference=None, ended: bool = False) -> bool:
+                        rows, result, reference=None, ended: bool = False, now=None,
+                        start_window_min: int = 10) -> bool:
     """D1-event-sink mode (SureOdds Cloudflare migration, 2026-10-15):
     GitHub Actions never sends Telegram messages directly. Instead of
     calling deliver_live/deliver_community_live/deliver_owner_live, this
@@ -219,8 +220,19 @@ def deliver_match_event(db: Database, sink, pick_date: str, fixture_key: str,
     from predbot.bot.format import live_match_message
     from predbot.jobs.live_results import orient_result
 
+    # Community notifications cover PUBLISHED selections only (Top / Daily). A fixture's All-only predictions are
+    # settled and shown through /all, but never announced or listed in a match alert.
+    rows = [r for r in rows if r.get("tier") in ("top", "daily")]
     if not rows:
         return True
+    if not ended and now is not None:
+        # A kickoff alert is only useful around kickoff. A late first sighting (delayed poll, outage) is dropped
+        # rather than recorded, so it can never reach Telegram after the match is well under way or over.
+        start = parse_iso(rows[0]["start_utc"])
+        if start is not None and now - start > timedelta(minutes=start_window_min):
+            log.info("live: kickoff alert outside its %d min window; not recorded | fixture=%s",
+                     start_window_min, fixture_key)
+            return True
     # Same per-status idempotency as every other delivery kind here (a
     # repeated "in_progress" poll must record the 'start' event at most
     # once) — there's no per-chat destination in sink mode, so "d1" stands

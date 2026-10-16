@@ -9,6 +9,7 @@ import {
   getDayCache,
   getFirstPickDate,
   getItemizedStatsRowsForDate,
+  getRecapStatuses,
   getStatsRowsForDate,
   getStatsRowsForDateByCollection,
   getStatsRowsForRange,
@@ -33,6 +34,7 @@ import {
   ZONE_LABEL,
   OUTCOME_MARK,
   bySportLines,
+  compactRecapText,
   computeStatsBlock,
   dayLabel,
   escHtml,
@@ -401,7 +403,14 @@ async function renderStatsLike(
  * reuse the interactive view's title verbatim.
  */
 export async function renderGroupRecap(env: Env, localDate: string): Promise<{ text: string }> {
-  return renderStatsLike(env, "📊 RESULTS", localDate, "yesterday");
+  // Compact marks-only recap of YESTERDAY's published Top and Daily picks.
+  // Membership-scoped queries: an All-only prediction can never appear.
+  const yesterday = shiftDate(localDate, -1);
+  const [top, daily] = await Promise.all([
+    getRecapStatuses(env.DB, yesterday, "top"),
+    getRecapStatuses(env.DB, yesterday, "daily"),
+  ]);
+  return { text: compactRecapText(top, daily) ?? `<b>📊 SUREODDS RESULTS</b>\n\n${NO_RESULTS_YET}` };
 }
 
 export async function renderView(

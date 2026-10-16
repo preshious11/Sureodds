@@ -129,9 +129,10 @@ def test_recap_job_renders_the_new_card(db, capsys):
 
     text = recap.run(db, Config(timezone="UTC"), None, dry_run=True)
 
-    assert text.startswith("📊 RESULTS · ")
-    assert "⚽ Football 1/1" in text
-    assert "🏆 Best:" in text
+    # The recap is marks-only: no teams, scores, markets or odds.
+    assert text.startswith("📊 SUREODDS RESULTS")
+    assert "⚽ DAILY PICKS" in text and "✅" in text and "1 Win | 0 Losses" in text
+    assert "Geylang" not in text and "@1.44" not in text
     assert text in capsys.readouterr().out
 
 

@@ -15,6 +15,10 @@ export interface Env {
   POST_TIME?: string;
   DELIVERY_TIME?: string;
   RECAP_TIME?: string;
+  /** Minutes after kickoff during which a match-start alert may still be sent (default 10). */
+  MATCH_START_WINDOW_MIN?: string;
+  /** Hours after the result was recorded during which a match-end alert may still be sent (default 24). */
+  MATCH_END_WINDOW_HOURS?: string;
 }
 
 /// Two-phase update claim (Stage 2 reliability).
@@ -356,6 +360,28 @@ export async function getItemizedStatsRowsForDate(db: D1Database, pickDate: stri
   return results ?? [];
 }
 
+/**
+ * Settlement statuses of ONE published collection for a day, in rank order —
+ * backs the compact results recap. Membership-scoped, so an All-only
+ * prediction can never appear.
+ */
+export async function getRecapStatuses(
+  db: D1Database,
+  pickDate: string,
+  collection: "top" | "daily",
+): Promise<string[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT p.status AS status FROM picks p
+       JOIN prediction_memberships m ON m.prediction_id = p.id
+       WHERE p.pick_date = ?1 AND m.collection = ?2
+       ORDER BY m.rank ASC, p.start_utc ASC, p.id ASC`,
+    )
+    .bind(pickDate, collection)
+    .all<{ status: string }>();
+  return (results ?? []).map((r) => r.status);
+}
+
 /** Same Top/Daily-only scoping, restricted to ONE collection — backs /stats_top, /stats_daily. */
 export async function getStatsRowsForDateByCollection(
   db: D1Database,
@@ -694,9 +720,15 @@ export async function setJobResult(
   name: string,
   result: string,
 ): Promise<void> {
+  // Upsert: an UPDATE-only write silently did nothing for any job name the
+  // migration did not seed (the Worker's "post" job was never seeded), so
+  // every posting failure/wait/success record was being dropped.
   await db
     .prepare(
-      "UPDATE job_state SET last_result = ?2, last_run_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name = ?1",
+      `INSERT INTO job_state (name, last_result, last_run_at, updated_at)
+       VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+       ON CONFLICT(name) DO UPDATE SET last_result = excluded.last_result,
+         last_run_at = excluded.last_run_at, updated_at = excluded.updated_at`,
     )
     .bind(name, result.slice(0, 500))
     .run();
@@ -770,4 +802,53 @@ export async function getRecentMatchEvents(db: D1Database, sinceIso: string, lim
     .bind(sinceIso, limit)
     .all<MatchEventRow>();
   return results ?? [];
+}
+
+
+/**
+ * Everything the dispatcher must re-verify for ONE persisted match event at
+ * the moment it is about to be sent. Reads only persisted state — never the
+ * candidate pool:
+ *   - kickoff_utc: the fixture's scheduled start (from its stored picks)
+ *   - live_status / settlement_done: the live monitor's durable fixture state
+ *   - published_open / published_total: predictions of this fixture that are
+ *     themselves members of Top/Daily AND whose day was officially published
+ *     (a posts receipt for the collection, or a COMPLETE prediction cache —
+ *     a failed Telegram send must not un-publish a day), excluding / including VOID legs
+ * A fixture only in All Predictions, or whose Top/Daily card was never
+ * posted, yields published_total = 0.
+ */
+export interface MatchEventContext {
+  kickoff_utc: string | null;
+  live_status: string | null;
+  settlement_done: number | null;
+  published_open: number;
+  published_total: number;
+}
+
+export async function getMatchEventContext(
+  db: D1Database,
+  pickDate: string,
+  fixtureKey: string,
+): Promise<MatchEventContext> {
+  const published = (extra: string) =>
+    `(SELECT COUNT(DISTINCT p.id) FROM picks p
+        JOIN prediction_memberships m ON m.prediction_id = p.id
+       WHERE p.pick_date = ?1 AND p.fixture_key = ?2 AND m.collection IN ('top', 'daily')
+         AND (EXISTS (SELECT 1 FROM posts po WHERE po.post_date = ?1 AND po.kind = m.collection)
+              OR EXISTS (SELECT 1 FROM prediction_cache c WHERE c.local_date = ?1 AND c.status = 'COMPLETE')) ${extra})`;
+  const row = await db
+    .prepare(
+      `SELECT
+         (SELECT MIN(start_utc) FROM picks WHERE pick_date = ?1 AND fixture_key = ?2) AS kickoff_utc,
+         (SELECT status FROM live_fixture_state WHERE pick_date = ?1 AND fixture_key = ?2) AS live_status,
+         (SELECT settlement_done FROM live_fixture_state WHERE pick_date = ?1 AND fixture_key = ?2) AS settlement_done,
+         ${published("AND p.status <> 'void'")} AS published_open,
+         ${published("")} AS published_total`,
+    )
+    .bind(pickDate, fixtureKey)
+    .first<MatchEventContext>();
+  return (
+    row ?? { kickoff_utc: null, live_status: null, settlement_done: null, published_open: 0, published_total: 0 }
+  );
 }

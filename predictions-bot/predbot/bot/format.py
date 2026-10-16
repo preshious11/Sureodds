@@ -506,6 +506,42 @@ def recap_message(s: Dict) -> str:
     return _results_card("📊 RESULTS", s, describes_yesterday=True)
 
 
+_COMPACT_MARK = {"won": "✅", "lost": "❌", "half_won": "✅½", "half_lost": "❌½", "push": "↩️", "void": "➖"}
+
+
+def _compact_section(title: str, statuses) -> List[str]:
+    def n(kind):
+        return sum(s == kind for s in statuses)
+
+    def plural(count, one, many):
+        return f"{count} {one if count == 1 else many}"
+
+    pending = sum(s not in _COMPACT_MARK for s in statuses)
+    parts = [plural(n("won"), "Win", "Wins"), plural(n("lost"), "Loss", "Losses")]
+    for kind, one, many in (("half_won", "Half Win", "Half Wins"), ("half_lost", "Half Loss", "Half Losses"),
+                            ("push", "Push", "Pushes")):
+        if n(kind):
+            parts.append(plural(n(kind), one, many))
+    if n("void"):
+        parts.append(f"{n('void')} Void")
+    if pending:
+        parts.append(f"{pending} Pending")
+    return [title, "", " ".join(_COMPACT_MARK.get(s, "⏳") for s in statuses), "", " | ".join(parts)]
+
+
+def compact_recap_message(top, daily) -> Optional[str]:
+    """Marks-only recap of PUBLISHED Top and Daily settlement statuses: no teams, scores, markets or odds. Half
+    results, pushes and voids keep their own labels and are never folded into full wins or losses."""
+    sections = []
+    if top:
+        sections.append(_compact_section("🏆 TOP PICKS", top))
+    if daily:
+        sections.append(_compact_section("⚽ DAILY PICKS", daily))
+    if not sections:
+        return None
+    return "\n".join(["📊 SUREODDS RESULTS"] + ["\n".join([""] + sec) for sec in sections])
+
+
 def stats_message(s: Dict) -> str:
     """The /stats card."""
     return _results_card("📊 STATS", s)

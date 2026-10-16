@@ -206,7 +206,8 @@ def _run(resolver, db, cfg, tg, now, sink=None):
         Calibrator(db, scope="settlement_v2").refit()
     # The SQL range is a broad candidate bound; each fixture uses its own sport cutoff below.
     lookback = max(DURATION_H.values()) + max(LIVE_GRACE_H.values())
-    rows = db.live_picks(iso(now - timedelta(hours=lookback)), iso(now))
+    # D1 path: only collections with a persisted publication receipt are tracked (selection alone is not publication).
+    rows = db.live_picks(iso(now - timedelta(hours=lookback)), iso(now), require_receipt=sink is not None)
     groups = defaultdict(list)
     for row in rows:
         groups[(row["pick_date"], row["fixture_key"])].append(row)
@@ -261,7 +262,8 @@ def _run(resolver, db, cfg, tg, now, sink=None):
                         # in for all three legacy destinations — the Worker
                         # owns group/owner delivery and its own receipts.
                         complete = community_complete = owner_complete = deliver_match_event(
-                            db, sink, pick_date, fixture_key, fresh, result, reference=picks[0], ended=True)
+                            db, sink, pick_date, fixture_key, fresh, result, reference=picks[0], ended=True,
+                            now=clock(), start_window_min=cfg.match_start_window_min)
                     else:
                         complete = True
                         if notify:
@@ -279,7 +281,8 @@ def _run(resolver, db, cfg, tg, now, sink=None):
                     db.complete_live_notifications(pick_date, fixture_key)
             elif result.status == "in_progress":
                 if sink is not None:
-                    deliver_match_event(db, sink, pick_date, fixture_key, picks, result, reference=picks[0])
+                    deliver_match_event(db, sink, pick_date, fixture_key, picks, result, reference=picks[0],
+                                        now=clock(), start_window_min=cfg.match_start_window_min)
                 else:
                     if notify:
                         deliver_live(db, tg, pick_date, fixture_key, picks, result)

@@ -781,28 +781,44 @@ class Database:
     def has_picks_for_date(self, pick_date: str) -> bool:
         return bool(self.query("SELECT 1 FROM picks WHERE pick_date=? LIMIT 1", (pick_date,)))
 
-    def pending_picks(self, before_utc: Optional[str] = None) -> List[sqlite3.Row]:
-        if before_utc:
-            return self.query("SELECT * FROM picks WHERE status='pending' AND start_utc<=? ORDER BY start_utc", (before_utc,))
-        return self.query("SELECT * FROM picks WHERE status='pending' ORDER BY start_utc")
+    #: A prediction is PUBLISHED when it belongs to the Top or Daily collection. All-only predictions are generated
+    #: and browsable (/all) but are never tracked, settled, announced or counted in results.
+    _PUBLISHED = ("EXISTS (SELECT 1 FROM prediction_memberships pm WHERE pm.prediction_id=picks.id "
+                  "AND pm.collection IN ('top','daily'))")
 
-    def live_picks(self, earliest: str, latest: str) -> List[Dict]:
+    def pending_picks(self, before_utc: Optional[str] = None, published_only: bool = False) -> List[sqlite3.Row]:
+        extra = f" AND {self._PUBLISHED}" if published_only else ""
+        if before_utc:
+            return self.query(f"SELECT * FROM picks WHERE status='pending' AND start_utc<=?{extra} ORDER BY start_utc", (before_utc,))
+        return self.query(f"SELECT * FROM picks WHERE status='pending'{extra} ORDER BY start_utc")
+
+    def live_picks(self, earliest: str, latest: str, require_receipt: bool = False) -> List[Dict]:
         """All predictions on due pending fixtures that reached Top or Daily, plus durable unfinished lifecycle work.
 
         Fixtures only in All Predictions are settled by the ordinary settlement job, not polled live.
+        Only predictions that are themselves Top/Daily members are returned (never an All-only sibling on the same
+        fixture). ``require_receipt`` (the D1 path) additionally demands official publication of the day: a ``posts``
+        receipt for the collection OR a COMPLETE prediction cache. Selection alone is not publication.
 
         Terminal delivery retries are not tied to pending picks or the stale watch
         window. Nonterminal watches expire with the ordinary settlement safety net.
         """
-        return self.picks_where("""
-            EXISTS (    -- live status is only worth provider calls for fixtures a subscriber was actually sent
-                SELECT 1 FROM prediction_memberships pm JOIN picks pp ON pp.id=pm.prediction_id
-                WHERE pp.pick_date=p.pick_date AND pp.fixture_key=p.fixture_key
-                AND pm.collection IN ('top','daily')
+        # Publication = the prediction itself is a Top/Daily member AND its day was officially published: the card
+        # was posted (a `posts` receipt) OR the day's cache is COMPLETE (what /top and /daily serve). A failed
+        # Telegram send must not permanently stop legitimate Top/Daily fixtures being tracked.
+        published = ("AND (EXISTS (SELECT 1 FROM posts po WHERE po.post_date=p.pick_date "
+                     "AND po.kind IN (pm.collection, 'picks_' || pm.collection)) "
+                     "OR EXISTS (SELECT 1 FROM prediction_cache pc WHERE pc.local_date=p.pick_date "
+                     "AND pc.status='COMPLETE'))") if require_receipt else ""
+        return self.picks_where(f"""
+            EXISTS (    -- this prediction itself is a published selection (never an All-only sibling)
+                SELECT 1 FROM prediction_memberships pm
+                WHERE pm.prediction_id=p.id AND pm.collection IN ('top','daily') {published}
             ) AND (EXISTS (
                 SELECT 1 FROM picks q WHERE q.pick_date=p.pick_date
                 AND q.fixture_key=p.fixture_key AND q.status='pending'
                 AND q.start_utc BETWEEN ? AND ?
+                AND EXISTS (SELECT 1 FROM prediction_memberships qm WHERE qm.prediction_id=q.id AND qm.collection IN ('top','daily'))
             ) OR EXISTS (
                 SELECT 1 FROM live_fixture_state s WHERE s.pick_date=p.pick_date
                 AND s.fixture_key=p.fixture_key AND s.notifications_done=0

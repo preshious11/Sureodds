@@ -8,12 +8,12 @@
 # is the only thing that ever delivers them, to the group and the owner
 # independently.
 #
-# SAFE BY DEFAULT, same pattern as stage7-scheduled-production.yml: a
-# schedule-triggered fire only PULLS and INSPECTS production D1
-# (dry_run=true) unless the repository variable STAGE8_LIVE_ENABLED is set
-# to exactly "true" — that is the single activation step; no workflow file
-# edit or redeploy is needed to go live, and this file does NOT set that
-# variable itself.
+# EXPLICIT AUTHORIZATION, LOUD FAILURE (same rule as
+# stage7-scheduled-production.yml). A scheduled fire writes to production D1
+# only when the repository variable STAGE8_LIVE_ENABLED is exactly "true".
+# "false" = deliberately paused (read-only inspection plus a warning);
+# unset/invalid = the run FAILS so the misconfiguration is visible. Manual
+# dispatch is dry-run unless the variable is "true" AND dry_run=false.
 name: stage8-live-monitor-production
 
 on:
@@ -62,12 +62,21 @@ jobs:
       - name: Resolve dry-run mode
         id: mode
         run: |
+          set -euo pipefail
+          v="${STAGE8_LIVE_ENABLED:-}"
+          live=false
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            live="${{ vars.STAGE8_LIVE_ENABLED == 'true' }}"
-          else
-            live="${{ vars.STAGE8_LIVE_ENABLED == 'true' && inputs.dry_run == false }}"
+            case "$v" in
+              true) live=true ;;
+              false) echo "::warning::STAGE8_LIVE_ENABLED=false - live monitoring/settlement is PAUSED (read-only run)." ;;
+              *) echo "::error::STAGE8_LIVE_ENABLED is '${v}' (must be exactly 'true' or 'false'). Live monitoring did NOT run." >&2; exit 1 ;;
+            esac
+          elif [ "$v" = "true" ] && [ "${{ inputs.dry_run }}" = "false" ]; then
+            live=true
           fi
           echo "dry_run=$([ "$live" = "true" ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
+        env:
+          STAGE8_LIVE_ENABLED: ${{ vars.STAGE8_LIVE_ENABLED }}
       - name: Live-run secrets check (skipped in dry-run)
         if: steps.mode.outputs.dry_run == 'false'
         run: |

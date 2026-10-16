@@ -5,7 +5,7 @@ import logging
 from datetime import timedelta
 from typing import Optional
 
-from predbot.bot.format import recap_message
+from predbot.bot.format import compact_recap_message
 from predbot.bot.telegram import Telegram
 from predbot.config import Config
 from predbot.jobs import stats as stats_mod
@@ -28,7 +28,11 @@ def run(db: Database, cfg: Config, tg: Optional[Telegram], force: bool = False, 
     if not rows:
         log.info("no picks for %s, skipping recap", y_str)
         return None
-    text = recap_message(stats_mod.compute(db, local))
+    statuses = {c: [r["status"] for r in sorted(db.collection_predictions(c, y_str), key=lambda r: r["collection_rank"] or 0)]
+                for c in ("top", "daily")}
+    text = compact_recap_message(statuses["top"], statuses["daily"])
+    if text is None:
+        return None
     if dry_run:
         print(text)
         return text

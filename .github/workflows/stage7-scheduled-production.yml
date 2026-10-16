@@ -1,17 +1,21 @@
-# Automatic daily PRODUCTION generation. SAFE BY DEFAULT, same pattern as
-# stage6-scheduled-staging.yml: a schedule-triggered fire always calls into
-# stage5-acceptance-production.yml with operation=fixture-replay,
-# dry_run=true (offline planning only — zero provider calls, zero D1
-# writes) UNLESS the repository variable STAGE7_LIVE_ENABLED is set to
-# exactly "true". That is the single activation step; no workflow file
-# edit or redeploy is needed to go live, and this change does NOT set
-# that variable — the production schedule stays disabled until you do.
+# Automatic daily PRODUCTION generation (09:00 Africa/Lagos).
 #
-# Even once live, this still only touches production D1 via
-# stage5-acceptance-production.yml's own "Production target guard" (which
-# refuses to run if wrangler.toml still has the placeholder database_id —
-# i.e. before workers/CUTOVER.md step 2 has been done for real), and never
-# posts to Telegram (allow_telegram_posts stays false here).
+# EXPLICIT AUTHORIZATION, LOUD FAILURE. Live production execution requires the
+# repository variable STAGE7_LIVE_ENABLED to be exactly "true". On a SCHEDULED
+# fire:
+#   "true"            -> live generation
+#   "false"           -> deliberately paused: generation is SKIPPED with a
+#                        warning annotation (never an offline replay, never
+#                        reported as a successful generation)
+#   unset / anything  -> this workflow FAILS (red) so the missing or invalid
+#   else                 configuration is noticed, and nothing runs
+# A scheduled fire can therefore never "succeed" by quietly replaying
+# fixtures, and missing configuration can never authorize a live run.
+# MANUAL dispatch (workflow_dispatch) is a wiring smoke test: it stays an
+# offline, zero-write fixture replay unless the variable is exactly "true".
+#
+# Telegram is never touched here (allow_telegram_posts stays false): the
+# Cloudflare Worker cron posts the stored Top/Daily cards from 09:30.
 name: stage7-scheduled-production
 
 on:
@@ -20,12 +24,35 @@ on:
   workflow_dispatch: {} # manual smoke-test of the scheduling wiring itself; same safe-by-default rule applies
 
 jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.decide.outputs.mode }}
+    steps:
+      - id: decide
+        run: |
+          set -euo pipefail
+          v="${STAGE7_LIVE_ENABLED:-}"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            case "$v" in
+              true) mode=live ;;
+              false) mode=paused; echo "::warning::STAGE7_LIVE_ENABLED=false - daily generation is PAUSED; nothing will be generated or posted today." ;;
+              *) echo "::error::STAGE7_LIVE_ENABLED is '${v}' (must be exactly 'true' or 'false'). Daily generation did NOT run." >&2; exit 1 ;;
+            esac
+          else
+            if [ "$v" = "true" ]; then mode=live; else mode=offline; fi
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+        env:
+          STAGE7_LIVE_ENABLED: ${{ vars.STAGE7_LIVE_ENABLED }}
   scheduled:
+    needs: guard
+    if: ${{ needs.guard.outputs.mode == 'live' || needs.guard.outputs.mode == 'offline' }}
     uses: ./.github/workflows/stage5-acceptance-production.yml
     with:
-      operation: ${{ vars.STAGE7_LIVE_ENABLED == 'true' && 'live-generate' || 'fixture-replay' }}
-      dry_run: ${{ vars.STAGE7_LIVE_ENABLED != 'true' }}
-      live_confirm: ${{ vars.STAGE7_LIVE_ENABLED == 'true' && 'RUN-LIVE' || '' }}
+      operation: ${{ needs.guard.outputs.mode == 'live' && 'live-generate' || 'fixture-replay' }}
+      dry_run: ${{ needs.guard.outputs.mode != 'live' }}
+      live_confirm: ${{ needs.guard.outputs.mode == 'live' && 'RUN-LIVE' || '' }}
       allow_telegram_posts: false
       write_budget: "5000"
     secrets: inherit

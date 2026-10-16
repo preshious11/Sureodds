@@ -403,6 +403,44 @@ export function lastDaysLines(seven: LastDaysBlock): string[] {
   return lines;
 }
 
+const RECAP_MARK: Record<string, string> = {
+  won: "✅",
+  lost: "❌",
+  half_won: "✅½",
+  half_lost: "❌½",
+  push: "↩️",
+  void: "➖",
+};
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * One compact recap section: a row of settlement marks and a count line —
+ * nothing about teams, scores, markets or odds. Half results, pushes and
+ * voids are counted under their OWN labels, never folded into full wins or
+ * losses; unsettled legs show ⏳ and a pending count.
+ */
+export function compactRecapSection(title: string, statuses: string[]): string[] {
+  const marks = statuses.map((s) => RECAP_MARK[s] ?? "⏳").join(" ");
+  const n = (k: string) => statuses.filter((s) => s === k).length;
+  const pending = statuses.filter((s) => !(s in RECAP_MARK)).length;
+  const parts = [plural(n("won"), "Win", "Wins"), plural(n("lost"), "Loss", "Losses")];
+  if (n("half_won")) parts.push(plural(n("half_won"), "Half Win", "Half Wins"));
+  if (n("half_lost")) parts.push(plural(n("half_lost"), "Half Loss", "Half Losses"));
+  if (n("push")) parts.push(plural(n("push"), "Push", "Pushes"));
+  if (n("void")) parts.push(`${n("void")} Void`);
+  if (pending) parts.push(`${pending} Pending`);
+  return [title, "", marks, "", parts.join(" | ")];
+}
+
+export function compactRecapText(top: string[], daily: string[]): string | null {
+  const sections: string[][] = [];
+  if (top.length) sections.push(compactRecapSection("🏆 TOP PICKS", top));
+  if (daily.length) sections.push(compactRecapSection("⚽ DAILY PICKS", daily));
+  if (!sections.length) return null;
+  return ["<b>📊 SUREODDS RESULTS</b>", ...sections.map((s) => ["", ...s].join("\n"))].join("\n");
+}
+
 export const NO_RESULTS_YET = "📊 No results yet — the first recap arrives the morning after the first slate.";
 
 /** "YYYY-MM-DD" shifted by `deltaDays` (UTC-safe; local date arithmetic only). */

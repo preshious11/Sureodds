@@ -380,6 +380,8 @@ class Config:
     # Schedule
     live_updates_enabled: bool = field(default_factory=lambda: _bool("LIVE_UPDATES_ENABLED", True))
     live_poll_minutes: int = field(default_factory=lambda: _int("LIVE_POLL_MINUTES", 5))
+    #: A kickoff alert is only worth sending shortly after kickoff; later than this it is dropped, never sent late.
+    match_start_window_min: int = field(default_factory=lambda: _int("MATCH_START_WINDOW_MIN", 10))
     timezone: str = field(default_factory=lambda: _env("TIMEZONE", "Africa/Lagos"))
     # POST_TIME is in TIMEZONE; every subscriber receives the same scheduled instant.
     post_time: str = field(default_factory=lambda: _env("POST_TIME", "09:00"))

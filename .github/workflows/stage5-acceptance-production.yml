@@ -152,7 +152,7 @@ jobs:
           cd workers
           npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
             --config wrangler.toml --json \
-            --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until='2099-01-01T00:00:00Z', attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='generate' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1
+            --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until=strftime('%Y-%m-%dT%H:%M:%SZ','now','+90 minutes'), attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='generate' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1
           echo "acquired=true" >> "$GITHUB_OUTPUT"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
@@ -294,6 +294,21 @@ jobs:
           npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
             --config wrangler.toml --json \
             --command "UPDATE job_state SET lease_owner=NULL, lease_until=NULL WHERE name='generate' AND lease_owner='gha-${{ github.run_id }}'" || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Record generation outcome in D1 (always; failures are never silent)
+        if: always() && steps.lease.outputs.acquired == 'true'
+        run: |
+          cd workers
+          if [ "${{ job.status }}" = "success" ]; then
+            msg="OK run ${{ github.run_id }} mode=${{ steps.mode.outputs.mode }} dry_run=${{ inputs.dry_run }}"
+          else
+            msg="FAILED run ${{ github.run_id }} status=${{ job.status }} - no predictions were published; see the Actions log"
+          fi
+          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE job_state SET last_result='$msg', last_run_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='generate'" || true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}

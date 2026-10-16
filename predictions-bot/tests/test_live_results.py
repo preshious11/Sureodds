@@ -501,6 +501,12 @@ def test_overlapping_poll_is_skipped(db, env):
 # is given a `sink` that records normalized events for the Cloudflare
 # Worker to deliver (group + owner, independently) later.
 
+def published(db, *kinds):
+    """The D1 path tracks only collections with a persisted publication receipt (the Worker's `posts` rows)."""
+    for kind in kinds or ("top", "daily"):
+        db.mark_post(kind, DAY, "1")
+
+
 def make_sink():
     events = []
 
@@ -518,6 +524,7 @@ def poll_sink(db, env, sink, now=NOW):
 def test_sink_mode_records_start_and_end_events_without_ever_sending_telegram(db, env):
     pick(db)
     received(db)
+    published(db)
     sink, events = make_sink()
     env[0].result = MatchResult("in_progress", source="espn")
     poll_sink(db, env, sink)
@@ -538,6 +545,7 @@ def test_sink_mode_records_start_and_end_events_without_ever_sending_telegram(db
 def test_sink_mode_repeated_polls_record_each_event_exactly_once(db, env):
     pick(db)
     received(db)
+    published(db)
     sink, events = make_sink()
     env[0].result = MatchResult("in_progress", source="espn")
     poll_sink(db, env, sink)
@@ -552,6 +560,7 @@ def test_sink_mode_repeated_polls_record_each_event_exactly_once(db, env):
 def test_sink_failure_leaves_the_fixture_retryable_without_resettling(db, env, monkeypatch):
     pick(db)
     received(db)
+    published(db)
     final(env)
     refit = Mock()
     monkeypatch.setattr(live_results.Calibrator, "refit", refit)
@@ -569,3 +578,91 @@ def test_sink_failure_leaves_the_fixture_retryable_without_resettling(db, env, m
     assert len(events) == 1 and events[0][2] == "end"
     assert db.live_state(DAY, db.picks_for_date(DAY)[0]["fixture_key"])["notifications_done"]
     refit.assert_called_once()  # not re-settled on the retry
+
+
+# --- Only published Top/Daily selections are tracked or announced ------------
+
+def test_sink_mode_announces_only_published_selections_of_a_published_fixture(db, env):
+    top_id = pick(db)
+    # A second, All-only prediction on the very same fixture must not appear in the alert.
+    all_only = pick(db, tier="all", market="total", selection="over", line=2.5, label="Over 2.5 Total Goals")
+    published(db, "top")
+    sink, events = make_sink()
+    env[0].result = MatchResult("in_progress", source="espn")
+    poll_sink(db, env, sink)
+    final(env)
+    poll_sink(db, env, sink)
+    assert [e[2] for e in events] == ["start", "end"]
+    for event in events:
+        assert "Chelsea to Win" in event[3]
+        assert "Over 2.5" not in event[3]
+    # The published selection settles; the All-only sibling is never settled (it stays out of results).
+    statuses = {r["id"]: r["status"] for r in db.picks_for_date(DAY)}
+    assert statuses[top_id] == "won" and statuses[all_only] == "pending"
+
+
+def test_sink_mode_ignores_fixtures_that_are_only_in_all_predictions(db, env):
+    pick(db, tier="all")
+    published(db)
+    sink, events = make_sink()
+    env[0].result = MatchResult("in_progress", source="espn")
+    poll_sink(db, env, sink)
+    final(env)
+    poll_sink(db, env, sink)
+    assert events == [] and env[0].calls == 0, "no events and no provider call for an All-only fixture"
+
+
+def test_sink_mode_ignores_a_selected_but_unpublished_fixture(db, env):
+    pick(db)  # Top membership exists, but no posts receipt: the card was never published
+    sink, events = make_sink()
+    env[0].result = MatchResult("in_progress", source="espn")
+    poll_sink(db, env, sink)
+    assert events == [] and env[0].calls == 0
+
+
+def test_sink_mode_tracks_top_only_daily_only_and_both_once(db, env):
+    pick(db, home="A", away="B", provider_event_id="e1")
+    pick(db, tier="daily", home="C", away="D", provider_event_id="e2")
+    pick(db, home="E", away="F", provider_event_id="e3")
+    pick(db, tier="daily", home="E", away="F", provider_event_id="e3", market="total", selection="over",
+         line=1.5, label="Over 1.5 Total Goals")
+    published(db)
+    sink, events = make_sink()
+    env[0].result = MatchResult("in_progress", source="espn")
+    poll_sink(db, env, sink)
+    starts = [e for e in events if e[2] == "start"]
+    assert len({e[1] for e in starts}) == 3 and len(starts) == 3, "one start event per published fixture"
+
+
+def test_sink_mode_drops_a_late_kickoff_alert_instead_of_recording_it(db, env):
+    pick(db)
+    published(db)
+    sink, events = make_sink()
+    env[0].result = MatchResult("in_progress", source="espn")
+    poll_sink(db, env, sink, now=NOW + timedelta(minutes=45))  # first sighting 50 min after kickoff
+    assert events == [], "a kickoff alert outside its window is never recorded"
+    final(env)
+    poll_sink(db, env, sink, now=NOW + timedelta(minutes=46))
+    assert [e[2] for e in events] == ["end"], "the end event is still recorded normally"
+
+
+def test_sink_mode_never_records_a_start_for_an_already_final_fixture(db, env):
+    pick(db)
+    published(db)
+    sink, events = make_sink()
+    final(env)
+    poll_sink(db, env, sink)
+    assert [e[2] for e in events] == ["end"]
+
+
+def test_end_event_reports_void_and_push_outcomes(db, env):
+    pid = pick(db)
+    published(db, "top")
+    db.execute("UPDATE picks SET status='push' WHERE id=?", (pid,))
+    text = live_match_message([dict(r) for r in db.picks_where("p.id=?", (pid,))],
+                              MatchResult("final", {"full": (1., 1.)}, source="espn"), ended=True)
+    assert "PUSH" in text
+    db.execute("UPDATE picks SET status='void' WHERE id=?", (pid,))
+    text = live_match_message([dict(r) for r in db.picks_where("p.id=?", (pid,))],
+                              MatchResult("final", {"full": (1., 1.)}, source="espn"), ended=True)
+    assert "VOID" in text

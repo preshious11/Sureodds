@@ -16,6 +16,10 @@ TIMEZONE = "Africa/Lagos"
 POST_TIME = "09:00"
 DELIVERY_TIME = "09:30"
 RECAP_TIME = "07:45"
+# Match-start alerts are only sent from kickoff through this many minutes after kickoff, then expire.
+MATCH_START_WINDOW_MIN = "10"
+# Match-end alerts expire this many hours after the result was recorded.
+MATCH_END_WINDOW_HOURS = "24"
 PAGE_SIZE = "5"
 # Public (not a secret): the Custom Picks deep-link button (empty-Top card)
 # is omitted entirely until this is set — never a dead link.
