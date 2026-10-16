@@ -41,7 +41,7 @@ PAGE_SIZE = "5"
 # no-op before and after the single real send.
 # [[triggers.crons]]
 # crons = [
-#   "*/5 8-11 * * *",  # post sweep: Top+Daily to the group, 09:00-12:55 Lagos
+#   "*/5 8-22 * * *",  # post sweep: Top+Daily to the group, 09:00-23:55 Lagos
 #   "*/5 6-7 * * *",   # recap sweep: yesterday's results to the group, 07:00-08:55 Lagos
 #   "*/5 * * * *",     # deliver: webhook-retry observability (no provider/Telegram calls)
 #   "0 10 * * *",      # watch: log MISSED generation if no COMPLETE cache by 11:00 Lagos

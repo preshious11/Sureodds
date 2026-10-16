@@ -33,7 +33,7 @@ STAGE3_CRON_ENABLED = "1"
 # exact string equality, never a substring, so these four strings must stay
 # byte-identical to those constants.
 [triggers]
-crons = ["*/5 8-11 * * *", "*/5 6-7 * * *", "*/5 * * * *", "0 10 * * *"]
+crons = ["*/5 8-22 * * *", "*/5 6-7 * * *", "*/5 * * * *", "0 10 * * *"]
 
 # Secrets (never in this file):
 #   wrangler secret put TELEGRAM_BOT_TOKEN

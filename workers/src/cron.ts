@@ -511,7 +511,7 @@ export async function detectMissedGeneration(env: Env, nowMs = Date.now()): Prom
 }
 
 // Cloudflare passes the exact matched Cron Trigger pattern as `event.cron` —
-// plain cron syntax (e.g. "*/5 8-11 * * *"), never a descriptive word. A
+// plain cron syntax (e.g. "*/5 8-22 * * *"), never a descriptive word. A
 // previous version of this dispatcher matched on `cron.includes("post")` /
 // `"recap"` / `"deliver"`, which can never match a real trigger string once
 // wrangler.staging.toml's `[[triggers.crons]]` is a list of several plain
@@ -530,7 +530,15 @@ export async function detectMissedGeneration(env: Env, nowMs = Date.now()): Prom
 // so repeated fires before readiness are safe no-ops ("waiting") and
 // repeated fires after the first successful send are safe no-ops
 // ("skipped") — across the whole window, each kind posts at most once.
-export const CRON_POST_SWEEP = "*/5 8-11 * * *"; // 08:00-11:55 UTC = 09:00-12:55 Lagos
+//
+// The window is wide (09:00-23:55 Lagos, not just 09:00-12:55): a manual
+// or retried GitHub Actions generation run has landed as late as 13:55
+// Lagos in production (2026-10-16), well past the old 12:55 cutoff, and
+// that cutoff meant NOTHING posted automatically that day even though
+// generation had actually succeeded - the only recovery was a manual
+// trigger. A same-day COMPLETE cache, however late, now always gets
+// picked up by the next 5-minute fire instead of requiring one.
+export const CRON_POST_SWEEP = "*/5 8-22 * * *"; // 08:00-22:55 UTC = 09:00-23:55 Lagos
 export const CRON_RECAP_SWEEP = "*/5 6-7 * * *"; // 06:00-07:55 UTC = 07:00-08:55 Lagos
 export const CRON_DELIVER_SWEEP = "*/5 * * * *"; // webhook-retry observability + match-event delivery, any time
 export const CRON_WATCH = "0 10 * * *"; // 11:00 Lagos: log a miss if generation never landed
