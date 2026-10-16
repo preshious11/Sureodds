@@ -51,6 +51,7 @@ import {
   splitCommand,
 } from "./telegram.ts";
 import { lagosDateString, lagosDayBounds, renderView } from "./views.ts";
+import { postGroupPicks } from "./cron.ts";
 
 const CUSTOM_PICKS_COOLDOWN_MS = 3_000;
 
@@ -516,6 +517,29 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       return;
     }
     await pinCommunityMenu(env, chatId);
+    return;
+  }
+
+  // /postpicks (admin-only, private chat only): manual stopgap for
+  // postGroupPicks's own Cron sweep (CRON_POST_SWEEP) — e.g. a slow/late
+  // GitHub Actions generation run, or a Cron Trigger that hasn't started
+  // firing yet after a schedule change (observed in production,
+  // 2026-10-16: a newly-registered trigger took well over an hour to start
+  // executing). Calls the exact same postGroupPicks used by the sweep, so
+  // it is just as idempotent: the claimPost-based receipt means running
+  // this command twice, or running it right before/after the sweep itself
+  // finally fires, can still send at most once per kind per day — never a
+  // duplicate group message.
+  if (cmd === "/postpicks" && args.length === 0) {
+    if (chatType !== "private") return; // admin command, private chat only — silently ignored elsewhere.
+    const adminIds = (env.TELEGRAM_ADMIN_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!adminIds.includes(String(from.id ?? ""))) {
+      await tgApi(env, "sendMessage", { chat_id: chatId, text: "Not allowed." });
+      return;
+    }
+    const top = await postGroupPicks(env, "top");
+    const daily = await postGroupPicks(env, "daily");
+    await tgApi(env, "sendMessage", { chat_id: chatId, text: `Top: ${top}\nDaily: ${daily}` });
     return;
   }
 
