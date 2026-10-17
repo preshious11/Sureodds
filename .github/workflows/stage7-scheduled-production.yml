@@ -62,5 +62,6 @@ jobs:
       dry_run: ${{ needs.guard.outputs.mode != 'live' }}
       live_confirm: ${{ needs.guard.outputs.mode == 'live' && 'RUN-LIVE' || '' }}
       allow_telegram_posts: false
-      write_budget: "5000"
+      # weekend slates insert ~6.5k+ rows; D1 free tier allows 100k writes/day
+      write_budget: "15000"
     secrets: inherit

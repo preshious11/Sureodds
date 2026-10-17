@@ -49,8 +49,9 @@ on:
         type: boolean
       write_budget:
         description: "Max D1 row writes for the plan"
+        # weekend slates insert ~6.5k+ rows; D1 free tier allows 100k writes/day
         required: false
-        default: "5000"
+        default: "15000"
   workflow_call:
     inputs:
       operation:
@@ -72,7 +73,8 @@ on:
       write_budget:
         required: false
         type: string
-        default: "5000"
+        # weekend slates insert ~6.5k+ rows; D1 free tier allows 100k writes/day
+        default: "15000"
 
 env:
   PRODUCTION_DB_NAME: sureodds_production
