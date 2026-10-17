@@ -51,6 +51,7 @@ import {
   splitCommand,
 } from "./telegram.ts";
 import { lagosDateString, lagosDayBounds, renderView } from "./views.ts";
+import { splitMessage } from "./format.ts";
 import { postGroupPicks } from "./cron.ts";
 
 const CUSTOM_PICKS_COOLDOWN_MS = 3_000;
@@ -68,6 +69,15 @@ const CUSTOM_PICKS_COOLDOWN_MS = 3_000;
 //     callback answer itself, touching no message at all.
 const ALL_GROUP_TEXT = "📚 All Predictions is a lot to show here — tap below to see it privately.";
 const ALL_GROUP_TEXT_NO_LINK = "📚 All Predictions is available in a private chat with me — open a DM and send /all.";
+
+/** The /command a group tap's no-username fallback alert points to, per view (bug 10). */
+const VIEW_FALLBACK_COMMAND: Record<string, string> = {
+  all: "/all",
+  top: "/top",
+  daily: "/daily",
+  stats: "/stats",
+  yesterday: "/yesterday",
+};
 const LOADING_TEXT = "⏳ Building your picks...";
 
 const WELCOME_COMMANDS =
@@ -83,6 +93,42 @@ export function welcomeMessage(firstName: string): string {
   return `👋 Hi, ${safe}\n\nUse the menu below or these commands:\n\n${WELCOME_COMMANDS}`;
 }
 
+// Splits an over-long sendMessage (Telegram's 4096-char limit) into several
+// calls, and redirects an over-long editMessageText into split sendMessage
+// calls, before handing off to tgApiOnce (below) for the actual HTTP work
+// and its failure semantics — see that function's own comment.
+export async function tgApi(env: Env, method: string, payload: Record<string, unknown>): Promise<Response> {
+  const text = payload.text;
+  if (method === "editMessageText" && typeof text === "string" && text.length > 4000) {
+    // Telegram's 4096-char limit can't be worked around by editing one message
+    // into several - fall back to sending new (possibly itself split, below)
+    // messages in the same chat rather than attempting an edit that would
+    // fail or silently truncate. message_id refers to the message being
+    // edited, which no longer applies once this becomes a fresh send.
+    const { message_id, ...rest } = payload;
+    return tgApi(env, "sendMessage", rest);
+  }
+  if (method === "sendMessage" && typeof text === "string") {
+    const chunks = splitMessage(text);
+    if (chunks.length > 1) {
+      // reply_markup refers to the whole message, which the reader only has
+      // once every chunk has arrived - attach it to the LAST chunk only. The
+      // returned Response is the FIRST chunk's, so a caller reading
+      // message_id (e.g. pinCommunityMenu) gets the same receipt-relevant id
+      // a single send always returned.
+      let first: Response | undefined;
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkPayload = { ...payload, text: chunks[i] };
+        if (i < chunks.length - 1) delete chunkPayload.reply_markup;
+        const res = await tgApiOnce(env, method, chunkPayload);
+        if (i === 0) first = res;
+      }
+      return first as Response;
+    }
+  }
+  return tgApiOnce(env, method, payload);
+}
+
 // Throws on a non-2xx response instead of returning it silently: previously
 // routeUpdate never inspected the Response it got back, so a failed
 // sendMessage/editMessageText (Telegram 5xx/4xx) was treated as success —
@@ -90,7 +136,7 @@ export function welcomeMessage(firstName: string): string {
 // messaged, and no retry ever happened. Throwing routes the failure through
 // handleUpdate's existing catch -> failUpdate path, so a transient Telegram
 // failure is retried exactly like a D1 failure already is.
-async function tgApi(env: Env, method: string, payload: Record<string, unknown>): Promise<Response> {
+async function tgApiOnce(env: Env, method: string, payload: Record<string, unknown>): Promise<Response> {
   const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -112,9 +158,26 @@ async function tgApi(env: Env, method: string, payload: Record<string, unknown>)
       // tgApi throws immediately after, so nothing downstream still needs
       // this response's body.)
     }
-    throw new Error(`telegram ${method} failed: ${res.status}${description ? ` (${description})` : ""}`);
+    throw new TelegramApiError(res.status, description, method);
   }
   return res;
+}
+
+/**
+ * Carries the HTTP status and Telegram's own description so a caller (just
+ * handleUpdate, today) can tell a PERMANENT failure (403 bot-blocked/kicked,
+ * 400 bad-request) from a RETRYABLE one (429 rate limit, 5xx outage)
+ * without re-parsing a formatted message string.
+ */
+export class TelegramApiError extends Error {
+  status: number;
+  description: string;
+  constructor(status: number, description: string, method: string) {
+    super(`telegram ${method} failed: ${status}${description ? ` (${description})` : ""}`);
+    this.name = "TelegramApiError";
+    this.status = status;
+    this.description = description;
+  }
 }
 
 /**
@@ -152,16 +215,19 @@ async function answerCallback(env: Env, id: string, text?: string): Promise<void
 /**
  * Opens a deep link directly from the callback answer, exactly like a URL
  * inline button would (Telegram Bot API: answerCallbackQuery's own `url`
- * field is documented for opening "t.me/your_bot?start=XXXX" links). This
- * is the fix for the regression in 4135f81: that commit instead called
- * editMessageText on the tapped group message to turn it into a redirect —
- * which silently replaced that message's ENTIRE keyboard (Top/Daily/Stats/
- * Yesterday sitting right alongside the All button), making the rest of
- * the group menu vanish. Answering the callback this way touches nothing
- * about the original message — same no-edit guarantee a plain URL button
- * (e.g. the Custom Picks button) already gives for free.
+ * field is documented for opening "t.me/your_bot?start=XXXX" links) —
+ * touches nothing about the original group message, unlike the regression
+ * in 4135f81 (editMessageText on the tapped message, which silently
+ * replaced its ENTIRE keyboard — Top/Daily/Stats/Yesterday sitting right
+ * alongside All — making the rest of the group menu vanish).
+ *
+ * Used for EVERY view a group keyboard button can point at (bug 10: a tap
+ * used to post a brand new full card into the group on every tap, for
+ * every view except "all", which this generalizes to). `fallbackCommand`
+ * (e.g. "/top") is shown only when no TELEGRAM_BOT_USERNAME is configured,
+ * so the alert is never a dead link.
  */
-async function answerCallbackWithDeepLink(env: Env, id: string, startParam: string): Promise<void> {
+async function answerCallbackWithDeepLink(env: Env, id: string, startParam: string, fallbackCommand: string): Promise<void> {
   if (!id) return;
   try {
     if (env.TELEGRAM_BOT_USERNAME) {
@@ -170,7 +236,11 @@ async function answerCallbackWithDeepLink(env: Env, id: string, startParam: stri
         url: `https://t.me/${env.TELEGRAM_BOT_USERNAME}?start=${startParam}`,
       });
     } else {
-      await tgApi(env, "answerCallbackQuery", { callback_query_id: id, text: ALL_GROUP_TEXT_NO_LINK, show_alert: true });
+      await tgApi(env, "answerCallbackQuery", {
+        callback_query_id: id,
+        text: `This is available in a private chat with me — open a DM and send ${fallbackCommand}.`,
+        show_alert: true,
+      });
     }
   } catch {
     // swallowed deliberately
@@ -301,6 +371,22 @@ async function clearLoadingIndicator(env: Env, chatId: string, messageId: number
   }
 }
 
+/** The chat an update is about, same resolution routeUpdate's callback branch already uses. */
+function extractChat(update: Record<string, unknown>): { chatId: string; chatType: string } {
+  const cb = update.callback_query as Record<string, unknown> | undefined;
+  const msg = (cb?.message ?? update.message) as Record<string, unknown> | undefined;
+  const chat = msg?.chat as Record<string, unknown> | undefined;
+  const chatId = String(chat?.id ?? (cb?.from as Record<string, unknown> | undefined)?.id ?? "");
+  const chatType = String(chat?.type ?? "private");
+  return { chatId, chatType };
+}
+
+// Telegram error descriptions that mean the user is permanently unreachable
+// (blocked the bot / deleted their account) rather than some transient chat
+// issue (e.g. "chat not found" from a deleted group, which is also a
+// permanent 400 but not a reason to deactivate a PRIVATE-chat subscriber).
+const USER_GONE = /blocked by the user|user is deactivated/i;
+
 export async function handleUpdate(env: Env, update: Record<string, unknown>): Promise<void> {
   const updateId = update.update_id as number;
   const claim = await tryClaimUpdate(env.DB, updateId);
@@ -315,6 +401,23 @@ export async function handleUpdate(env: Env, update: Record<string, unknown>): P
       // 500 and redelivers later, and deduplication is intact because no done
       // row exists. Zero additional writes are spent on the retry path.
       throw err;
+    }
+    // A PERMANENT Telegram failure (403 bot-blocked/kicked, or 400 other than
+    // "message is not modified", which editMessageTextIdempotent already
+    // handles before this ever sees it) will never succeed on retry — the
+    // thing that would fix it (the user unblocking the bot, the chat
+    // existing again) can't happen from here. Retrying it 10 times the way a
+    // transient 429/5xx is retried just wastes the whole retry budget on a
+    // guaranteed failure. Mark it done instead: there is nothing more this
+    // Worker can do for this update.
+    if (err instanceof TelegramApiError && (err.status === 403 || err.status === 400)) {
+      console.error(JSON.stringify({ event: "permanent_telegram_error", status: err.status, description: err.description }));
+      const { chatId, chatType } = extractChat(update);
+      if (chatType === "private" && chatId && USER_GONE.test(err.description)) {
+        await deactivateSubscriber(env.DB, chatId);
+      }
+      await completeUpdate(env.DB, updateId);
+      return;
     }
     // Persist the failure and leave the update retryable: a Telegram retry
     // or the Stage-3 sweeper reaps `failed` rows. The update is NOT lost.
@@ -345,35 +448,27 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
     }
     const chatType = String((msg?.chat as Record<string, unknown> | undefined)?.type ?? "private");
 
-    // All Predictions never renders in a group — whether this is a brand
-    // new tap (shouldn't happen once the keyboard itself is fixed, see
-    // telegram.ts allButtonModeFor) or a tap on an OLD group message from
-    // before this redirect existed, still carrying a live pg|all*|... button.
-    // Answered via the callback's own deep link (never an edit/send into the
-    // group): editing the tapped message would also overwrite every OTHER
-    // button sharing that same keyboard (Top/Daily/Stats/Yesterday), which
-    // is exactly the menu-disappearing regression this fixes — the rest of
-    // the group menu, on that message and everywhere else, is left intact.
-    if (chatType !== "private" && (parsed.view === "all" || parsed.view.startsWith("all_"))) {
-      await answerCallbackWithDeepLink(env, cbId, "all");
+    // No view ever renders or sends anything new into a GROUP on a button
+    // tap (bug 10: previously only "all" was redirected this way — top,
+    // daily, stats and yesterday each posted a brand-new full card into the
+    // group on EVERY tap). Every group tap is answered via the callback's
+    // own deep link instead, whether it's a brand new tap (shouldn't happen
+    // once the keyboard itself only ever offers deep-link buttons in a
+    // group, see telegram.ts allButtonModeFor) or a tap on an OLD group
+    // message from before this redirect existed. Editing/sending into the
+    // group would also disturb every OTHER button sharing that keyboard —
+    // the rest of the group menu, on that message and everywhere else, is
+    // left untouched either way.
+    if (chatType !== "private") {
+      const startParam = parsed.view.startsWith("all") ? "all" : parsed.view;
+      await answerCallbackWithDeepLink(env, cbId, startParam, VIEW_FALLBACK_COMMAND[startParam] ?? "/all");
       return;
     }
 
-    // Group taps on paged views are acknowledged without re-render spam;
-    // private chats get the page edit. (Closest clean alternative to
-    // per-member group welcomes, which read-only groups cannot do.)
+    // Private chats get the real page edit.
     const { text, replyMarkup } = await renderView(env, parsed.view, parsed.page, parsed.day, chatType);
     await answerCallback(env, cbId);
     if (!chatId) return;
-    if (chatType !== "private") {
-      await tgApi(env, "sendMessage", {
-        chat_id: chatId,
-        text,
-        parse_mode: "HTML",
-        reply_markup: replyMarkup,
-      });
-      return;
-    }
     const messageId = (msg as Record<string, unknown> | undefined)?.message_id;
     if (messageId) {
       await editMessageTextIdempotent(env, {
@@ -419,14 +514,20 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
     return;
   }
 
-  // /start all (the group-facing All Predictions deep link,
-  // https://t.me/<bot>?start=all) — Telegram always sends this as a plain
-  // text message in the private chat it just opened, whether or not the
-  // user had ever started the bot before (deep links don't need a prior
-  // /start). Shows today's All Predictions immediately, same pagination/
-  // formatting as typing /all directly.
-  if (cmd === "/start" && args.length === 1 && args[0] === "all") {
+  // /start <view> (any group deep-link button's target, e.g.
+  // https://t.me/<bot>?start=top — generalized, bug 10, from "all" being
+  // the only param this ever worked for) — Telegram always sends this as a
+  // plain text message in the private chat it just opened, whether or not
+  // the user had ever started the bot before (deep links don't need a
+  // prior /start). Shows that view immediately, same pagination/formatting
+  // as typing the matching command directly. An unrecognized param falls
+  // through to the plain /start welcome below.
+  if (cmd === "/start" && args.length === 1 && Object.hasOwn(VIEW_FALLBACK_COMMAND, args[0])) {
+    const view = args[0];
     if (chatType !== "private") {
+      // Only reachable if this was literally typed in a group (a deep link
+      // itself always opens a private chat) — "all"'s own redirect copy/
+      // button still applies well enough as a generic "open a DM" nudge.
       await sendGroupAllRedirect(env, chatId);
       return;
     }
@@ -435,7 +536,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       username: (from.username as string) ?? null,
       firstName: (from.first_name as string) ?? null,
     });
-    const { text: body, replyMarkup } = await renderView(env, "all", 0, null, chatType);
+    const { text: body, replyMarkup } = await renderView(env, view, 0, null, chatType);
     await tgApi(env, "sendMessage", { chat_id: chatId, text: body, parse_mode: "HTML", reply_markup: replyMarkup });
     return;
   }
@@ -543,19 +644,21 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
     return;
   }
 
-  // /stop unsubscribes from daily-pick delivery AND leaves any active
-  // Custom Picks session, with a confirmation — mirrors
-  // predbot/bot/commands.py handle("/stop") ("🛑 Unsubscribed — no more
-  // daily picks. Send /start whenever you want them back."). The subscriber
-  // row is deactivated in every chat type (group delivery is receipt-based,
-  // so deactivating a group chat_id is a harmless no-op there); the session
-  // leave is private-chat-only, where sessions exist.
+  // /stop leaves any active Custom Picks session and marks the subscriber
+  // inactive, with a confirmation. Bug 11: the old text ("no more daily
+  // picks") promised an automatic DM delivery that sweepDeliveries never
+  // actually sends in production (SUBSCRIBER_DELIVERY_ENABLED=false) — this
+  // no longer claims anything was ever being pushed, only that /stop was
+  // received. The subscriber row is deactivated in every chat type (group
+  // delivery is receipt-based, so deactivating a group chat_id is a
+  // harmless no-op there); the session leave is private-chat-only, where
+  // sessions exist.
   if (cmd === "/stop" && args.length === 0) {
     if (chatType === "private" && userId) await leaveCustomSession(env.DB, userId, chatId);
     await deactivateSubscriber(env.DB, chatId);
     await tgApi(env, "sendMessage", {
       chat_id: chatId,
-      text: "🛑 Unsubscribed — no more daily picks. Send /start whenever you want them back.",
+      text: "🛑 Stopped. Send /start any time to come back.",
     });
     return;
   }
@@ -787,9 +890,10 @@ export default {
     return Response.json({ ok: false, error: "not_found" }, { status: 404 });
   },
 
-  // Stage 3 Cron entrypoint: handleScheduled is master-switched OFF
-  // (STAGE3_CRON_ENABLED) and no triggers are attached yet, so this is a
-  // verified no-op until staging enables it explicitly.
+  // Cron entrypoint — live in production (wrangler.toml's STAGE3_CRON_ENABLED
+  // = "1" and its [[triggers]] crons). handleScheduled is a no-op only in an
+  // environment that omits STAGE3_CRON_ENABLED (e.g. a fresh D1 with no
+  // triggers configured yet).
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     const { handleScheduled } = await import("./cron.ts");
     ctx.waitUntil(handleScheduled(env, event.cron, Date.now()));

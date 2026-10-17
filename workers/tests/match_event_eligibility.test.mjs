@@ -442,7 +442,11 @@ describe("daily posting schedule and failure handling", () => {
     } finally {
       globalThis.fetch = realFetch;
     }
-    assert.equal(calls, 2);
+    // 2 for the match-event (group + owner), +1 for maybeDispatchLiveMonitor's
+    // missing-config alert to the owner (bug 6): the "in_progress" fixture's
+    // live_fixture_state row has notifications_done=0, which is real work,
+    // and this env has no GITHUB_REPO/TOKEN configured.
+    assert.equal(calls, 3);
   });
 });
 
@@ -484,10 +488,15 @@ describe("integration: publication -> kickoff -> settlement -> full time -> next
       // Live monitor (GitHub Actions) records start events for tracked fixtures only; All-only has none.
       for (const k of ["top-fx", "daily-fx", "both-fx"]) w.event(k, "start");
       sent.length = 0;
+      // live_fixture_state rows exist with notifications_done=0, so
+      // maybeDispatchLiveMonitor (bug 6) sees real work; this env has no
+      // GITHUB_REPO/TOKEN configured, so it DMs the owner once (the +1
+      // below) instead of dispatching — claimPost-guarded, so the second
+      // sweep's duplicate check still holds at the same total.
       await handleScheduled(env, CRON_DELIVER_SWEEP, KICKOFF + 2 * 60_000);
-      assert.equal(sent.length, 6, "3 fixtures x (group, owner)");
+      assert.equal(sent.length, 7, "3 fixtures x (group, owner), plus one missing-live-monitor-config alert");
       await handleScheduled(env, CRON_DELIVER_SWEEP, KICKOFF + 7 * 60_000);
-      assert.equal(sent.length, 6, "duplicate sweep sends nothing");
+      assert.equal(sent.length, 7, "duplicate sweep sends nothing more");
 
       // Full time: settlement lands, end events follow.
       w.sql.prepare("UPDATE live_fixture_state SET status='final', settlement_done=1").run();

@@ -3,6 +3,12 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { renderView } from "../src/views.ts";
 
+// The /all sport-menu fixtures below use 2026-10-14 as their stand-in
+// "today" — freeze the clock to match (renderView's bug-12 today-vs-past-day
+// distinction otherwise drifts out of sync with that fixture date as real
+// wall-clock time moves past it).
+Date.now = () => Date.UTC(2026, 9, 14, 8, 0); // 09:00 Lagos
+
 function stubDb(sql) {
   return {
     prepare(query) {
@@ -56,6 +62,39 @@ describe("/all sport menu and per-sport fixture pages", () => {
     for (const leak of [/quality floor/i, /threshold/i, /honest empty/i]) {
       assert.doesNotMatch(menu.text, leak, `must never leak: ${leak}`);
     }
+  });
+  // Bug 12: prediction_cache is retention-pruned after a few days, but the
+  // picks/prediction_memberships rows themselves never are. An OLD day's
+  // page-turn button must still work from those rows directly, without
+  // requiring a COMPLETE cache row for that day — only TODAY needs that.
+  it("a past day with NO cache row at all still renders real picks (cache retention-pruned, picks are not)", async () => {
+    const sql = baseSchema();
+    const pastDay = "2026-09-20"; // older than "today" (frozen to 2026-10-14 above); no setCache() call for it
+    sql.prepare(
+      "INSERT INTO picks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    ).run(1, pastDay, "top", 1, "football", "Premier League", "Arsenal", "Chelsea", "2026-09-20T18:00:00Z", "1x2", "home", "Arsenal to Win", 1.8, 0.6, "won", null);
+    sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)").run(1, "top", 1);
+    const page = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "top", 0, pastDay);
+    assert.match(page.text, /Arsenal/);
+    assert.doesNotMatch(page.text, /not been generated yet/);
+    assert.doesNotMatch(page.text, /No predictions were recorded/);
+  });
+  it("a past day with genuinely NO picks (and no cache row) gets the past-day message, not today's 'not generated yet'", async () => {
+    const sql = baseSchema();
+    const pastDay = "2026-09-20";
+    const page = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "top", 0, pastDay);
+    assert.match(page.text, /No predictions were recorded for this date\./);
+    assert.doesNotMatch(page.text, /not been generated yet/, "that wording is for TODAY only");
+  });
+  it("TODAY still requires the COMPLETE cache row, even if (hypothetically) picks already exist", async () => {
+    const sql = baseSchema();
+    const today = "2026-10-14"; // matches the frozen clock above - no setCache() call
+    sql.prepare(
+      "INSERT INTO picks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    ).run(1, today, "top", 1, "football", "Premier League", "Arsenal", "Chelsea", "2026-10-14T18:00:00Z", "1x2", "home", "Arsenal to Win", 1.8, 0.6, "pending", null);
+    sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)").run(1, "top", 1);
+    const page = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "top", 0, today);
+    assert.match(page.text, /not been generated yet/, "today's own readiness gate is unchanged by bug 12");
   });
   it("lists only sports with predictions, with correct counts and sport buttons", async () => {
     const sql = baseSchema();

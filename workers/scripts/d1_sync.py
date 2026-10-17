@@ -182,11 +182,26 @@ def write_policy(table, cols, con=None):
         return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
                 " ON CONFLICT(provider,bucket) DO UPDATE SET used=MAX(api_budget.used,excluded.used)")
     if table == 'live_fixture_state' and {'pick_date','fixture_key','status'} <= set(cols):
-        assignments = ', '.join(f'{c}=excluded.{c}' for c in cols if c not in {'pick_date','fixture_key'})
+        # settlement_done/notifications_done must update monotonically (MAX) even once
+        # status is already final: the old single row-level WHERE guarded the WHOLE
+        # UPDATE, so a later settlement/notification flip (exactly the transition the
+        # Match Ended alert waits on) could never reach D1 once a fixture went final.
+        # Every other column keeps the previous guard, now expressed per-column via
+        # CASE instead of one WHERE, since the monotonic columns must bypass it.
+        guard = ("live_fixture_state.status NOT IN ('final','postponed','cancelled') "
+                 "AND NOT (live_fixture_state.status='in_progress' AND excluded.status='scheduled')")
+        monotonic = {'settlement_done', 'notifications_done'}
+        parts = []
+        for c in cols:
+            if c in {'pick_date', 'fixture_key'}:
+                continue
+            if c in monotonic:
+                parts.append(f"{c}=MAX(live_fixture_state.{c}, excluded.{c})")
+            else:
+                parts.append(f"{c}=CASE WHEN {guard} THEN excluded.{c} ELSE live_fixture_state.{c} END")
+        assignments = ', '.join(parts)
         return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
-                f" ON CONFLICT(pick_date,fixture_key) DO UPDATE SET {assignments} "
-                "WHERE live_fixture_state.status NOT IN ('final','postponed','cancelled') "
-                "AND NOT (live_fixture_state.status='in_progress' AND excluded.status='scheduled')")
+                f" ON CONFLICT(pick_date,fixture_key) DO UPDATE SET {assignments}")
     return f"INSERT OR REPLACE INTO {table} ({columns}) VALUES ", ""
 
 

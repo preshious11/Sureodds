@@ -9,16 +9,19 @@
 # independently.
 #
 # EXPLICIT AUTHORIZATION, LOUD FAILURE (same rule as
-# stage7-scheduled-production.yml). A scheduled fire writes to production D1
+# stage7-scheduled-production.yml). A dispatched run writes to production D1
 # only when the repository variable STAGE8_LIVE_ENABLED is exactly "true".
 # "false" = deliberately paused (read-only inspection plus a warning);
-# unset/invalid = the run FAILS so the misconfiguration is visible. Manual
-# dispatch is dry-run unless the variable is "true" AND dry_run=false.
+# unset/invalid = the run FAILS so the misconfiguration is visible.
+#
+# A3: no schedule trigger — the Worker's own CRON_DELIVER_SWEEP
+# (maybeDispatchLiveMonitor, workers/src/cron.ts) dispatches this on demand
+# via workflow_dispatch instead, only when there is real live-tracking work
+# to do, instead of this running unconditionally every 5 minutes (288x/day)
+# even at night with nothing to track.
 name: stage8-live-monitor-production
 
 on:
-  schedule:
-    - cron: "*/5 * * * *" # matches predbot's own LIVE_POLL_MINUTES default
   workflow_dispatch:
     inputs:
       dry_run:
@@ -34,8 +37,13 @@ jobs:
   monitor:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Its own group, distinct from stage5/stage7/stage9's sureodds-production-sync:
+    # sharing one group meant GitHub cancelled whichever run was still pending
+    # when the other queued, so a live-monitor tick in progress at generation
+    # time would cancel that day's generation outright. The sync_write lease
+    # (A2, below) is what keeps D1 writes from overlapping instead.
     concurrency:
-      group: sureodds-production-sync
+      group: sureodds-production-livemon
       cancel-in-progress: false
     permissions:
       contents: read
@@ -47,6 +55,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: predictions-bot/requirements.txt
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -64,15 +74,16 @@ jobs:
         run: |
           set -euo pipefail
           v="${STAGE8_LIVE_ENABLED:-}"
+          # A3: the dry_run input can arrive as the string "false", "False"
+          # (workflow_dispatch's own boolean rendering) or, dispatched via
+          # the REST API (the Worker's own on-demand dispatch, B6), the JSON
+          # string "false" — normalize case so all of these compare the same.
+          dry_run_input="$(printf '%s' "${{ inputs.dry_run }}" | tr '[:upper:]' '[:lower:]')"
           live=false
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            case "$v" in
-              true) live=true ;;
-              false) echo "::warning::STAGE8_LIVE_ENABLED=false - live monitoring/settlement is PAUSED (read-only run)." ;;
-              *) echo "::error::STAGE8_LIVE_ENABLED is '${v}' (must be exactly 'true' or 'false'). Live monitoring did NOT run." >&2; exit 1 ;;
-            esac
-          elif [ "$v" = "true" ] && [ "${{ inputs.dry_run }}" = "false" ]; then
+          if [ "$v" = "true" ] && [ "$dry_run_input" = "false" ]; then
             live=true
+          elif [ "$v" != "true" ] && [ "$v" != "false" ] && [ -n "$v" ]; then
+            echo "::error::STAGE8_LIVE_ENABLED is '${v}' (must be exactly 'true' or 'false')." >&2; exit 1
           fi
           echo "dry_run=$([ "$live" = "true" ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
         env:
@@ -87,11 +98,41 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
-      - name: Pull production base (export + load)
+      - name: Yield to an in-progress generation lease (never race it)
+        id: yield
+        if: steps.mode.outputs.dry_run == 'false'
         run: |
           set -euo pipefail
           cd workers
-          npx -y wrangler@4 d1 export "$PRODUCTION_DB_NAME" --remote \
+          n=$(npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "SELECT COUNT(*) AS n FROM job_state WHERE name='generate' AND lease_owner IS NOT NULL AND lease_until > strftime('%Y-%m-%dT%H:%M:%SZ','now')" | python3 scripts/d1_json.py --get 0.results.0.n)
+          if [ "$n" != "0" ]; then
+            echo "::notice::generation lease is active - yielding this tick instead of racing it."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Pull production base (export + load)
+        if: steps.yield.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          cd workers
+          # A3: a reduced --table export was investigated (the live monitor's
+          # own direct reads/writes trace cleanly to picks, prediction_memberships,
+          # posts, prediction_cache, live_fixture_state, ratings, calibration,
+          # results_seen, match_events and job_state) — but build_providers()
+          # also constructs a Budget(db) for every configured provider
+          # (SportsGameOdds here), whose budget/usage tables (api_budget,
+          # sgo_usage) are touched only conditionally, depending on which
+          # live fixture resolves through which provider on a given run.
+          # That conditional path could not be exhaustively proven safe to
+          # exclude within this pass, so the export stays full rather than
+          # risk a "no such table" failure on a code path this didn't cover.
+          npx -y wrangler@4.151.1 d1 export "$PRODUCTION_DB_NAME" --remote \
             --config wrangler.toml --output /tmp/livemon_base.sql
           python3 - <<'EOF'
           import sqlite3, shutil
@@ -104,6 +145,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Run live monitoring + settlement (writes only to the scratch copy)
+        if: steps.yield.outputs.skip != 'true'
         run: |
           cd predictions-bot
           python3 -m predbot.jobs.live_monitor_d1 /tmp/livemon_scratch.db
@@ -112,9 +154,14 @@ jobs:
           # mechanism — never hardcoded here. No live sources configured
           # means this step is a safe no-op (zero provider calls).
           SPORTSGAMEODDS_KEY: ${{ secrets.SPORTSGAMEODDS_KEY }}
+          # Must match workers/wrangler.toml's MATCH_START_WINDOW_MIN: both sides
+          # gate the same kickoff window, and a mismatch would re-introduce the
+          # dropped-alert bug this value is here to fix.
+          MATCH_START_WINDOW_MIN: "30"
           FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       - name: Build scoped plan (settlement + live-tracking tables only)
+        if: steps.yield.outputs.skip != 'true'
         run: |
           set -euo pipefail
           python3 workers/scripts/d1_sync.py plan /tmp/livemon_base.db /tmp/livemon_scratch.db \
@@ -122,12 +169,46 @@ jobs:
             --tables match_events,picks,live_fixture_state,results_seen,ratings,calibration \
             --write-budget 2000
           cat /tmp/livemon_plan/plan.json
-      - name: Apply to production D1 (skipped in dry-run)
-        if: steps.mode.outputs.dry_run == 'false'
+      - name: Acquire the shared D1-write lease (or skip this tick)
+        id: lease
+        if: steps.mode.outputs.dry_run == 'false' && steps.yield.outputs.skip != 'true'
         run: |
           set -euo pipefail
           cd workers
-          epoch=$(npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+          # A2: serializes against generation AND settlement (stage9), not
+          # just 'generate' (the yield check above is specifically about not
+          # racing generation while it's mid-run; this lease is the general
+          # "nobody else is writing to D1 right now" gate shared by every
+          # writer). Unlike generation/settlement (which retry the acquire),
+          # the live monitor just skips this tick with a notice — the next
+          # dispatch (on-demand, from the Worker) tries again.
+          if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until=strftime('%Y-%m-%dT%H:%M:%SZ','now','+20 minutes'), attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='sync_write' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1; then
+            echo "acquired=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::sync_write lease is held by another writer - skipping this tick's apply; the next dispatch retries."
+            echo "acquired=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Apply to production D1 (skipped in dry-run)
+        if: steps.mode.outputs.dry_run == 'false' && steps.yield.outputs.skip != 'true' && steps.lease.outputs.acquired == 'true'
+        run: |
+          set -euo pipefail
+          cd workers
+          # Re-check the generation lease right before applying: the window
+          # between the earlier yield check and this write is long enough
+          # for a generation run to have started in between.
+          n=$(npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "SELECT COUNT(*) AS n FROM job_state WHERE name='generate' AND lease_owner IS NOT NULL AND lease_until > strftime('%Y-%m-%dT%H:%M:%SZ','now')" | python3 scripts/d1_json.py --get 0.results.0.n)
+          if [ "$n" != "0" ]; then
+            echo "::notice::generation lease became active since the yield check - skipping apply this tick; the next tick retries."
+            exit 0
+          fi
+          epoch=$(npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
             --config wrangler.toml --json \
             --command "SELECT epoch FROM sync_state WHERE id=1" | python3 scripts/d1_json.py --get 0.results.0.epoch)
           ok=0; total=0
@@ -135,7 +216,7 @@ jobs:
             [ -e "$f" ] || continue
             total=$((total + 1))
             base=$(basename "$f")
-            if npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
               --config wrangler.toml --json --file "$f" > "/tmp/livemon_applied_$base.json" 2>&1; then
               if python3 scripts/d1_json.py --assert-success "/tmp/livemon_applied_$base.json"; then
                 ok=$((ok + 1)); echo "OK $base"
@@ -153,9 +234,19 @@ jobs:
               --account-id "$CLOUDFLARE_ACCOUNT_ID" --database-id "$DB_ID" \
               --api-token "$CLOUDFLARE_API_TOKEN"
           fi
-          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
             --config wrangler.toml --json \
             --command "UPDATE sync_state SET epoch=epoch+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=1 AND epoch=$epoch" | python3 scripts/d1_json.py --expect-changes 1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Release the shared D1-write lease (always, if acquired)
+        if: always() && steps.lease.outputs.acquired == 'true'
+        run: |
+          cd workers
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE job_state SET lease_owner=NULL, lease_until=NULL WHERE name='sync_write' AND lease_owner='gha-${{ github.run_id }}'" || true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
@@ -166,3 +257,15 @@ jobs:
           name: stage8-live-monitor-plan
           if-no-files-found: warn
           path: /tmp/livemon_plan/plan.json
+      - name: Alert the owner on failure (A6; skip is not a failure)
+        if: failure()
+        run: |
+          set -euo pipefail
+          admin_id=$(grep '^TELEGRAM_ADMIN_IDS' workers/wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | cut -d',' -f1 | xargs)
+          [ -n "$admin_id" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || { echo "no admin id/token configured for the alert" >&2; exit 0; }
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode chat_id="$admin_id" \
+            --data-urlencode text="⚠️ stage8-live-monitor-production failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /dev/null || true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}

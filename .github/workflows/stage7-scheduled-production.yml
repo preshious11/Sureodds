@@ -20,7 +20,15 @@ name: stage7-scheduled-production
 
 on:
   schedule:
-    - cron: "0 8 * * *" # 08:00 UTC = 09:00 Africa/Lagos (no DST), matches POST_TIME
+    # 08:03 UTC = 09:03 Africa/Lagos (no DST): off GitHub's overloaded top-of-hour
+    # slot, where scheduled runs are commonly delayed or dropped.
+    - cron: "3 8 * * *"
+    # 08:45 UTC = 09:45 Africa/Lagos: backup fire. If 09:03 already landed a
+    # COMPLETE cache for today, this is a safe no-op (a non-forced live run is a
+    # cache-HIT with zero provider calls and zero new rows — see
+    # predbot/cache/fetcher.py _snapshot_locked). It only does real work when
+    # 09:03 didn't land.
+    - cron: "45 8 * * *"
   workflow_dispatch: {} # manual smoke-test of the scheduling wiring itself; same safe-by-default rule applies
 
 jobs:

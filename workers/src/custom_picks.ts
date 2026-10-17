@@ -1179,14 +1179,43 @@ export interface PoolDiagnostics {
   rejectedByReason: Record<string, number>;
 }
 
+type LoadedPool = { candidates: Candidate[]; diagnostics: PoolDiagnostics; poolStatus: string; poolGeneratedAt: string };
+
+// Per-isolate cache (bug 13): a Worker isolate can serve several Custom
+// Picks requests back to back, each previously re-running getCandidates'
+// full-table scan (every candidate row for the day) from scratch. Keyed by
+// (day, timezone, pool.generated_at) - the pool row itself is always read
+// fresh (cheap, one row) so a NEW generation run (a changed generated_at)
+// is never served stale candidates; only the expensive candidates read is
+// skipped on a hit. 60s TTL, not unbounded by generated_at alone, since a
+// candidate archive row could theoretically be corrected without the
+// pool's own generated_at changing.
+const POOL_CACHE_TTL_MS = 60_000;
+const poolCache = new Map<string, { value: LoadedPool; cachedAtMs: number }>();
+
+/**
+ * Test-only escape hatch: a real Worker isolate never needs this (the cache
+ * existing for its whole lifetime is the point), but a test process is one
+ * long-lived "isolate" across many independent test cases that reuse the
+ * same (day, timezone, generated_at) fixture values on purpose — without
+ * this, a later test would silently see an earlier test's cached candidates
+ * instead of its own freshly-seeded ones.
+ */
+export function __resetPoolCacheForTests(): void {
+  poolCache.clear();
+}
+
 async function loadPool(
   deps: CustomPicksDeps,
   day: string,
   zone: string,
   nowMs: number,
-): Promise<{ candidates: Candidate[]; diagnostics: PoolDiagnostics; poolStatus: string; poolGeneratedAt: string } | null> {
+): Promise<LoadedPool | null> {
   const pool = await deps.getPool(day, zone);
   if (!pool) return null;
+  const cacheKey = `${day}|${zone}|${pool.generated_at}`;
+  const cached = poolCache.get(cacheKey);
+  if (cached && nowMs - cached.cachedAtMs < POOL_CACHE_TTL_MS) return cached.value;
   const poolTimeMs = Date.parse(pool.generated_at);
   const rows = await deps.getCandidates(day, zone);
   const candidates: Candidate[] = [];
@@ -1220,7 +1249,16 @@ async function loadPool(
   const deduped = dropConflictingIdentities(candidates);
   const dropped = before - deduped.length;
   if (dropped) diagnostics.rejectedByReason["conflicting_identity"] = (diagnostics.rejectedByReason["conflicting_identity"] ?? 0) + dropped;
-  return { candidates: deduped, diagnostics, poolStatus: pool.status, poolGeneratedAt: pool.generated_at };
+  const result: LoadedPool = { candidates: deduped, diagnostics, poolStatus: pool.status, poolGeneratedAt: pool.generated_at };
+  // Bound the cache to live entries only — isolates are short-lived, but an
+  // isolate that happens to serve several different (day, timezone) combos
+  // (e.g. spanning a Lagos midnight rollover) must not accumulate entries
+  // forever within its own lifetime.
+  for (const [k, v] of poolCache) {
+    if (nowMs - v.cachedAtMs >= POOL_CACHE_TTL_MS) poolCache.delete(k);
+  }
+  poolCache.set(cacheKey, { value: result, cachedAtMs: nowMs });
+  return result;
 }
 
 export interface RespondResult {

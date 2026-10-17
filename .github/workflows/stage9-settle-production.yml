@@ -1,0 +1,251 @@
+# A5: scheduled full settlement for PRODUCTION, modelled on
+# stage8-live-monitor-production.yml's D1-scratch-copy pattern.
+#
+# Root cause this restores: the old (pre-Cloudflare) server ran settle.run
+# against ALL result providers (ESPN, football-data.org, EuroLeague — see
+# predbot/jobs/settle.py / predbot/providers/chain.py's ResultsResolver).
+# In production today, only stage8's live monitor settles, and only
+# fixtures inside its own live-tracking window — a fixture whose result
+# never got picked up there (a provider outage during the live window, a
+# fixture outside DURATION_H/LIVE_GRACE_H's cutoff, etc.) is left void or
+# pending forever, which silently breaks /stats, Elo and calibration
+# learning. This workflow re-runs the same settle.run every leftover
+# fixture gets, twice a day, independently of the live monitor.
+#
+# EXPLICIT AUTHORIZATION, LOUD FAILURE (same rule as stage7/stage8). A
+# scheduled fire writes to production D1 only when the repository variable
+# STAGE9_LIVE_ENABLED is exactly "true". "false" = deliberately paused
+# (skipped with a warning); unset/invalid = the run FAILS so the missing or
+# invalid configuration is noticed. Manual dispatch stays a dry-run unless
+# the variable is "true" AND dry_run=false.
+name: stage9-settle-production
+
+on:
+  schedule:
+    - cron: "30 5 * * *" # 05:30 UTC = 06:30 Africa/Lagos (no DST) - before the 07:45 recap
+    - cron: "30 22 * * *" # 22:30 UTC = 23:30 Africa/Lagos
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Plan only, no D1 writes (default true)"
+        required: false
+        default: true
+        type: boolean
+
+env:
+  PRODUCTION_DB_NAME: sureodds_production
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.decide.outputs.mode }}
+    steps:
+      - id: decide
+        run: |
+          set -euo pipefail
+          v="${STAGE9_LIVE_ENABLED:-}"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            case "$v" in
+              true) mode=live ;;
+              false) mode=paused; echo "::warning::STAGE9_LIVE_ENABLED=false - scheduled settlement is PAUSED." ;;
+              *) echo "::error::STAGE9_LIVE_ENABLED is '${v}' (must be exactly 'true' or 'false'). Scheduled settlement did NOT run." >&2; exit 1 ;;
+            esac
+          else
+            dry_run_input="$(printf '%s' "${{ inputs.dry_run }}" | tr '[:upper:]' '[:lower:]')"
+            if [ "$v" = "true" ] && [ "$dry_run_input" = "false" ]; then mode=live; else mode=dry; fi
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+        env:
+          STAGE9_LIVE_ENABLED: ${{ vars.STAGE9_LIVE_ENABLED }}
+  settle:
+    needs: guard
+    if: ${{ needs.guard.outputs.mode == 'live' || needs.guard.outputs.mode == 'dry' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: sureodds-production-sync
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install runtime dependency
+        run: pip install -r predictions-bot/requirements.txt
+      - name: Production target guard (never staging, never a placeholder id)
+        run: |
+          set -euo pipefail
+          grep -q 'database_name = "sureodds_production"' workers/wrangler.toml
+          grep -qv 'REPLACE_WITH_STAGING_D1_ID' workers/wrangler.toml || \
+            { echo "FAIL workers/wrangler.toml still has the placeholder database_id — run workers/CUTOVER.md step 2 first" >&2; exit 1; }
+          ! grep -q 'sureodds_staging' <(grep database_name workers/wrangler.toml)
+      - name: Live-run secrets check (skipped in dry-run)
+        if: needs.guard.outputs.mode == 'live'
+        run: |
+          set -euo pipefail
+          # SHARPAPI_KEY is unconditionally required by predbot.config.require_provider_keys
+          # even for a settle-only run (it is the one provider the engine refuses to start
+          # without) - settlement itself only actually calls ESPN/football-data/EuroLeague.
+          for v in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID SHARPAPI_KEY; do
+            if [ -z "${!v:-}" ]; then echo "missing secret: $v" >&2; exit 1; fi
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+          SHARPAPI_KEY: ${{ secrets.SHARPAPI_KEY }}
+      - name: Pull production base (export + load)
+        run: |
+          set -euo pipefail
+          cd workers
+          npx -y wrangler@4 d1 export "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --output /tmp/settle_base.sql
+          python3 - <<'EOF'
+          import sqlite3, shutil
+          con = sqlite3.connect("/tmp/settle_base.db")
+          con.executescript(open("/tmp/settle_base.sql", encoding="utf-8").read())
+          con.commit(); con.close()
+          shutil.copyfile("/tmp/settle_base.db", "/tmp/settle_scratch.db")
+          EOF
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Run settlement (writes only to the scratch copy)
+        run: |
+          cd predictions-bot
+          export PREDBOT_ALLOW_LIVE=1
+          export DB_PATH=/tmp/settle_scratch.db
+          python3 run_once.py settle --live --report /tmp/settle_report.json
+          cat /tmp/settle_report.json 2>/dev/null || true
+        env:
+          SHARPAPI_KEY: ${{ secrets.SHARPAPI_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          SPORTSGAMEODDS_KEY: ${{ secrets.SPORTSGAMEODDS_KEY }}
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
+          # No TELEGRAM_CHAT_ID / TELEGRAM_BOT_TOKEN: settle.run never sends
+          # Telegram messages (it only grades picks and updates ratings/
+          # calibration) - nothing here could post even if they were set.
+      - name: Build scoped plan (settlement tables only)
+        id: plan
+        run: |
+          set -euo pipefail
+          python3 workers/scripts/d1_sync.py plan /tmp/settle_base.db /tmp/settle_scratch.db \
+            --out /tmp/settle_plan \
+            --tables picks,live_fixture_state,results_seen,ratings,calibration \
+            --write-budget 2000
+          cat /tmp/settle_plan/plan.json
+      - name: Acquire the shared D1-write lease (retries, then fails — A2)
+        id: synclease
+        if: needs.guard.outputs.mode == 'live'
+        run: |
+          set -euo pipefail
+          cd workers
+          acquired=false
+          for i in $(seq 1 10); do
+            if npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+              --config wrangler.toml --json \
+              --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until=strftime('%Y-%m-%dT%H:%M:%SZ','now','+20 minutes'), attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='sync_write' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1; then
+              acquired=true; break
+            fi
+            echo "::notice::sync_write lease held by another writer (attempt $i/10) - retrying in 30s"
+            sleep 30
+          done
+          if [ "$acquired" != "true" ]; then
+            echo "::error::could not acquire the sync_write lease after 10 attempts (5 minutes) - another writer held it the whole time" >&2
+            exit 1
+          fi
+          echo "acquired=true" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Apply to production D1 (skipped in dry-run)
+        if: needs.guard.outputs.mode == 'live'
+        run: |
+          set -euo pipefail
+          cd workers
+          epoch=$(npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "SELECT epoch FROM sync_state WHERE id=1" | python3 scripts/d1_json.py --get 0.results.0.epoch)
+          ok=0; total=0
+          for f in /tmp/settle_plan/p0_*.sql /tmp/settle_plan/p1_*.sql; do
+            [ -e "$f" ] || continue
+            total=$((total + 1))
+            base=$(basename "$f")
+            if npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+              --config wrangler.toml --json --file "$f" > "/tmp/settle_applied_$base.json" 2>&1; then
+              if python3 scripts/d1_json.py --assert-success "/tmp/settle_applied_$base.json"; then
+                ok=$((ok + 1)); echo "OK $base"
+              else
+                echo "FAIL $base (D1 reported failure):"; tail -20 "/tmp/settle_applied_$base.json"; exit 1
+              fi
+            else
+              echo "FAIL $base (wrangler error):"; tail -20 "/tmp/settle_applied_$base.json"; exit 1
+            fi
+          done
+          echo "applied $ok/$total batch files"
+          if [ -d /tmp/settle_plan/rest ] && [ -n "$(ls /tmp/settle_plan/rest/*.jsonl 2>/dev/null)" ]; then
+            DB_ID=$(grep -A2 'database_name = "sureodds_production"' wrangler.toml | grep database_id | sed -E 's/.*"([^"]+)".*/\1/')
+            python3 scripts/d1_sync.py rest-apply /tmp/settle_plan/rest \
+              --account-id "$CLOUDFLARE_ACCOUNT_ID" --database-id "$DB_ID" \
+              --api-token "$CLOUDFLARE_API_TOKEN"
+          fi
+          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE sync_state SET epoch=epoch+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=1 AND epoch=$epoch" | python3 scripts/d1_json.py --expect-changes 1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Release the shared D1-write lease (always, if acquired — A2)
+        if: always() && steps.synclease.outputs.acquired == 'true'
+        run: |
+          cd workers
+          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE job_state SET lease_owner=NULL, lease_until=NULL WHERE name='sync_write' AND lease_owner='gha-${{ github.run_id }}'" || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Record settlement outcome in D1 (always; failures are never silent)
+        if: always()
+        run: |
+          cd workers
+          if [ "${{ job.status }}" = "success" ]; then
+            msg="OK run ${{ github.run_id }} mode=${{ needs.guard.outputs.mode }}"
+          else
+            msg="FAILED run ${{ github.run_id }} status=${{ job.status }} - see the Actions log"
+          fi
+          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE job_state SET last_result='$msg', last_run_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='settle'" || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Upload sanitized plan (never a full DB dump)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage9-settle-production-plan
+          if-no-files-found: warn
+          path: |
+            /tmp/settle_plan/plan.json
+            /tmp/settle_report.json
+      - name: Alert the owner on failure (A6)
+        if: failure()
+        run: |
+          set -euo pipefail
+          admin_id=$(grep '^TELEGRAM_ADMIN_IDS' workers/wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | cut -d',' -f1 | xargs)
+          [ -n "$admin_id" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || { echo "no admin id/token configured for the alert" >&2; exit 0; }
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode chat_id="$admin_id" \
+            --data-urlencode text="⚠️ stage9-settle-production failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /dev/null || true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}

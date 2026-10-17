@@ -10,9 +10,11 @@ import {
   getFirstPickDate,
   getItemizedStatsRowsForDate,
   getRecapStatuses,
+  getStatsAggregateForRange,
   getStatsRowsForDate,
   getStatsRowsForDateByCollection,
   getStatsRowsForRange,
+  hasPicksForDate,
   type Env,
   type CachedPick,
 } from "./db.ts";
@@ -47,6 +49,7 @@ import {
   picksCard,
   shiftDate,
   sportsDayBlock,
+  statsBlockFromAggregate,
   yesterdayLines,
   type PickLineInput,
 } from "./format.ts";
@@ -98,6 +101,12 @@ const VIEW_TITLE: Record<string, string> = {
 export function notReadyText(view: string, localDate: string): string {
   const title = VIEW_TITLE[view] ?? "📋 PICKS";
   return `<b>${title}</b> — ${localDate}\n\n` + "📋 Today's predictions have not been generated yet.";
+}
+
+/** Bug 12: a PAST day genuinely has nothing recorded — distinct from notReadyText's "not generated YET" (today only). */
+export function noDataForDateText(view: string, localDate: string): string {
+  const title = VIEW_TITLE[view] ?? "📋 PICKS";
+  return `<b>${title}</b> — ${localDate}\n\n` + "📋 No predictions were recorded for this date.";
 }
 
 function toPickLineInput(p: CachedPick): PickLineInput {
@@ -382,8 +391,13 @@ async function renderStatsLike(
     const thirtyLines = historicalLines("📈 Last 30 days", computeStatsBlock(rows30));
     if (thirtyLines.length) blocks.push(thirtyLines.map(escHtml));
     if (firstPickDate) {
-      const allRows = await getStatsRowsForRange(env.DB, firstPickDate, shiftDate(localDate, 1));
-      const allLines = historicalLines("📈 All time", computeStatsBlock(allRows));
+      // Bug 13: unlike Last 7/30 days (already bounded reads), "All time"
+      // used to read EVERY settled Top/Daily row ever via getStatsRowsForRange
+      // just to feed computeStatsBlock - an unbounded, ever-growing read.
+      // getStatsAggregateForRange computes the identical won/lost/push/void/
+      // unresolved/profit/bestWin in SQL instead (two point queries).
+      const agg = await getStatsAggregateForRange(env.DB, firstPickDate, shiftDate(localDate, 1));
+      const allLines = historicalLines("📈 All time", statsBlockFromAggregate(agg));
       if (allLines.length) blocks.push(allLines.map(escHtml));
     }
   }
@@ -437,10 +451,21 @@ export async function renderView(
   if (view === "stats_top") return renderStatsLike(env, "🔥 TOP STATS", localDate, "top", allMode);
   if (view === "stats_daily") return renderStatsLike(env, "📋 DAILY STATS", localDate, "daily", allMode);
 
-  const cache = await getDayCache(env.DB, localDate, timezone);
-  if (!cache || cache.status !== "COMPLETE") {
+  // Today requires a COMPLETE prediction_cache row (the actual readiness
+  // signal: generation may still be running). A PAST day instead checks
+  // for picks/prediction_memberships rows directly (bug 12): its cache row
+  // is retention-pruned after a few days even though the picks themselves
+  // never are, so gating a page-turn on an old message's cache row the same
+  // way went dark on perfectly good historical data once that row expired.
+  const isToday = localDate === lagosDateString();
+  const ready = isToday
+    ? (await getDayCache(env.DB, localDate, timezone))?.status === "COMPLETE"
+    : await hasPicksForDate(env.DB, localDate);
+  if (!ready) {
     const keyboard = view === "all" || view.startsWith("all_") ? menuKeyboard(allMode) : buildKeyboard(view, 0, 1, localDate, [], allMode);
-    return { text: notReadyText(view.startsWith("all_") ? "all" : view, localDate), replyMarkup: keyboard };
+    const baseView = view.startsWith("all_") ? "all" : view;
+    const text = isToday ? notReadyText(baseView, localDate) : noDataForDateText(baseView, localDate);
+    return { text, replyMarkup: keyboard };
   }
 
   if (view === "top" || view === "daily") return renderTicket(env, view, page, localDate, allMode);

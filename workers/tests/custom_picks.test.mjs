@@ -1,9 +1,10 @@
-import { describe, it } from "node:test";
+import { beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   HELP,
   TODAY_ONLY,
   UNAVAILABLE,
+  __resetPoolCacheForTests,
   chooseTicket,
   claimedCount,
   dropConflictingIdentities,
@@ -23,6 +24,11 @@ import {
   ticketSignature,
   validTicket,
 } from "../src/custom_picks.ts";
+
+// See custom_picks_routing.test.mjs's identical comment: resets bug 13's
+// per-isolate pool cache so fixtures reusing the same (day, zone,
+// generated_at) across tests never leak cached candidates between them.
+beforeEach(() => __resetPoolCacheForTests());
 
 const DAY = "2026-10-14";
 const ZONE = "Africa/Lagos";
@@ -349,6 +355,40 @@ describe("respond() end-to-end contract", () => {
     const pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
     const { result } = await respond(deps(pool, rows), "1 picks", ZONE, DAY, NOW, null);
     assert.equal(result.reason, "success");
+  });
+  // Bug 13: a per-isolate cache keyed by (day, timezone, pool.generated_at)
+  // means a Worker isolate serving several requests back to back only pays
+  // for getCandidates' full read once per 60s per pool generation.
+  it("a repeat request within 60s reuses the cached candidates (getCandidates not called again)", async () => {
+    const rows = [{ payload_json: JSON.stringify(candidatePayload()) }];
+    const pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
+    let getCandidatesCalls = 0;
+    const d = { getPool: async () => pool, getCandidates: async () => { getCandidatesCalls += 1; return rows; } };
+    await respond(d, "1 picks", ZONE, DAY, NOW, null);
+    assert.equal(getCandidatesCalls, 1);
+    await respond(d, "1 picks", ZONE, DAY, NOW + 30_000, null); // 30s later, still within the 60s TTL
+    assert.equal(getCandidatesCalls, 1, "cache hit - candidates not re-read");
+  });
+  it("after the TTL elapses, candidates are re-read even with the same generated_at", async () => {
+    const rows = [{ payload_json: JSON.stringify(candidatePayload()) }];
+    const pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
+    let getCandidatesCalls = 0;
+    const d = { getPool: async () => pool, getCandidates: async () => { getCandidatesCalls += 1; return rows; } };
+    await respond(d, "1 picks", ZONE, DAY, NOW, null);
+    await respond(d, "1 picks", ZONE, DAY, NOW + 61_000, null); // past the 60s TTL
+    assert.equal(getCandidatesCalls, 2);
+  });
+  it("a new generation (changed pool.generated_at) is never served stale cached candidates", async () => {
+    const rowsV1 = [{ payload_json: JSON.stringify(candidatePayload()) }];
+    const rowsV2 = [{ payload_json: JSON.stringify(candidatePayload({ canonical_event_id: "fx-2", home: "Barca", away: "Real" })) }];
+    let pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
+    let getCandidatesCalls = 0;
+    const d = { getPool: async () => pool, getCandidates: async () => { getCandidatesCalls += 1; return pool.generated_at === "2026-10-14T06:30:00Z" ? rowsV1 : rowsV2; } };
+    const first = await respond(d, "1 picks", ZONE, DAY, NOW, null);
+    pool = { status: "COMPLETE", generated_at: "2026-10-14T07:00:00Z" }; // regeneration landed
+    const second = await respond(d, "1 picks", ZONE, DAY, NOW + 1000, null);
+    assert.equal(getCandidatesCalls, 2, "a changed generated_at must never be served the old cache entry");
+    assert.notDeepEqual(first.result.text, second.result.text);
   });
   it("builds a ticket from production-shaped rows: payload lacks generated_at, row supplies it", async () => {
     function payloadWithoutGeneratedAt(overrides = {}) {

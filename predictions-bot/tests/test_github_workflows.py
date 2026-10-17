@@ -178,3 +178,40 @@ def test_stage5_live_pushes_need_explicit_opt_in():
     assert 'TELEGRAM_CHAT_ID=""' in body
     assert "SUBSCRIBER_DELIVERY_ENABLED=false" in body
     assert "allow_telegram_posts" in body
+
+
+def test_stage8_has_no_schedule_and_uses_the_livemon_group():
+    """A3: the live monitor is dispatched on demand by the Worker
+    (maybeDispatchLiveMonitor) instead of running on its own schedule
+    288x/day. It also must never share stage5/stage7/stage9's
+    sureodds-production-sync concurrency group (A1/A2's root cause: that
+    sharing let a live-monitor tick cancel an in-progress generation run)."""
+    text = (WORKFLOWS / "stage8-live-monitor-production.yml").read_text(encoding="utf-8")
+    assert "schedule:" not in text, "stage8 must have no schedule trigger - dispatch is on-demand only"
+    assert "workflow_dispatch:" in text
+    assert "group: sureodds-production-livemon" in text
+    assert "group: sureodds-production-sync" not in text
+
+
+def test_stage9_exists_with_the_shared_lease():
+    """A5/A2: the new settlement workflow must exist, use the shared
+    sync_write lease (retry-then-fail, not stage8's skip-this-tick), and
+    release it unconditionally afterward."""
+    path = WORKFLOWS / "stage9-settle-production.yml"
+    assert path.exists(), "stage9-settle-production.yml must exist"
+    text = path.read_text(encoding="utf-8")
+    assert "STAGE9_LIVE_ENABLED" in text
+    assert "name='sync_write'" in text
+    lease_branch = [b for n, b in _run_blocks(text) if "name='sync_write'" in b and "seq 1 10" in b]
+    assert lease_branch, "stage9 must retry the sync_write lease acquire (up to 10 times), not just skip"
+    assert "lease_owner=NULL, lease_until=NULL WHERE name='sync_write'" in text, "must release the lease it acquired"
+    assert "run_once.py settle --live" in text
+
+
+def test_stage7_has_both_the_primary_and_backup_schedule():
+    """A4: off the top-of-hour slot (09:03 Lagos primary), with a 09:45
+    backup fire that is a safe cache-HIT no-op if the primary already
+    landed (predbot/cache/fetcher.py _snapshot_locked)."""
+    text = (WORKFLOWS / "stage7-scheduled-production.yml").read_text(encoding="utf-8")
+    assert '"3 8 * * *"' in text, "primary schedule (09:03 Lagos) missing"
+    assert '"45 8 * * *"' in text, "backup schedule (09:45 Lagos) missing"

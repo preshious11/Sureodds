@@ -526,3 +526,118 @@ export function computeStatsBlock(rows: {
     bestWin: best,
   };
 }
+
+/**
+ * The same StatsBlock shape, but from db.ts's getStatsAggregateForRange's
+ * SQL-computed sums (bug 13) instead of computeStatsBlock's row-by-row
+ * reducer — same won/lost/half-leg counting and rounding, so historicalLines
+ * renders either source identically.
+ */
+export function statsBlockFromAggregate(agg: {
+  won: number;
+  lost: number;
+  push: number;
+  voided: number;
+  unresolved: number;
+  staked: number;
+  profit: number;
+  bestWin: StatsBlock["bestWin"];
+}): StatsBlock {
+  return {
+    won: agg.won, lost: agg.lost, push: agg.push, void: agg.voided, unresolved: agg.unresolved, n: agg.staked,
+    roi: agg.staked ? (100 * agg.profit) / agg.staked : 0,
+    profit: Math.round(agg.profit * 100) / 100,
+    bestWin: agg.bestWin,
+  };
+}
+
+// Telegram's sendMessage/editMessageText 4096-char limit is in UTF-16 code
+// units, which is exactly what JS string .length already counts (unlike
+// Python, which indexes by codepoint and needs its own utf16_len/_prefix_len
+// helpers) — so this port of predbot/bot/telegram.py's _split/_split_long
+// works directly in .length/.slice space, with no codepoint<->UTF-16
+// conversion needed.
+const STICKY_HEADER = /^(?:🔥 TOP PICKS|📋 DAILY PICKS) · /;
+const TAG_RE = /<[^<>]*>/g;
+
+/** The largest UTF-16 offset <= limit that never splits a surrogate pair (an emoji outside the BMP). */
+function prefixLen(text: string, limit: number): number {
+  if (text.length <= limit) return text.length;
+  let i = limit;
+  if (i > 0 && i < text.length) {
+    const code = text.charCodeAt(i - 1);
+    if (code >= 0xd800 && code <= 0xdbff) i -= 1; // i-1 is a lone high surrogate; keep its pair together
+  }
+  return i;
+}
+
+/** predbot/bot/telegram.py _cut_outside_tag: the last index <= limit that doesn't land inside an HTML tag or entity. */
+function cutOutsideTag(text: string, limit: number): number {
+  let cut = limit;
+  for (const m of text.slice(0, limit + 1).matchAll(TAG_RE)) {
+    const start = m.index ?? 0;
+    const end = start + m[0].length;
+    if (start < cut && cut < end) cut = start;
+  }
+  const amp = text.slice(0, cut).lastIndexOf("&");
+  if (amp !== -1 && !text.slice(amp, cut).includes(";") && cut - amp < 10) cut = amp;
+  return cut || limit; // cut === 0 falls back to limit, matching Python's `cut or limit`
+}
+
+/** predbot/bot/telegram.py _split_long: a block longer than one message, split by lines then words, never inside a tag. */
+function splitLong(paragraph: string, limit: number): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (let line of paragraph.split("\n")) {
+    while (line.length > limit) {
+      let head = line.slice(0, cutOutsideTag(line, prefixLen(line, limit)));
+      const space = head.lastIndexOf(" ");
+      if (space > Math.floor(head.length / 2)) head = head.slice(0, space);
+      if (cur) {
+        out.push(cur);
+        cur = "";
+      }
+      out.push(head);
+      line = line.slice(head.length).replace(/^ +/, "");
+    }
+    if (cur && cur.length + line.length + 1 > limit) {
+      out.push(cur);
+      cur = "";
+    }
+    cur = cur ? `${cur}\n${line}` : line;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/**
+ * predbot/bot/telegram.py _split: splits `text` into messages of at most
+ * `limit` UTF-16 code units, only BETWEEN blocks (a blank line), so a
+ * three-line pick block is never cut in half, and never inside an HTML tag
+ * or entity. A ticket header ("🔥 TOP PICKS · ..." / "📋 DAILY PICKS · ...")
+ * is carried over to the chunk that follows it rather than left alone at
+ * the end of a chunk with nothing under it.
+ */
+export function splitMessage(text: string, limit = 4000): string[] {
+  if (text.length <= limit) return [text];
+  const chunks: string[][] = [];
+  let cur: string[] = [];
+  let size = 0;
+  for (const para of text.split("\n\n")) {
+    const pieces = para.length <= limit ? [para] : splitLong(para, limit);
+    for (const piece of pieces) {
+      let add = piece.length + (cur.length ? 2 : 0);
+      if (cur.length && size + add > limit) {
+        const carry = STICKY_HEADER.test(cur[cur.length - 1] ?? "") ? [cur.pop() as string] : [];
+        if (cur.length) chunks.push(cur);
+        cur = carry;
+        size = carry.reduce((s, c) => s + c.length, 0);
+        add = piece.length + (cur.length ? 2 : 0);
+      }
+      cur.push(piece);
+      size += add;
+    }
+  }
+  if (cur.length) chunks.push(cur);
+  return chunks.map((c) => c.join("\n\n"));
+}

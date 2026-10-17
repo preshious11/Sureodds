@@ -30,6 +30,7 @@ const FRESH_DB_SEQUENCE = [
   "0007_custom_picks_conversation.sql",
   "0008_pinned_menu.sql",
   "0009_match_events.sql",
+  "0010_sync_lease.sql",
 ];
 
 describe("migration chain against a fresh database (workers/CUTOVER.md step 2)", () => {
@@ -56,6 +57,14 @@ describe("migration chain against a fresh database (workers/CUTOVER.md step 2)",
     }
     const sessionCols = sql.prepare("PRAGMA table_info(custom_sessions)").all().map((c) => c.name);
     assert.ok(sessionCols.includes("request_json"), "0007's ALTER TABLE custom_sessions must have applied");
+    // 0010 (A2): the shared D1-write lease and the live-monitor dispatch
+    // tracking row must exist, pre-seeded the same way 'generate' already
+    // is in 0001 - their lease-acquire/interval-check patterns are UPDATE-
+    // only and do nothing against a row that was never inserted.
+    const jobNames = sql.prepare("SELECT name FROM job_state ORDER BY name").all().map((r) => r.name);
+    for (const name of ["generate", "deliver", "settle", "recap", "sync_write", "livemon_dispatch"]) {
+      assert.ok(jobNames.includes(name), `job_state must have a '${name}' row after the fresh-database sequence`);
+    }
   });
 
   it("documents the exact failure production hit: including 0002 on a fresh database errors on 'duplicate column name'", () => {

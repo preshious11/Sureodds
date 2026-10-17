@@ -105,11 +105,33 @@ const VIEW_LABEL: Record<string, string> = {
   yesterday: "Yesterday",
 };
 
-function viewButton(view: string): { text: string; callback_data: string } {
-  return { text: `${VIEW_ICON[view] ?? ""} ${VIEW_LABEL[view] ?? view}`.trim(), callback_data: encodeCallback(view, 0) };
+type SwitchButton = { text: string; callback_data?: string; url?: string };
+
+// AllButtonMode's `{ url }` is always exactly this shape (allButtonModeFor,
+// below) - pulling botUsername back out of it lets every OTHER view button
+// (top/daily/stats/yesterday) build its own `?start=<view>` deep link from
+// the same mode, without changing AllButtonMode's own public shape (pinned
+// by an existing test asserting it with assert.deepEqual).
+function usernameFromAllUrl(url: string): string | undefined {
+  return /^https:\/\/t\.me\/([^/?]+)\?start=all$/.exec(url)?.[1];
 }
 
-type SwitchButton = { text: string; callback_data?: string; url?: string };
+/**
+ * Bug 10: a group tap on Top/Daily/Stats/Yesterday used to be a callback
+ * button, which posted a brand-new full card into the group (see
+ * cron.ts/index.ts's own fix for the TAP side). `mode` lets every caller
+ * that already threads an AllButtonMode through for the "all" button make
+ * these four buttons deep links in a group too, the way "all" already does
+ * - "callback" (private) is unchanged; "omit" (group, no username to build
+ * a link with) falls back to callback rather than omitting the button
+ * entirely, since index.ts's own redirect handler has a no-link fallback
+ * alert for exactly that case.
+ */
+function viewButton(view: string, mode: AllButtonMode = "callback"): SwitchButton {
+  const text = `${VIEW_ICON[view] ?? ""} ${VIEW_LABEL[view] ?? view}`.trim();
+  const username = mode !== "callback" && mode !== "omit" ? usernameFromAllUrl(mode.url) : undefined;
+  return username ? { text, url: `https://t.me/${username}?start=${view}` } : { text, callback_data: encodeCallback(view, 0) };
+}
 type KeyboardRow = SwitchButton[];
 
 /**
@@ -142,8 +164,8 @@ function switchRows(allMode: AllButtonMode = "callback"): KeyboardRow[] {
   const all = allButton(allMode);
   return [
     ...(all ? [[all]] : []),
-    [viewButton("top"), viewButton("daily")],
-    [viewButton("stats"), viewButton("yesterday")],
+    [viewButton("top", allMode), viewButton("daily", allMode)],
+    [viewButton("stats", allMode), viewButton("yesterday", allMode)],
   ];
 }
 
@@ -198,7 +220,8 @@ export function customPicksButton(botUsername: string): { text: string; url: str
  */
 export function topEmptyKeyboard(botUsername: string, allMode: AllButtonMode = "callback"): Record<string, unknown> {
   const all = allButton(allMode);
-  const topRow = all ? [viewButton("daily"), all] : [viewButton("daily")];
+  const daily = viewButton("daily", allMode);
+  const topRow = all ? [daily, all] : [daily];
   return { inline_keyboard: [topRow, [customPicksButton(botUsername)]] };
 }
 
@@ -208,11 +231,12 @@ export function topEmptyKeyboard(botUsername: string, allMode: AllButtonMode = "
  * private deep link, never the in-group callback.
  */
 export function communityMenuKeyboard(botUsername: string): Record<string, unknown> {
+  const mode: AllButtonMode = { url: `https://t.me/${botUsername}?start=all` };
   return {
     inline_keyboard: [
-      [viewButton("top"), viewButton("daily")],
-      [allButton({ url: `https://t.me/${botUsername}?start=all` })!],
-      [viewButton("stats"), viewButton("yesterday")],
+      [viewButton("top", mode), viewButton("daily", mode)],
+      [allButton(mode)!],
+      [viewButton("stats", mode), viewButton("yesterday", mode)],
       [customPicksButton(botUsername)],
     ],
   };

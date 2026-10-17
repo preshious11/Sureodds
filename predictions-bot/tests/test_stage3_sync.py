@@ -895,3 +895,78 @@ def test_changed_records_converge_and_history_is_never_deleted(tmp_path):
     # A partial/reset source must never erase historical tickets in D1.
     deletes = os.path.join(out, "p1_deletes.sql")
     assert not os.path.exists(deletes)
+
+
+def _seed_live_fixture_state(path, status="in_progress", settlement_done=0, notifications_done=0):
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT)")
+    con.execute("CREATE TABLE live_fixture_state (pick_date TEXT NOT NULL, fixture_key TEXT NOT NULL,"
+                " status TEXT NOT NULL, started_at TEXT, final_at TEXT, last_checked_at TEXT,"
+                " result_source TEXT, result_json TEXT,"
+                " settlement_done INTEGER NOT NULL DEFAULT 0, notifications_done INTEGER NOT NULL DEFAULT 0,"
+                " updated_at TEXT NOT NULL, PRIMARY KEY (pick_date, fixture_key))")
+    con.execute(
+        "INSERT INTO live_fixture_state (pick_date, fixture_key, status, settlement_done,"
+        " notifications_done, updated_at) VALUES (?, ?, ?, ?, ?, '2026-10-11T00:00:00Z')",
+        ("2026-10-11", "f1", status, settlement_done, notifications_done),
+    )
+    con.commit()
+    con.close()
+
+
+def test_live_fixture_state_settlement_flip_lands_after_final(tmp_path):
+    """A fixture already 'final' in D1 must still accept a later settlement_done/
+    notifications_done flip (the Match Ended alert waits on exactly this) - the old
+    single row-level WHERE guarded the whole UPDATE and blocked it once final."""
+    base = str(tmp_path / "base.db")
+    src = str(tmp_path / "src.db")
+    _seed_live_fixture_state(base, status="final", settlement_done=0, notifications_done=0)
+    import shutil
+    shutil.copy(base, src)
+    con = sqlite3.connect(src)
+    con.execute("UPDATE live_fixture_state SET settlement_done=1, notifications_done=1,"
+                " result_json='{\"h\":1,\"a\":0}' WHERE fixture_key='f1'")
+    con.commit()
+    con.close()
+    out = str(tmp_path / "delta")
+    assert sync("diff", base, src, "--out", out, "--tables", "live_fixture_state").returncode == 0
+    tgt = str(tmp_path / "tgt.db")
+    shutil.copy(base, tgt)
+    assert sync("apply", tgt, out).returncode == 0
+    row = sqlite3.connect(tgt).execute(
+        "SELECT settlement_done, notifications_done, result_json, status FROM live_fixture_state WHERE fixture_key='f1'"
+    ).fetchone()
+    # settlement_done/notifications_done land via MAX() regardless of status; result_json
+    # is NOT one of the two monotonic columns, so it keeps the old guard (status already
+    # 'final' in the target blocks it) - exactly as the spec says: "all other columns keep
+    # the existing guard".
+    assert row == (1, 1, None, "final")
+
+
+def test_live_fixture_state_status_guard_still_blocks_regression_once_final(tmp_path):
+    """Non-monotonic columns (status, result_json, etc.) keep the old protection: a
+    source that regresses status (e.g. a stale scratch copy) must not overwrite an
+    already-final D1 row, even though settlement_done/notifications_done now always
+    update via MAX()."""
+    base = str(tmp_path / "base.db")
+    src = str(tmp_path / "src.db")
+    _seed_live_fixture_state(base, status="final", settlement_done=1, notifications_done=1)
+    import shutil
+    shutil.copy(base, src)
+    con = sqlite3.connect(src)
+    # A stale/reset source regressing status and settlement flags backward.
+    con.execute("UPDATE live_fixture_state SET status='in_progress', settlement_done=0,"
+                " notifications_done=0 WHERE fixture_key='f1'")
+    con.commit()
+    con.close()
+    out = str(tmp_path / "delta")
+    assert sync("diff", base, src, "--out", out, "--tables", "live_fixture_state").returncode == 0
+    tgt = str(tmp_path / "tgt.db")
+    shutil.copy(base, tgt)
+    assert sync("apply", tgt, out).returncode == 0
+    row = sqlite3.connect(tgt).execute(
+        "SELECT status, settlement_done, notifications_done FROM live_fixture_state WHERE fixture_key='f1'"
+    ).fetchone()
+    # status never regresses (old guard); MAX() means settlement/notifications flags
+    # never regress either, even though they are no longer gated by that guard.
+    assert row == ("final", 1, 1)

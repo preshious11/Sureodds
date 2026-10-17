@@ -1,8 +1,16 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
-import { describe, it } from "node:test";
+import { beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { handleUpdate } from "../src/index.ts";
+import { __resetPoolCacheForTests } from "../src/custom_picks.ts";
+
+// Bug 13's per-isolate pool/candidates cache is keyed by (day, timezone,
+// generated_at) - many tests here deliberately reuse the same fixture
+// values across different seeded DBs, which the real production cache is
+// never meant to distinguish between (it's one isolate, one day). Reset it
+// before every test so one test's cached candidates never leak into another.
+beforeEach(() => __resetPoolCacheForTests());
 
 // Every seed in this file archives day 2026-10-14, which the handler looks
 // up by CURRENT Lagos date — so a wall-clock rollover past midnight Lagos
@@ -653,6 +661,72 @@ describe("All Predictions: group-to-private flow", () => {
     assert.equal(fetchImpl.calls.some((c) => c.url.includes("editMessageText")), false, "the original message must never be edited");
     assert.equal(fetchImpl.calls.some((c) => c.url.includes("sendMessage")), false, "no replacement/extra message either");
   });
+  // Bug 10: a group tap on Top/Daily/Stats/Yesterday used to render+send a
+  // brand-new full card into the group on EVERY tap (unlike "all", fixed
+  // above). It now follows the exact same deep-link-answer rule.
+  it("a group pg|top|0 tap is answered with a deep link too, never a new sendMessage into the group", async () => {
+    const db = realDb();
+    const theEnv = { ...env(db), TELEGRAM_BOT_USERNAME: "SureOddsBot" };
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () =>
+      handleUpdate(theEnv, {
+        update_id: 1,
+        callback_query: {
+          id: "cbq-1",
+          data: "pg|top|0",
+          from: { id: "u1" },
+          message: { message_id: 55, chat: { id: "g1", type: "supergroup" } },
+        },
+      }),
+    );
+    assert.equal(fetchImpl.calls.length, 1, "only the callback answer — no edit, no new message");
+    assert.match(fetchImpl.calls[0].url, /answerCallbackQuery/);
+    assert.equal(fetchImpl.calls[0].body.url, "https://t.me/SureOddsBot?start=top");
+    assert.equal(fetchImpl.calls.some((c) => c.url.includes("sendMessage") || c.url.includes("editMessageText")), false);
+  });
+  it("a group pg|daily|0 tap with no configured username falls back to a no-link alert naming /daily", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () =>
+      handleUpdate(env(db), {
+        update_id: 1,
+        callback_query: {
+          id: "cbq-1",
+          data: "pg|daily|0",
+          from: { id: "u1" },
+          message: { message_id: 55, chat: { id: "g1", type: "supergroup" } },
+        },
+      }),
+    );
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.equal(fetchImpl.calls[0].body.url, undefined, "never a dead link without a configured username");
+    assert.match(fetchImpl.calls[0].body.text, /\/daily/);
+  });
+  it("/start top (the group Top button's deep link) renders today's Top Picks immediately in the private chat", async () => {
+    const db = realDb();
+    const day = "2026-10-14";
+    seedAllPick(db._sql, day);
+    const fetchImpl = stubFetch();
+    const FROZEN_NOW = Date.UTC(2026, 9, 14, 8, 0);
+    const realNow = Date.now;
+    Date.now = () => FROZEN_NOW;
+    try {
+      await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start top")));
+    } finally {
+      Date.now = realNow;
+    }
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.match(fetchImpl.calls[0].body.text, /TOP PICKS/i);
+    const sub = db._sql.prepare("SELECT active FROM subscribers WHERE chat_id='c1'").get();
+    assert.equal(sub.active, 1, "a valid /start <view> param still subscribes, same as /start all");
+  });
+  it("/start with an unrecognized param falls back to the plain welcome", async () => {
+    const db = realDb();
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start nonsense")));
+    assert.equal(fetchImpl.calls.length, 1);
+    assert.match(fetchImpl.calls[0].body.text, /Hi,/);
+  });
   it("a legacy group pg|all_<sport>|... sub-page callback is redirected the same way — no edit, no new message", async () => {
     const db = realDb();
     const theEnv = { ...env(db), TELEGRAM_BOT_USERNAME: "SureOddsBot" };
@@ -865,6 +939,42 @@ describe("failed Telegram sends during webhook processing", () => {
     assert.equal(row.status, "failed");
     assert.equal(row.attempts, 1);
   });
+  it("a 429 from the Telegram API also fails the update and leaves it retryable (not permanent)", async () => {
+    const db = realDb();
+    const failing = async () => ({ ok: false, status: 429, json: async () => ({ description: "Too Many Requests: retry later" }) });
+    await assert.rejects(() => withFetch(failing, () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start"))));
+    const row = db._sql.prepare("SELECT status, attempts FROM telegram_updates WHERE update_id=1").get();
+    assert.equal(row.status, "failed");
+  });
+  // Bug 9: 403 (bot blocked/kicked) is PERMANENT - retrying it 10 times can
+  // never succeed, since the thing that would fix it (the user unblocking
+  // the bot) can't happen from inside this retry loop. The update completes
+  // immediately instead of exhausting its retry budget on a guaranteed failure.
+  it("a 403 'bot was blocked by the user' in a PRIVATE chat completes the update AND deactivates the subscriber", async () => {
+    const db = realDb();
+    db._sql.prepare(
+      "INSERT INTO subscribers (chat_id, username, first_name, timezone, subscribed_at, active) VALUES ('c1', NULL, NULL, '', '2026-10-01T00:00:00Z', 1)",
+    ).run();
+    const failing = async () => ({ ok: false, status: 403, json: async () => ({ description: "Forbidden: bot was blocked by the user" }) });
+    await withFetch(failing, () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start")));
+    const row = db._sql.prepare("SELECT status, attempts, last_error FROM telegram_updates WHERE update_id=1").get();
+    assert.equal(row.status, "done", "a permanent failure must complete, not sit retrying forever");
+    assert.equal(row.attempts, 0);
+    const sub = db._sql.prepare("SELECT active FROM subscribers WHERE chat_id='c1'").get();
+    assert.equal(sub.active, 0, "a blocked private-chat subscriber must be deactivated");
+  });
+  it("a 403 in a GROUP chat completes the update but never touches the subscribers table", async () => {
+    const db = realDb();
+    db._sql.prepare(
+      "INSERT INTO subscribers (chat_id, username, first_name, timezone, subscribed_at, active) VALUES ('c1', NULL, NULL, '', '2026-10-01T00:00:00Z', 1)",
+    ).run();
+    const failing = async () => ({ ok: false, status: 403, json: async () => ({ description: "Forbidden: bot was kicked from the group chat" }) });
+    await withFetch(failing, () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start", "group")));
+    const row = db._sql.prepare("SELECT status FROM telegram_updates WHERE update_id=1").get();
+    assert.equal(row.status, "done");
+    const sub = db._sql.prepare("SELECT active FROM subscribers WHERE chat_id='c1'").get();
+    assert.equal(sub.active, 1, "a group kick is not a private-chat subscriber signal; must not deactivate");
+  });
   // Regression (production incident, 2026-10-15, first real Cron-triggered
   // traffic after activation): a user re-tapped a button whose re-render
   // produced content identical to what was already shown. Telegram
@@ -885,16 +995,22 @@ describe("failed Telegram sends during webhook processing", () => {
     assert.equal(row.attempts, 0);
     assert.equal(row.last_error, null);
   });
-  it("any OTHER editMessageText failure (not 'not modified') still fails and retries normally", async () => {
+  // Bug 9 (query-budget/reliability pass): any 400 other than "message is
+  // not modified" is PERMANENT the same way "not modified" is - a message
+  // Telegram says it can't find will never be found by retrying the exact
+  // same edit 10 times. This update now completes immediately instead of
+  // burning its whole retry budget on a guaranteed failure (previously it
+  // was marked failed/retried like a transient 429/5xx).
+  it("any OTHER 400 editMessageText failure (not 'not modified') is also permanent: done, not retried", async () => {
     const db = realDb();
     const failing = async (url) => {
       if (url.includes("editMessageText")) return { ok: false, status: 400, json: async () => ({ ok: false, description: "Bad Request: message to edit not found" }) };
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
     };
-    await assert.rejects(() => withFetch(failing, () => handleUpdate(env(db), callbackQuery(1, "cbq-1", "c1", "u1", "pg|top|0"))));
+    await withFetch(failing, () => handleUpdate(env(db), callbackQuery(1, "cbq-1", "c1", "u1", "pg|top|0")));
     const row = db._sql.prepare("SELECT status, attempts FROM telegram_updates WHERE update_id=1").get();
-    assert.equal(row.status, "failed");
-    assert.equal(row.attempts, 1);
+    assert.equal(row.status, "done");
+    assert.equal(row.attempts, 0);
   });
   it("a duplicate delivery of an already-completed update is never reprocessed", async () => {
     const db = realDb();
@@ -947,7 +1063,7 @@ describe("Phase A/B reliability: /stop, group /start redirects, @BotName, cooldo
       const fetchImpl = stubFetch();
       await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(3, "c1", "u1", "/stop")));
       assert.equal(fetchImpl.calls.length, 1);
-      assert.match(fetchImpl.calls[0].body.text, /Unsubscribed/);
+      assert.match(fetchImpl.calls[0].body.text, /Stopped/);
       const sub = db._sql.prepare("SELECT active FROM subscribers WHERE chat_id='c1'").get();
       assert.equal(sub.active, 0, "delivery subscription must actually deactivate");
       const session = db._sql.prepare("SELECT active FROM custom_sessions WHERE user_id='u1' AND chat_id='c1'").get();
@@ -959,7 +1075,7 @@ describe("Phase A/B reliability: /stop, group /start redirects, @BotName, cooldo
     const fetchImpl = stubFetch();
     await withFetch(fetchImpl, () => handleUpdate(env(db), textMessage(1, "c9", "u9", "/stop")));
     assert.equal(fetchImpl.calls.length, 1);
-    assert.match(fetchImpl.calls[0].body.text, /Unsubscribed/);
+    assert.match(fetchImpl.calls[0].body.text, /Stopped/);
   });
   it("group /start custom_picks redirects to a private chat with a deep-link button, no session", async () => {
     const db = realDb();
@@ -994,7 +1110,7 @@ describe("Phase A/B reliability: /stop, group /start redirects, @BotName, cooldo
     assert.match(menuFetch.calls.find((c) => c.body.chat_id === "private-7").body.text, /posted/);
     const stopFetch = stubFetch();
     await withFetch(stopFetch, () => handleUpdate(adminEnv(db), textMessage(2, "c1", "u1", "/stop@SureOddsBot")));
-    assert.match(stopFetch.calls[0].body.text, /Unsubscribed/);
+    assert.match(stopFetch.calls[0].body.text, /Stopped/);
     const startFetch = stubFetch();
     await withFetch(startFetch, () => handleUpdate(env(db), textMessage(3, "c1", "u1", "/START")));
     assert.match(startFetch.calls[0].body.text, /Use the menu below/);

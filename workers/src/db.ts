@@ -15,10 +15,20 @@ export interface Env {
   POST_TIME?: string;
   DELIVERY_TIME?: string;
   RECAP_TIME?: string;
+  /** Latest the recap may wait for yesterday's settlement before posting anyway (never skipped entirely). */
+  RECAP_DEADLINE?: string;
   /** Minutes after kickoff during which a match-start alert may still be sent (default 10). */
   MATCH_START_WINDOW_MIN?: string;
   /** Hours after the result was recorded during which a match-end alert may still be sent (default 24). */
   MATCH_END_WINDOW_HOURS?: string;
+  /** Minutes that must pass between the Worker's own on-demand dispatches of stage8-live-monitor-production.yml (default 10). */
+  LIVE_MONITOR_INTERVAL_MIN?: string;
+  /** "owner/repo" for the stage8-live-monitor-production.yml workflow_dispatch call. Unset = live-monitor dispatch is disabled (alerts the owner once/day instead, if work exists). */
+  GITHUB_REPO?: string;
+  /** The ref (branch) to dispatch stage8 against. Defaults to "main". */
+  GITHUB_REF?: string;
+  /** Fine-grained PAT with this repo's "Actions: Read and write" permission, for the workflow_dispatch call. Secret, never a [vars] entry. */
+  GITHUB_DISPATCH_TOKEN?: string;
 }
 
 /// Two-phase update claim (Stage 2 reliability).
@@ -226,6 +236,21 @@ export async function getDayCache(
   return row ?? null;
 }
 
+/**
+ * Whether ANY pick exists for `pickDate` — used as the readiness check for a
+ * PAST day (bug 12), instead of getDayCache's COMPLETE prediction_cache row:
+ * that row is retention-pruned after a few days, but the picks/
+ * prediction_memberships rows themselves never are, so an old message's
+ * page-turn button was going dark not because the data was gone, but
+ * because the readiness receipt confirming a day that already finished had
+ * been cleaned up. A plain existence check, not getAllPicksForCollection's
+ * full row fetch, since only presence/absence is needed here.
+ */
+export async function hasPicksForDate(db: D1Database, pickDate: string): Promise<boolean> {
+  const row = await db.prepare("SELECT 1 AS one FROM picks WHERE pick_date = ?1 LIMIT 1").bind(pickDate).first<{ one: number }>();
+  return !!row;
+}
+
 export interface CachedPick {
   id: number;
   tier: string;
@@ -414,6 +439,79 @@ export async function getStatsRowsForRange(
     .bind(sinceDate, beforeDate)
     .all<DayStatsRow>();
   return results ?? [];
+}
+
+export interface StatsAggregateRow {
+  won: number;
+  lost: number;
+  push: number;
+  voided: number;
+  unresolved: number;
+  staked: number;
+  profit: number;
+  bestWin: { label: string; price: number; home: string; away: string } | null;
+}
+
+/**
+ * Bug 13: /stats "All time" used to call getStatsRowsForRange(firstPickDate,
+ * tomorrow) — EVERY Top/Daily row ever, read in full just to feed
+ * computeStatsBlock's per-row reducer — an unbounded and ever-growing read
+ * as the bot accumulates history. This computes the exact same won/lost/
+ * push/void/unresolved/staked/profit via SQL aggregates (the unresolved-vs-
+ * void split mirrors computeStatsBlock's own result_json.reason ===
+ * 'settlement deadline expired' check) plus a second indexed query for the
+ * single highest-price 'won' row (computeStatsBlock's bestWin only ever
+ * updates on an exact 'won', never 'half_won' - same here). Two point
+ * queries instead of reading every settled row.
+ */
+export async function getStatsAggregateForRange(
+  db: D1Database,
+  sinceDate: string,
+  beforeDate: string,
+): Promise<StatsAggregateRow> {
+  const scope = `EXISTS (SELECT 1 FROM prediction_memberships m WHERE m.prediction_id = picks.id AND m.collection IN ('top', 'daily'))`;
+  const UNRESOLVED = "settlement deadline expired";
+  const totals = await db
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN status IN ('won','half_won') THEN 1 ELSE 0 END) AS won,
+         SUM(CASE WHEN status IN ('lost','half_lost') THEN 1 ELSE 0 END) AS lost,
+         SUM(CASE WHEN status = 'push' THEN 1 ELSE 0 END) AS push,
+         SUM(CASE WHEN status = 'void' AND NOT (result_json IS NOT NULL AND json_valid(result_json) AND json_extract(result_json, '$.reason') = ?3) THEN 1 ELSE 0 END) AS voided,
+         SUM(CASE WHEN status = 'void' AND result_json IS NOT NULL AND json_valid(result_json) AND json_extract(result_json, '$.reason') = ?3 THEN 1 ELSE 0 END) AS unresolved,
+         SUM(CASE WHEN status IN ('won','half_won','lost','half_lost','push') THEN 1 ELSE 0 END) AS staked,
+         SUM(CASE WHEN status = 'won' THEN price - 1.0
+                  WHEN status = 'half_won' THEN (price - 1.0) / 2.0
+                  WHEN status = 'lost' THEN -1.0
+                  WHEN status = 'half_lost' THEN -0.5
+                  ELSE 0 END) AS profit
+       FROM picks WHERE pick_date >= ?1 AND pick_date < ?2 AND ${scope}`,
+    )
+    .bind(sinceDate, beforeDate, UNRESOLVED)
+    .first<{ won: number | null; lost: number | null; push: number | null; voided: number | null; unresolved: number | null; staked: number | null; profit: number | null }>();
+  const best = await db
+    .prepare(
+      `SELECT label, price, home, away FROM picks
+       WHERE pick_date >= ?1 AND pick_date < ?2 AND status = 'won' AND ${scope}
+       ORDER BY price DESC LIMIT 1`,
+    )
+    .bind(sinceDate, beforeDate)
+    .first<{ label: string; price: number; home: string; away: string }>();
+  return {
+    won: totals?.won ?? 0,
+    lost: totals?.lost ?? 0,
+    push: totals?.push ?? 0,
+    voided: totals?.voided ?? 0,
+    unresolved: totals?.unresolved ?? 0,
+    staked: totals?.staked ?? 0,
+    profit: totals?.profit ?? 0,
+    // A plain object literal, not whatever shape the driver's row object
+    // happens to be (e.g. node:sqlite returns a null-prototype object) —
+    // computeStatsBlock's own bestWin is always a plain literal, and
+    // callers comparing the two (tests/stats_aggregate.test.mjs) must see
+    // the same shape.
+    bestWin: best ? { label: best.label, price: best.price, home: best.home, away: best.away } : null,
+  };
 }
 
 /** predbot/jobs/stats.py compute(): window_days = min(7, days since the first ever pick_date). */
@@ -785,6 +883,69 @@ export async function setJobResult(
     .bind(name, result.slice(0, 500))
     .run();
 }
+
+/**
+ * Same upsert as setJobResult, but `last_run_at` is the CALLER's `nowMs`
+ * instead of D1's own `strftime('now')` — needed wherever the caller does
+ * its own elapsed-time math against that timestamp (maybeDispatchLiveMonitor's
+ * interval check): comparing a caller-supplied "now" against a D1-clock
+ * timestamp is only ever correct by coincidence.
+ */
+export async function recordJobRun(db: D1Database, name: string, nowMs: number, result: string): Promise<void> {
+  const now = new Date(nowMs).toISOString();
+  await db
+    .prepare(
+      `INSERT INTO job_state (name, last_result, last_run_at, updated_at)
+       VALUES (?1, ?2, ?3, ?3)
+       ON CONFLICT(name) DO UPDATE SET last_result = excluded.last_result,
+         last_run_at = excluded.last_run_at, updated_at = excluded.updated_at`,
+    )
+    .bind(name, result.slice(0, 500), now)
+    .run();
+}
+
+/** `last_run_at` of a named job_state row, or null if it has never run. */
+export async function getJobLastRunAt(db: D1Database, name: string): Promise<string | null> {
+  const row = await db.prepare("SELECT last_run_at FROM job_state WHERE name = ?1").bind(name).first<{ last_run_at: string | null }>();
+  return row?.last_run_at ?? null;
+}
+
+/**
+ * Whether the live monitor has any actual work to do right now (bug 6: the
+ * Worker decides this and dispatches GitHub Actions on demand, instead of
+ * stage8 running on its own 5-minute schedule 288x/day even at night with
+ * nothing to track). ONE query, two EXISTS clauses:
+ *   - a published Top/Daily pick (same publication rule as
+ *     getMatchEventContext: a posts receipt for its collection, or a
+ *     COMPLETE day cache) that is still 'pending' and due to kick off soon
+ *     or already underway (`sinceIso`..`untilIso`);
+ *   - OR any live_fixture_state row not yet fully processed
+ *     (notifications_done = 0 or settlement_done = 0) - covers a fixture
+ *     already past kickoff that still needs tracking even if its pick row
+ *     itself isn't 'pending' any more.
+ */
+export async function liveMonitorWorkExists(db: D1Database, sinceIso: string, untilIso: string): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT (
+         EXISTS (
+           SELECT 1 FROM picks p
+           JOIN prediction_memberships m ON m.prediction_id = p.id
+           WHERE p.status = 'pending' AND p.start_utc BETWEEN ?1 AND ?2
+             AND m.collection IN ('top', 'daily')
+             AND (
+               EXISTS (SELECT 1 FROM posts po WHERE po.post_date = p.pick_date AND po.kind = m.collection)
+               OR EXISTS (SELECT 1 FROM prediction_cache c WHERE c.local_date = p.pick_date AND c.status = 'COMPLETE')
+             )
+         )
+         OR EXISTS (SELECT 1 FROM live_fixture_state WHERE notifications_done = 0 OR settlement_done = 0)
+       ) AS work`,
+    )
+    .bind(sinceIso, untilIso)
+    .first<{ work: number }>();
+  return !!row?.work;
+}
+
 export interface PinnedMenuRow {
   chat_id: string;
   message_id: number;
@@ -818,22 +979,55 @@ export interface MatchEventRow {
 }
 
 /**
- * Recent match-start/match-end events written by the GitHub Actions live-
- * monitoring workflow (0009_match_events.sql) — the Worker's own Cron sweep
- * is the only thing that ever delivers these to Telegram. Bounded by
- * `sinceIso` (not "undelivered", since each event needs independently
- * checked group/owner receipts, done per-row by the caller via the
- * existing posts table) so this never scans unbounded history. Rows are
- * identified by the natural (pick_date, fixture_key, event_type) key — no
- * surrogate id exists to collide across the GitHub Actions scratch copy
- * and D1's own rows.
+ * Match-start/match-end events (0009_match_events.sql) that STILL need
+ * delivery to at least one configured destination — the Worker's own Cron
+ * sweep is the only thing that ever delivers these to Telegram.
+ *
+ * Previously this read the last 30 days oldest-first with LIMIT 200 and let
+ * the caller check each row's group/owner/expired receipts itself: on the
+ * free plan that is 2-3 extra D1 queries PER EVENT, including already-
+ * delivered ones, which blew past the 50-query-per-invocation limit within
+ * a day or two, and a backlog of 200+ already-delivered events meant a new
+ * event could never even be reached (LIMIT 200 oldest-first). This single
+ * query does the receipt filtering itself (NOT EXISTS against `posts`, the
+ * same table the caller used to re-check one row at a time) so only events
+ * genuinely still outstanding are ever returned, and LIMIT 5 bounds the
+ * per-sweep cost regardless of backlog size.
+ *
+ * `groupConfigured`/`ownerConfigured` mirror the caller's own "no chat/no
+ * owner means that leg is never outstanding" rule (same as the old
+ * `groupDone = !env.TELEGRAM_CHAT_ID || hasPosted(...)` check) - a leg that
+ * was never going to be delivered must not keep an otherwise-fully-handled
+ * event matching forever.
+ *
+ * The window is now 48 hours, not 30 days: a 30-day scan is unbounded read
+ * cost on a backlog, and decideMatchEvent's own kickoff/settlement windows
+ * mean nothing genuinely actionable survives this long anyway — the
+ * tradeoff is that an outage longer than 48h now permanently loses an
+ * undelivered alert instead of the old 30-day recovery margin.
  */
-export async function getRecentMatchEvents(db: D1Database, sinceIso: string, limit = 200): Promise<MatchEventRow[]> {
+export async function getUndeliveredMatchEvents(
+  db: D1Database,
+  sinceIso: string,
+  groupConfigured: boolean,
+  ownerConfigured: boolean,
+  limit = 5,
+): Promise<MatchEventRow[]> {
   const { results } = await db
     .prepare(
-      "SELECT pick_date, fixture_key, event_type, text, created_at FROM match_events WHERE created_at >= ?1 ORDER BY created_at ASC LIMIT ?2",
+      `SELECT pick_date, fixture_key, event_type, text, created_at FROM match_events me
+       WHERE created_at >= ?1
+         AND NOT EXISTS (SELECT 1 FROM posts po WHERE po.post_date = me.pick_date
+           AND po.kind = 'evt_' || me.fixture_key || '_' || me.event_type || '_expired')
+         AND (
+           (?2 = 1 AND NOT EXISTS (SELECT 1 FROM posts po WHERE po.post_date = me.pick_date
+             AND po.kind = 'evt_' || me.fixture_key || '_' || me.event_type))
+           OR (?3 = 1 AND NOT EXISTS (SELECT 1 FROM posts po WHERE po.post_date = me.pick_date
+             AND po.kind = 'evt_' || me.fixture_key || '_' || me.event_type || '_owner'))
+         )
+       ORDER BY created_at ASC LIMIT ?4`,
     )
-    .bind(sinceIso, limit)
+    .bind(sinceIso, groupConfigured ? 1 : 0, ownerConfigured ? 1 : 0, limit)
     .all<MatchEventRow>();
   return results ?? [];
 }

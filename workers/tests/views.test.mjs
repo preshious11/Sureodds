@@ -2,6 +2,12 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { lagosDateString, lagosDayBounds, notReadyText, picksPerPage, renderView } from "../src/views.ts";
 
+// Every fixture in this file uses 2026-10-11 as its stand-in "today" — freeze
+// the clock to match (renderView's bug-12 today-vs-past-day distinction
+// otherwise drifts out of sync with these fixtures as real wall-clock time
+// moves past that date).
+Date.now = () => Date.UTC(2026, 9, 11, 8, 0); // 09:00 Lagos
+
 // Minimal in-memory D1 stub: only the queries views.ts issues.
 function stubDb({ cache = null, picks = [] } = {}) {
   return {
@@ -15,6 +21,11 @@ function stubDb({ cache = null, picks = [] } = {}) {
         },
         async first() {
           if (this._sql.includes("FROM prediction_cache")) return cache;
+          // hasPicksForDate (bug 12, past-day readiness check): true iff
+          // this fixture seeded any picks at all, same signal `picks` already
+          // represents for the "FROM picks p JOIN ..." / getAllPicksForCollection
+          // query below.
+          if (this._sql.includes("FROM picks")) return picks.length ? { one: 1 } : null;
           return null;
         },
         async all() {

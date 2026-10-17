@@ -16,10 +16,22 @@ TIMEZONE = "Africa/Lagos"
 POST_TIME = "09:00"
 DELIVERY_TIME = "09:30"
 RECAP_TIME = "07:45"
+# Latest the recap may wait for yesterday's settlement before posting anyway (never skipped entirely). Must stay inside the CRON_RECAP_SWEEP window (07:00-08:55 Lagos).
+RECAP_DEADLINE = "08:45"
 # Match-start alerts are only sent from kickoff through this many minutes after kickoff, then expire.
-MATCH_START_WINDOW_MIN = "10"
+# Must equal stage8-live-monitor-production.yml's MATCH_START_WINDOW_MIN env var: a start event has
+# to clear GitHub's schedule jitter, the D1 export/apply round trip and this Worker's own sweep before
+# this window closes, so 10 minutes dropped nearly every alert.
+MATCH_START_WINDOW_MIN = "30"
 # Match-end alerts expire this many hours after the result was recorded.
 MATCH_END_WINDOW_HOURS = "24"
+# Minutes between the Worker's own on-demand dispatches of stage8-live-monitor-production.yml
+# (CRON_DELIVER_SWEEP decides whether there is any work before dispatching at all).
+LIVE_MONITOR_INTERVAL_MIN = "10"
+# "owner/repo" for the stage8 workflow_dispatch call.
+GITHUB_REPO = "preshious11/Sureodds"
+# Ref (branch) stage8 is dispatched against. Defaults to "main" in code if unset here.
+GITHUB_REF = "main"
 PAGE_SIZE = "5"
 # Public (not a secret): the Custom Picks deep-link button (empty-Top card)
 # is omitted entirely until this is set — never a dead link.
@@ -39,5 +51,7 @@ crons = ["*/5 8-22 * * *", "*/5 6-7 * * *", "*/5 * * * *", "0 10 * * *"]
 #   wrangler secret put TELEGRAM_BOT_TOKEN
 #   wrangler secret put TELEGRAM_WEBHOOK_SECRET
 #   wrangler secret put TELEGRAM_CHAT_ID   (optional, community destination)
+#   wrangler secret put GITHUB_DISPATCH_TOKEN   (optional: fine-grained PAT, "Actions: Read and write"
+#                                                 on this repo only — enables on-demand live-monitor dispatch)
 #
 # Local dev: copy .dev.vars.example to .dev.vars (gitignored).

@@ -33,7 +33,19 @@ function eligibleContext(evt) {
   };
 }
 
-function cronDb({ cache = null, subs = [], delivered = new Set(), posted = new Set(), events = [], contextFor = null } = {}) {
+function cronDb({
+  cache = null,
+  subs = [],
+  delivered = new Set(),
+  posted = new Set(),
+  events = [],
+  contextFor = null,
+  // Backs getRecapStatuses: non-empty/non-pending by default so every
+  // existing test that doesn't care about recap content still gets a
+  // normal "sent" recap (B4's empty-day skip only matters to tests that
+  // explicitly set this).
+  recapStatuses = { top: ["won"], daily: ["won"] },
+} = {}) {
   const jobs = {};
   const state = { cache };
   // Models the real `posts` table: a row with message_id === null is an
@@ -89,9 +101,25 @@ function cronDb({ cache = null, subs = [], delivered = new Set(), posted = new S
             return { results: [...delivered].map((c) => ({ chat_id: c })) };
           }
           if (this._sql.includes("FROM telegram_updates")) return { results: [] };
+          if (this._sql.includes("AS status FROM picks")) {
+            const [, collection] = this._args;
+            return { results: (recapStatuses[collection] ?? []).map((status) => ({ status })) };
+          }
           if (this._sql.includes("FROM match_events")) {
-            const [sinceIso] = this._args;
-            return { results: events.filter((e) => !e.created_at || e.created_at >= sinceIso) };
+            // Mirrors getUndeliveredMatchEvents's own NOT EXISTS filtering against
+            // `posts`, using the same postsTable the rest of this mock maintains,
+            // instead of just the sinceIso bound the old simpler query needed.
+            const [sinceIso, groupConfigured, ownerConfigured, limit] = this._args;
+            const outstanding = events.filter((e) => {
+              if (e.created_at && e.created_at < sinceIso) return false;
+              const base = `evt_${e.fixture_key}_${e.event_type}`;
+              if (postsTable.has(`${base}_expired|${e.pick_date}`)) return false;
+              const groupLeft = groupConfigured === 1 && !postsTable.has(`${base}|${e.pick_date}`);
+              const ownerLeft = ownerConfigured === 1 && !postsTable.has(`${base}_owner|${e.pick_date}`);
+              return groupLeft || ownerLeft;
+            });
+            outstanding.sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
+            return { results: outstanding.slice(0, limit) };
           }
           return { results: [] };
         },
@@ -450,13 +478,17 @@ describe("match-event delivery (GitHub Actions writes the event; only this sweep
     assert.deepEqual(sent.sort(), ["-100123", "999"]);
   });
 
-  // Regression (verification pass, 2026-10-15): the lookback window used to
-  // be 48h, so an event surviving an outage longer than that would never
-  // be picked up by getRecentMatchEvents again, even though the row (and
-  // its receipts) never expire. 30 days makes this require an outage an
-  // order of magnitude longer than anything else here tolerates.
-  it("a delayed sweep still delivers an event from well beyond the old 48h boundary (up to 30 days)", async () => {
-    const stale = { ...EVENT, created_at: new Date(Date.now() - 20 * 24 * 3_600_000).toISOString() }; // 20 days old
+  // The lookback window was widened to 30 days (verification pass,
+  // 2026-10-15), then narrowed back to 48h (query-budget pass, 2026-10-16):
+  // getUndeliveredMatchEvents now does its own receipt filtering (NOT EXISTS
+  // against `posts`) inside the one query, which bounds the per-sweep D1
+  // query count regardless of backlog size, but a 30-day scan is unbounded
+  // READ cost on that same backlog. The tradeoff is an outage longer than
+  // 48h now permanently loses an undelivered alert instead of the 30-day
+  // recovery margin — decideMatchEvent's own kickoff/settlement windows mean
+  // nothing genuinely actionable survives that long anyway.
+  it("a delayed sweep still delivers an event from well within the 48h window", async () => {
+    const stale = { ...EVENT, created_at: new Date(Date.now() - 20 * 3_600_000).toISOString() }; // 20 hours old
     const db = cronDb({ events: [stale] });
     const env = { DB: db, TELEGRAM_CHAT_ID: "-100123" };
     const sent = [];
@@ -464,11 +496,11 @@ describe("match-event delivery (GitHub Actions writes the event; only this sweep
       sent.push(p.chat_id);
       return { ok: true, messageId: 9 };
     });
-    assert.equal(delivered, 1, "a 20-day-old undelivered event must still be delivered, not silently dropped");
+    assert.equal(delivered, 1, "a 20-hour-old undelivered event must still be delivered, not silently dropped");
     assert.deepEqual(sent, ["-100123"]);
   });
   it("an event genuinely older than the lookback window is no longer swept (the bound still has an edge)", async () => {
-    const ancient = { ...EVENT, created_at: new Date(Date.now() - 45 * 24 * 3_600_000).toISOString() }; // 45 days old
+    const ancient = { ...EVENT, created_at: new Date(Date.now() - 50 * 3_600_000).toISOString() }; // 50 hours old
     const db = cronDb({ events: [ancient] });
     const env = { DB: db, TELEGRAM_CHAT_ID: "-100123" };
     const delivered = await sweepMatchEvents(env, Date.now(), async () => {
