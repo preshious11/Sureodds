@@ -434,7 +434,8 @@ def test_diagnostic_reports_complete_cache_without_api_calls(db, monkeypatch, cl
     assert info['prediction_table'] == 'prediction_cache' and info['provider_table'] == 'provider_cache'
     assert info['top_picks_count'] == len(snapshot.top_picks)
     assert info['daily_picks_count'] == len(snapshot.daily_picks)
-    assert info['football_count'] + info['baseball_count'] == snapshot.total_picks()
+    # The diagnostic counts published Top/Daily legs, not the full prediction archive.
+    assert info['football_count'] + info['baseball_count'] == len(snapshot.top_picks) + len(snapshot.daily_picks)
     assert info['retry_after'] is None and info['cache_version'] == SCHEMA_VERSION
     for label in ('Prediction cache backend=sqlite', 'Database path:', 'Status: COMPLETE', 'Sport status:',
                   'Football count:', 'Baseball count:', 'Top Picks count:', 'Daily Picks count:',

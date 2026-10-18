@@ -227,14 +227,15 @@
    "trigger": "scheduled/admin job"
   },
   "daily": {
-   "candidates": 81,
+   "candidates": 79,
    "combined_odds": 10.226650016952197,
    "rejections": {
     "below_probability": 1144,
     "book_disagreement": 12,
+    "combined_odds_ceiling": 24,
     "disabled_market": 278,
-    "diversity_limit": 1,
-    "duplicate_event": 3,
+    "diversity_limit": 2,
+    "duplicate_event": 9,
     "insufficient_books": 327,
     "price_range": 3
    },

@@ -48,7 +48,7 @@ function world() {
   const sql = new DatabaseSync(":memory:");
   for (const file of [
     "0001_foundation.sql",
-    "0003_engine_state.sql", "0005_ticket_candidates.sql", "0011_pipeline_dispatch.sql",
+    "0003_engine_state.sql", "0005_ticket_candidates.sql", "0011_pipeline_dispatch.sql", "0012_result_gifs.sql",
     "0006_custom_sessions.sql",
     "0007_custom_picks_conversation.sql",
     "0009_match_events.sql",
@@ -96,6 +96,7 @@ describe("query budget: every scheduled invocation stays at or below 40 D1 queri
     for (const [id, tier, status] of [[1, "top", "won"], [2, "daily", "lost"]]) {
       insertPick(sql, { id, tier, status, startMs: Date.UTC(2026, 9, 16, 18, 0) });
     }
+    sql.prepare("UPDATE picks SET pick_date=?").run(yesterday);
     const env = { DB, TELEGRAM_CHAT_ID: "-100", TELEGRAM_ADMIN_IDS: "999", TIMEZONE: "Africa/Lagos", STAGE3_CRON_ENABLED: "1" };
     const realFetch = globalThis.fetch;
     globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, result: { message_id: 1 } }) });
@@ -229,7 +230,10 @@ for (const scenario of ['generation failure','generation cap','generation interv
     if(scenario==='generation lease') sql.prepare("UPDATE job_state SET lease_owner='busy',lease_until=? WHERE name='generate'").run(iso(now+60000));
     if(scenario==='generation complete') sql.prepare(`INSERT INTO prediction_cache(cache_key,local_date,timezone,status,payload_json,generated_at,updated_at,expires_at)
       VALUES('k',?,'Africa/Lagos','COMPLETE','{}',?,?,?)`).run(DAY,iso(now),iso(now),iso(now+86400000));
-    const env={DB,TELEGRAM_ADMIN_IDS:'999',TELEGRAM_CHAT_ID:'-100',STAGE3_CRON_ENABLED:'1',GITHUB_REPO:'owner/repo',GITHUB_DISPATCH_TOKEN:'t'};
+    // Exercise the new aggregate + missing-library branch alongside failed match sends and dispatch alerts.
+    insertPick(sql,{id:200,tier:'daily',status:'won',startMs:now-3600000});
+    sql.prepare("INSERT INTO posts(kind,post_date,message_id,created_at) VALUES('daily',?,'123',?)").run(DAY,iso(now));
+    const env={RESULT_GIFS_START_DATE:DAY,DB,TELEGRAM_ADMIN_IDS:'999',TELEGRAM_CHAT_ID:'-100',STAGE3_CRON_ENABLED:'1',GITHUB_REPO:'owner/repo',GITHUB_DISPATCH_TOKEN:'t'};
     const saved=globalThis.fetch;
     globalThis.fetch=async(url)=>({ok:false,status:String(url).includes('github.com')?401:500,json:async()=>({})});
     try { await handleScheduled(env,CRON_DELIVER_SWEEP,now); } finally {globalThis.fetch=saved;}
@@ -244,4 +248,77 @@ it('WATCH health report, missing generation and full retention with failed sends
   try {await handleScheduled({DB,STAGE3_CRON_ENABLED:'1',TELEGRAM_ADMIN_IDS:'999'},CRON_WATCH,NOW);}
   finally {globalThis.fetch=saved;}
   assert.ok(DB.count<=BUDGET,`WATCH failed sends used ${DB.count} queries`);
+});
+
+
+for(const [status,registered] of [['won',true],['lost',true],['void',false],['pending',false]]) {
+  it(`result GIF ${status}, registered=${registered}: cron invocation stays under 40 queries`,async()=>{
+    const {sql,DB}=world();
+    insertPick(sql,{id:1,tier:'top',status,startMs:NOW-3600000});
+    sql.prepare("INSERT INTO posts(kind,post_date,message_id,created_at) VALUES('top',?,'123',?)").run(DAY,iso(NOW));
+    if(registered)sql.prepare("INSERT INTO result_gifs VALUES(?,'f','u',?)").run(status,iso(NOW));
+    const saved=globalThis.fetch;globalThis.fetch=async()=>({ok:false,status:500,json:async()=>({})});
+    try{await handleScheduled({DB,TELEGRAM_CHAT_ID:'-100',TELEGRAM_ADMIN_IDS:'999',RESULT_GIFS_START_DATE:DAY,STAGE3_CRON_ENABLED:'1'},CRON_POST_SWEEP,NOW);}
+    finally{globalThis.fetch=saved;}
+    assert.ok(DB.count<=BUDGET,`GIF ${status}: ${DB.count} queries`);
+  });
+}
+
+
+for(const [tickets,registered] of [[6,false],[6,true],[2,false]]) {
+  it(`${tickets} ready result tickets in the POST backup, registered=${registered}, stays under 40`,async()=>{
+    const {sql,DB}=world();
+    const dates=tickets===2?['2026-10-17']:['2026-10-15','2026-10-16','2026-10-17'];
+    sql.prepare("INSERT INTO telegram_updates(update_id,status,updated_at) VALUES(1,'failed',?)").run(iso(NOW));
+    let id=300;
+    for(const day of dates)for(const kind of ['top','daily']) {
+      const status=kind==='top'?'won':'lost';
+      insertPick(sql,{id,tier:kind,status,startMs:NOW-3600000});
+      sql.prepare('UPDATE picks SET pick_date=? WHERE id=?').run(day,id);
+      sql.prepare("INSERT INTO posts(kind,post_date,message_id,created_at) VALUES(?,?,'123',?)").run(kind,day,iso(NOW));
+      id++;
+    }
+    if(registered)for(const kind of ['won','lost'])sql.prepare("INSERT INTO result_gifs VALUES(?,?,?,?)").run(kind,kind,kind,iso(NOW));
+    const saved=globalThis.fetch;let animations=0;
+    globalThis.fetch=async(url)=>{if(String(url).endsWith('sendAnimation'))animations++;return {ok:false,status:500,json:async()=>({})};};
+    try{await handleScheduled({DB,TELEGRAM_CHAT_ID:'-100',TELEGRAM_ADMIN_IDS:'999',STAGE3_CRON_ENABLED:'1',RESULT_GIFS_START_DATE:dates[0],
+      GITHUB_REPO:'owner/repo',GITHUB_DISPATCH_TOKEN:'t'},CRON_POST_SWEEP,NOW);}
+    finally{globalThis.fetch=saved;}
+    assert.equal(animations,registered?tickets:0,'all ready tickets are handled in one sweep');
+    assert.equal(sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'result_gif_%'").get().n,registered?0:tickets);
+    assert.ok(DB.count<=BUDGET,`six tickets: ${DB.count} queries, budget ${BUDGET}`);
+  });
+}
+
+for(const cron of [CRON_DELIVER_SWEEP,CRON_POST_SWEEP])it(`maximum batch with six ready tickets, missing GIFs and mixed delivery failures: ${cron}`,async(t)=>{
+ const {sql,DB}=world();let id=500;
+ for(const day of ['2026-10-15','2026-10-16',DAY])for(const kind of ['top','daily']) {
+  insertPick(sql,{id,tier:kind,status:kind==='top'?'won':'lost',startMs:NOW-3600000});
+  sql.prepare('UPDATE picks SET pick_date=? WHERE id=?').run(day,id);
+  if(cron===CRON_DELIVER_SWEEP || day!==DAY)
+   sql.prepare("INSERT INTO posts(kind,post_date,message_id,created_at) VALUES(?,?,'123',?)").run(kind,day,iso(NOW));
+  if(cron===CRON_DELIVER_SWEEP) {
+   sql.prepare("INSERT INTO live_fixture_state(pick_date,fixture_key,status,settlement_done,updated_at) VALUES(?,?,'final',1,?)").run(day,`fx-${id}`,iso(NOW));
+   sql.prepare("INSERT INTO match_events VALUES(?,?,'end',?,?)").run(day,`fx-${id}`,`end ${id}`,iso(NOW));
+  }
+  id++;
+ }
+ if(cron===CRON_DELIVER_SWEEP)
+  sql.prepare("INSERT INTO telegram_updates(update_id,status,updated_at) VALUES(1,'failed',?)").run(iso(NOW));
+ else sql.prepare("INSERT INTO prediction_cache(cache_key,local_date,timezone,status,payload_json,generated_at,updated_at,expires_at) VALUES('k',?,'Africa/Lagos','COMPLETE','{}',?,?,?)")
+  .run(DAY,iso(NOW),iso(NOW),iso(NOW+86400000));
+ const saved=globalThis.fetch;let ownerMessages=0;
+ globalThis.fetch=async(url,init)=>{
+  if(String(url).includes('github.com'))return {ok:false,status:401,json:async()=>({})};
+  const body=JSON.parse(init.body);
+  const ok=body.chat_id==='-100' || (cron===CRON_DELIVER_SWEEP && body.text==='end 500' && ++ownerMessages===1);
+  return {ok,status:ok?200:500,json:async()=>({ok,result:ok?{message_id:42}:undefined})};
+ };
+ try {await handleScheduled({DB,STAGE3_CRON_ENABLED:'1',TELEGRAM_CHAT_ID:'-100',TELEGRAM_ADMIN_IDS:'999',RESULT_GIFS_START_DATE:'2026-10-15',
+  GITHUB_REPO:'owner/repo',GITHUB_DISPATCH_TOKEN:'t'},cron,NOW);}finally{globalThis.fetch=saved;}
+ assert.equal(sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'result_gif_%' AND message_id='no-gif'").get().n,6);
+ if(cron===CRON_DELIVER_SWEEP)assert.equal(sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'evt_%_end' AND message_id IS NOT NULL").get().n,6);
+ t.diagnostic(`D1 queries: ${DB.count}`);
+ assert.equal(DB.count,cron===CRON_DELIVER_SWEEP?40:35);
+ assert.ok(DB.count<=BUDGET);
 });

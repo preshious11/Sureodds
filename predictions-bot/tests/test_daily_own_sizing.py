@@ -53,7 +53,8 @@ def test_the_daily_alone_reaches_the_band_with_a_top_of_about_two():
 def test_seven_legs_worth_8_2_are_not_enough_but_nothing_weak_is_added_to_get_there():
     """Short of 10 with everything that qualifies: the ticket is posted short (1.35**7 = 8.17), never padded."""
     ps = select(pool(n=7), Config(), dt())
-    assert len(ps.daily) == 7 and own(ps) == pytest.approx(PRICE ** 7, abs=0.01)
+    assert len(ps.daily) == 7 - len(ps.top)
+    assert own(ps) == pytest.approx(PRICE ** len(ps.daily), abs=0.01)
     assert not ps.diagnostics["daily"]["target_reached"]
 
 
@@ -69,12 +70,12 @@ def test_the_top_ticket_is_identical_whatever_the_daily_band():
     assert [(s.event.provider_event_id, s.line.selection, s.price) for s in base.top] ==         [(s.event.provider_event_id, s.line.selection, s.price) for s in other.top]
 
 
-def test_the_daily_counts_its_own_legs_only_and_shares_predictions_with_the_top():
+def test_the_daily_counts_its_own_legs_only_without_sharing_top_predictions():
     """No cross-tier exclusion: the Daily is built from the stored predictions alone. A prediction that is a Top
     leg may also be a Daily leg (one row, two memberships) and counts in the Daily's own product."""
     ps = select(pool(), Config(), dt())
     assert ps.top and ps.daily
-    assert {id(s) for s in ps.top} & {id(s) for s in ps.daily}      # the strongest rows qualify for both
+    assert not ({id(s) for s in ps.top} & {id(s) for s in ps.daily})      # the strongest rows qualify for both
     assert own(ps) == pytest.approx(ps.diagnostics["daily"]["combined_odds"], abs=0.01)
     assert len({s.event.canonical_event_id for s in ps.daily}) == len(ps.daily)    # one pick per match
 

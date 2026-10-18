@@ -176,14 +176,15 @@ def test_two_books_are_enough_for_a_main_market_daily_leg():
 
 
 def test_secondary_and_restricted_markets_need_more_books():
+    # WHY: isolate Daily gates; Top must not consume the same synthetic predictions.
     e1, e2 = _fx(0), _fx(1)
     btts = cand(e1, "btts", "yes", 0.70, 1.5, quotes={"a": 1.5, "b": 1.5})                       # secondary: needs 3
     corners = cand(e2, "total", "over", 0.70, 1.5, quotes=books(3), line=9.5, stat="corners")   # restricted: needs 4
-    ps = select([btts, corners], Config(), dt())
+    ps = select([btts, corners], Config(top_min_prob=1.0), dt())
     assert ps.daily == []
     btts3 = cand(e1, "btts", "yes", 0.70, 1.5, quotes=books(3))
     corners4 = cand(e2, "total", "over", 0.70, 1.5, quotes=books(4), line=9.5, stat="corners")
-    assert {s.line.market for s in select([btts3, corners4], Config(), dt()).daily} == {"btts", "total"}
+    assert {s.line.market for s in select([btts3, corners4], Config(top_min_prob=1.0), dt()).daily} == {"btts", "total"}
 
 
 def test_top_needs_three_distinct_books():
@@ -256,8 +257,9 @@ def test_totals_are_graded_by_distance_from_the_main_line():
 
 
 def test_restricted_market_competes_after_coverage_and_uncertainty_gates():
+    # WHY: isolate Daily gates; Top must not consume the same synthetic predictions.
     """A well-covered restricted market competes on its penalized evidence rank."""
-    c = Config(daily_odds_min=1.4, daily_odds_max=1.6)                    # one leg completes the ticket
+    c = Config(top_min_prob=1.0, daily_odds_min=1.4, daily_odds_max=1.6)                    # one leg completes the ticket
     corners = cand(_fx(0), "total", "over", 0.90, 1.45, quotes=books(6, 1.45), line=9.5, stat="corners")
     win = cand(_fx(1), "result3", "home", 0.70, 1.45, quotes=books(6, 1.45))
     ps = select([corners, win], c, dt())
@@ -298,10 +300,11 @@ def test_ranking_orders_the_daily_by_evidence_not_probability():
 
 
 def test_without_a_sharp_reference_there_is_no_edge_and_no_edge_gate():
+    # WHY: isolate Daily gates; Top must not consume the same synthetic predictions.
     s = cand(_fx(0), p=0.70)
-    e = evmod.assess(s, Config())
+    e = evmod.assess(s, Config(top_min_prob=1.0))
     assert s.p_fair is None and s.edge_ev is None and e.edge is None and e.has_sharp is False
-    assert select([s], Config(), dt()).daily == [s]       # absence of a reference is not a rejection
+    assert select([s], Config(top_min_prob=1.0), dt()).daily == [s]       # absence of a reference is not a rejection
 
 
 def test_missing_reference_costs_confidence_not_a_fabricated_edge():
@@ -313,9 +316,10 @@ def test_missing_reference_costs_confidence_not_a_fabricated_edge():
 
 
 def test_an_unsupported_claim_over_the_market_is_rejected():
+    # WHY: isolate Daily gates; Top must not consume the same synthetic predictions.
     big = cand(_fx(0), p=0.80, price=1.4, edge=0.12)                      # model says +12 points, nothing independent
     backed = cand(_fx(1), p=0.80, price=1.4, edge=0.12, independent=("elo",))
-    ps = select([big, backed], Config(), dt())
+    ps = select([big, backed], Config(top_min_prob=1.0), dt())
     assert big not in ps.daily and backed in ps.daily
     assert big in ps.predictions                             # kept as a prediction, not promoted
     assert ps.diagnostics["daily"]["rejections"]["unsupported_edge"] == 1

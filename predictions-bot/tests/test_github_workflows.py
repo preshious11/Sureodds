@@ -270,3 +270,11 @@ def test_production_generation_has_separate_write_budgets():
     assert 'write_budget: "40000"' in backup and 'destructive_budget: "2000"' in backup
     settle = (WORKFLOWS / "stage9-settle-production.yml").read_text(encoding="utf-8")
     assert "if: always() && needs.guard.outputs.mode == 'live'" in settle
+
+
+def test_production_match_start_windows_match():
+    import re
+    worker = (WORKFLOWS.parents[1] / "workers" / "wrangler.toml").read_text(encoding="utf-8")
+    workflow = (WORKFLOWS / "stage8-live-monitor-production.yml").read_text(encoding="utf-8")
+    assert re.search(r'^MATCH_START_WINDOW_MIN = "45"$', worker, re.M)
+    assert re.search(r'^\s+MATCH_START_WINDOW_MIN: "45"$', workflow, re.M)

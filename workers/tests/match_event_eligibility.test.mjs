@@ -54,7 +54,7 @@ function world() {
     CREATE TABLE picks(id INTEGER PRIMARY KEY, pick_date TEXT, tier TEXT DEFAULT 'all', rank INTEGER DEFAULT 0,
       sport TEXT DEFAULT 'football', league TEXT, home TEXT DEFAULT 'H', away TEXT DEFAULT 'A', start_utc TEXT,
       market TEXT DEFAULT '1x2', selection TEXT DEFAULT 'home', label TEXT DEFAULT 'H to Win', price REAL DEFAULT 2,
-      prob REAL DEFAULT 0.6, status TEXT, fixture_key TEXT);
+      prob REAL DEFAULT 0.6, status TEXT, fixture_key TEXT, result_json TEXT);
     CREATE TABLE prediction_memberships(prediction_id INTEGER, collection TEXT, rank INTEGER,
       PRIMARY KEY(prediction_id, collection));
     CREATE TABLE posts(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, post_date TEXT, message_id TEXT,
@@ -505,15 +505,16 @@ describe("integration: publication -> kickoff -> settlement -> full time -> next
       for (const k of ["top-fx", "daily-fx", "both-fx"]) w.event(k, "end", KICKOFF + 115 * 60_000);
       sent.length = 0;
       await handleScheduled(env, CRON_DELIVER_SWEEP, KICKOFF + 120 * 60_000);
+      await handleScheduled(env, CRON_DELIVER_SWEEP, KICKOFF + 125 * 60_000);
       assert.equal(sent.length, 6);
       assert.ok(w.sql.prepare("SELECT status FROM picks WHERE id=?").get(allFx).status === "pending", "All-only never settled");
 
       // 07:50 Lagos next morning: compact recap to group + owner.
       sent.length = 0;
       await handleScheduled(env, CRON_RECAP_SWEEP, Date.UTC(2026, 9, 17, 6, 50));
-      assert.equal(sent.length, 2);
-      const recap = sent[0].text;
-      assert.equal(sent[1].text, recap);
+      assert.equal(sent.length, 1);
+      assert.equal(sent[0].chat, "999");
+      const recap = sent[0].text.split("\n\nYesterday")[0];
       assert.equal(
         recap,
         "<b>📊 SUREODDS RESULTS</b>\n\n🏆 TOP PICKS\n\n✅ ✅\n\n2 Wins | 0 Losses\n\n⚽ DAILY PICKS\n\n❌ ✅\n\n1 Win | 1 Loss"

@@ -21,6 +21,18 @@ class PickSet:
         return self.predictions
 
 
+def prediction_identity(row):
+    """WHY: compare prediction semantics, never display labels or provider spellings."""
+    from predbot.selection.representatives import FAMILY_OF_MARKET
+    market = str(row.get('market') or '').lower()
+    market = {'1x2': 'result3', 'moneyline': 'result2', 'over_under': 'total',
+              'spread': 'handicap', 'double_chance': 'dc', 'draw_no_bet': 'dnb'}.get(market, market)
+    line = row.get('line')
+    return (row.get('canonical_event_id') or row.get('fixture_key'),
+            FAMILY_OF_MARKET.get(market, market), row.get('stat'), row.get('selection'),
+            None if line is None else round(float(line), 2), row.get('period'))
+
+
 class PredictionPool:
     """Today's prediction pool behind one interface, whatever holds it.
 
@@ -58,10 +70,14 @@ class PredictionPool:
         has_archive = bool(db.query('SELECT 1 FROM ticket_candidates WHERE pick_date=? LIMIT 1', (day,)))
         pool = db.ticket_candidate_rows(day) if has_archive else self.rows('all')
         top, top_diag = select_top(pool, cfg, now_utc)
-        daily, daily_diag = select_daily(pool, cfg, now_utc)
+        # WHY: Top owns identical predictions; another market on the same fixture remains eligible.
+        top_keys = {prediction_identity(row) for row in top}
+        daily_pool = [row for row in pool if prediction_identity(row) not in top_keys]
+        daily, daily_diag = select_daily(daily_pool, cfg, now_utc)
+        # WHY: Worker top/daily receipts freeze both cards, just like legacy pick receipts.
         with db.transaction():
             if not db.deliveries_exist('picks', day) and not db.query(
-                    "SELECT 1 FROM posts WHERE post_date=? AND kind IN ('picks','picks_top','picks_daily')", (day,)):
+                    "SELECT 1 FROM posts WHERE post_date=? AND kind IN ('picks','picks_top','picks_daily','top','daily')", (day,)):
                 db.execute("DELETE FROM prediction_memberships WHERE collection IN ('top','daily') "
                            "AND prediction_id IN (SELECT id FROM picks WHERE pick_date=?)", (day,))
                 for collection, rows in (('top', top), ('daily', daily)):

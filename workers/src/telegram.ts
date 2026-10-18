@@ -116,20 +116,10 @@ function usernameFromAllUrl(url: string): string | undefined {
   return /^https:\/\/t\.me\/([^/?]+)\?start=all$/.exec(url)?.[1];
 }
 
-/**
- * Bug 10: a group tap on Top/Daily/Stats/Yesterday used to be a callback
- * button, which posted a brand-new full card into the group (see
- * cron.ts/index.ts's own fix for the TAP side). `mode` lets every caller
- * that already threads an AllButtonMode through for the "all" button make
- * these four buttons deep links in a group too, the way "all" already does
- * - "callback" (private) is unchanged; "omit" (group, no username to build
- * a link with) falls back to callback rather than omitting the button
- * entirely, since index.ts's own redirect handler has a no-link fallback
- * alert for exactly that case.
- */
+// WHY: group modes only expose private deep links; admin browsing is private-only.
 function viewButton(view: string, mode: AllButtonMode = "callback"): SwitchButton {
   const text = `${VIEW_ICON[view] ?? ""} ${VIEW_LABEL[view] ?? view}`.trim();
-  const username = mode !== "callback" && mode !== "omit" ? usernameFromAllUrl(mode.url) : undefined;
+  const username = typeof mode === "object" ? usernameFromAllUrl(mode.url) : undefined;
   return username ? { text, url: `https://t.me/${username}?start=${view}` } : { text, callback_data: encodeCallback(view, 0) };
 }
 type KeyboardRow = SwitchButton[];
@@ -146,26 +136,29 @@ type KeyboardRow = SwitchButton[];
  *   - "omit": group chat with no configured bot username — no dead link,
  *     no callback either; the button is simply left out.
  */
-export type AllButtonMode = "callback" | { url: string } | "omit";
+export type AllButtonMode = "callback" | "admin" | { url: string } | "omit";
 
-export function allButtonModeFor(chatType: string, botUsername: string | undefined): AllButtonMode {
-  if (chatType === "private") return "callback";
+export function allButtonModeFor(chatType: string, botUsername: string | undefined, admin = false): AllButtonMode {
+  if (chatType === "private") return admin ? "admin" : "callback";
   return botUsername ? { url: `https://t.me/${botUsername}?start=all` } : "omit";
 }
 
 function allButton(mode: AllButtonMode): SwitchButton | null {
   if (mode === "omit") return null;
-  if (mode === "callback") return viewButton("all");
+  if (mode === "callback" || mode === "admin") return viewButton("all");
   return { text: `${VIEW_ICON.all} ${VIEW_LABEL.all}`, url: mode.url };
 }
 
 // predbot/bot/pagination.py SWITCH_ROWS: ((all,), (top, daily), (stats, yesterday)).
 function switchRows(allMode: AllButtonMode = "callback"): KeyboardRow[] {
+  // WHY: group keyboards contain game links only; private stats switches require admin mode.
+  if (typeof allMode === 'object') return communityMenuKeyboard(usernameFromAllUrl(allMode.url)!).inline_keyboard as KeyboardRow[];
+  if (allMode === 'omit') return [];
   const all = allButton(allMode);
   return [
     ...(all ? [[all]] : []),
     [viewButton("top", allMode), viewButton("daily", allMode)],
-    [viewButton("stats", allMode), viewButton("yesterday", allMode)],
+    ...(allMode === "admin" ? [[viewButton("stats"), viewButton("yesterday")]] : []),
   ];
 }
 
@@ -190,6 +183,7 @@ export function buildKeyboard(
   extraRows: KeyboardRow[] = [],
   allMode: AllButtonMode = "callback",
 ): Record<string, unknown> {
+  if (allMode !== "callback" && allMode !== "admin") return menuKeyboard(allMode);
   const pagerRow: KeyboardRow = [];
   if (pages > 1) {
     if (page > 0) pagerRow.push({ text: "◀️", callback_data: encodeCallback(view, page - 1, day ?? undefined) });
@@ -219,10 +213,7 @@ export function customPicksButton(botUsername: string): { text: string; url: str
  * button, if the username isn't configured).
  */
 export function topEmptyKeyboard(botUsername: string, allMode: AllButtonMode = "callback"): Record<string, unknown> {
-  const all = allButton(allMode);
-  const daily = viewButton("daily", allMode);
-  const topRow = all ? [daily, all] : [daily];
-  return { inline_keyboard: [topRow, [customPicksButton(botUsername)]] };
+  return typeof allMode === "object" ? communityMenuKeyboard(botUsername) : menuKeyboard(allMode);
 }
 
 /**
@@ -236,8 +227,26 @@ export function communityMenuKeyboard(botUsername: string): Record<string, unkno
     inline_keyboard: [
       [viewButton("top", mode), viewButton("daily", mode)],
       [allButton(mode)!],
-      [viewButton("stats", mode), viewButton("yesterday", mode)],
       [customPicksButton(botUsername)],
     ],
   };
+}
+
+
+// WHY: privileges depend only on the real sender id, never Telegram group-admin roles.
+export function isAdmin(env: { TELEGRAM_ADMIN_IDS?: string }, userId: unknown): boolean {
+  return userId != null && (env.TELEGRAM_ADMIN_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean).includes(String(userId));
+}
+export function restrictedView(view: string): boolean {
+  return view === 'yesterday' || view === 'stats' || view.startsWith('stats_');
+}
+
+const WELCOME_COMMANDS =
+  "<b>🏆 /top</b> – Top picks of the day\n" +
+  "<b>📚 /all</b> – All predictions\n" +
+  "<b>📋 /daily</b> – Daily picks · Accumulator slip";
+
+export function welcomeMessage(firstName: string): string {
+  const safe = firstName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `👋 Hi, ${safe}\n\nUse the menu below or these commands:\n\n${WELCOME_COMMANDS}`;
 }

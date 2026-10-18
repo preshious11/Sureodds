@@ -102,30 +102,26 @@ describe("All Predictions group-to-private keyboards", () => {
   // group even once "all" was fixed this way — a tap posted a brand-new
   // full card into the group every time. They now follow the exact same
   // AllButtonMode-driven rule "all" already used.
-  it("menuKeyboard/buildKeyboard also swap Top/Daily/Stats/Yesterday for group deep links, not just All", () => {
+  it("group switches contain only private game links", () => {
     const groupMode = allButtonModeFor("group", "SureOddsBot");
     const menuKb = JSON.stringify(menuKeyboard(groupMode));
-    for (const view of ["top", "daily", "stats", "yesterday"]) {
+    for (const view of ["top", "daily"]) {
       assert.match(menuKb, new RegExp(`https://t\\.me/SureOddsBot\\?start=${view}`));
       assert.doesNotMatch(menuKb, new RegExp(`"callback_data":"pg\\|${view}\\|0"`));
     }
   });
-  it("in a PRIVATE chat, Top/Daily/Stats/Yesterday stay callback buttons, unchanged", () => {
+  it("regular private chats retain Top and Daily callback buttons", () => {
     const menuKb = JSON.stringify(menuKeyboard("callback"));
-    for (const view of ["top", "daily", "stats", "yesterday"]) {
+    for (const view of ["top", "daily"]) {
       assert.match(menuKb, new RegExp(`"callback_data":"pg\\|${view}\\|0"`));
     }
   });
-  it("with no configured username, Top/Daily/Stats/Yesterday fall back to callback rather than a dead link", () => {
-    const omitMode = allButtonModeFor("group", undefined);
-    const menuKb = JSON.stringify(menuKeyboard(omitMode));
-    for (const view of ["top", "daily", "stats", "yesterday"]) {
-      assert.match(menuKb, new RegExp(`"callback_data":"pg\\|${view}\\|0"`));
-    }
+  it("with no configured username, group keyboards fail closed without callbacks", () => {
+    assert.deepEqual(menuKeyboard(allButtonModeFor('group',undefined)), {inline_keyboard:[]});
   });
-  it("communityMenuKeyboard's Top/Daily/Stats/Yesterday are also always deep links (it is group-only by design)", () => {
+  it("community game buttons are private deep links", () => {
     const kb = JSON.stringify(communityMenuKeyboard("SureOddsBot"));
-    for (const view of ["top", "daily", "stats", "yesterday"]) {
+    for (const view of ["top", "daily"]) {
       assert.match(kb, new RegExp(`https://t\\.me/SureOddsBot\\?start=${view}`));
       assert.doesNotMatch(kb, new RegExp(`"callback_data":"pg\\|${view}\\|0"`));
     }

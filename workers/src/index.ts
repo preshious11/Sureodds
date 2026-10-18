@@ -40,6 +40,7 @@ import {
   validTicket,
 } from "./custom_picks.ts";
 import {
+  isAdmin, restrictedView, welcomeMessage,
   allButtonModeFor,
   commandToView,
   communityMenuKeyboard,
@@ -80,18 +81,9 @@ const VIEW_FALLBACK_COMMAND: Record<string, string> = {
 };
 const LOADING_TEXT = "⏳ Building your picks...";
 
-const WELCOME_COMMANDS =
-  "<b>🏆 /top</b> – Top picks of the day\n" +
-  "<b>📚 /all</b> – All predictions\n" +
-  "<b>📋 /daily</b> – Daily picks · Accumulator slip\n" +
-  "<b>📊 /stats</b> – See prediction results";
-
 const COMMUNITY_MENU_TEXT = "⚽ Predictions\n\nToday's picks, results and more.";
 
-export function welcomeMessage(firstName: string): string {
-  const safe = firstName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return `👋 Hi, ${safe}\n\nUse the menu below or these commands:\n\n${WELCOME_COMMANDS}`;
-}
+export { welcomeMessage } from "./telegram.ts";
 
 // Splits an over-long sendMessage (Telegram's 4096-char limit) into several
 // calls, and redirects an over-long editMessageText into split sendMessage
@@ -254,8 +246,8 @@ function allRedirectKeyboard(botUsername: string | undefined): Record<string, un
 
 /** /all typed as a plain group command: a brand-new short message, never an edit — nothing to preserve yet. */
 async function sendGroupAllRedirect(env: Env, chatId: string): Promise<void> {
-  const replyMarkup = allRedirectKeyboard(env.TELEGRAM_BOT_USERNAME);
-  const text = replyMarkup ? ALL_GROUP_TEXT : ALL_GROUP_TEXT_NO_LINK;
+  const replyMarkup = env.TELEGRAM_BOT_USERNAME ? communityMenuKeyboard(env.TELEGRAM_BOT_USERNAME) : undefined;
+  const text = "Open a private chat using the prediction buttons below.";
   await tgApi(env, "sendMessage", { chat_id: chatId, text, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) });
 }
 
@@ -269,19 +261,7 @@ const PRIVATE_CHAT_TEXT = "Use this command in a private chat with the bot.";
  * (plain text otherwise, so no dead link is ever shown).
  */
 async function sendPrivateChatRedirect(env: Env, chatId: string, startParam: string): Promise<void> {
-  if (env.TELEGRAM_BOT_USERNAME) {
-    const button =
-      startParam === "custom_picks"
-        ? customPicksButton(env.TELEGRAM_BOT_USERNAME)
-        : { text: "📚 Open All Predictions", url: `https://t.me/${env.TELEGRAM_BOT_USERNAME}?start=${startParam}` };
-    await tgApi(env, "sendMessage", {
-      chat_id: chatId,
-      text: PRIVATE_CHAT_TEXT,
-      reply_markup: { inline_keyboard: [[button]] },
-    });
-    return;
-  }
-  await tgApi(env, "sendMessage", { chat_id: chatId, text: PRIVATE_CHAT_TEXT });
+  await sendGroupAllRedirect(env, chatId);
 }
 
 /**
@@ -446,6 +426,8 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       await answerCallback(env, cbId);
       return;
     }
+    const from = cb.from as Record<string, unknown> | undefined;
+    const admin = !msg?.sender_chat && from?.username !== 'GroupAnonymousBot' && isAdmin(env, from?.id);
     const chatType = String((msg?.chat as Record<string, unknown> | undefined)?.type ?? "private");
 
     // No view ever renders or sends anything new into a GROUP on a button
@@ -460,13 +442,21 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
     // the rest of the group menu, on that message and everywhere else, is
     // left untouched either way.
     if (chatType !== "private") {
+      if (restrictedView(parsed.view)) {
+        await answerCallback(env, cbId);
+        if (admin) {
+          const rendered = await renderView(env, parsed.view, parsed.page, parsed.day, 'private', true);
+          await tgApi(env, 'sendMessage', {chat_id: String(from?.id), text: rendered.text, parse_mode:'HTML', reply_markup:rendered.replyMarkup});
+        }
+        return;
+      }
       const startParam = parsed.view.startsWith("all") ? "all" : parsed.view;
       await answerCallbackWithDeepLink(env, cbId, startParam, VIEW_FALLBACK_COMMAND[startParam] ?? "/all");
       return;
     }
 
     // Private chats get the real page edit.
-    const { text, replyMarkup } = await renderView(env, parsed.view, parsed.page, parsed.day, chatType);
+    const { text, replyMarkup } = await renderView(env, parsed.view, parsed.page, parsed.day, chatType, admin);
     await answerCallback(env, cbId);
     if (!chatId) return;
     const messageId = (msg as Record<string, unknown> | undefined)?.message_id;
@@ -501,6 +491,25 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   // exact match, as in production (`args == [CUSTOM_PICKS_START_PARAMETER]`).
   const userId = String(from.id ?? "");
   const { cmd, args } = splitCommand(text);
+  const admin = !msg.sender_chat && from.username !== 'GroupAnonymousBot' && isAdmin(env, from.id);
+  // WHY: the group is a game-content channel, not a command/help conversation.
+  const requestedView = commandToView(cmd) ?? (cmd === '/start' ? args[0] : null);
+  if (chatType !== 'private') {
+    if (requestedView && restrictedView(requestedView)) {
+      if (admin) {
+        const rendered = await renderView(env, requestedView, 0, null, 'private', true);
+        await tgApi(env, 'sendMessage', { chat_id: userId, text: rendered.text, parse_mode: 'HTML', reply_markup: rendered.replyMarkup });
+      }
+      return;
+    }
+    if (cmd === '/menu' || cmd === '/pinmenu') {
+      if (!admin) return;
+    } else {
+      if (requestedView || cmd === '/start') await sendGroupAllRedirect(env, chatId);
+      return;
+    }
+  }
+  if (chatType === 'private' && await handleGifAdmin(env, msg, userId, chatId, cmd, args, admin)) return;
   if (cmd === "/start" && args.length === 1 && args[0] === "custom_picks") {
     if (chatType !== "private" || !userId) {
       // Custom Picks has no group path — redirect to a private chat instead
@@ -536,7 +545,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       username: (from.username as string) ?? null,
       firstName: (from.first_name as string) ?? null,
     });
-    const { text: body, replyMarkup } = await renderView(env, view, 0, null, chatType);
+    const { text: body, replyMarkup } = await renderView(env, view, 0, null, chatType, admin);
     await tgApi(env, "sendMessage", { chat_id: chatId, text: body, parse_mode: "HTML", reply_markup: replyMarkup });
     return;
   }
@@ -557,7 +566,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       chat_id: chatId,
       text: welcomeMessage(name),
       parse_mode: "HTML",
-      reply_markup: menuKeyboard(allButtonModeFor(chatType, env.TELEGRAM_BOT_USERNAME)),
+      reply_markup: menuKeyboard(allButtonModeFor(chatType, env.TELEGRAM_BOT_USERNAME, admin)),
     });
     return;
   }
@@ -568,18 +577,17 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   // This is the group's normal (non-empty-Top-card) Custom Picks entry
   // point; the empty-Top-card keyboard (above) is the other one.
   if (cmd === "/menu" && args.length === 0) {
-    const adminIds = (env.TELEGRAM_ADMIN_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-    if (!adminIds.includes(String(from.id ?? ""))) {
-      await tgApi(env, "sendMessage", { chat_id: chatId, text: "Not allowed." });
+    if (!admin) {
+      await tgApi(env, "sendMessage", { chat_id: chatType === "private" ? chatId : userId, text: "Not allowed." });
       return;
     }
     if (!env.TELEGRAM_CHAT_ID) {
-      await tgApi(env, "sendMessage", { chat_id: chatId, text: "Community destination is not configured. Set TELEGRAM_CHAT_ID." });
+      await tgApi(env, "sendMessage", { chat_id: chatType === "private" ? chatId : userId, text: "Community destination is not configured. Set TELEGRAM_CHAT_ID." });
       return;
     }
     if (!env.TELEGRAM_BOT_USERNAME) {
       await tgApi(env, "sendMessage", {
-        chat_id: chatId,
+        chat_id: chatType === "private" ? chatId : userId,
         text: "Could not resolve this bot's username. Community menu was not posted. Try /menu again.",
       });
       return;
@@ -589,7 +597,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       text: COMMUNITY_MENU_TEXT,
       reply_markup: communityMenuKeyboard(env.TELEGRAM_BOT_USERNAME),
     });
-    await tgApi(env, "sendMessage", { chat_id: chatId, text: "Community menu posted." });
+    await tgApi(env, "sendMessage", { chat_id: chatType === "private" ? chatId : userId, text: "Community menu posted." });
     return;
   }
 
@@ -601,8 +609,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   // untouched and add a new command instead of overloading it.
   if (cmd === "/pinmenu" && args.length === 0) {
     if (chatType !== "private") return; // admin command, private chat only — silently ignored elsewhere.
-    const adminIds = (env.TELEGRAM_ADMIN_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-    if (!adminIds.includes(String(from.id ?? ""))) {
+    if (!admin) {
       await tgApi(env, "sendMessage", { chat_id: chatId, text: "Not allowed." });
       return;
     }
@@ -633,8 +640,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   // duplicate group message.
   if (cmd === "/postpicks" && args.length === 0) {
     if (chatType !== "private") return; // admin command, private chat only — silently ignored elsewhere.
-    const adminIds = (env.TELEGRAM_ADMIN_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-    if (!adminIds.includes(String(from.id ?? ""))) {
+    if (!admin) {
       await tgApi(env, "sendMessage", { chat_id: chatId, text: "Not allowed." });
       return;
     }
@@ -745,7 +751,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
         firstName: (from.first_name as string) ?? null,
       });
     }
-    const { text: body, replyMarkup } = await renderView(env, view, 0, null, chatType);
+    const { text: body, replyMarkup } = await renderView(env, view, 0, null, chatType, admin);
     await tgApi(env, "sendMessage", {
       chat_id: chatId,
       text: body,
@@ -756,14 +762,70 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   }
   // Non-command chatter is ignored in groups to avoid clutter; in private
   // chats we point back to the menu once.
-  if (chatType === "private" && text.trim() !== "") {
+  if (chatType === "private" && (text.trim() !== "" || msg.animation || msg.document || msg.video)) {
     await tgApi(env, "sendMessage", {
       chat_id: chatId,
       text: welcomeMessage(String(from.first_name ?? "there")),
       parse_mode: "HTML",
-      reply_markup: menuKeyboard(),
+      reply_markup: menuKeyboard(admin ? "admin" : "callback"),
     });
   }
+}
+
+// WHY: collect state is durable across Worker instances, scoped to the actual admin sender.
+async function handleGifAdmin(env: Env, msg: Record<string, any>, userId: string, chatId: string,
+  cmd: string, args: string[], admin: boolean): Promise<boolean> {
+  if (!admin) {
+    if (['/setcommands','/addgif','/done','/gifs','/cleargifs'].includes(cmd)) {
+      await tgApi(env,'sendMessage',{chat_id:chatId,text:welcomeMessage('there'),reply_markup:menuKeyboard()});
+      return true;
+    }
+    return false;
+  }
+  const key = `gif_collect:${userId}`;
+  if (cmd.startsWith('/')) await env.DB.prepare('DELETE FROM kv WHERE k=?1').bind(key).run();
+  const reply = (text: string) => tgApi(env,'sendMessage',{chat_id:chatId,text});
+  if (cmd === '/setcommands') {
+    const regular = ['start','top','daily','all'].map(command=>({command,description:command}));
+    const elevated = [...regular,...['stats','yesterday','gifs','addgif','cleargifs','done','setcommands','menu','pinmenu'].map(command=>({command,description:command}))];
+    const scopes = [{type:'default'},...(env.TELEGRAM_ADMIN_IDS??'').split(',').map(s=>s.trim()).filter(Boolean).map(chat_id=>({type:'chat',chat_id}))];
+    for (const scope of scopes) {
+      try {
+        const res=await tgApi(env,'setMyCommands',{scope,commands:scope.type==='default'?regular:elevated});
+        const result=await res.json();
+        await reply(`${JSON.stringify(scope)}: ${JSON.stringify(result)}`);
+      } catch (err) { await reply(`${JSON.stringify(scope)}: ${err instanceof Error ? err.message : 'failed'}`); }
+    }
+    return true;
+  }
+  if (cmd === '/done') { await reply('GIF collection ended.'); return true; }
+  if (cmd === '/addgif') {
+    if (!['won','lost'].includes(args[0]) || args.length !== 1) { await reply('Use /addgif won or /addgif lost.'); return true; }
+    await env.DB.prepare('INSERT INTO kv(k,v) VALUES(?1,?2) ON CONFLICT(k) DO UPDATE SET v=excluded.v')
+      .bind(key,JSON.stringify({kind:args[0],expires:Date.now()+15*60000})).run();
+    await reply(`Send ${args[0]} GIFs for the next 15 minutes, then /done.`);return true;
+  }
+  if (cmd === '/cleargifs') {
+    if (['won','lost'].includes(args[0]) && args.length === 1) await env.DB.prepare('DELETE FROM result_gifs WHERE kind=?1').bind(args[0]).run();
+    else {await reply('Use /cleargifs won or /cleargifs lost.');return true;}
+  }
+  if (cmd === '/gifs' || cmd === '/cleargifs') {
+    const {results}=await env.DB.prepare('SELECT kind,COUNT(*) AS n FROM result_gifs GROUP BY kind').all<{kind:string;n:number}>();
+    await reply(['won','lost'].map(k=>`${k}: ${results.find(r=>r.kind===k)?.n??0}`).join('\n'));return true;
+  }
+  const media=msg.animation ?? (['image/gif','video/mp4'].includes(msg.document?.mime_type)?msg.document:null) ?? msg.video;
+  if (!media?.file_id || !media.file_unique_id) return false;
+  const row=await env.DB.prepare('SELECT v FROM kv WHERE k=?1').bind(key).first<{v:string}>();
+  let kind=String(msg.caption??'').trim().toLowerCase();
+  if (row) {
+    try {const state=JSON.parse(row.v);if(state.expires>Date.now())kind=state.kind;
+      else await env.DB.prepare('DELETE FROM kv WHERE k=?1').bind(key).run();} catch { /* ignore invalid state */ }
+  }
+  if (!['won','lost'].includes(kind)) return false;
+  await env.DB.prepare('INSERT OR IGNORE INTO result_gifs(kind,file_id,file_unique_id,added_at) VALUES(?1,?2,?3,?4)')
+    .bind(kind,media.file_id,media.file_unique_id,new Date().toISOString()).run();
+  const count=await env.DB.prepare('SELECT COUNT(*) AS n FROM result_gifs WHERE kind=?1').bind(kind).first<{n:number}>();
+  await reply(`Added (${count?.n??0} ${kind} GIFs)`);return true;
 }
 
 const CALLBACK_PREFIX = "cp|";

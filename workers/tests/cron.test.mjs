@@ -93,6 +93,14 @@ function cronDb({
           return null;
         },
         async all() {
+          if(this._sql.includes('RETURNING kind,post_date')) {
+            const results=[];
+            for(const r of JSON.parse(this._args[0])) {
+              const key=`${r.kind}|${r.date}`;
+              if(!postsTable.has(key)) { postsTable.set(key,{message_id:r.message,created_at:'now'});results.push({kind:r.kind,post_date:r.date}); }
+            }
+            return {results};
+          }
           if (this._sql.includes("FROM subscribers")) {
             const [limit, offset] = this._args;
             return { results: subs.slice(offset, offset + limit) };
@@ -119,11 +127,18 @@ function cronDb({
               return groupLeft || ownerLeft;
             });
             outstanding.sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
-            return { results: outstanding.slice(0, limit) };
+            return { results: outstanding.slice(0, limit).map(e=>({...e,...(contextFor??eligibleContext)(e,e.pick_date,e.fixture_key)})) };
           }
           return { results: [] };
         },
         async run() {
+          if(this._sql.includes('json_each(?1)')) {
+            const data=JSON.parse(this._args[0]);
+            if(this._sql.startsWith('UPDATE posts')) for(const r of data) {const row=postsTable.get(`${r.kind}|${r.date}`);if(row)row.message_id=r.message;}
+            if(this._sql.startsWith('DELETE FROM posts')) for(const r of data) {const key=`${r.kind}|${r.date}`;if(postsTable.get(key)?.message_id===null)postsTable.delete(key);}
+            if(this._sql.includes('INTO job_state')) {Object.assign(jobs,data);jobs.last=Object.values(data).at(-1);}
+            return {meta:{changes:1}};
+          }
           if (this._sql.includes("INTO deliveries")) {
             delivered.add(this._args[2]);
           }
@@ -298,9 +313,9 @@ describe("group posting (production model: single group, never per-subscriber)",
     });
     assert.equal(outcome, "no-chat");
   });
-  it("recap posts once to the group after RECAP_TIME, gated by its own receipt", async () => {
+  it("recap posts once privately after RECAP_TIME, gated by its own receipt", async () => {
     const db = cronDb();
-    const env = { DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5", TELEGRAM_CHAT_ID: "-100123" };
+    const env = { DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5", TELEGRAM_CHAT_ID: "-100123", TELEGRAM_ADMIN_IDS:"999" };
     const RECAP_AFTER = Date.UTC(2026, 9, 11, 6, 50); // 07:50 Lagos > 07:45 gate
     const sent = [];
     const texts = [];
@@ -310,7 +325,7 @@ describe("group posting (production model: single group, never per-subscriber)",
       return { ok: true, messageId: 7 };
     });
     assert.equal(outcome, "sent");
-    assert.deepEqual(sent, ["-100123"]);
+    assert.deepEqual(sent, ["999"]);
     // Matches predbot/jobs/recap.py's recap_message() title exactly
     // ("📊 RESULTS") — distinct from the interactive /yesterday button's
     // own "🗓 YESTERDAY" title (UI-parity audit, 2026-10-15).
@@ -389,7 +404,7 @@ describe("owner-private delivery (production repair, 2026-10-15: no subscriber D
     assert.equal(outcome, "sent");
     assert.deepEqual(sent, ["-100123"]);
   });
-  it("the recap also reaches the owner privately, independently of the group receipt", async () => {
+  it("the recap goes exclusively to the owner", async () => {
     const db = cronDb();
     const env = { DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5", TELEGRAM_CHAT_ID: "-100123", TELEGRAM_ADMIN_IDS: "999" };
     const RECAP_AFTER = Date.UTC(2026, 9, 11, 6, 50);
@@ -399,7 +414,7 @@ describe("owner-private delivery (production repair, 2026-10-15: no subscriber D
       return { ok: true, messageId: 7 };
     });
     assert.equal(outcome, "sent");
-    assert.deepEqual(sent, ["-100123", "999"]);
+    assert.deepEqual(sent, ["999"]);
   });
 });
 
@@ -520,13 +535,13 @@ describe("handleScheduled dispatches on the exact Cron Trigger pattern, never a 
     assert.equal(db.posted.size, 0);
     assert.equal(db.jobs.last, undefined);
   });
-  it("CRON_POST_SWEEP posts top and daily to the group; CRON_RECAP_SWEEP posts group recap", async () => {
+  it("POST posts game tickets; RECAP only sends the owner", async () => {
     const db = cronDb({ cache: { status: "COMPLETE", payload_json: "{}" } });
     const env = {
       DB: db,
       TIMEZONE: "Africa/Lagos",
       PAGE_SIZE: "5",
-      TELEGRAM_CHAT_ID: "-100123",
+      TELEGRAM_CHAT_ID: "-100123", TELEGRAM_ADMIN_IDS:"999",
       STAGE3_CRON_ENABLED: "1",
     };
     const realFetch = globalThis.fetch;
@@ -537,15 +552,15 @@ describe("handleScheduled dispatches on the exact Cron Trigger pattern, never a 
     };
     try {
       await handleScheduled(env, CRON_POST_SWEEP, AFTER_GATE);
-      assert.equal(calls, 2); // top + daily, never a per-subscriber loop
+      assert.equal(calls, 4); // top + daily, never a per-subscriber loop
       const RECAP_AFTER = Date.UTC(2026, 9, 11, 6, 50);
       await handleScheduled(env, CRON_RECAP_SWEEP, RECAP_AFTER);
-      assert.equal(calls, 3);
+      assert.equal(calls, 5);
       // CRON_DELIVER_SWEEP and CRON_WATCH are distinct patterns that must
       // not re-trigger a post even though they can fire in the same minute.
       await handleScheduled(env, CRON_DELIVER_SWEEP, AFTER_GATE);
       await handleScheduled(env, CRON_WATCH, AFTER_GATE);
-      assert.equal(calls, 3);
+      assert.equal(calls, 6);
     } finally {
       globalThis.fetch = realFetch;
     }

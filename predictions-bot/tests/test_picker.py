@@ -362,7 +362,8 @@ def test_independent_signal_candidates_have_a_disagreement_floor_not_an_edge_req
     ps = select([mildly_negative, strongly_overpriced], cfg(), now)
     keys = lambda rows: {s.event.dedupe_key() for s in rows}
     assert keys(ps.all()) == {mildly_negative.event.dedupe_key(), strongly_overpriced.event.dedupe_key()}
-    assert keys(ps.daily) == {mildly_negative.event.dedupe_key()}
+    assert keys(ps.top) == {mildly_negative.event.dedupe_key()}
+    assert not ps.daily  # identical Top prediction is excluded
     assert strongly_overpriced.event.dedupe_key() not in keys(ps.top)
     assert ps.diagnostics["daily"]["rejections"].get("poor_model_value", 0) == 1
 

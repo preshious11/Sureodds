@@ -103,7 +103,9 @@ def test_selectors_take_stored_dict_rows_never_scored_objects(db):
     assert rows and all(isinstance(r, dict) and 'canonical_event_id' in r and 'prob' in r for r in rows)
     cfg, now = Config(), iso(dt())
     top, top_diag = select_top(rows, cfg, now)
-    daily, daily_diag = select_daily(rows, cfg, now)
+    from predbot.selection.picker import prediction_identity
+    top_keys = {prediction_identity(r) for r in top}
+    daily, daily_diag = select_daily([r for r in rows if prediction_identity(r) not in top_keys], cfg, now)
     for chosen in top + daily:
         assert isinstance(chosen, dict)                      # a stored row, not a model object
         assert chosen in rows
@@ -161,9 +163,11 @@ def test_a_prediction_in_top_and_daily_is_one_row_and_settles_once(db):
     stored(db, varied(12))
     top_ids = {r['id'] for r in db.collection_predictions('top', DAY)}
     daily_ids = {r['id'] for r in db.collection_predictions('daily', DAY)}
-    shared = top_ids & daily_ids
-    assert shared, "the strongest prediction qualifies for both collections"
-    pid = next(iter(shared))
+    assert not top_ids & daily_ids  # Newly packaged tickets cannot overlap.
+    # Historical memberships may overlap; keep proving those rows settle only once.
+    pid = next(iter(top_ids))
+    db.add_membership(pid, 'daily', len(daily_ids) + 1)
+    daily_ids.add(pid)
     assert db.query("SELECT COUNT(*) AS n FROM picks WHERE id=?", (pid,))[0]['n'] == 1
     assert db.query("SELECT COUNT(*) AS n FROM picks WHERE pick_date=?", (DAY,))[0]['n'] == 12
     assert db.query("SELECT COUNT(*) AS n FROM prediction_memberships WHERE prediction_id=?", (pid,))[0]['n'] == 3

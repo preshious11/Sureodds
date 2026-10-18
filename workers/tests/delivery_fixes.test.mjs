@@ -4,7 +4,7 @@
 //  - bug 4 (owner gets nothing when TELEGRAM_CHAT_ID is unset): postGroupPicks
 //    and postGroupRecap both still reach the owner leg.
 //  - root cause 2 (10-minute match-start window too short): decideMatchEvent
-//    at the new MATCH_START_WINDOW_MIN=30 boundary.
+//    at the new MATCH_START_WINDOW_MIN=45 boundary.
 // Minimal in-file D1 stub, in the style of tests/cron.test.mjs's cronDb.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -101,13 +101,13 @@ describe("recap waits for settlement, but never skips the day entirely", () => {
     assert.equal(r.sent.length, 0);
   });
 
-  it("sends to the group and the owner when everything is settled", async () => {
+  it("sends only to the owner when everything is settled", async () => {
     const db = stubDb({ statuses: { top: ["won", "lost"], daily: ["lost"] } });
     const env = { DB: db, TELEGRAM_CHAT_ID: "-100", TELEGRAM_ADMIN_IDS: "999" };
     const r = recorder();
     const outcome = await postGroupRecap(env, RECAP_AFTER_GATE_BEFORE_DEADLINE, r.fn);
     assert.equal(outcome, "sent");
-    assert.deepEqual(r.sent.map((s) => s.chat).sort(), ["-100", "999"]);
+    assert.deepEqual(r.sent.map((s) => s.chat).sort(), ["999"]);
   });
 
   it("skips silently (no placeholder) and marks the day handled when yesterday has no picks at all", async () => {
@@ -125,7 +125,7 @@ describe("recap waits for settlement, but never skips the day entirely", () => {
     const r = recorder();
     const outcome = await postGroupRecap(env, RECAP_AT_DEADLINE, r.fn);
     assert.equal(outcome, "sent");
-    assert.deepEqual(r.sent.map((s) => s.chat).sort(), ["-100", "999"]);
+    assert.deepEqual(r.sent.map((s) => s.chat).sort(), ["999"]);
   });
 });
 
@@ -139,12 +139,12 @@ describe("the owner leg is independent of TELEGRAM_CHAT_ID (bug 4)", () => {
     assert.deepEqual(r.sent.map((s) => s.chat), ["999"]);
   });
 
-  it("postGroupRecap with only TELEGRAM_ADMIN_IDS sends to the owner only and returns no-chat", async () => {
+  it("postGroupRecap with only TELEGRAM_ADMIN_IDS sends successfully to the owner", async () => {
     const db = stubDb({ statuses: { top: ["won"], daily: ["lost"] } });
     const env = { DB: db, TELEGRAM_ADMIN_IDS: "999" }; // no TELEGRAM_CHAT_ID
     const r = recorder();
     const outcome = await postGroupRecap(env, RECAP_AT_DEADLINE, r.fn);
-    assert.equal(outcome, "no-chat");
+    assert.equal(outcome, "sent");
     assert.deepEqual(r.sent.map((s) => s.chat), ["999"]);
   });
 
@@ -182,20 +182,20 @@ describe("missed generation also DMs the owner once per day (bug 7)", () => {
   });
 });
 
-describe("decideMatchEvent at the widened MATCH_START_WINDOW_MIN=30 (root cause 2)", () => {
+describe("decideMatchEvent at the widened MATCH_START_WINDOW_MIN=45 (root cause 2)", () => {
   const ctx = { kickoff_utc: null, live_status: "in_progress", settlement_done: 0, published_open: 1, published_total: 1 };
   const evt = { pick_date: "2026-10-11", fixture_key: "football|x", event_type: "start", text: "t", created_at: "" };
-  const env = { MATCH_START_WINDOW_MIN: "30" };
+  const env = { MATCH_START_WINDOW_MIN: "45" };
 
-  it("kickoff 20 minutes ago still sends", () => {
+  it("kickoff 45 minutes ago still sends", () => {
     const now = Date.now();
-    const decision = decideMatchEvent(env, evt, { ...ctx, kickoff_utc: new Date(now - 20 * 60_000).toISOString() }, now);
+    const decision = decideMatchEvent(env, evt, { ...ctx, kickoff_utc: new Date(now - 45 * 60_000).toISOString() }, now);
     assert.deepEqual(decision, { action: "send" });
   });
 
-  it("kickoff 31 minutes ago has expired", () => {
+  it("kickoff 46 minutes ago has expired", () => {
     const now = Date.now();
-    const decision = decideMatchEvent(env, evt, { ...ctx, kickoff_utc: new Date(now - 31 * 60_000).toISOString() }, now);
+    const decision = decideMatchEvent(env, evt, { ...ctx, kickoff_utc: new Date(now - 46 * 60_000).toISOString() }, now);
     assert.equal(decision.action, "expire");
   });
 });

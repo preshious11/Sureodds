@@ -1,3 +1,4 @@
+// WHY: stats rendering tests use admin context; access denial is tested at the routing boundary.
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -168,12 +169,12 @@ describe("/stats and /yesterday real settlement data", () => {
     }
     try {
       const db = stubDb(sql);
-      const stats = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      const stats = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today, "private", true);
       assert.match(stats.text, /📊 STATS/);
       assert.match(stats.text, /🗓 Yesterday · Tue 13 Oct · 4 picks/);
       assert.match(stats.text, /✅ 2  ❌ 1  ➖ 0  ↩️ 1/);
       assert.match(stats.text, /🎯 67%/); // won/(won+lost) = 2/3
-      const yview = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "yesterday", 0, today);
+      const yview = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "yesterday", 0, today, "private", true);
       assert.match(yview.text, /🗓 YESTERDAY/);
       assert.match(yview.text, /✅ 2  ❌ 1/);
     } finally {
@@ -197,11 +198,11 @@ describe("/stats and /yesterday real settlement data", () => {
     }
     try {
       const db = stubDb(sql);
-      const stats = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      const stats = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today, "private", true);
       assert.match(stats.text, /📊 STATS/);
       assert.doesNotMatch(stats.text, /not ready yet/i, "today's missing cache must never block yesterday's real results");
       assert.match(stats.text, /✅ 1  ❌ 1/);
-      const yview = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "yesterday", 0, today);
+      const yview = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "yesterday", 0, today, "private", true);
       assert.match(yview.text, /🗓 YESTERDAY/);
       assert.doesNotMatch(yview.text, /not ready yet/i);
       assert.match(yview.text, /✅ 1  ❌ 1/);
@@ -216,7 +217,7 @@ describe("/stats and /yesterday real settlement data", () => {
     setCache(sql, today);
     try {
       const db = stubDb(sql);
-      const stats = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      const stats = await renderView({ DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today, "private", true);
       assert.match(stats.text, /No results yet/);
     } finally {
       sql.close();
@@ -231,14 +232,14 @@ describe("/stats and /yesterday real settlement data", () => {
     // The two tracked legs (what production would actually count).
     insertPick(sql, 1, yesterday, "won", 2.0); addMembership(sql, 1, "all"); addMembership(sql, 1, "top");
     insertPick(sql, 2, yesterday, "lost", 1.5); addMembership(sql, 2, "all"); addMembership(sql, 2, "daily");
-    const before = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+    const before = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today, "private", true);
     // 100 All-Predictions-only rows, mixed won/lost, same day, no top/daily membership at all.
     for (let id = 100; id < 200; id += 1) {
       insertPick(sql, id, yesterday, id % 2 === 0 ? "won" : "lost", 3.0);
       addMembership(sql, id, "all");
     }
     try {
-      const after = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      const after = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today, "private", true);
       assert.equal(after.text, before.text, "All Predictions must never change tracked stats");
       assert.match(after.text, /2 picks/); // still just the 2 tracked legs, not 102
       assert.doesNotMatch(after.text, /100|101|102/);
@@ -257,7 +258,7 @@ describe("/stats and /yesterday real settlement data", () => {
     addMembership(sql, 1, "top");
     addMembership(sql, 1, "daily"); // same prediction promoted into both tickets
     try {
-      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today, "private", true);
       assert.match(stats.text, /1 pick\b/);
       assert.doesNotMatch(stats.text, /2 picks/);
     } finally {
@@ -273,7 +274,7 @@ describe("/stats and /yesterday real settlement data", () => {
     insertPick(sql, 1, yesterday, "won", 2.0); addMembership(sql, 1, "all"); addMembership(sql, 1, "top");
     insertPick(sql, 2, yesterday, "pending", 1.8); addMembership(sql, 2, "all"); addMembership(sql, 2, "daily");
     try {
-      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today, "private", true);
       assert.match(stats.text, /1 of 2 settled · final card after the last result/);
       // Yesterday's OWN hit rate is withheld until its day is fully settled;
       // the separate 7-day trend section legitimately has its own 🎯 (it
@@ -294,7 +295,7 @@ describe("/stats and /yesterday real settlement data", () => {
     insertPick(sql, 1, yesterday, "won", 2.0); addMembership(sql, 1, "all"); addMembership(sql, 1, "top");
     insertPick(sql, 2, yesterday, "void", 1.8); addMembership(sql, 2, "all"); addMembership(sql, 2, "daily");
     try {
-      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today, "private", true);
       assert.match(stats.text, /✅ 1  ❌ 0  ➖ 1/);
       assert.match(stats.text, /🎯 100%/); // decided = won+lost = 1, hit rate on decided legs only
     } finally {
@@ -309,13 +310,13 @@ describe("/stats and /yesterday real settlement data", () => {
     setCache(sql, today);
     insertPick(sql, 1, yesterday, "won", 2.0); addMembership(sql, 1, "all"); addMembership(sql, 1, "top");
     insertPick(sql, 2, yesterday, "lost", 1.5); addMembership(sql, 2, "all"); addMembership(sql, 2, "daily");
-    const before = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+    const before = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today, "private", true);
     for (let id = 100; id < 200; id += 1) {
       insertPick(sql, id, yesterday, id % 2 === 0 ? "won" : "lost", 3.0);
       addMembership(sql, id, "all"); // no top/daily membership: must never count
     }
     try {
-      const after = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      const after = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today, "private", true);
       assert.equal(after.text, before.text, "All Predictions must never change by-sport or 7-day figures either");
       assert.match(after.text, /⚽ Football 1\/2/); // 1 won of 2 settled (tracked legs only)
       assert.match(after.text, /📈 Last 1 day/);
@@ -334,7 +335,7 @@ describe("/stats and /yesterday real settlement data", () => {
     // so the trend section must say "Last 1 day", never "Last 7 days".
     insertPick(sql, 1, yesterday, "won", 2.0); addMembership(sql, 1, "all"); addMembership(sql, 1, "top");
     try {
-      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today, "private", true);
       assert.match(stats.text, /📈 Last 1 day\b/);
       assert.doesNotMatch(stats.text, /📈 Last 7 days/);
     } finally {
@@ -352,7 +353,7 @@ describe("/stats and /yesterday real settlement data", () => {
     addMembership(sql, 1, "top");
     addMembership(sql, 1, "daily");
     try {
-      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today, "private", true);
       assert.match(stats.text, /⚽ Football 1\/1/);
       assert.doesNotMatch(stats.text, /⚽ Football 2\/2/);
     } finally {
@@ -377,7 +378,7 @@ describe("itemized /yesterday, 30-day/all-time blocks, and collection-specific s
     insertPick(sql, 2, yesterday, "lost", 1.5, "Barca", "Real"); addMembership(sql, 2, "daily");
     insertPick(sql, 3, yesterday, "pending", 1.8, "Bayern", "Dortmund"); addMembership(sql, 3, "daily");
     try {
-      const view = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "yesterday", 0, today);
+      const view = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "yesterday", 0, today, "private", true);
       assert.match(view.text, /🔥 Top\n✅ Arsenal vs Chelsea/);
       assert.match(view.text, /📋 Daily\n❌ Barca vs Real/);
       assert.match(view.text, /1 leg still pending/);
@@ -399,7 +400,7 @@ describe("itemized /yesterday, 30-day/all-time blocks, and collection-specific s
       addMembership(sql, id, "all");
     }
     try {
-      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today);
+      const stats = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats", 0, today, "private", true);
       assert.match(stats.text, /📈 Last 30 days/);
       assert.match(stats.text, /📈 All time/);
       // All-time spans both tracked legs (won 2026-10-13 + lost 2026-10-01) -> 1/2, never counts the 50 noise rows.
@@ -418,10 +419,10 @@ describe("itemized /yesterday, 30-day/all-time blocks, and collection-specific s
     insertPick(sql, 1, yesterday, "won", 2.0); addMembership(sql, 1, "top");
     insertPick(sql, 2, yesterday, "lost", 1.5); addMembership(sql, 2, "daily");
     try {
-      const top = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats_top", 0, today);
+      const top = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats_top", 0, today, "private", true);
       assert.match(top.text, /🔥 TOP STATS/);
       assert.match(top.text, /✅ 1  ❌ 0  ➖ 0/);
-      const daily = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats_daily", 0, today);
+      const daily = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "stats_daily", 0, today, "private", true);
       assert.match(daily.text, /📋 DAILY STATS/);
       assert.match(daily.text, /✅ 0  ❌ 1  ➖ 0/);
     } finally {

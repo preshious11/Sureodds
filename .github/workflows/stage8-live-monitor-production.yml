@@ -158,7 +158,7 @@ jobs:
           # Must match workers/wrangler.toml's MATCH_START_WINDOW_MIN: both sides
           # gate the same kickoff window, and a mismatch would re-introduce the
           # dropped-alert bug this value is here to fix.
-          MATCH_START_WINDOW_MIN: "30"
+          MATCH_START_WINDOW_MIN: "45"
           FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       - name: Build scoped plan (settlement + live-tracking tables only)

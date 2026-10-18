@@ -23,7 +23,6 @@ import {
   getDayCache,
   getFailedUpdates,
   getJobLastRunAt,
-  getMatchEventContext,
   type MatchEventContext,
   type MatchEventRow,
   getRecapStatuses,
@@ -38,9 +37,9 @@ import {
   setJobResult,
   type Env,
 } from "./db.ts";
-import { lagosDateString, renderGroupCard, renderGroupRecap, renderView } from "./views.ts";
+import { lagosDateString, renderGroupCard, renderGroupRecap, renderRecapStats, renderView } from "./views.ts";
 import { shiftDate, splitMessage } from "./format.ts";
-import { allButtonModeFor, topEmptyKeyboard } from "./telegram.ts";
+import { allButtonModeFor, topEmptyKeyboard, menuKeyboard, isAdmin } from "./telegram.ts";
 
 export const BROADCAST_PER_SECOND = 25;
 
@@ -198,6 +197,7 @@ export async function sweepDeliveries(
     if (subs.length === 0) break;
     offset += subs.length;
     for (const sub of subs) {
+      if (sub.chat_id === env.TELEGRAM_CHAT_ID) continue; // WHY: legacy subscriber sweeps cannot publish group views.
       if (done.has(sub.chat_id)) {
         out.skipped += 1;
         continue;
@@ -271,7 +271,7 @@ async function postToOwner(
   if (!owner) return; // no admin configured — never a dead destination, just skipped
   const ownerKind = `${kind}_owner`;
   if (!(await claimPost(env.DB, ownerKind, localDate))) return;
-  const { ok, messageId } = await sendSplit(env, owner, text, replyMarkup, sender);
+  const { ok, messageId } = await sendSplit(env, owner, text, replyMarkup ? menuKeyboard(isAdmin(env, owner) ? "admin" : "callback") : undefined, sender);
   if (!ok) {
     await recordDeliveryFailure(env, "owner", `${kind} ${localDate}`);
     await releaseClaim(env.DB, ownerKind, localDate);
@@ -361,7 +361,7 @@ export async function postGroupPicks(
 export const DEFAULT_RECAP_DEADLINE = "08:45";
 
 /**
- * Posts yesterday's settled recap to the group — production equivalent is
+ * Sends yesterday's settled recap privately to the owner — production equivalent is
  * predbot/jobs/recap.py (single group send, post_done("recap", date) gate).
  */
 export async function postGroupRecap(
@@ -369,7 +369,7 @@ export async function postGroupRecap(
   nowMs = Date.now(),
   sender: typeof sendTelegram = sendTelegram,
 ): Promise<GroupPostOutcome> {
-  if (!env.TELEGRAM_CHAT_ID && !ownerChatId(env)) return "no-chat";
+  if (!ownerChatId(env)) return "no-chat";
   const gate = parseHhmm(env.RECAP_TIME ?? "07:45");
   if (lagosMinutes(nowMs) < gate) return "waiting";
   const localDate = lagosDateString(nowMs);
@@ -402,30 +402,20 @@ export async function postGroupRecap(
       return "waiting";
     }
   }
-  const claimedGroup = env.TELEGRAM_CHAT_ID ? await claimPost(env.DB, "recap", localDate) : false;
-  // predbot/jobs/recap.py: tg.send(text) — no keyboard on the automatic
-  // group recap, same as the picks cards above. renderGroupRecap (not the
-  // generic renderView) titles this "📊 RESULTS", matching recap_message()
-  // exactly — distinct from the interactive /yesterday button's own title.
-  const { text } = await renderGroupRecap(env, localDate);
-  if (!env.TELEGRAM_CHAT_ID) {
-    // No group configured: the owner leg still gets the recap (independent destination).
-    await postToOwner(env, "recap", localDate, text, undefined, sender);
-    return "no-chat";
-  }
-  if (!claimedGroup) {
-    await postToOwner(env, "recap", localDate, text, undefined, sender);
-    return "skipped";
-  }
-  const { ok, messageId } = await sendSplit(env, env.TELEGRAM_CHAT_ID, text, undefined, sender);
+  // WHY: results belong only in the owner's private chat; never publish a group recap.
+  const owner = ownerChatId(env);
+  if (!owner) return "no-chat";
+  if (!(await claimPost(env.DB, "recap", localDate))) return "skipped";
+  const recap = await renderGroupRecap(env, localDate);
+  const stats = await renderRecapStats(env, localDate);
+  const {ok,messageId} = await sendSplit(env, owner, `${recap.text}\n\n${stats}`, undefined, sender);
   if (!ok) {
-    await recordDeliveryFailure(env, "group", `recap ${localDate}`);
     await releaseClaim(env.DB, "recap", localDate);
+    await recordDeliveryFailure(env,"owner",`recap ${localDate}`);
     return "failed";
   }
-  await confirmPosted(env.DB, "recap", localDate, messageId != null ? String(messageId) : null);
-  await setJobResult(env.DB, "post", `recap ${localDate}: posted message=${messageId ?? "?"}`);
-  await postToOwner(env, "recap", localDate, text, undefined, sender);
+  await confirmPosted(env.DB,"recap",localDate,messageId != null ? String(messageId) : "sent");
+  await setJobResult(env.DB,"post",`recap ${localDate}: sent privately`);
   return "sent";
 }
 
@@ -450,12 +440,10 @@ export async function reportFailedUpdates(env: Env): Promise<number> {
 // tradeoff for keeping this one query cheap on a backlog.
 const MATCH_EVENT_LOOKBACK_MS = 48 * 3_600_000;
 
-// Caps the per-sweep cost regardless of how large the undelivered backlog
-// is: getUndeliveredMatchEvents + per-event (context + up to 2 claim/
-// confirm pairs) must stay well inside the 50-queries-per-invocation free-
-// tier limit even in the worst case (see tests/query_budget.test.mjs).
-// WHY: reserve queries for recovery/alerts, including failed sends (40-query ceiling).
-const MATCH_EVENT_SWEEP_LIMIT = 3;
+// Six events clear 15 simultaneous kickoffs in three five-minute sweeps.
+// Batch context/claims/cleanup and one ticket aggregate keep DELIVER <=40
+// D1 queries even with six ready tickets and failed recovery dispatches.
+const MATCH_EVENT_SWEEP_LIMIT = 6;
 
 /** A kickoff alert is valid from kickoff through this many minutes afterward (inclusive), never earlier or later. */
 export const DEFAULT_MATCH_START_WINDOW_MIN = 10;
@@ -526,60 +514,164 @@ export function decideMatchEvent(env: Env, evt: MatchEventRow, ctx: MatchEventCo
  * (kind, post_date) keys, so a fire that sends one leg but not the other
  * retries only the missing leg, and a repeat/restart is a safe no-op.
  */
-export async function sweepMatchEvents(env: Env, nowMs = Date.now(), sender: typeof sendTelegram = sendTelegram): Promise<number> {
+export async function sweepMatchEvents(env: Env, nowMs = Date.now(), sender: typeof sendTelegram = sendTelegram, limit = MATCH_EVENT_SWEEP_LIMIT): Promise<number> {
   const since = new Date(nowMs - MATCH_EVENT_LOOKBACK_MS).toISOString();
   const owner = ownerChatId(env);
   const groupConfigured = !!env.TELEGRAM_CHAT_ID;
   const ownerConfigured = !!owner;
-  // The receipt filtering (expired + per-leg "still outstanding") now happens
-  // INSIDE this one query (see getUndeliveredMatchEvents) instead of a
-  // hasPosted() read per event per leg out here — that per-event pattern is
-  // exactly what exceeded the D1 query budget on a backlog.
-  const events = await getUndeliveredMatchEvents(env.DB, since, groupConfigured, ownerConfigured, MATCH_EVENT_SWEEP_LIMIT);
-  let delivered = 0;
-  for (const evt of events) {
-    const eventKey = `evt_${evt.fixture_key}_${evt.event_type}`;
-    const groupKind = eventKey;
-    const ownerKind = `${eventKey}_owner`;
-    const expiredKind = `${eventKey}_expired`;
-
-    const ctx = await getMatchEventContext(env.DB, evt.pick_date, evt.fixture_key);
-    const decision = decideMatchEvent(env, evt, ctx, nowMs);
-    if (decision.action === "wait") continue;
-    if (decision.action === "expire") {
-      await markPosted(env.DB, expiredKind, evt.pick_date, null);
-      console.warn(JSON.stringify({ event: "match_event_expired", fixture: evt.fixture_key, type: evt.event_type, reason: decision.reason }));
-      await setJobResult(env.DB, "match_events", `expired ${evt.fixture_key}/${evt.event_type}: ${decision.reason}`);
-      continue;
+  // Receipt filtering and persisted fixture/publication context share one
+  // batch query; no per-event context or receipt reads are needed.
+  const events = await getUndeliveredMatchEvents(env.DB, since, groupConfigured, ownerConfigured, limit);
+  // One atomic statement claims every destination in the batch. It has the
+  // same stale-claim timeout and conflict predicate as claimPost.
+  const claims: {kind:string;date:string;message:string|null}[]=[];
+  const jobs=new Map<string,string>();
+  const actionable=events.filter(evt=>{
+    const decision=decideMatchEvent(env,evt,evt,nowMs);
+    const base=`evt_${evt.fixture_key}_${evt.event_type}`;
+    if(decision.action==='expire') {
+      claims.push({kind:`${base}_expired`,date:evt.pick_date,message:'expired'});
+      jobs.set('match_events',`expired ${evt.fixture_key}/${evt.event_type}: ${decision.reason}`);
+      return false;
     }
-
-    // claimPost is what actually prevents two overlapping sweeps from both
-    // sending the same leg; a leg the fetch query already knows is done for
-    // this event (not configured, or already delivered) is skipped here too,
-    // so an event returned only because its OTHER leg is outstanding never
-    // re-attempts a leg that is already finished.
-    if (groupConfigured && (await claimPost(env.DB, groupKind, evt.pick_date))) {
-      const { ok, messageId } = await sendSplit(env, env.TELEGRAM_CHAT_ID as string, evt.text, undefined, sender);
-      if (ok) {
-        await confirmPosted(env.DB, groupKind, evt.pick_date, messageId != null ? String(messageId) : null);
-        delivered += 1;
-      } else {
-        await recordDeliveryFailure(env, "group", `match event ${evt.fixture_key}/${evt.event_type}`);
-        await releaseClaim(env.DB, groupKind, evt.pick_date);
+    if(decision.action!=='send') return false;
+    if(groupConfigured) claims.push({kind:base,date:evt.pick_date,message:null});
+    if(ownerConfigured) claims.push({kind:`${base}_owner`,date:evt.pick_date,message:null});
+    return true;
+  });
+  if(!claims.length) return 0;
+  const {results:claimed}=await env.DB.prepare(`INSERT INTO posts(kind,post_date,message_id,created_at)
+    SELECT json_extract(value,'$.kind'),json_extract(value,'$.date'),json_extract(value,'$.message'),
+      strftime('%Y-%m-%dT%H:%M:%SZ','now') FROM json_each(?1) WHERE true
+    ON CONFLICT(kind,post_date) DO UPDATE SET created_at=excluded.created_at,message_id=excluded.message_id
+      WHERE posts.message_id IS NULL AND posts.created_at<strftime('%Y-%m-%dT%H:%M:%SZ','now','-300 seconds')
+    RETURNING kind,post_date`).bind(JSON.stringify(claims)).all<{kind:string;post_date:string}>();
+  const owned=new Set(claimed.map(r=>`${r.kind}|${r.post_date}`));
+  const confirmed:{kind:string;date:string;message:string}[]=[];
+  const failed:{kind:string;date:string}[]=[];
+  const endAlerts=new Set<string>();
+  const alerted=new Set<string>();
+  let tickets:ResultTicket[]|undefined;
+  let delivered=0;
+  for(const evt of actionable) {
+    const base=`evt_${evt.fixture_key}_${evt.event_type}`;
+    for(const [destination,chat,kind] of [['group',env.TELEGRAM_CHAT_ID,base],['owner',owner,`${base}_owner`]] as const) {
+      if(!chat || !owned.has(`${kind}|${evt.pick_date}`)) continue;
+      const {ok,messageId}=await sendSplit(env,chat,evt.text,undefined,sender);
+      if(!ok) {
+        failed.push({kind,date:evt.pick_date});
+        const error=`FAILED match event ${evt.fixture_key}/${evt.event_type}`;
+        console.error(JSON.stringify({event:'delivery_failed',destination,error}));
+        jobs.set(`post_${destination}`,error);jobs.set('post',error);
+        continue;
       }
-    }
-    if (ownerConfigured && (await claimPost(env.DB, ownerKind, evt.pick_date))) {
-      const { ok, messageId } = await sendSplit(env, owner as string, evt.text, undefined, sender);
-      if (ok) {
-        await confirmPosted(env.DB, ownerKind, evt.pick_date, messageId != null ? String(messageId) : null);
-        delivered += 1;
-      } else {
-        await releaseClaim(env.DB, ownerKind, evt.pick_date);
-        await recordDeliveryFailure(env, "owner", `match event ${evt.fixture_key}/${evt.event_type}`);
-      }
+      delivered++;
+      if(destination==='group' && evt.event_type==='end') {
+        // Confirm the END before even checking its tickets. Other destination
+        // confirmations can be batched without affecting this ordering.
+        await confirmPosted(env.DB,kind,evt.pick_date,String(messageId??'sent'));
+        endAlerts.add(`${evt.pick_date}|${evt.fixture_key}`);
+        // One aggregate for all recent tickets, shared by every END in this
+        // batch. Each event only considers tickets containing its fixture.
+        // pending_ends also fences the POST backup until queued END alerts
+        // are confirmed, including alerts outside this six-event batch.
+        tickets??=await getResultTickets(env,nowMs,actionable.filter(e=>e.event_type==='end').map(e=>({date:e.pick_date,fixture:e.fixture_key})));
+        await sendReadyResultGifs(env,nowMs,sender,tickets.filter(t=>t.post_date===evt.pick_date &&
+          JSON.parse(t.fixtures).includes(evt.fixture_key)),endAlerts,alerted);
+      } else confirmed.push({kind,date:evt.pick_date,message:String(messageId??'sent')});
     }
   }
+  if(confirmed.length) await env.DB.prepare(`UPDATE posts SET message_id=(SELECT json_extract(value,'$.message')
+    FROM json_each(?1) WHERE json_extract(value,'$.kind')=posts.kind AND json_extract(value,'$.date')=posts.post_date)
+    WHERE EXISTS(SELECT 1 FROM json_each(?1) WHERE json_extract(value,'$.kind')=posts.kind
+      AND json_extract(value,'$.date')=posts.post_date)`).bind(JSON.stringify(confirmed)).run();
+  if(failed.length) await env.DB.prepare(`DELETE FROM posts WHERE message_id IS NULL AND EXISTS(
+    SELECT 1 FROM json_each(?1) WHERE json_extract(value,'$.kind')=posts.kind AND json_extract(value,'$.date')=posts.post_date)`)
+    .bind(JSON.stringify(failed)).run();
+  if(jobs.size) await env.DB.prepare(`INSERT INTO job_state(name,last_result,last_run_at,updated_at)
+    SELECT key,value,strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now') FROM json_each(?1) WHERE true
+    ON CONFLICT(name) DO UPDATE SET last_result=excluded.last_result,last_run_at=excluded.last_run_at,updated_at=excluded.updated_at`)
+    .bind(JSON.stringify(Object.fromEntries(jobs))).run();
   return delivered;
+}
+
+interface ResultTicket {
+  kind:string;post_date:string;message_id:string;legs:number;pending:number;losses:number;wins:number;
+  file_id:string|null;fixtures:string;pending_ends:string;
+}
+async function getResultTickets(env:Env,nowMs:number,fixtures?:{date:string;fixture:string}[]):Promise<ResultTicket[]> {
+  if (!env.TELEGRAM_CHAT_ID || !/^\d{4}-\d{2}-\d{2}$/.test(env.RESULT_GIFS_START_DATE??'')) return [];
+  const day=lagosDateString(nowMs);
+  // WHY: one aggregate covers all recent posted tickets, not one read per ticket or leg.
+  const {results}=await env.DB.prepare(`WITH tickets AS (SELECT po.kind,po.post_date,po.message_id,COUNT(p.id) AS legs,
+    json_group_array(DISTINCT p.fixture_key) AS fixtures,
+    (SELECT json_group_array(me.pick_date||'|'||me.fixture_key) FROM match_events me
+      WHERE me.pick_date=po.post_date AND me.event_type='end'
+      AND EXISTS(SELECT 1 FROM picks ep JOIN prediction_memberships em ON em.prediction_id=ep.id
+        WHERE ep.pick_date=po.post_date AND ep.fixture_key=me.fixture_key AND em.collection=po.kind)
+      AND NOT EXISTS(SELECT 1 FROM posts er WHERE er.post_date=me.pick_date
+        AND er.kind='evt_'||me.fixture_key||'_end' AND er.message_id IS NOT NULL)
+      AND NOT EXISTS(SELECT 1 FROM posts expired WHERE expired.post_date=me.pick_date
+        AND expired.kind='evt_'||me.fixture_key||'_end_expired')) AS pending_ends,
+    SUM(CASE WHEN p.status NOT IN ('won','half_won','lost','half_lost','void','push','cancelled','canceled','abandoned') THEN 1 ELSE 0 END) AS pending,
+    SUM(CASE WHEN p.status IN ('lost','half_lost') THEN 1 ELSE 0 END) AS losses,
+    SUM(CASE WHEN p.status IN ('won','half_won') THEN 1 ELSE 0 END) AS wins,
+    SUM(CASE WHEN p.status='won' THEN 1 ELSE 0 END) AS won_legs,
+    SUM(CASE WHEN p.status='half_won' THEN 1 ELSE 0 END) AS half_won_legs,
+    SUM(CASE WHEN p.status='lost' THEN 1 ELSE 0 END) AS lost_legs,
+    SUM(CASE WHEN p.status='half_lost' THEN 1 ELSE 0 END) AS half_lost_legs,
+    SUM(CASE WHEN p.status='push' THEN 1 ELSE 0 END) AS push_legs,
+    SUM(CASE WHEN p.status='void' THEN 1 ELSE 0 END) AS void_legs,
+    SUM(CASE WHEN p.status='pending' THEN 1 ELSE 0 END) AS pending_legs
+    FROM posts po LEFT JOIN picks p ON p.pick_date=po.post_date AND EXISTS(
+      SELECT 1 FROM prediction_memberships pm WHERE pm.prediction_id=p.id AND pm.collection=po.kind)
+    WHERE po.kind IN ('top','daily') AND po.message_id IS NOT NULL AND po.post_date>=?1 AND po.post_date>=?2
+      AND po.post_date<=?3
+      AND (?5 IS NULL OR EXISTS(SELECT 1 FROM picks fp JOIN prediction_memberships fm ON fm.prediction_id=fp.id
+        JOIN json_each(?5) ef ON json_extract(ef.value,'$.date')=fp.pick_date AND json_extract(ef.value,'$.fixture')=fp.fixture_key
+        WHERE fp.pick_date=po.post_date AND fm.collection=po.kind))
+      AND NOT EXISTS(SELECT 1 FROM posts done WHERE done.kind='result_gif_'||po.kind
+        AND done.post_date=po.post_date AND (done.message_id IS NOT NULL OR julianday(done.created_at)>julianday(?4,'-5 minutes')))
+    GROUP BY po.kind,po.post_date,po.message_id)
+    SELECT tickets.*, (SELECT file_id FROM result_gifs WHERE kind=CASE WHEN tickets.losses>0 THEN 'lost' ELSE 'won' END
+      ORDER BY random() LIMIT 1) AS file_id FROM tickets ORDER BY post_date,kind`)
+    .bind(shiftDate(day,-2),env.RESULT_GIFS_START_DATE,day,nowStr(nowMs),fixtures?JSON.stringify(fixtures):null)
+    .all<ResultTicket>();
+  return results;
+}
+
+async function sendReadyResultGifs(env:Env,nowMs:number,sender:typeof sendTelegram,tickets:ResultTicket[],
+  endAlerts=new Set<string>(),alerted=new Set<string>()):Promise<void> {
+  const day=lagosDateString(nowMs);
+  const ready=tickets.filter(ticket=>!ticket.pending && /^\d+$/.test(ticket.message_id) &&
+    JSON.parse(ticket.pending_ends).every((key:string)=>endAlerts.has(key)));
+  for(const ticket of ready) {
+    if (ticket.pending || !/^\d+$/.test(ticket.message_id)) continue;
+    ticket.pending=1; // This batch attempts a ticket at most once, including clean send failures.
+    const receipt=`result_gif_${ticket.kind}`;
+    if (!(await claimPost(env.DB,receipt,ticket.post_date))) continue;
+    const kind=ticket.losses?'lost':ticket.wins?'won':null;
+    if (!kind) {await confirmPosted(env.DB,receipt,ticket.post_date,'all-void');continue;}
+    if (!ticket.file_id) {
+      console.warn(`No ${kind} GIFs registered`);
+      await confirmPosted(env.DB,receipt,ticket.post_date,'no-gif');
+      if (!alerted.has(kind)) {
+        alerted.add(kind);
+        await ownerNoticeOnce(env,`alert_no_${kind}_gifs`,day,`No ${kind} GIFs registered \u2014 use /addgif`,sender);
+      }
+      continue;
+    }
+    try {
+      const {ok,messageId}=await sender(env,'sendAnimation',{chat_id:env.TELEGRAM_CHAT_ID,animation:ticket.file_id,
+        reply_parameters:{message_id:Number(ticket.message_id),allow_sending_without_reply:true}});
+      if (!ok) await releaseClaim(env.DB,receipt,ticket.post_date);
+      else await confirmPosted(env.DB,receipt,ticket.post_date,messageId!=null?String(messageId):'sent');
+    } catch {await releaseClaim(env.DB,receipt,ticket.post_date);}
+  }
+}
+
+export async function sweepResultGifs(env:Env,nowMs=Date.now(),sender:typeof sendTelegram=sendTelegram):Promise<void> {
+  await sendReadyResultGifs(env,nowMs,sender,await getResultTickets(env,nowMs));
 }
 
 export async function detectMissedGeneration(
@@ -931,6 +1023,7 @@ export async function handleScheduled(env: Env, cron: string, nowMs = Date.now()
     // production's SUBSCRIBER_DELIVERY_ENABLED=false.
     await postGroupPicks(env, "top", nowMs);
     await postGroupPicks(env, "daily", nowMs);
+    await sweepResultGifs(env, nowMs);
   } else if (cron === CRON_DELIVER_SWEEP) {
     await reportFailedUpdates(env);
     // Match-start/match-end events: written by GitHub Actions, delivered

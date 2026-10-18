@@ -138,6 +138,9 @@ def evaluated_pool():
     event.markets = [s.line for s in candidates]
     other = ev(2); other.canonical_event_id = 'fixture-b'
     candidates.append(sc(other, 'btts', 'yes', .81, 1.5))
+    # WHY: Daily now needs its own prediction instead of reusing either Top leg.
+    daily_event = ev(3); daily_event.canonical_event_id = 'fixture-c'
+    candidates.append(sc(daily_event, 'result3', 'home', .61, 2.05))
     gen = representative_predictions(candidates)
     cfg = replace(Config(), daily_odds_min=2., daily_odds_max=2.5)
     for s in gen.ticket_predictions:
@@ -157,8 +160,9 @@ def test_real_promotion_preserves_all_view_history_and_exact_outcome_identity(tm
         assert next(r for r in before if r['market']=='total')['line'] == 2.5
         pool.package(cfg, iso(dt()))
         assert pool.rows('all') == before
-        for kind in ('top', 'daily'):
-            assert next(r for r in pool.rows(kind) if r['market']=='total')['line'] == 1.5
+        assert next(r for r in pool.rows('top') if r['market']=='total')['line'] == 1.5
+        from predbot.selection.picker import prediction_identity
+        assert not {prediction_identity(r) for r in pool.rows('top')} & {prediction_identity(r) for r in pool.rows('daily')}
         top = pool.rows('top')
         promoted = next(r for r in top if r['market']=='total')
         pool.db.settle_pick(promoted['id'], 'won', {'score': '2-1'})
@@ -169,7 +173,7 @@ def test_real_promotion_preserves_all_view_history_and_exact_outcome_identity(tm
         pool.store(ps); pool.package(cfg, iso(dt()))
         assert dict(pool.db.query('SELECT * FROM picks WHERE id=?', (promoted['id'],))[0]) == historical
         assert {r['id'] for r in pool.rows('top')} == {r['id'] for r in top}
-        assert pool.db.query('SELECT COUNT(*) AS n FROM ticket_candidates')[0]['n'] == 5
+        assert pool.db.query('SELECT COUNT(*) AS n FROM ticket_candidates')[0]['n'] == 6
         # Reopening applies the migration idempotently without altering old forecasts.
         path = pool.db.path; pool.db.close(); pool.db = Database(path)
         assert dict(pool.db.query('SELECT * FROM picks WHERE id=?', (promoted['id'],))[0]) == historical

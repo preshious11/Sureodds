@@ -32,6 +32,7 @@ const FRESH_DB_SEQUENCE = [
   "0009_match_events.sql",
   "0010_sync_lease.sql",
   "0011_pipeline_dispatch.sql",
+  "0012_result_gifs.sql",
 ];
 
 describe("migration chain against a fresh database (workers/CUTOVER.md step 2)", () => {

@@ -198,14 +198,10 @@ describe("Custom Picks: group button -> private deep link -> request -> failure 
 });
 
 describe("/menu admin command — the group's Custom Picks entry point", () => {
-  it("a non-admin typing /menu in the group gets 'Not allowed.', nothing posted to the group", async () => {
-    const db = realDb();
-    const fetchImpl = stubFetch();
-    const envWithAdmin = { ...env(db), TELEGRAM_CHAT_ID: "group-1", TELEGRAM_BOT_USERNAME: "SureOddsBot", TELEGRAM_ADMIN_IDS: "999" };
-    await withFetch(fetchImpl, () => handleUpdate(envWithAdmin, textMessage(1, "group-1", "u1", "/menu", "supergroup")));
-    assert.equal(fetchImpl.calls.length, 1);
-    assert.equal(fetchImpl.calls[0].body.chat_id, "group-1");
-    assert.match(fetchImpl.calls[0].body.text, /Not allowed/);
+  it("non-admin group /menu is silently ignored", async()=>{
+    const db=realDb(); const f=stubFetch();
+    await withFetch(f,()=>handleUpdate({...env(db),TELEGRAM_ADMIN_IDS:'999'},textMessage(1,'group-1','u1','/menu','supergroup')));
+    assert.equal(f.calls.length,0);
   });
   it("an admin typing /menu (from anywhere) posts the community menu with the Custom Picks button to the configured group", async () => {
     const db = realDb();
@@ -297,8 +293,8 @@ describe("/pinmenu admin command — private-chat only, posts + pins the group m
     assert.match(kb, /Top Picks/);
     assert.match(kb, /Daily Picks/);
     assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=all/);
-    assert.match(kb, /Stats/);
-    assert.match(kb, /Yesterday/);
+    assert.doesNotMatch(kb, /Stats/);
+    assert.doesNotMatch(kb, /Yesterday/);
     assert.match(kb, /✨ Custom Picks/);
     assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=custom_picks/);
     const pin = fetchImpl.calls.find((c) => c.url.includes("pinChatMessage"));

@@ -249,7 +249,8 @@ def test_oddsapi_only_events_can_join_the_daily_ticket():
     """The Odds API is a full chain member with no reserved/priority role: its prediction is an ordinary one."""
     oa_event = oddssgo_event(price=1.20)
     pool = [sc(oa_event, "result3", "home", 0.70, 1.20, sources=2, ev_val=0.06)]
-    result = select(pool, Config(), dt())
+    # WHY: isolate provider eligibility in Daily; Top owns identical predictions.
+    result = select(pool, Config(top_min_prob=1.0), dt())
     assert len(result.daily) == 1
     assert "RESERVED_FOR_TOP_PRIORITY_SOURCE" not in str(result.diagnostics)
 

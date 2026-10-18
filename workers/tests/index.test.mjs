@@ -8,10 +8,11 @@ const FIXTURE = JSON.parse(
   readFileSync(fileURLToPath(new URL("./fixtures/golden_welcome.json", import.meta.url)), "utf-8"),
 );
 
-describe("shared golden fixture (predictions-bot/tests/test_welcome_golden.py renders the same input)", () => {
-  it("welcomeMessage matches the Python production welcome_message byte-for-byte, including HTML escaping", () => {
+describe("legacy Python golden welcome with production access restrictions", () => {
+  it("welcomeMessage preserves legacy greeting/escaping while omitting stats help", () => {
     for (const { first_name, expected } of FIXTURE.cases) {
-      assert.equal(welcomeMessage(first_name), expected, first_name);
+      // Python menus are legacy; production intentionally omits private admin views.
+      assert.equal(welcomeMessage(first_name), expected.split('\n').filter(line=>!line.includes('/stats')).join('\n'), first_name);
     }
   });
 });

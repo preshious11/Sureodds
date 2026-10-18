@@ -15,6 +15,7 @@ export interface Env {
   POST_TIME?: string;
   DELIVERY_TIME?: string;
   RECAP_TIME?: string;
+  RESULT_GIFS_START_DATE?: string;
   /** Latest the recap may wait for yesterday's settlement before posting anyway (never skipped entirely). */
   RECAP_DEADLINE?: string;
   /** Minutes after kickoff during which a match-start alert may still be sent (default 10). */
@@ -993,8 +994,9 @@ export interface MatchEventRow {
  * event could never even be reached (LIMIT 200 oldest-first). This single
  * query does the receipt filtering itself (NOT EXISTS against `posts`, the
  * same table the caller used to re-check one row at a time) so only events
- * genuinely still outstanding are ever returned, and LIMIT 5 bounds the
- * per-sweep cost regardless of backlog size.
+ * genuinely still outstanding are ever returned, and the caller limit bounds the
+ * per-sweep cost regardless of backlog size. Fixture/publication context is
+ * returned in the same query; stale unconfirmed claims remain reclaimable.
  *
  * `groupConfigured`/`ownerConfigured` mirror the caller's own "no chat/no
  * owner means that leg is never outstanding" rule (same as the old
@@ -1014,23 +1016,37 @@ export async function getUndeliveredMatchEvents(
   groupConfigured: boolean,
   ownerConfigured: boolean,
   limit = 5,
-): Promise<MatchEventRow[]> {
+): Promise<(MatchEventRow & MatchEventContext)[]> {
   const { results } = await db
     .prepare(
-      `SELECT pick_date, fixture_key, event_type, text, created_at FROM match_events me
+      `SELECT me.*,
+         (SELECT MIN(start_utc) FROM picks WHERE pick_date=me.pick_date AND fixture_key=me.fixture_key) AS kickoff_utc,
+         (SELECT status FROM live_fixture_state WHERE pick_date=me.pick_date AND fixture_key=me.fixture_key) AS live_status,
+         (SELECT settlement_done FROM live_fixture_state WHERE pick_date=me.pick_date AND fixture_key=me.fixture_key) AS settlement_done,
+         (SELECT COUNT(DISTINCT p.id) FROM picks p JOIN prediction_memberships m ON m.prediction_id=p.id
+           WHERE p.pick_date=me.pick_date AND p.fixture_key=me.fixture_key AND m.collection IN ('top','daily')
+           AND (EXISTS(SELECT 1 FROM posts po WHERE po.post_date=p.pick_date AND po.kind=m.collection)
+             OR EXISTS(SELECT 1 FROM prediction_cache c WHERE c.local_date=p.pick_date AND c.status='COMPLETE'))) AS published_total,
+         (SELECT COUNT(DISTINCT p.id) FROM picks p JOIN prediction_memberships m ON m.prediction_id=p.id
+           WHERE p.pick_date=me.pick_date AND p.fixture_key=me.fixture_key AND p.status<>'void' AND m.collection IN ('top','daily')
+           AND (EXISTS(SELECT 1 FROM posts po WHERE po.post_date=p.pick_date AND po.kind=m.collection)
+             OR EXISTS(SELECT 1 FROM prediction_cache c WHERE c.local_date=p.pick_date AND c.status='COMPLETE'))) AS published_open
+         FROM match_events me
        WHERE created_at >= ?1
          AND NOT EXISTS (SELECT 1 FROM posts po WHERE po.post_date = me.pick_date
            AND po.kind = 'evt_' || me.fixture_key || '_' || me.event_type || '_expired')
          AND (
            (?2 = 1 AND NOT EXISTS (SELECT 1 FROM posts po WHERE po.post_date = me.pick_date
-             AND po.kind = 'evt_' || me.fixture_key || '_' || me.event_type))
+             AND po.kind = 'evt_' || me.fixture_key || '_' || me.event_type
+             AND (po.message_id IS NOT NULL OR po.created_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-300 seconds'))))
            OR (?3 = 1 AND NOT EXISTS (SELECT 1 FROM posts po WHERE po.post_date = me.pick_date
-             AND po.kind = 'evt_' || me.fixture_key || '_' || me.event_type || '_owner'))
+             AND po.kind = 'evt_' || me.fixture_key || '_' || me.event_type || '_owner'
+             AND (po.message_id IS NOT NULL OR po.created_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-300 seconds'))))
          )
        ORDER BY created_at ASC LIMIT ?4`,
     )
     .bind(sinceIso, groupConfigured ? 1 : 0, ownerConfigured ? 1 : 0, limit)
-    .all<MatchEventRow>();
+    .all<MatchEventRow & MatchEventContext>();
   return results ?? [];
 }
 

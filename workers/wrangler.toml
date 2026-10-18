@@ -16,13 +16,15 @@ TIMEZONE = "Africa/Lagos"
 POST_TIME = "09:00"
 DELIVERY_TIME = "09:30"
 RECAP_TIME = "07:45"
+# WHY: set this to the deploy date after migration 0012; empty disables result GIFs.
+RESULT_GIFS_START_DATE = "2026-10-18"
 # Latest the recap may wait for yesterday's settlement before posting anyway (never skipped entirely). Must stay inside the CRON_RECAP_SWEEP window (07:00-08:55 Lagos).
 RECAP_DEADLINE = "08:45"
 # Match-start alerts are only sent from kickoff through this many minutes after kickoff, then expire.
 # Must equal stage8-live-monitor-production.yml's MATCH_START_WINDOW_MIN env var: a start event has
 # to clear GitHub's schedule jitter, the D1 export/apply round trip and this Worker's own sweep before
 # this window closes, so 10 minutes dropped nearly every alert.
-MATCH_START_WINDOW_MIN = "30"
+MATCH_START_WINDOW_MIN = "45"
 # Match-end alerts expire this many hours after the result was recorded.
 MATCH_END_WINDOW_HOURS = "24"
 # Minutes between the Worker's own on-demand dispatches of stage8-live-monitor-production.yml

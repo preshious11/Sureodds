@@ -1,3 +1,4 @@
+import { restrictedView, welcomeMessage } from "./telegram.ts";
 // View rendering, ported to match predbot/bot/pagination.py + format.py
 // (production) rather than the earlier ad-hoc Stage 1 format. Reads
 // D1-cached picks only — never calls a sports provider. See
@@ -433,10 +434,13 @@ export async function renderView(
   page: number,
   day: string | null,
   chatType = "private",
+  admin = false,
 ): Promise<{ text: string; replyMarkup: Record<string, unknown> }> {
+  // WHY: every stats entry path, including old callbacks, fails closed here.
+  if (restrictedView(view) && !admin) return { text: welcomeMessage('there'), replyMarkup: menuKeyboard() };
   const timezone = env.TIMEZONE ?? "Africa/Lagos";
   const localDate = day ?? lagosDateString();
-  const allMode = allButtonModeFor(chatType, env.TELEGRAM_BOT_USERNAME);
+  const allMode = allButtonModeFor(chatType, env.TELEGRAM_BOT_USERNAME, admin);
 
   // Stats/Yesterday read PAST, already-settled dates (yesterday + rolling
   // windows) from their own tables (picks/prediction_memberships/stats
@@ -476,4 +480,19 @@ export async function renderView(
   // Unroutable collection falls back to /all's current day, matching the
   // previous Stage 1 default.
   return renderAllSportMenu(env, localDate, allMode);
+}
+
+
+export async function renderRecapStats(env: Env, day: string): Promise<string> {
+  // WHY: reuse the existing aggregate and formatter without rendering a user-facing stats route.
+  const [yesterday, seven] = await Promise.all([
+    getStatsAggregateForRange(env.DB,shiftDate(day,-1),day),
+    getStatsAggregateForRange(env.DB,shiftDate(day,-7),day),
+  ]);
+  const block = (label: string, aggregate: typeof yesterday) => {
+    const lines = historicalLines(label, statsBlockFromAggregate(aggregate));
+    // WHY: a forced recap with pending legs must still identify both statistics windows.
+    return lines.length ? lines : [label, 'No settled results yet.'];
+  };
+  return [...block('Yesterday', yesterday), '', ...block('Last 7 days', seven)].map(escHtml).join('\n');
 }
