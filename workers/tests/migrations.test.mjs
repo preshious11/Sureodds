@@ -31,6 +31,7 @@ const FRESH_DB_SEQUENCE = [
   "0008_pinned_menu.sql",
   "0009_match_events.sql",
   "0010_sync_lease.sql",
+  "0011_pipeline_dispatch.sql",
 ];
 
 describe("migration chain against a fresh database (workers/CUTOVER.md step 2)", () => {
@@ -62,7 +63,7 @@ describe("migration chain against a fresh database (workers/CUTOVER.md step 2)",
     // is in 0001 - their lease-acquire/interval-check patterns are UPDATE-
     // only and do nothing against a row that was never inserted.
     const jobNames = sql.prepare("SELECT name FROM job_state ORDER BY name").all().map((r) => r.name);
-    for (const name of ["generate", "deliver", "settle", "recap", "sync_write", "livemon_dispatch"]) {
+    for (const name of ["generate", "deliver", "settle", "recap", "sync_write", "livemon_dispatch", "generation_dispatch", "settlement_dispatch"]) {
       assert.ok(jobNames.includes(name), `job_state must have a '${name}' row after the fresh-database sequence`);
     }
   });

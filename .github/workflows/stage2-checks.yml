@@ -1,3 +1,4 @@
+# WHY: pin the runner/toolchain so unattended runs cannot drift.
 # Stage 2 CI: offline checks only. No schedule trigger, no secrets, no
 # provider or Telegram calls. Live runs remain manual via workflow_dispatch
 # on run_once (Stage 3); this workflow never spends quota.
@@ -20,7 +21,7 @@ on:
 
 jobs:
   worker-foundation:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,10 +34,10 @@ jobs:
       - name: Worker unit tests (auth, views, retry, cron)
         run: node --test workers/tests/*.test.mjs
       - name: Wrangler dry-run (binding check, no deploy)
-        run: npx -y wrangler@4 deploy --dry-run --config workers/wrangler.toml
+        run: npx -y wrangler@4.151.1 deploy --dry-run --config workers/wrangler.toml
 
   schema-compat:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,7 +56,7 @@ jobs:
         run: python workers/scripts/check_schema_compat.py --sqlite /tmp/engine_schema.db --migrations /tmp/all_migrations.sql
 
   engine-offline:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:

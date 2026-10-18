@@ -454,7 +454,8 @@ const MATCH_EVENT_LOOKBACK_MS = 48 * 3_600_000;
 // is: getUndeliveredMatchEvents + per-event (context + up to 2 claim/
 // confirm pairs) must stay well inside the 50-queries-per-invocation free-
 // tier limit even in the worst case (see tests/query_budget.test.mjs).
-const MATCH_EVENT_SWEEP_LIMIT = 5;
+// WHY: reserve queries for recovery/alerts, including failed sends (40-query ceiling).
+const MATCH_EVENT_SWEEP_LIMIT = 3;
 
 /** A kickoff alert is valid from kickoff through this many minutes afterward (inclusive), never earlier or later. */
 export const DEFAULT_MATCH_START_WINDOW_MIN = 10;
@@ -622,7 +623,7 @@ export async function detectMissedGeneration(
  * Daily housekeeping (CRON_WATCH, once a day): deletes rows that have
  * genuinely finished their job and only cost read budget by sticking
  * around — never anything a later sweep could still need. One DELETE per
- * table (4 total), well inside the per-invocation query budget.
+ * table (8 total), well inside the per-invocation query budget.
  *   - telegram_updates: 'done' rows older than 7 days (dedupe only needs
  *     recent history; MAX_UPDATE_ATTEMPTS-exhausted/failed rows are left
  *     alone — those are still operator-visible signal, not dedupe noise).
@@ -637,11 +638,19 @@ export async function detectMissedGeneration(
 export async function cleanupOldRows(env: Env, nowMs = Date.now()): Promise<void> {
   const cutoff7d = new Date(nowMs - 7 * 24 * 3_600_000).toISOString();
   const cutoff2d = new Date(nowMs - 2 * 24 * 3_600_000).toISOString();
+  const cutoff3Dates = shiftDate(lagosDateString(nowMs), -3);
+  const cutoff7Dates = shiftDate(lagosDateString(nowMs), -7);
   const cutoff30d = new Date(nowMs - 30 * 24 * 3_600_000).toISOString();
   await env.DB.prepare("DELETE FROM telegram_updates WHERE status = 'done' AND updated_at < ?1").bind(cutoff7d).run();
   await env.DB.prepare("DELETE FROM custom_suggestions WHERE expires_at < ?1").bind(nowStr(nowMs)).run();
   await env.DB.prepare("DELETE FROM custom_sessions WHERE updated_at < ?1").bind(cutoff2d).run();
   await env.DB.prepare("DELETE FROM match_events WHERE created_at < ?1").bind(cutoff30d).run();
+  // WHY: expired candidate archives dominate storage; permanent picks/learning data are untouched.
+  await env.DB.prepare("DELETE FROM ticket_candidates WHERE pick_date < ?1").bind(cutoff3Dates).run();
+  await env.DB.prepare("DELETE FROM custom_pick_candidates WHERE prediction_date < ?1").bind(cutoff3Dates).run();
+  await env.DB.prepare("DELETE FROM custom_pick_pools WHERE prediction_date < ?1").bind(cutoff3Dates).run();
+  // Provider cache is date-scoped and expires at midnight; never needed after seven days.
+  await env.DB.prepare("DELETE FROM provider_cache WHERE local_date < ?1 AND expires_at < ?2").bind(cutoff7Dates, nowStr(nowMs)).run();
 }
 
 function nowStr(nowMs: number): string {
@@ -700,25 +709,183 @@ export async function maybeDispatchLiveMonitor(
   const lastMs = lastRunAt ? Date.parse(lastRunAt) : NaN;
   if (Number.isFinite(lastMs) && nowMs - lastMs < intervalMs) return;
 
+  await dispatchWorkflow(env, "stage8-live-monitor-production.yml", "livemon_dispatch",
+    { dry_run: "false" }, nowMs, fetchImpl, sender);
+}
+
+// WHY: GitHub rejection/transport failures must be visible without leaking tokens or response bodies.
+async function ownerNoticeOnce(env: Env, kind: string, day: string, text: string, sender: typeof sendTelegram): Promise<void> {
+  const owner = ownerChatId(env);
+  if (!owner || !(await claimPost(env.DB, kind, day))) return;
   try {
-    const res = await fetchImpl(
-      `https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/stage8-live-monitor-production.yml/dispatches`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "sureodds-worker",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ ref: env.GITHUB_REF ?? "main", inputs: { dry_run: "false" } }),
-      },
-    );
-    await recordJobRun(env.DB, "livemon_dispatch", nowMs, res.ok ? "OK dispatched" : `FAILED dispatch returned ${res.status}`);
-  } catch (err) {
-    await recordJobRun(env.DB, "livemon_dispatch", nowMs, `FAILED ${err instanceof Error ? err.message : String(err)}`);
+    await sender(env, "sendMessage", { chat_id: owner, text }); // plain text
+  } catch {
+    console.error("Owner notice could not be sent", kind);
+  } finally {
+    // At most one attempt/day, even if Telegram fails or returns no message id.
+    await confirmPosted(env.DB, kind, day, "attempted");
   }
+}
+
+export async function dispatchWorkflow(
+  env: Env, workflow: string, job: string, inputs: Record<string, string>, nowMs: number,
+  fetchImpl: typeof fetch = fetch, sender: typeof sendTelegram = sendTelegram,
+): Promise<void> {
+  let status = "network error";
+  let ok = false;
+  try {
+    if (!env.GITHUB_REPO || !env.GITHUB_DISPATCH_TOKEN) {
+      status = "not configured";
+    } else {
+      const res = await fetchImpl(`https://api.github.com/repos/${env.GITHUB_REPO}/actions/workflows/${workflow}/dispatches`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`, Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "sureodds-worker", "content-type": "application/json" },
+        body: JSON.stringify({ ref: env.GITHUB_REF ?? "main", inputs }),
+      });
+      status = String(res.status);
+      ok = res.ok;
+    }
+  } catch {
+    // Exceptions may contain request headers/URLs; record only a safe classification.
+  }
+  await recordJobRun(env.DB, job, nowMs, ok ? "OK dispatched" : `FAILED dispatch returned ${status}`);
+  if (!ok) {
+    const hint = status === "401" || status === "403"
+      ? " The GitHub token (GITHUB_DISPATCH_TOKEN) may have expired \u2014 create a new one and update the Cloudflare secret." : "";
+    await ownerNoticeOnce(env, `alert_dispatch_${workflow}`, lagosDateString(nowMs),
+      `\u26a0\ufe0f ${workflow} dispatch failed: HTTP ${status}.${hint}`, sender);
+  }
+}
+
+export async function maybeDispatchGeneration(
+  env: Env, nowMs = Date.now(), fetchImpl: typeof fetch = fetch, sender: typeof sendTelegram = sendTelegram,
+): Promise<void> {
+  const minute = lagosMinutes(nowMs);
+  if (minute < 9 * 60 + 20 || minute >= 12 * 60) return;
+  const day = lagosDateString(nowMs);
+  const cache = await getDayCache(env.DB, day, env.TIMEZONE ?? "Africa/Lagos");
+  if (cache?.status === "COMPLETE") return;
+  const max = Math.floor(positiveNumber(env.GENERATION_MAX_DISPATCHES_PER_DAY, 5));
+  // WHY: reserve the count AND timestamp atomically before HTTP, including failed dispatches.
+  // Neither overlapping cron invocations nor the GitHub generate lease may bypass these guards.
+  const reserved = await env.DB.prepare(`UPDATE job_state SET
+      attempts = CASE WHEN due_at = ?1 THEN attempts + 1 ELSE 1 END,
+      due_at = ?1, last_run_at = ?2, updated_at = ?2
+    WHERE name = 'generation_dispatch'
+      AND (due_at IS NULL OR due_at <> ?1 OR attempts < ?3)
+      AND (last_run_at IS NULL OR julianday(last_run_at) <= julianday(?2, '-30 minutes'))
+      AND NOT EXISTS (SELECT 1 FROM job_state WHERE name = 'generate'
+        AND lease_owner IS NOT NULL AND julianday(lease_until) > julianday(?2))`)
+    .bind(day, nowStr(nowMs), max).run();
+  if ((reserved.meta?.changes ?? 0) > 0) {
+    await dispatchWorkflow(env, "stage5-acceptance-production.yml", "generation_dispatch", {
+      operation: "live-generate", dry_run: "false", live_confirm: "RUN-LIVE",
+      allow_telegram_posts: "false", write_budget: "40000", destructive_budget: "2000",
+    }, nowMs, fetchImpl, sender);
+    return;
+  }
+  const state = await env.DB.prepare("SELECT due_at, attempts FROM job_state WHERE name = 'generation_dispatch'")
+    .first<{ due_at: string; attempts: number }>();
+  if (state?.due_at === day && state.attempts >= max) {
+    await ownerNoticeOnce(env, "alert_generation_cap", day,
+      `\u26a0\ufe0f Generation retry limit reached (${state.attempts}/${max}) for ${day}; no COMPLETE picks are available.`, sender);
+  }
+}
+
+export async function maybeDispatchSettlement(
+  env: Env, nowMs = Date.now(), fetchImpl: typeof fetch = fetch, sender: typeof sendTelegram = sendTelegram,
+): Promise<void> {
+  const minute = lagosMinutes(nowMs);
+  if (minute < 6 * 60 + 15 || minute >= 7 * 60 + 30) return;
+  const day = lagosDateString(nowMs);
+  // WHY: one durable dispatch receipt per Lagos day, even when GitHub fails or cron overlaps.
+  const claim = await env.DB.prepare(`INSERT OR IGNORE INTO posts (kind, post_date, message_id, created_at)
+    SELECT 'dispatch_settlement', ?1, 'attempted', ?2
+    WHERE NOT EXISTS (SELECT 1 FROM job_state WHERE name = 'settle'
+      AND last_result LIKE 'OK %mode=live%'
+      AND date(last_run_at, '+1 hour') = ?1)`)
+    .bind(day, nowStr(nowMs)).run();
+  if ((claim.meta?.changes ?? 0) === 0) return;
+  await dispatchWorkflow(env, "stage9-settle-production.yml", "settlement_dispatch", { dry_run: "false" },
+    nowMs, fetchImpl, sender);
+}
+
+export async function dailyHealthReport(env: Env, nowMs = Date.now(), sender: typeof sendTelegram = sendTelegram): Promise<void> {
+  if (!ownerChatId(env)) return;
+  const day = lagosDateString(nowMs);
+  // WHY: one bounded read per data source, instead of a query per receipt/table row.
+  const { results: receipts } = await env.DB.prepare(
+    "SELECT kind, message_id, created_at FROM posts WHERE post_date = ?1 AND kind IN ('top','daily','recap')")
+    .bind(day).all<{ kind: string; message_id: string | null; created_at: string }>();
+  const { results: jobs } = await env.DB.prepare(
+    "SELECT name, last_result, last_run_at, due_at, attempts FROM job_state WHERE name IN ('generate','settle','livemon_dispatch','generation_dispatch')")
+    .all<{ name: string; last_result: string | null; last_run_at: string | null; due_at: string | null; attempts: number }>();
+  const cache = await getDayCache(env.DB, day, env.TIMEZONE ?? "Africa/Lagos");
+  const pending = await env.DB.prepare(`SELECT COUNT(*) AS n FROM picks p WHERE pick_date = ?1 AND status = 'pending'
+    AND EXISTS (SELECT 1 FROM prediction_memberships pm WHERE pm.prediction_id = p.id AND pm.collection IN ('top','daily'))`)
+    .bind(shiftDate(day, -1)).first<{ n: number }>();
+  const counts = await env.DB.prepare(`SELECT (SELECT COUNT(*) FROM picks) AS picks,
+    (SELECT COUNT(*) FROM ticket_candidates) AS ticket_candidates,
+    (SELECT COUNT(*) FROM custom_pick_candidates) AS custom_pick_candidates,
+    (SELECT COUNT(*) FROM telegram_updates) AS telegram_updates`).first<Record<string, number>>();
+  const posted = (kind: string) => receipts.find((r) => r.kind === kind && r.message_id != null);
+  const job = (name: string) => jobs.find((r) => r.name === name);
+  const summary = (name: string) => `${job(name)?.last_result ?? 'never run'} @ ${job(name)?.last_run_at ?? '?'}`;
+  const problems: string[] = [];
+  if (!posted('top') || !posted('daily')) problems.push('picks not fully posted');
+  if (!posted('recap')) problems.push('recap not posted');
+  if (pending?.n) problems.push(`${pending.n} pending legs from yesterday`);
+  for (const name of ['settle', 'livemon_dispatch']) {
+    if (job(name)?.last_result?.startsWith('FAILED')) problems.push(`${name} failed`);
+  }
+  const settle = job('settle');
+  if (!settle?.last_result?.includes('mode=live') || !settle.last_result.startsWith('OK ')
+      || !settle.last_run_at || lagosDateString(Date.parse(settle.last_run_at)) !== day) {
+    problems.push('no successful live settlement today');
+  }
+  if (cache?.status !== 'COMPLETE') problems.push('no COMPLETE cache today');
+  let fallback = false;
+  let generation: Record<string, any> = {};
+  try {
+    const payload = JSON.parse(cache?.payload_json ?? '{}');
+    generation = payload.generation ?? payload.diagnostics ?? {};
+    fallback = !!generation.provider_coverage?.fallback_used;
+  } catch { problems.push('invalid cache payload'); }
+  if (fallback) problems.push('backup odds providers used');
+  // WHY: distinguish daily/cycle usage from provider-reported monthly quotas.
+  const providerLines = ['sharpapi', 'oddsapi', 'sportsgameodds'].map((name) => {
+    const report = generation.providers?.[name] ?? {};
+    const usage = generation.api_usage?.[name] ?? {};
+    const quota = report.quota ?? {};
+    const status = report.status ?? 'not reported';
+    if (status !== 'complete') problems.push(`${name} ${status}`);
+    const readings: string[] = [];
+    const addUsage = (used: unknown, limit: unknown, period: string) => {
+      if (typeof used !== 'number' || !Number.isFinite(used)) return;
+      const bounded = typeof limit === 'number' && Number.isFinite(limit) && limit > 0;
+      readings.push(`${period} ${used}/${bounded ? limit : '?'}`);
+      if (bounded && used >= limit * 0.8) problems.push(`${name} ${period} usage >=80%`);
+    };
+    addUsage(usage.today, usage.limit, 'today');
+    addUsage(report.requests?.spent, report.requests?.budget, 'cycle');
+    addUsage(quota.monthly_entities_used, quota.monthly_entities_max, 'monthly objects');
+    if (typeof quota.requests_used === 'number' && typeof quota.requests_remaining === 'number') {
+      addUsage(quota.requests_used, quota.requests_used + quota.requests_remaining, 'monthly credits');
+    }
+    return `${name}: ${status}; ${readings.join(', ') || 'usage not recorded'}.`;
+  });
+  const receiptTime = (kind: string) => posted(kind)?.created_at ?? 'not posted';
+  const text = [problems.length ? `\u26a0\ufe0f Needs attention: ${problems.join('; ')}` : '\u2705 All good',
+    `${day} (Lagos)`,
+    `Picks: Top ${receiptTime('top')}; Daily ${receiptTime('daily')}; fallback=${fallback}.`,
+    ...(!posted('top') || !posted('daily') ? [`Generation: ${summary('generate')}`] : []),
+    `Recap: ${receiptTime('recap')}; yesterday pending=${pending?.n ?? 0}.`,
+    `Settlement: ${summary('settle')}`, `Live monitor: ${summary('livemon_dispatch')}`,
+    `Generation dispatches: ${job('generation_dispatch')?.due_at === day ? job('generation_dispatch')?.attempts : 0}/${env.GENERATION_MAX_DISPATCHES_PER_DAY ?? '5'}.`,
+    ...providerLines,
+    `Rows: ${Object.entries(counts ?? {}).map(([k,v]) => `${k}=${v}`).join(', ')}.`].join('\n');
+  await ownerNoticeOnce(env, "daily_health", day, text, sender);
 }
 
 // Cloudflare passes the exact matched Cron Trigger pattern as `event.cron` —
@@ -771,11 +938,14 @@ export async function handleScheduled(env: Env, cron: string, nowMs = Date.now()
     await sweepMatchEvents(env, nowMs);
     // Dispatches the live-monitoring workflow on demand instead of it
     // running unconditionally every 5 minutes (bug 6/A3).
+    await maybeDispatchGeneration(env, nowMs);
+    await maybeDispatchSettlement(env, nowMs);
     await maybeDispatchLiveMonitor(env, nowMs);
   } else if (cron === CRON_RECAP_SWEEP) {
     await postGroupRecap(env, nowMs);
   } else if (cron === CRON_WATCH) {
     await detectMissedGeneration(env, nowMs);
     await cleanupOldRows(env, nowMs);
+    await dailyHealthReport(env, nowMs);
   }
 }

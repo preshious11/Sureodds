@@ -1,3 +1,4 @@
+# WHY: pin the runner/toolchain so unattended runs cannot drift.
 # Automatic daily PRODUCTION generation (09:00 Africa/Lagos).
 #
 # EXPLICIT AUTHORIZATION, LOUD FAILURE. Live production execution requires the
@@ -33,7 +34,7 @@ on:
 
 jobs:
   guard:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       mode: ${{ steps.decide.outputs.mode }}
     steps:
@@ -63,5 +64,6 @@ jobs:
       live_confirm: ${{ needs.guard.outputs.mode == 'live' && 'RUN-LIVE' || '' }}
       allow_telegram_posts: false
       # weekend slates insert ~6.5k+ rows; D1 free tier allows 100k writes/day
-      write_budget: "15000"
+      write_budget: "40000"
+      destructive_budget: "2000"
     secrets: inherit

@@ -1,3 +1,4 @@
+# WHY: pin the runner/toolchain so unattended runs cannot drift.
 # Stage 3 benchmark: measures GitHub-hosted wall times with ZERO provider
 # consumption (offline fixtures only). MANUAL DISPATCH ONLY — no schedule.
 # Read billed minutes from the workflow run's billing page; the artifact
@@ -9,7 +10,7 @@ on:
 
 jobs:
   benchmark:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read

@@ -28,6 +28,8 @@ MATCH_END_WINDOW_HOURS = "24"
 # Minutes between the Worker's own on-demand dispatches of stage8-live-monitor-production.yml
 # (CRON_DELIVER_SWEEP decides whether there is any work before dispatching at all).
 LIVE_MONITOR_INTERVAL_MIN = "10"
+# WHY: bound self-healing retries to protect provider quotas.
+GENERATION_MAX_DISPATCHES_PER_DAY = "5"
 # "owner/repo" for the stage8 workflow_dispatch call.
 GITHUB_REPO = "preshious11/Sureodds"
 # Ref (branch) stage8 is dispatched against. Defaults to "main" in code if unset here.

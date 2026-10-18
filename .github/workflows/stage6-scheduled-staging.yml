@@ -1,3 +1,4 @@
+# WHY: pin the runner/toolchain so unattended runs cannot drift.
 # Automatic daily staging generation, so the pipeline runs without anyone's
 # computer. SAFE BY DEFAULT: a schedule-triggered fire always calls into
 # stage5-acceptance.yml with operation=fixture-replay, dry_run=true (offline
@@ -9,7 +10,7 @@
 # Even once live, this still only touches staging D1 (stage5-acceptance's
 # own "Staging target guard" step enforces that) and never posts to
 # Telegram (allow_telegram_posts stays false here).
-name: stage6-scheduled-staging
+name: "🧪 STAGING — stage6-scheduled-staging"
 
 on:
   schedule:

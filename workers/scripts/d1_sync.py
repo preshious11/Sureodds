@@ -672,7 +672,7 @@ def cmd_require_complete(db_path: str, local_date: str, timezone: str = "Africa/
 
 
 def cmd_plan(base: str, src: str, out: str, only_tables=None, allow_deletes: bool = False,
-             write_budget: int = 5000, exclude_keys=None) -> int:
+             write_budget: int = 5000, exclude_keys=None, destructive_budget=None) -> int:
     """Build a diff, then audit it into plan.json and enforce the write budget.
 
     Estimated D1 row writes = upserts + deletes + rest_pending (each REST row
@@ -682,6 +682,10 @@ def cmd_plan(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
     Explicitly excluded rows are listed under "excluded" (auditable, and they
     do not count toward the budget since nothing is emitted for them).
     """
+    # WHY: insert growth must not hide an unexpectedly destructive plan.
+    if write_budget < 0 or (destructive_budget is not None and destructive_budget < 0):
+        print("FAIL budgets must be non-negative", file=sys.stderr)
+        return 2
     rc = cmd_diff(base, src, out, only_tables, allow_deletes, exclude_keys)
     if rc != 0:
         return rc
@@ -704,6 +708,8 @@ def cmd_plan(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
         "sql_batches": len(files),
         "estimated_writes": upserts + deletes + rest,
         "write_budget": write_budget,
+        "destructive_budget": destructive_budget,
+        "destructive_writes": sum(v.get("updated", 0) for v in delta["tables"].values()) + deletes,
         "complete": rest == 0,
     }
     with open(os.path.join(out, "plan.json"), "w", encoding="utf-8") as fh:
@@ -711,9 +717,15 @@ def cmd_plan(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
     print(f"plan: +{plan['inserts']}/~{plan['updates']}/-{plan['deletes']} "
           f"rest={rest} batches={len(files)} estimated_writes={plan['estimated_writes']} "
           f"budget={write_budget} excluded={sum(len(v) for v in excluded.values())}")
-    if plan["estimated_writes"] > write_budget:
+    total_exceeded = plan["estimated_writes"] > write_budget
+    destructive_exceeded = destructive_budget is not None and plan["destructive_writes"] > destructive_budget
+    if total_exceeded or destructive_exceeded:
         import shutil
-        print(f"FAIL plan exceeds write budget ({plan['estimated_writes']} > {write_budget}); "
+        if destructive_exceeded:
+            print(f"FAIL plan exceeds destructive budget ({plan['destructive_writes']} > {destructive_budget}); "
+                  "raise --destructive-budget explicitly", file=sys.stderr)
+        if total_exceeded:
+            print(f"FAIL plan exceeds write budget ({plan['estimated_writes']} > {write_budget}); "
               f"narrow --tables or raise --write-budget explicitly", file=sys.stderr)
         # Remove emitted batches so a later step cannot apply a refused plan.
         for name in files:
@@ -721,6 +733,7 @@ def cmd_plan(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
                 os.remove(os.path.join(out, name))
             except OSError:
                 pass
+        shutil.rmtree(os.path.join(out, "rest"), ignore_errors=True)
         for name in ("delta-manifest.json",):
             try:
                 os.remove(os.path.join(out, name))
@@ -1170,6 +1183,7 @@ def main(argv=None) -> int:
     p.add_argument("--tables", default="")
     p.add_argument("--no-deletes", action="store_true")
     p.add_argument("--write-budget", type=int, default=5000)
+    p.add_argument("--destructive-budget", type=int, default=None, help="Max updates plus deletes (optional).")
     p.add_argument("--exclude-keys", default="",
                    help="Comma-separated TABLE:key skips, recorded in the manifest.")
     p = sub.add_parser("rest-apply"); p.add_argument("batches")
@@ -1221,7 +1235,7 @@ def main(argv=None) -> int:
             print(f"FAIL {exc}", file=sys.stderr)
             return 2
         return cmd_plan(args.base, args.src, args.out, only, False,
-                        args.write_budget, excluded)
+                        args.write_budget, excluded, args.destructive_budget)
     if args.cmd == "rest-apply":
         return cmd_rest_apply(args.batches, args.account_id, args.database_id,
                               args.api_token, args.batch_size, args.retries,

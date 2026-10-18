@@ -248,3 +248,25 @@ def test_production_fallback_notice_is_best_effort_and_live_only(monkeypatch):
             assert payload["text"] == ["\u2139\ufe0f Today's picks were published using backup odds providers; SharpAPI was partial."]
             request.side_effect = OSError("offline")
             exec(compile(body, "fallback-notice", "exec"), {})  # Never raises on Telegram errors.
+
+
+def test_workflow_runners_tools_and_staging_names_are_pinned():
+    import re
+    for path in WORKFLOWS.glob("*.yml"):
+        text = path.read_text(encoding="utf-8")
+        assert "ubuntu-latest" not in text, path.name
+        versions = re.findall(r"wrangler(?:@([\w.]+))?\s+(?:d1|deploy)", text)
+        assert all(v == "4.151.1" for v in versions), path.name
+        if "STAGING_DB_NAME: sureodds_staging" in text or path.name == "stage6-scheduled-staging.yml":
+            assert re.search(r'^name: "\U0001f9ea STAGING \u2014 ', text, re.M), path.name
+
+
+def test_production_generation_has_separate_write_budgets():
+    text = (WORKFLOWS / "stage5-acceptance-production.yml").read_text(encoding="utf-8")
+    assert text.count('default: "40000"') == 2
+    assert text.count('default: "2000"') == 2
+    assert '--destructive-budget "${{ inputs.destructive_budget }}"' in text
+    backup = (WORKFLOWS / "stage7-scheduled-production.yml").read_text(encoding="utf-8")
+    assert 'write_budget: "40000"' in backup and 'destructive_budget: "2000"' in backup
+    settle = (WORKFLOWS / "stage9-settle-production.yml").read_text(encoding="utf-8")
+    assert "if: always() && needs.guard.outputs.mode == 'live'" in settle

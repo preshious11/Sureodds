@@ -26,7 +26,7 @@ function stubDb(sql) {
 
 function world() {
   const sql = new DatabaseSync(":memory:");
-  for (const file of ["0001_foundation.sql", "0006_custom_sessions.sql", "0007_custom_picks_conversation.sql", "0009_match_events.sql"]) {
+  for (const file of ["0001_foundation.sql", "0003_engine_state.sql", "0005_ticket_candidates.sql", "0011_pipeline_dispatch.sql", "0006_custom_sessions.sql", "0007_custom_picks_conversation.sql", "0009_match_events.sql"]) {
     sql.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), "utf8"));
   }
   return { sql, env: { DB: stubDb(sql) } };
@@ -79,7 +79,7 @@ describe("cleanupOldRows (CRON_WATCH daily housekeeping)", () => {
     assert.deepEqual(keys, ["recent-fixture"]);
   });
 
-  it("is exactly 4 DELETE statements (one per table), comfortably inside the query budget", async () => {
+  it("is exactly 8 DELETE statements (one per table), comfortably inside the query budget", async () => {
     const { sql, env } = world();
     let count = 0;
     const counting = {
@@ -89,6 +89,30 @@ describe("cleanupOldRows (CRON_WATCH daily housekeeping)", () => {
       },
     };
     await cleanupOldRows({ DB: counting }, NOW);
-    assert.equal(count, 4);
+    assert.equal(count, 8);
   });
+});
+
+
+it("candidate retention uses Lagos date boundaries and provider retention requires expiry", async () => {
+  const { sql, env } = world();
+  const now = Date.UTC(2026,9,17,23,30); // October 18 Lagos; cutoff October 15.
+  for (const date of ['2026-10-14','2026-10-15','2026-10-18']) {
+    sql.prepare("INSERT INTO ticket_candidates VALUES (?, 'c', '{}')").run(date);
+    sql.prepare("INSERT INTO custom_pick_candidates VALUES (?, 'Africa/Lagos', 'c', 'e', '{}', 't', 't', 1)").run(date);
+    sql.prepare("INSERT INTO custom_pick_pools VALUES (?, 'Africa/Lagos', 't', 'COMPLETE', '{}')").run(date);
+  }
+  for (const [key,date,expires] of [['old','2026-10-10',iso(now-1000)], ['boundary','2026-10-11',iso(now-1000)],
+      ['unexpired','2026-10-10',iso(now+1000)]]) {
+    sql.prepare("INSERT INTO provider_cache VALUES (?,?,'[]','{}',?,1)").run(key,date,expires);
+  }
+  const protectedTables=['picks','prediction_memberships','posts','ratings','calibration','results_seen','prediction_cache'];
+  const deleted=[];
+  const DB={prepare(query){deleted.push(query);return env.DB.prepare(query);}};
+  await cleanupOldRows({...env,DB},now);
+  for (const [table,col] of [['ticket_candidates','pick_date'],['custom_pick_candidates','prediction_date'],['custom_pick_pools','prediction_date']]) {
+    assert.deepEqual(sql.prepare(`SELECT ${col} day FROM ${table} ORDER BY ${col}`).all().map(r=>r.day), ['2026-10-15','2026-10-18']);
+  }
+  assert.deepEqual(sql.prepare('SELECT cache_key FROM provider_cache ORDER BY cache_key').all().map(r=>r.cache_key),['boundary','unexpired']);
+  for(const table of protectedTables) assert.ok(!deleted.some(q=>q.startsWith(`DELETE FROM ${table} `)),table);
 });

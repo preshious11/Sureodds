@@ -48,7 +48,7 @@ function world() {
   const sql = new DatabaseSync(":memory:");
   for (const file of [
     "0001_foundation.sql",
-    "0003_engine_state.sql",
+    "0003_engine_state.sql", "0005_ticket_candidates.sql", "0011_pipeline_dispatch.sql",
     "0006_custom_sessions.sql",
     "0007_custom_picks_conversation.sql",
     "0009_match_events.sql",
@@ -207,4 +207,41 @@ describe("query budget: every scheduled invocation stays at or below 40 D1 queri
     }
     assert.ok(DB.count <= BUDGET, `CRON_WATCH used ${DB.count} queries, budget is ${BUDGET}`);
   });
+});
+
+
+// WHY: budget the failure paths too: each rejected event send records destination
+// failures, while dispatch failures independently alert the owner.
+for (const scenario of ['generation failure','generation cap','generation interval','generation lease','generation complete','settlement failure']) {
+  it(`40-query bound with failed Telegram sends and ${scenario}`,async()=>{
+    const {sql,DB}=world();
+    const now=scenario==='settlement failure'?Date.UTC(2026,9,17,5,20):NOW;
+    sql.prepare("INSERT INTO telegram_updates (update_id,status,updated_at) VALUES(1,'failed',?)").run(iso(now));
+    sql.prepare("INSERT INTO posts(kind,post_date,message_id,created_at) VALUES('top',?,'1',?)").run(DAY,iso(now));
+    for(let i=0;i<5;i++) {
+      insertPick(sql,{id:100+i,tier:'top',status:'pending',startMs:now-60000});
+      const key=`fx-${100+i}`;
+      sql.prepare("INSERT INTO live_fixture_state(pick_date,fixture_key,status,updated_at) VALUES(?,?,'in_progress',?)").run(DAY,key,iso(now));
+      sql.prepare("INSERT INTO match_events VALUES(?,?,'start','t',?)").run(DAY,key,iso(now-30000));
+    }
+    if(scenario==='generation cap') sql.prepare("UPDATE job_state SET due_at=?,attempts=5 WHERE name='generation_dispatch'").run(DAY);
+    if(scenario==='generation interval') sql.prepare("UPDATE job_state SET due_at=?,attempts=1,last_run_at=? WHERE name='generation_dispatch'").run(DAY,iso(now-60000));
+    if(scenario==='generation lease') sql.prepare("UPDATE job_state SET lease_owner='busy',lease_until=? WHERE name='generate'").run(iso(now+60000));
+    if(scenario==='generation complete') sql.prepare(`INSERT INTO prediction_cache(cache_key,local_date,timezone,status,payload_json,generated_at,updated_at,expires_at)
+      VALUES('k',?,'Africa/Lagos','COMPLETE','{}',?,?,?)`).run(DAY,iso(now),iso(now),iso(now+86400000));
+    const env={DB,TELEGRAM_ADMIN_IDS:'999',TELEGRAM_CHAT_ID:'-100',STAGE3_CRON_ENABLED:'1',GITHUB_REPO:'owner/repo',GITHUB_DISPATCH_TOKEN:'t'};
+    const saved=globalThis.fetch;
+    globalThis.fetch=async(url)=>({ok:false,status:String(url).includes('github.com')?401:500,json:async()=>({})});
+    try { await handleScheduled(env,CRON_DELIVER_SWEEP,now); } finally {globalThis.fetch=saved;}
+    assert.ok(DB.count<=BUDGET,`${scenario}: ${DB.count} queries exceeds ${BUDGET}`);
+    assert.equal(sql.prepare('SELECT COUNT(*) n FROM match_events').get().n,5,'backlog retained for later sweeps');
+  });
+}
+
+it('WATCH health report, missing generation and full retention with failed sends stays under 40',async()=>{
+  const {sql,DB}=world();const saved=globalThis.fetch;
+  globalThis.fetch=async()=>({ok:false,status:500,json:async()=>({})});
+  try {await handleScheduled({DB,STAGE3_CRON_ENABLED:'1',TELEGRAM_ADMIN_IDS:'999'},CRON_WATCH,NOW);}
+  finally {globalThis.fetch=saved;}
+  assert.ok(DB.count<=BUDGET,`WATCH failed sends used ${DB.count} queries`);
 });

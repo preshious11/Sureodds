@@ -23,6 +23,8 @@ export interface Env {
   MATCH_END_WINDOW_HOURS?: string;
   /** Minutes that must pass between the Worker's own on-demand dispatches of stage8-live-monitor-production.yml (default 10). */
   LIVE_MONITOR_INTERVAL_MIN?: string;
+  /** WHY: bound self-healing provider use even when generation keeps failing. */
+  GENERATION_MAX_DISPATCHES_PER_DAY?: string;
   /** "owner/repo" for the stage8-live-monitor-production.yml workflow_dispatch call. Unset = live-monitor dispatch is disabled (alerts the owner once/day instead, if work exists). */
   GITHUB_REPO?: string;
   /** The ref (branch) to dispatch stage8 against. Defaults to "main". */

@@ -970,3 +970,52 @@ def test_live_fixture_state_status_guard_still_blocks_regression_once_final(tmp_
     # status never regresses (old guard); MAX() means settlement/notifications flags
     # never regress either, even though they are no longer gated by that guard.
     assert row == ("final", 1, 1)
+
+
+def test_plan_separates_insert_growth_from_destructive_budget(tmp_path):
+    import shutil
+    base, src = str(tmp_path / "base.db"), str(tmp_path / "src.db")
+    _seed_engine_tables(base)
+    shutil.copy(base, src)
+    with sqlite3.connect(src) as con:
+        con.executemany("INSERT INTO picks VALUES (?, ?, ?)",
+                        [(10 + i, "2026-10-11", "pending") for i in range(100)])
+    out = str(tmp_path / "inserts")
+    proc = sync("plan", base, src, "--out", out, "--tables", "picks",
+                "--write-budget", "200", "--destructive-budget", "0")
+    assert proc.returncode == 0, proc.stderr
+    plan = json.load(open(os.path.join(out, "plan.json")))
+    assert plan["inserts"] == 100 and plan["destructive_writes"] == 0
+    with sqlite3.connect(src) as con:
+        con.execute("UPDATE picks SET status='won' WHERE id=1")
+    out = str(tmp_path / "updates")
+    proc = sync("plan", base, src, "--out", out, "--tables", "picks",
+                "--write-budget", "200", "--destructive-budget", "0")
+    assert proc.returncode == 2
+    assert "destructive budget" in proc.stderr
+    assert not list(__import__('pathlib').Path(out).glob("*.sql"))
+    plan = json.load(open(os.path.join(out, "plan.json")))
+    assert plan["destructive_writes"] == 1
+    proc = sync("plan", base, src, "--out", str(tmp_path / "both"), "--tables", "picks",
+                "--write-budget", "1", "--destructive-budget", "0")
+    assert proc.returncode == 2
+    assert "write budget" in proc.stderr and "destructive budget" in proc.stderr
+
+
+def test_plan_destructive_budget_counts_deletes(tmp_path, monkeypatch):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("d1_sync_budget_test", SYNC)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # Delete emission remains recovery-only; test auditing without weakening that guard.
+    out = tmp_path / "deletes"
+    def diff(*args):
+        out.mkdir()
+        (out / "delta-manifest.json").write_text(json.dumps({"tables": {"picks": {
+            "added_or_changed": 0, "added": 0, "updated": 0, "deleted": 1}}}))
+        (out / "p1_deletes.sql").write_text("DELETE FROM picks WHERE id=1;")
+        return 0
+    monkeypatch.setattr(module, "cmd_diff", diff)
+    assert module.cmd_plan("base", "src", str(out), destructive_budget=0) == 2
+    assert json.loads((out / "plan.json").read_text())["destructive_writes"] == 1
+    assert not list(out.glob("*.sql"))

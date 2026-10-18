@@ -1,3 +1,4 @@
+# WHY: pin the runner/toolchain so unattended runs cannot drift.
 # Live match monitoring + settlement for PRODUCTION (SureOdds Cloudflare
 # migration, 2026-10-15). Reuses the existing, tested Python engine
 # (predbot/jobs/live_results.py + predbot/jobs/live_monitor_d1.py) against
@@ -35,7 +36,7 @@ env:
 
 jobs:
   monitor:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Its own group, distinct from stage5/stage7/stage9's sureodds-production-sync:
     # sharing one group meant GitHub cancelled whichever run was still pending

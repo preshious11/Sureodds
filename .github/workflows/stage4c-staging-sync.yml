@@ -1,8 +1,9 @@
+# WHY: pin the runner/toolchain so unattended runs cannot drift.
 # Stage 4C staging sync: engine (offline fixtures) -> scoped incremental
 # plan -> guarded apply to staging D1 -> readback verify.
 # MANUAL DISPATCH ONLY. No schedule, no live providers, no production target.
 # Dry-run (default true) performs reads + planning only and writes nothing.
-name: stage4c-staging-sync
+name: "🧪 STAGING — stage4c-staging-sync"
 
 on:
   workflow_dispatch:
@@ -30,7 +31,7 @@ env:
 
 jobs:
   staging-sync:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     concurrency:
       group: sureodds-staging-sync
@@ -78,7 +79,7 @@ jobs:
           export CLOUDFLARE_API_TOKEN="${{ secrets.CLOUDFLARE_API_TOKEN }}"
           export CLOUDFLARE_ACCOUNT_ID="${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
           start=$SECONDS
-          npx -y wrangler@4 d1 export "$STAGING_DB_NAME" --remote \
+          npx -y wrangler@4.151.1 d1 export "$STAGING_DB_NAME" --remote \
             --config wrangler.staging.toml --output /tmp/stage4c_base.sql
           python3 - "$PWD" <<'EOF'
           import sqlite3, sys, time
@@ -98,7 +99,7 @@ jobs:
         run: |
           set -euo pipefail
           cd workers
-          out=$(npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+          out=$(npx -y wrangler@4.151.1 d1 execute "$STAGING_DB_NAME" --remote \
             --config wrangler.staging.toml --json \
             --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until='2099-01-01T00:00:00Z', attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='generate' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))")
           echo "$out" | python3 scripts/d1_json.py --expect-changes 1
@@ -137,7 +138,7 @@ jobs:
           set -euo pipefail
           offset=100000
           ceiling=$((offset + 1000000))
-          maxid=$(cd workers && npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+          maxid=$(cd workers && npx -y wrangler@4.151.1 d1 execute "$STAGING_DB_NAME" --remote \
             --config wrangler.staging.toml --json \
             --command "SELECT COALESCE(MAX(id),0) AS m FROM picks" | python3 scripts/d1_json.py --get 0.results.0.m)
           echo "staging max id: $maxid, fixture offset: $offset, ceiling: $ceiling"
@@ -168,7 +169,7 @@ jobs:
         run: |
           set -euo pipefail
           cd workers
-          epoch=$(npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+          epoch=$(npx -y wrangler@4.151.1 d1 execute "$STAGING_DB_NAME" --remote \
             --config wrangler.staging.toml --json \
             --command "SELECT epoch FROM sync_state WHERE id=1" | python3 scripts/d1_json.py --get 0.results.0.epoch)
           echo "epoch before: $epoch"
@@ -181,7 +182,7 @@ jobs:
             if grep -qx "$base" /tmp/stage4c_applied.log 2>/dev/null; then
               echo "SKIP $base (already applied this run)"; ok=$((ok + 1)); continue
             fi
-            if npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+            if npx -y wrangler@4.151.1 d1 execute "$STAGING_DB_NAME" --remote \
               --config wrangler.staging.toml --json --file "$f" > "/tmp/applied_$base.json" 2>&1; then
               if python3 scripts/d1_json.py --assert-success "/tmp/applied_$base.json"; then
                 echo "$base" >> /tmp/stage4c_applied.log
@@ -217,7 +218,7 @@ jobs:
               assert len(applied) >= total, f"rest incomplete: {len(applied)}/{total} applied"
           print("rest gate: OK (pending=%d)" % pending)
           EOF
-          npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+          npx -y wrangler@4.151.1 d1 execute "$STAGING_DB_NAME" --remote \
             --config wrangler.staging.toml --json \
             --command "UPDATE sync_state SET epoch=epoch+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=1 AND epoch=$epoch" | python3 scripts/d1_json.py --expect-changes 1
         env:
@@ -228,7 +229,7 @@ jobs:
         run: |
           set -euo pipefail
           cd workers
-          npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+          npx -y wrangler@4.151.1 d1 execute "$STAGING_DB_NAME" --remote \
             --config wrangler.staging.toml --json \
             --command "SELECT pick_date, COUNT(*) AS n FROM picks GROUP BY pick_date ORDER BY pick_date" | python3 scripts/d1_json.py --get 0.results
         env:
@@ -238,7 +239,7 @@ jobs:
         if: always() && steps.lease.outputs.acquired == 'true'
         run: |
           cd workers
-          npx -y wrangler@4 d1 execute "$STAGING_DB_NAME" --remote \
+          npx -y wrangler@4.151.1 d1 execute "$STAGING_DB_NAME" --remote \
             --config wrangler.staging.toml --json \
             --command "UPDATE job_state SET lease_owner=NULL, lease_until=NULL WHERE name='generate' AND lease_owner='gha-${{ github.run_id }}'" || true
         env:

@@ -1,3 +1,4 @@
+# WHY: pin the runner/toolchain so unattended runs cannot drift.
 # Read-only production diagnostic: calls Telegram's getWebhookInfo and
 # prints it with the bot token masked. No D1 access, no sends, no writes
 # of any kind — purely inspects webhook delivery health.
@@ -8,7 +9,7 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read

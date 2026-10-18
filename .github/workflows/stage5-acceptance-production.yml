@@ -1,3 +1,4 @@
+# WHY: pin the runner/toolchain so unattended runs cannot drift.
 # Production generation + D1 sync — a deliberately SEPARATE file from
 # stage5-acceptance.yml, not a parameter on it. stage5-acceptance.yml's own
 # "Staging target guard" exists specifically so that pipeline can never be
@@ -49,9 +50,13 @@ on:
         type: boolean
       write_budget:
         description: "Max D1 row writes for the plan"
-        # weekend slates insert ~6.5k+ rows; D1 free tier allows 100k writes/day
+        # WHY: allow insert growth while separately limiting updates and deletes.
         required: false
-        default: "15000"
+        default: "40000"
+      destructive_budget:
+        description: "Max updates plus deletes; insert growth uses the total budget"
+        required: false
+        default: "2000"
   workflow_call:
     inputs:
       operation:
@@ -73,8 +78,12 @@ on:
       write_budget:
         required: false
         type: string
-        # weekend slates insert ~6.5k+ rows; D1 free tier allows 100k writes/day
-        default: "15000"
+        # WHY: allow insert growth while separately limiting updates and deletes.
+        default: "40000"
+      destructive_budget:
+        required: false
+        type: string
+        default: "2000"
 
 env:
   PRODUCTION_DB_NAME: sureodds_production
@@ -82,7 +91,7 @@ env:
 
 jobs:
   acceptance:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     concurrency:
       group: sureodds-production-sync
@@ -132,7 +141,7 @@ jobs:
           set -euo pipefail
           cd workers
           start=$SECONDS
-          npx -y wrangler@4 d1 export "$PRODUCTION_DB_NAME" --remote \
+          npx -y wrangler@4.151.1 d1 export "$PRODUCTION_DB_NAME" --remote \
             --config wrangler.toml --output /tmp/prodacc_base.sql
           python3 - <<'EOF'
           import sqlite3, time
@@ -152,7 +161,7 @@ jobs:
         run: |
           set -euo pipefail
           cd workers
-          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
             --config wrangler.toml --json \
             --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until=strftime('%Y-%m-%dT%H:%M:%SZ','now','+90 minutes'), attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='generate' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1
           echo "acquired=true" >> "$GITHUB_OUTPUT"
@@ -235,7 +244,8 @@ jobs:
           python3 workers/scripts/d1_sync.py plan /tmp/prodacc_base.db /tmp/prodacc_rebased.db \
             --out /tmp/prodacc_plan \
             --tables picks,prediction_memberships,ticket_candidates,prediction_cache,custom_pick_candidates,custom_pick_pools $deletes_flag \
-            --write-budget "${{ inputs.write_budget }}"
+            --write-budget "${{ inputs.write_budget }}" \
+            --destructive-budget "${{ inputs.destructive_budget }}"
           cat /tmp/prodacc_plan/plan.json
       - name: Require COMPLETE current-day cache (live mode)
         if: steps.mode.outputs.mode == 'live'
@@ -259,7 +269,7 @@ jobs:
           # generation is a much bigger deal than a delayed live update.
           acquired=false
           for i in $(seq 1 10); do
-            if npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
               --config wrangler.toml --json \
               --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until=strftime('%Y-%m-%dT%H:%M:%SZ','now','+20 minutes'), attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='sync_write' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1; then
               acquired=true; break
@@ -280,7 +290,7 @@ jobs:
         run: |
           set -euo pipefail
           cd workers
-          epoch=$(npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+          epoch=$(npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
             --config wrangler.toml --json \
             --command "SELECT epoch FROM sync_state WHERE id=1" | python3 scripts/d1_json.py --get 0.results.0.epoch)
           : > /tmp/prodacc_applied.log
@@ -292,7 +302,7 @@ jobs:
             if grep -qx "$base" /tmp/prodacc_applied.log 2>/dev/null; then
               echo "SKIP $base (already applied this run)"; ok=$((ok + 1)); continue
             fi
-            if npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
               --config wrangler.toml --json --file "$f" > "/tmp/prodapplied_$base.json" 2>&1; then
               if python3 scripts/d1_json.py --assert-success "/tmp/prodapplied_$base.json"; then
                 echo "$base" >> /tmp/prodacc_applied.log
@@ -314,7 +324,7 @@ jobs:
           else
             echo "no rest batches pending"
           fi
-          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
             --config wrangler.toml --json \
             --command "UPDATE sync_state SET epoch=epoch+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=1 AND epoch=$epoch" | python3 scripts/d1_json.py --expect-changes 1
         env:
@@ -324,7 +334,7 @@ jobs:
         if: always() && steps.lease.outputs.acquired == 'true'
         run: |
           cd workers
-          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
             --config wrangler.toml --json \
             --command "UPDATE job_state SET lease_owner=NULL, lease_until=NULL WHERE name='generate' AND lease_owner='gha-${{ github.run_id }}'" || true
         env:
@@ -334,7 +344,7 @@ jobs:
         if: always() && steps.synclease.outputs.acquired == 'true'
         run: |
           cd workers
-          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
             --config wrangler.toml --json \
             --command "UPDATE job_state SET lease_owner=NULL, lease_until=NULL WHERE name='sync_write' AND lease_owner='gha-${{ github.run_id }}'" || true
         env:
@@ -349,7 +359,7 @@ jobs:
           else
             msg="FAILED run ${{ github.run_id }} status=${{ job.status }} - no predictions were published; see the Actions log"
           fi
-          npx -y wrangler@4 d1 execute "$PRODUCTION_DB_NAME" --remote \
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
             --config wrangler.toml --json \
             --command "UPDATE job_state SET last_result='$msg', last_run_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='generate'" || true
         env:
@@ -365,6 +375,7 @@ jobs:
             "run_id": "${{ github.run_id }}", "event": "${{ github.event_name }}",
             "operation": "${{ inputs.operation }}", "dry_run": "${{ inputs.dry_run }}",
             "live_confirm": "${{ inputs.live_confirm != '' }}", "write_budget": "${{ inputs.write_budget }}",
+            "destructive_budget": "${{ inputs.destructive_budget }}",
           }
           with open("/tmp/prodacc_run_meta.json", "w", encoding="utf-8") as fh:
               json.dump(meta, fh, indent=2)
