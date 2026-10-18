@@ -409,19 +409,282 @@
   "pipeline_version": 5,
   "provider_coverage": {
    "complete": true,
+   "complete_providers": [
+    "sharpapi"
+   ],
    "missing_required": [],
    "optional_degraded": {
     "sportsgameodds": "partial"
    },
    "required": [
     "sharpapi"
-   ]
+   ],
+   "sharpapi": {
+    "fetch": {
+     "atp": {
+      "capped": false,
+      "in_window": 6,
+      "match_events": 7,
+      "matches_in_window": 6,
+      "matches_seen": 7,
+      "pages": 1,
+      "requests": 1,
+      "rows": 14,
+      "rows_per_match": 2.0,
+      "stop_reason": "no_more_data"
+     },
+     "england_-_championship": {
+      "capped": false,
+      "in_window": 0,
+      "match_events": 2,
+      "matches_in_window": 0,
+      "matches_seen": 2,
+      "pages": 1,
+      "requests": 1,
+      "rows": 36,
+      "rows_per_match": 18.0,
+      "stop_reason": "no_more_data"
+     },
+     "england_-_premier_league": {
+      "capped": false,
+      "in_window": 0,
+      "match_events": 10,
+      "matches_in_window": 0,
+      "matches_seen": 10,
+      "pages": 1,
+      "requests": 1,
+      "rows": 200,
+      "rows_per_match": 20.0,
+      "stop_reason": "window_end"
+     },
+     "euroleague": {
+      "capped": false,
+      "in_window": 0,
+      "match_events": 2,
+      "matches_in_window": 0,
+      "matches_seen": 2,
+      "pages": 1,
+      "requests": 1,
+      "rows": 12,
+      "rows_per_match": 6.0,
+      "stop_reason": "no_more_data"
+     },
+     "france_-_ligue_1": {
+      "capped": false,
+      "in_window": 5,
+      "match_events": 8,
+      "matches_in_window": 5,
+      "matches_seen": 8,
+      "pages": 1,
+      "requests": 1,
+      "rows": 200,
+      "rows_per_match": 25.0,
+      "stop_reason": "window_end"
+     },
+     "germany_-_bundesliga": {
+      "capped": false,
+      "in_window": 0,
+      "match_events": 6,
+      "matches_in_window": 0,
+      "matches_seen": 6,
+      "pages": 1,
+      "requests": 1,
+      "rows": 114,
+      "rows_per_match": 19.0,
+      "stop_reason": "no_more_data"
+     },
+     "italy_-_serie_a": {
+      "capped": false,
+      "in_window": 1,
+      "match_events": 6,
+      "matches_in_window": 1,
+      "matches_seen": 6,
+      "pages": 1,
+      "requests": 1,
+      "rows": 170,
+      "rows_per_match": 28.3,
+      "stop_reason": "no_more_data"
+     },
+     "mlb": {
+      "capped": false,
+      "in_window": 15,
+      "match_events": 15,
+      "matches_in_window": 15,
+      "matches_seen": 15,
+      "pages": 1,
+      "requests": 1,
+      "rows": 184,
+      "rows_per_match": 12.3,
+      "stop_reason": "no_more_data"
+     },
+     "nba": {
+      "capped": false,
+      "in_window": 0,
+      "match_events": 17,
+      "matches_in_window": 0,
+      "matches_seen": 17,
+      "pages": 1,
+      "requests": 1,
+      "rows": 170,
+      "rows_per_match": 10.0,
+      "stop_reason": "no_more_data"
+     },
+     "netherlands_-_eredivisie": {
+      "capped": false,
+      "in_window": 2,
+      "match_events": 5,
+      "matches_in_window": 2,
+      "matches_seen": 5,
+      "pages": 1,
+      "requests": 1,
+      "rows": 90,
+      "rows_per_match": 18.0,
+      "stop_reason": "no_more_data"
+     },
+     "nfl": {
+      "capped": false,
+      "in_window": 0,
+      "match_events": 4,
+      "matches_in_window": 0,
+      "matches_seen": 4,
+      "pages": 1,
+      "requests": 1,
+      "rows": 200,
+      "rows_per_match": 50.0,
+      "stop_reason": "window_end"
+     },
+     "nigeria_-_premier_league": {
+      "capped": false,
+      "in_window": 0,
+      "match_events": 0,
+      "matches_in_window": 0,
+      "matches_seen": 0,
+      "pages": 1,
+      "requests": 1,
+      "rows": 0,
+      "rows_per_match": 0.0,
+      "stop_reason": "no_more_data"
+     },
+     "portugal_-_primeira_liga": {
+      "capped": false,
+      "in_window": 1,
+      "match_events": 6,
+      "matches_in_window": 1,
+      "matches_seen": 6,
+      "pages": 1,
+      "requests": 1,
+      "rows": 108,
+      "rows_per_match": 18.0,
+      "stop_reason": "no_more_data"
+     },
+     "spain_-_la_liga": {
+      "capped": false,
+      "in_window": 1,
+      "match_events": 7,
+      "matches_in_window": 1,
+      "matches_seen": 7,
+      "pages": 1,
+      "requests": 1,
+      "rows": 168,
+      "rows_per_match": 24.0,
+      "stop_reason": "no_more_data"
+     },
+     "turkey_-_super_lig": {
+      "capped": false,
+      "in_window": 0,
+      "match_events": 3,
+      "matches_in_window": 0,
+      "matches_seen": 3,
+      "pages": 1,
+      "requests": 1,
+      "rows": 54,
+      "rows_per_match": 18.0,
+      "stop_reason": "no_more_data"
+     },
+     "uefa_-_champions_league": {
+      "capped": false,
+      "in_window": 0,
+      "match_events": 14,
+      "matches_in_window": 0,
+      "matches_seen": 14,
+      "pages": 1,
+      "requests": 1,
+      "rows": 200,
+      "rows_per_match": 14.3,
+      "stop_reason": "window_end"
+     },
+     "uefa_-_europa_conference_league": {
+      "capped": false,
+      "in_window": 0,
+      "match_events": 11,
+      "matches_in_window": 0,
+      "matches_seen": 11,
+      "pages": 1,
+      "requests": 1,
+      "rows": 194,
+      "rows_per_match": 17.6,
+      "stop_reason": "no_more_data"
+     },
+     "uefa_-_europa_league": {
+      "capped": false,
+      "in_window": 0,
+      "match_events": 0,
+      "matches_in_window": 0,
+      "matches_seen": 0,
+      "pages": 1,
+      "requests": 1,
+      "rows": 0,
+      "rows_per_match": 0.0,
+      "stop_reason": "no_more_data"
+     },
+     "wta": {
+      "capped": false,
+      "in_window": 6,
+      "match_events": 20,
+      "matches_in_window": 6,
+      "matches_seen": 20,
+      "pages": 1,
+      "requests": 1,
+      "rows": 200,
+      "rows_per_match": 10.0,
+      "stop_reason": "window_end"
+     }
+    },
+    "sport_status": {
+     "american_football": {
+      "events": 0,
+      "feeds": 1,
+      "status": "empty"
+     },
+     "baseball": {
+      "events": 15,
+      "feeds": 1,
+      "status": "success"
+     },
+     "basketball": {
+      "events": 0,
+      "feeds": 2,
+      "status": "empty"
+     },
+     "football": {
+      "events": 10,
+      "feeds": 13,
+      "status": "success"
+     },
+     "tennis": {
+      "events": 9,
+      "feeds": 2,
+      "status": "success"
+     }
+    },
+    "status": "complete"
+   }
   },
   "provider_identity_failures": {},
   "providers": {
    "sharpapi": {
     "cache": "reused",
-    "collection_signature": "d9d4d37f0dae5c1716f5c85c04701f81f0d9138df0f26e860063dd384eacd203",
+    "collection_signature": "be95a900e0fb19adc07f1ef8cf6f1e533871aa83609a6e8d7a76edf4b5dd3682",
     "events": {
      "baseball": 15,
      "football": 10,

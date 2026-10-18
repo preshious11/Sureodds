@@ -153,6 +153,13 @@ class UnifiedFetcher:
                     pool.store(pickset)
                     snapshot.generation.update(pool.package(self.cfg, iso(now)))
                     self._hydrate_collections(snapshot, pool)
+                    # WHY: recheck the actual stored card after the scratch fallback preview.
+                    coverage = snapshot.generation.get('provider_coverage', {})
+                    if coverage.get('fallback_used') and not (snapshot.top_picks or snapshot.daily_picks):
+                        coverage.pop('fallback_used', None)
+                        coverage.pop('fallback_reason', None)
+                        coverage['complete'] = snapshot.generation['complete'] = False
+                        snapshot.status = 'PARTIAL'
                     if persist:
                         self._store(snapshot, now)
             finally:

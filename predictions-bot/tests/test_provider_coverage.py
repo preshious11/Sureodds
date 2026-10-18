@@ -6,12 +6,14 @@ Policy under test (predbot/jobs/daily_picks.py):
 - Optional providers (SGO, Odds API by default) may be quota-gated, partial
   or failed without forcing PARTIAL; their state is recorded in
   diagnostics['provider_coverage'] instead.
-- Unknown/absent required names fail closed (PARTIAL with the name visible).
+- A usable backup card can satisfy the configured fallback policy; thin slates fail closed.
 - Selection thresholds, pricing and settlement are untouched by this file.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+import pytest
 from unittest.mock import Mock
 
 from predbot.config import Config
@@ -28,12 +30,14 @@ def _chain(reports, order=("oddsapi", "sharpapi", "sportsgameodds")):
     return chain
 
 
-def _run(reports, order=("oddsapi", "sharpapi", "sportsgameodds"), **cfg_kwargs):
+def _run(reports, events=None, order=("oddsapi", "sharpapi", "sportsgameodds"), **cfg_kwargs):
     db = Database(":memory:")
     try:
         cfg = Config(timezone="UTC", **cfg_kwargs)
         now = datetime(2030, 6, 1, 10, 0, tzinfo=timezone.utc)
-        return daily_picks.build_picks(_chain(reports, order), db, cfg, now)
+        chain = _chain(reports, order)
+        chain.collect.return_value = events or []
+        return daily_picks.build_picks(chain, db, cfg, now)
     finally:
         db.close()
 
@@ -106,3 +110,48 @@ def test_all_complete_is_complete_with_empty_degraded():
     assert ps.complete is True
     cov = ps.diagnostics["provider_coverage"]
     assert cov["missing_required"] == [] and cov["optional_degraded"] == {}
+
+
+@pytest.mark.parametrize("sharp_status,backup_status,count,enabled,usable,expected", [
+    ("partial", "complete", 20, True, True, True),
+    ("failed", "complete", 20, True, True, True),
+    ("partial", "complete", 19, True, True, False),
+    ("partial", "partial", 20, True, True, False),
+    ("partial", "complete", 20, False, True, False),
+    ("complete", "complete", 20, True, True, True),
+    ("partial", "complete", 20, True, False, False),
+])
+def test_fallback_uses_real_collection_selection(monkeypatch, sharp_status, backup_status,
+                                                  count, enabled, usable, expected):
+    from tests.real_events import real_ev
+    from tests.test_picker import sc
+    now = datetime(2030, 6, 1, 10, tzinfo=timezone.utc)
+    events = [real_ev(i, home=f"Club {chr(65+i)}", away=f"Team {chr(65+i)}",
+                      start=now + timedelta(hours=4)) for i in range(count)]
+    # Identity matching is tested separately; keep every synthetic fixture distinct.
+    for i, event in enumerate(events):
+        event.canonical_event_id = f"fixture-{i}"
+    monkeypatch.setattr(daily_picks, "resolve_events_detailed", lambda batch, *args: (batch, []))
+    monkeypatch.setattr(daily_picks, "score_events", lambda batch, *args: [
+        sc(e, "result3", "home", .76, 1.40) for e in batch])
+    ps = _run({"sharpapi": {"status": sharp_status}, "oddsapi": {"status": backup_status}},
+              events=events, provider_fallback_enabled=enabled,
+              top_min_prob=.62 if usable else .99, daily_min_prob=.55 if usable else .99)
+    assert len(ps.predictions) == count
+    assert ps.complete is expected
+    cov = ps.diagnostics["provider_coverage"]
+    fallback = expected and sharp_status != "complete"
+    assert bool(cov.get("fallback_used")) is fallback
+    assert cov["complete"] is expected
+    assert ps.diagnostics["complete"] is expected
+    if fallback:
+        assert cov["fallback_reason"] == {"sharpapi": sharp_status}
+        assert cov["complete_providers"] == ["oddsapi"]
+
+
+def test_sharpapi_stop_reasons_are_in_coverage():
+    report = {"status": "partial", "sport_status": {
+        "football": {"status": "partial", "stop_reason": {"soccer": "max_pages"}}},
+        "fetch": {"soccer": {"stop_reason": "max_pages"}}}
+    ps = _run({"sharpapi": report})
+    assert ps.diagnostics["provider_coverage"]["sharpapi"] == report

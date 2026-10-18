@@ -141,6 +141,7 @@ class ProviderChain:
             self.last_report[name] = {"status": "complete" if getattr(prov, 'last_fetch_complete', True) else "partial",
                                       "sport_rejected": counts.get("sport_rejected", 0),
                                       "fetch": getattr(prov, 'fetch_counts', {}),
+                                      "sport_status": getattr(prov, "sport_status", {}),
                                       "normalization": getattr(prov, 'normalization_counts', {}),
                                       "events": dict(Counter(e.sport for e in events)),
                                       "markets": dict(Counter(e.sport for e in events for m in e.markets))}

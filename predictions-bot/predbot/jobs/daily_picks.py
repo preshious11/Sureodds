@@ -221,9 +221,46 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
                for n, p in (providers_map or {}).items()
                if isinstance(getattr(p, "skipped_no_results", None), list)}
     ps.diagnostics["leagues_skipped_no_results"] = {n: v for n, v in skipped.items() if v}
+    # WHY: collections are selected from stored rows; preview the same selectors
+    # in scratch storage before allowing a degraded provider slate to publish.
+    coverage = ps.diagnostics["provider_coverage"]
+    complete_providers = [n for n, status in statuses.items() if status == "complete"]
+    coverage["complete_providers"] = complete_providers
+    sharp = providers.get("sharpapi", {})
+    if sharp:
+        coverage["sharpapi"] = {"status": sharp.get("status"),
+                                "sport_status": sharp.get("sport_status") or {},
+                                "fetch": sharp.get("fetch") or {}}
+    if (missing_required and cfg.provider_fallback_enabled and complete_providers
+            and len(ps.predictions) >= cfg.fallback_min_predictions):
+        from predbot.selection.picker import PredictionPool
+        pool = PredictionPool.scratch(day)
+        try:
+            pool.store(ps)
+            selected = pool.package(cfg, iso(now))
+        finally:
+            pool.close()
+        apply_provider_fallback(ps, cfg, selected["top_selected"], selected["daily_selected"])
     log.info("Prediction generation %s: %s", day, ps.diagnostics)
     log.info("Generation funnel %s | %s", day, " | ".join(l for l in pipeline_lines(ps.diagnostics) if l))
     return ps
+
+
+def apply_provider_fallback(ps, cfg, top_count, daily_count):
+    """Only a usable card from a complete backup source may bypass the veto."""
+    coverage = ps.diagnostics["provider_coverage"]
+    if (coverage["missing_required"] and cfg.provider_fallback_enabled
+            and coverage.get("complete_providers")
+            and len(ps.predictions) >= cfg.fallback_min_predictions
+            and (top_count or daily_count)):
+        statuses = ps.diagnostics["providers"]
+        coverage.update(fallback_used=True, fallback_reason={
+            name: statuses.get(name, {}).get("status") for name in coverage["missing_required"]},
+            complete=True)
+        ps.complete = True
+        ps.diagnostics["complete"] = True
+        log.warning("Publishing with backup odds providers: missing=%s complete=%s",
+                    coverage["fallback_reason"], coverage["complete_providers"])
 
 
 def prediction_row(s, pick_date, rank=0):

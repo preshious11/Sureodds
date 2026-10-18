@@ -260,3 +260,25 @@ def test_the_wider_list_stays_cheap_per_match():
     for r in _recorded_wide():
         per_event.setdefault(r["event_id"], []).append(r)
     assert 200 / len(per_event) <= 80
+
+
+def test_failed_requests_also_respect_generation_cap():
+    from unittest.mock import Mock
+    from predbot.util.http import ProviderError
+    p = _provider([], leagues=[f"l{i}" for i in range(10)],
+                  max_pages=6, max_requests_per_generation=3)
+    p.http = Mock()
+    p.http.get.side_effect = ProviderError("offline")
+    p.fetch_events(START, END)
+    assert p.http.get.call_count == p.requests_spent == 3
+    assert p.last_fetch_complete is False
+    assert list(p.fetch_counts.values())[-1]["stop_reason"] == "budget"
+
+
+def test_six_pages_remain_bounded_by_generation_budget():
+    p = _provider([page([])], leagues=["england_-_premier_league", "nba"],
+                  max_pages=6, max_requests_per_generation=8)
+    p.fetch_events(START, END)
+    assert len(p.http.calls) == p.requests_spent == 8
+    assert p.fetch_counts["england_-_premier_league"]["stop_reason"] == "max_pages"
+    assert p.sport_status["basketball"]["stop_reason"] == {"nba": "budget"}

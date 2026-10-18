@@ -215,3 +215,36 @@ def test_stage7_has_both_the_primary_and_backup_schedule():
     text = (WORKFLOWS / "stage7-scheduled-production.yml").read_text(encoding="utf-8")
     assert '"3 8 * * *"' in text, "primary schedule (09:03 Lagos) missing"
     assert '"45 8 * * *"' in text, "backup schedule (09:45 Lagos) missing"
+
+
+def test_production_fallback_notice_is_best_effort_and_live_only(monkeypatch):
+    import json
+    import urllib.parse
+    import urllib.request
+    from unittest.mock import MagicMock
+
+    text = (WORKFLOWS / "stage5-acceptance-production.yml").read_text(encoding="utf-8")
+    notice = text.split("- name: Tell the owner when backup providers were used", 1)[1].split("- name:", 1)[0]
+    assert "if: success() && steps.mode.outputs.mode == 'live'" in notice
+    assert "continue-on-error: true" in notice
+    assert "secrets.PRODUCTION_TELEGRAM_BOT_TOKEN" in notice
+    body = next(body for _, _, body in _heredoc_bodies(text) if "fallback_used" in body)
+    request = MagicMock()
+    monkeypatch.setattr(urllib.request, "urlopen", request)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    for used in (False, True):
+        def read(path, *args, **kwargs):
+            if path.name == "wrangler.toml":
+                return 'TELEGRAM_ADMIN_IDS = "123,456"'
+            return json.dumps({"generation": {"provider_coverage": {
+                "fallback_used": used, "fallback_reason": {"sharpapi": "partial"}}}})
+        monkeypatch.setattr(Path, "read_text", read)
+        request.reset_mock()
+        exec(compile(body, "fallback-notice", "exec"), {})
+        assert request.call_count == int(used)
+        if used:
+            payload = urllib.parse.parse_qs(request.call_args.kwargs["data"].decode())
+            assert payload["chat_id"] == ["123"]
+            assert payload["text"] == ["\u2139\ufe0f Today's picks were published using backup odds providers; SharpAPI was partial."]
+            request.side_effect = OSError("offline")
+            exec(compile(body, "fallback-notice", "exec"), {})  # Never raises on Telegram errors.

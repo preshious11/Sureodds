@@ -283,6 +283,7 @@ class SharpApiProvider(BaseProvider):
         if rate_limited:
             log.warning("SharpAPI: cooling down after a rate limit for %.0fs more - no request this run",
                         self._cooldown_left())
+        sport_stops = defaultdict(dict)  # WHY: retain each feed's truncation reason per sport.
         for index, target in enumerate(targets):
             label = target.get("league") or target.get("sport") or "all"
             sport = self._target_sport(target)
@@ -295,6 +296,7 @@ class SharpApiProvider(BaseProvider):
             counts = {"requests": 0, "rows": 0, "matches_seen": 0, "matches_in_window": 0, "rows_per_match": 0.0,
                       "capped": False, "stop_reason": ""}
             self.fetch_counts[label] = counts
+            sport_stops[sport][label] = counts
             if ceiling < 1:                   # checked BEFORE any request is made
                 counts.update(capped=True, stop_reason="budget")
                 self.last_fetch_complete = False
@@ -307,6 +309,7 @@ class SharpApiProvider(BaseProvider):
                 continue
             cursor = None
             pages = 0
+            fetched_pages = 0
             seen: set = set()
             in_window_ids: set = set()
             stop = "page_ceiling"
@@ -314,6 +317,13 @@ class SharpApiProvider(BaseProvider):
                 params = self._params(target)
                 if cursor:
                     params["cursor"] = cursor
+                # WHY: failed attempts also consume the generation request cap.
+                self.budget.spend(self.name, 1)
+                pages += 1
+                self.requests_spent += 1
+                if budget_left is not None:
+                    budget_left -= 1
+                counts["requests"] = pages
                 try:
                     data = self.http.get("/odds", params)
                 except ProviderError as e:
@@ -327,11 +337,7 @@ class SharpApiProvider(BaseProvider):
                     log.warning("SharpAPI fetch failed (%s): %s", label, e)
                     stop = "error"
                     break
-                self.budget.spend(self.name, 1)
-                pages += 1
-                self.requests_spent += 1
-                if budget_left is not None:
-                    budget_left -= 1
+                fetched_pages += 1
                 batch = data.get("data", [])
                 rows.extend(batch)
                 # Matches only: season outrights arrive without an away team.
@@ -373,7 +379,7 @@ class SharpApiProvider(BaseProvider):
             counts["stop_reason"] = stop
             if stop in ("window_end", "events_per_target"):
                 counts["capped"] = False                  # stopped on purpose: nothing we need is missing
-            if pages:
+            if fetched_pages:
                 target_status[sport].add("fetched")
         events = self._rows_to_events(rows, start, end)
         sport_events = Counter(e.sport for e in events)
@@ -391,7 +397,9 @@ class SharpApiProvider(BaseProvider):
             else:
                 state = "success"
             self.sport_status[sport] = {"status": state, "events": sport_events.get(sport, 0),
-                                        "feeds": feeds[sport]}
+                                        "feeds": feeds[sport],
+                                        "stop_reason": {label: c["stop_reason"]
+                                                        for label, c in sport_stops[sport].items()}}
         log.info("SharpAPI: %d rows -> %d events in window | parse rejections: %s | sport status: %s",
                  len(rows), len(events), dict(self.parse_counts), self.sport_status)
         return events

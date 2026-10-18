@@ -199,6 +199,14 @@ class Config:
     #: slate that blocks publication. Narrower than PROVIDER_ORDER on purpose;
     #: widen it only with justification (every name must earn its veto).
     required_providers: List[str] = field(default_factory=lambda: _list("REQUIRED_PROVIDERS", "sharpapi"))
+    #: Fallback completeness policy: when a REQUIRED provider (SharpAPI by
+    #: default) is not COMPLETE but the remaining providers produced a full
+    #: slate, publish it as COMPLETE with recorded degraded coverage instead of
+    #: blocking the whole day. Only fires when at least one provider reported
+    #: complete, the slate holds >= FALLBACK_MIN_PREDICTIONS predictions and at
+    #: least one Top/Daily pick exists, so a thin/empty fallback never passes.
+    provider_fallback_enabled: bool = field(default_factory=lambda: _bool("PROVIDER_FALLBACK_ENABLED", True))
+    fallback_min_predictions: int = field(default_factory=lambda: _int("FALLBACK_MIN_PREDICTIONS", 20))
     sgo_sports: List[str] = field(default_factory=lambda: _list("SGO_SPORTS", ""))
     sgo_leagues: List[str] = field(default_factory=lambda: _list("SGO_LEAGUES", "NBA,NFL,MLB,MLS,NCAAF,NCAAB,UEFA_CHAMPIONS_LEAGUE"))
     sgo_event_limit: int = field(default_factory=lambda: _int("SGO_EVENT_LIMIT", 50))
@@ -222,7 +230,8 @@ class Config:
     # Match-market filter: drops the futures/outrights that flood the raw feed.
     sharpapi_markets: List[str] = field(
         default_factory=lambda: _list("SHARPAPI_MARKETS", "moneyline,spread,total"))
-    sharpapi_max_pages: int = field(default_factory=lambda: _int("SHARPAPI_MAX_PAGES", 3))     # hard per-feed ceiling
+    # WHY: busy weekend football feeds run past 3 pages before reaching the end of the day's window.
+    sharpapi_max_pages: int = field(default_factory=lambda: _int("SHARPAPI_MAX_PAGES", 6))     # hard per-feed ceiling
     #: is_main_line=true on every request (alternate lines are ~70% of the rows a match costs)
     sharpapi_main_lines_only: bool = field(default_factory=lambda: _bool("SHARPAPI_MAIN_LINES_ONLY", True))
     #: exact market names per sport; the aliases in SHARPAPI_MARKETS also drag in shots/fouls/corners/player rows

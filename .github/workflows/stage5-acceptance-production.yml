@@ -380,6 +380,31 @@ jobs:
             /tmp/prodacc_plan/plan.json
             /tmp/prodacc_gen.json
             /tmp/prodacc_run_meta.json
+      - name: Tell the owner when backup providers were used
+        if: success() && steps.mode.outputs.mode == 'live'
+        continue-on-error: true
+        run: |
+          # WHY: degraded publication is successful, but the owner should know.
+          python3 - <<'EOF'
+          import json, os, re, urllib.parse, urllib.request
+          from pathlib import Path
+          try:
+              coverage = json.loads(Path("/tmp/prodacc_gen.json").read_text())["generation"]["provider_coverage"]
+              if coverage.get("fallback_used") is True:
+                  match = re.search(r'^TELEGRAM_ADMIN_IDS\s*=\s*"([^"]+)"', Path("workers/wrangler.toml").read_text(), re.M)
+                  admin = match.group(1).split(",")[0].strip() if match else ""
+                  token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+                  status = coverage.get("fallback_reason", {}).get("sharpapi", "unknown")
+                  if admin and token:
+                      text = f"ℹ️ Today's picks were published using backup odds providers; SharpAPI was {status}."
+                      body = urllib.parse.urlencode({"chat_id": admin, "text": text}).encode()
+                      with urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data=body, timeout=15):
+                          pass
+          except Exception:
+              print("Backup provider notice could not be sent")
+          EOF
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
       - name: Alert the owner on failure (A6)
         if: failure()
         run: |
