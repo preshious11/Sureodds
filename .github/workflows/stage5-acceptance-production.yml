@@ -219,7 +219,7 @@ jobs:
           FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.PRODUCTION_TELEGRAM_CHAT_ID }}
-          TELEGRAM_GROUP_INVITE_URL: ${{ secrets.TELEGRAM_GROUP_INVITE_URL }}
+          TELEGRAM_GROUP_INVITE_URL: ${{ secrets.TELEGRAM_GROUP_INVITE_URL || vars.TELEGRAM_GROUP_INVITE_URL }}
       - name: Prepare scratch (fixture rebase only; live uses native ids)
         run: |
           set -euo pipefail
