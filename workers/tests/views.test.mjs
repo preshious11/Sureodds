@@ -108,7 +108,7 @@ describe("views never touch providers", () => {
     assert.match(page0.text, /🎟 Combined odds/); // ticket header carries the combined-odds line
     const emptyDb = stubDb({ cache: { status: "COMPLETE", payload_json: "{}" }, picks: [] });
     const emptyTop = await renderView({ DB: emptyDb, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "top", 0, "2026-10-11");
-    assert.match(emptyTop.text, /No Top Picks for today/); // production's exact Top empty-state text
+    assert.match(emptyTop.text, /No Bet of the Day for today/); // production's exact Top empty-state text
     const emptyDaily = await renderView({ DB: emptyDb, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "daily", 0, "2026-10-11");
     assert.match(emptyDaily.text, /No selections qualified today/); // production's exact Daily empty-state text
   });

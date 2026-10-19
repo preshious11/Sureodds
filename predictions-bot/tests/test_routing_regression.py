@@ -89,7 +89,7 @@ def test_removed_subscribe_toggle_cannot_send_predictions(db):
     assert (len(tg.sends), len(tg.edits)) == before   # unknown payloads: nothing happens
     assert db.subscribers_active()                    # and they cannot undo /start
     buttons = [b for row in menu_markup()["inline_keyboard"] for b in row]
-    assert [b["text"] for b in buttons] == ["📚 All Predictions", "🔥 Top Picks", "📋 Daily Picks", "📊 Stats",
+    assert [b["text"] for b in buttons] == ["📚 All Predictions", "🔥 Bet of the Day", "📋 Daily Picks", "📊 Stats",
                                                  "🗓 Yesterday"]
     assert not any(b["callback_data"].startswith("sub|") for b in buttons)
 

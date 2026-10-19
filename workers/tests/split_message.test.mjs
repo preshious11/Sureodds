@@ -49,7 +49,7 @@ describe("splitMessage (Telegram's 4096-char limit, counted in UTF-16 units)", (
   });
 
   it("keeps a sticky ticket header with the block that follows it, never left alone", () => {
-    const header = "🔥 TOP PICKS · Sat 1 Jun";
+    const header = "🔥 BET OF THE DAY · Sat 1 Jun";
     const filler = "f".repeat(3000); // fits with the header in the same chunk
     const bigBlock = "b".repeat(3000); // forces a new chunk once added
     const text = [header, filler, bigBlock].join("\n\n");

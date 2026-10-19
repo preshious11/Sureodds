@@ -45,19 +45,19 @@ def test_card_matches_the_requested_layout():
                "Over 1.5 Goals", 0.84, 1.74, market="total", selection="over", line=1.5)
 
     assert picks_message([villa], [overs], DAY, WAT) == (
-        "🔥 TOP PICKS · Wed 16 Sep\n"
+        "🔥 BET OF THE DAY · Wed 16 Sep\n"
         "🎟 Combined odds 2.05 · 1 pick · 🕘 times in WAT\n"
         "\n"
         "⚽ Premier League · Home1 vs Away1\n"
         "🎯 Aston Villa to win\n"
-        "💰 2.05  ·  📊 72%  ·  🕘 7:45 PM\n"
+        "💰 2.05  ·  📊 72%  ·  🕘 7:45 PM\n\nBet only what you can afford to lose.\n"
         "\n"
         "📋 DAILY PICKS · Wed 16 Sep\n"
         "🎟 Combined odds 1.74 · 1 pick · 🕘 times in WAT\n"
         "\n"
         "⚽ La Liga · Home2 vs Away2\n"
         "🎯 Over 1.5 Goals\n"
-        "💰 1.74  ·  📊 84%  ·  🕘 3:00 PM"
+        "💰 1.74  ·  📊 84%  ·  🕘 3:00 PM\n\nBet only what you can afford to lose."
     )
 
 
@@ -81,7 +81,7 @@ def test_every_pick_gets_the_three_line_block():
         "",
         "⚽ Serie A · Home1 vs Away1",
         "🎯 Inter to win",
-        "💰 1.95  ·  📊 66%  ·  🕘 7:45 PM",
+        "💰 1.95  ·  📊 66%  ·  🕘 7:45 PM", "", "Bet only what you can afford to lose.",
     ]
 
 
@@ -141,7 +141,7 @@ def test_subscriber_summary_is_the_canonical_card_and_matches_the_views():
     card = picks_text(snapshot, WAT)
 
     # the exact canonical summary structure, one section per ticket, each with its own odds and count
-    assert card.startswith("🔥 TOP PICKS · Wed 16 Sep\n🎟 Combined odds 2.05 · 1 pick · 🕘 times in WAT")
+    assert card.startswith("🔥 BET OF THE DAY · Wed 16 Sep\n🎟 Combined odds 2.05 · 1 pick · 🕘 times in WAT")
     assert "📋 DAILY PICKS · Wed 16 Sep\n🎟 Combined odds 1.74 · 1 pick · 🕘 times in WAT" in card
     # every pick block is byte-identical to the paginated view's card
     from predbot.bot.pagination import render_pick

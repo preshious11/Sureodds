@@ -59,3 +59,8 @@ workers/.wrangler/
 workers/build/
 workers/staging_check.db
 workers/build_stage1_copy.db
+
+.task-deps/
+
+.ticket-test-tmp/
+.ticket-*-tmp*/

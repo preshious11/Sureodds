@@ -26,13 +26,13 @@ def _record(i, market="result3", selection="home", label="Angers to Win", line=N
 def test_the_emoji_vocabulary_is_frozen():
     named = ("top", "daily", "stats", "yesterday", "all")
     assert {v: pagination.VIEW_ICON[v] for v in named} == {"top": "🔥", "daily": "📋", "stats": "📊", "yesterday": "🗓", "all": "📚"}
-    assert (fmt.TOP_TITLE, fmt.DAILY_TITLE) == ("🔥 TOP PICKS", "📋 DAILY PICKS")
+    assert (fmt.TOP_TITLE, fmt.DAILY_TITLE) == ("🔥 BET OF THE DAY", "📋 DAILY PICKS")
     # M8 added the unresolved mark: a pick no result could be confirmed for is not a void
     assert fmt.MARK == {"won": "✅", "lost": "❌", "void": "➖", "push": "↩️", "unresolved": "❔"}
     assert (fmt.STARTED_MARK, fmt.FINISHED_MARK) == (" 🔴", " · Finished")
     assert [fmt.SPORT_ICON[s] for s in ("football", "basketball", "baseball", "tennis")] == ["⚽", "🏀", "⚾", "🎾"]
     assert [pagination.view_button_label(v) for v in ("top", "daily", "stats", "yesterday", "all")] == \
-        ["🔥 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday", "📚 All Predictions"]
+        ["🔥 Bet of the Day", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday", "📚 All Predictions"]
 
 
 def test_a_pick_block_is_three_lines_with_the_original_separators():
@@ -44,7 +44,7 @@ def test_a_pick_block_is_three_lines_with_the_original_separators():
 def test_the_top_and_daily_card_headers_and_blocks_are_unchanged():
     picks = [pagination.pick_line_from_record(_record(i, hour=18 + i), "UTC") for i in (1, 2)]
     card = fmt.picks_card(picks, DAY, title=fmt.TOP_TITLE, zone="UTC")
-    assert card.splitlines()[:2] == ["🔥 TOP PICKS · Sat 1 Jun", "🎟 Combined odds 4.08 · 2 picks · 🕘 times in UTC"]
+    assert card.splitlines()[:2] == ["🔥 BET OF THE DAY · Sat 1 Jun", "🎟 Combined odds 4.08 · 2 picks · 🕘 times in UTC"]
     assert card.splitlines()[2:6] == ["", "⚽ France • Ligue 1 · Angers vs ESTAC Troyes", "🎯 Angers to Win",
                                       "💰 2.02  ·  📊 46%  ·  🕘 7:45 PM"]
     assert fmt.picks_card(picks, DAY, title=fmt.DAILY_TITLE, zone="UTC").startswith("📋 DAILY PICKS · Sat 1 Jun\n🎟 Combined odds")
@@ -78,7 +78,7 @@ def test_all_menu_and_buttons_follow_the_established_style():
     text, markup = pagination.render_view(snap, "all", 0, 5, "UTC")
     assert text == "📚 ALL PREDICTIONS · Sat 1 Jun\n2 predictions · 2 matches\n\nPick a sport:"
     rows = [[b["text"] for b in r] for r in markup["inline_keyboard"]]
-    assert rows == [["⚽ Football (2 · 2 matches)"], ["📚 All Predictions"], ["🔥 Top Picks", "📋 Daily Picks"], ["📊 Stats", "🗓 Yesterday"]]
+    assert rows == [["⚽ Football (2 · 2 matches)"], ["📚 All Predictions"], ["🔥 Bet of the Day", "📋 Daily Picks"], ["📊 Stats", "🗓 Yesterday"]]
 
 
 def test_all_pages_use_the_original_footer_and_keep_the_sports_back_button():
@@ -126,7 +126,7 @@ def test_the_main_stats_card_is_the_original_one_and_gains_only_a_button_row(tmp
     text, markup = pagination.render_stats(DailySnapshot(date=DAY), db=db, tz="UTC", now=now)
     assert text.startswith("📊 STATS · Sat 1 Jun") and "Performance" not in text
     rows = [[b["text"] for b in r] for r in markup["inline_keyboard"]]
-    assert rows[1:] == [["📚 All Predictions"], ["🔥 Top Picks", "📋 Daily Picks"], ["📊 Stats", "🗓 Yesterday"]]   # the usual switch rows
+    assert rows[1:] == [["📚 All Predictions"], ["🔥 Bet of the Day", "📋 Daily Picks"], ["📊 Stats", "🗓 Yesterday"]]   # the usual switch rows
     assert rows[0] == ["🔥 Top stats", "📋 Daily stats", "📚 All stats"]
 
 

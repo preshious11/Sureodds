@@ -16,7 +16,7 @@ from tests.test_subscribers_broadcast import FakeTG, _snapshot
 
 NOW = datetime(2030, 6, 1, 9, 30, tzinfo=timezone.utc)
 CFG = Config(timezone="UTC")
-LABELS = ["📚 All Predictions", "🔥 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
+LABELS = ["📚 All Predictions", "🔥 Bet of the Day", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
 
 
 @pytest.fixture(autouse=True)
@@ -45,8 +45,8 @@ def test_two_messages_per_subscriber_in_order_each_with_the_four_button_keyboard
     assert broadcast.deliver_picks(db, CFG, tg, _snapshot(), now=NOW) == 1
     assert len(tg.sends) == 2
     top, daily = tg.sends
-    assert top["text"].startswith("🔥 TOP PICKS") and "DAILY PICKS" not in top["text"]
-    assert daily["text"].startswith("📋 DAILY PICKS") and "TOP PICKS" not in daily["text"]
+    assert top["text"].startswith("🔥 BET OF THE DAY") and "DAILY PICKS" not in top["text"]
+    assert daily["text"].startswith("📋 DAILY PICKS") and "BET OF THE DAY" not in daily["text"]
     for send in tg.sends:
         assert [b["text"] for row in send["reply_markup"]["inline_keyboard"] for b in row] == LABELS
     assert db.deliveries_done("picks_top", "2030-06-01") == db.deliveries_done("picks_daily", "2030-06-01") == {"42"}
@@ -84,7 +84,7 @@ def test_an_empty_top_says_so_and_the_daily_still_goes_out(db):
     tg = FakeTG()
     broadcast.deliver_picks(db, CFG, tg, snap, now=NOW)
     assert len(tg.sends) == 2
-    assert tg.sends[0]["text"] == "🔥 TOP PICKS · Sat 1 Jun\nNo Top Picks for today.\n\nSee other picks:"
+    assert tg.sends[0]["text"] == "🔥 BET OF THE DAY · Sat 1 Jun\nNo Bet of the Day for today.\n\nSee other picks:\n\nBet only what you can afford to lose."
     assert tg.sends[1]["text"].startswith("📋 DAILY PICKS") and "3 picks" in tg.sends[1]["text"]
 
 
@@ -94,8 +94,8 @@ def test_an_empty_daily_says_so_and_the_top_still_goes_out(db):
     snap.daily_picks = []
     tg = FakeTG()
     broadcast.deliver_picks(db, CFG, tg, snap, now=NOW)
-    assert tg.sends[0]["text"].startswith("🔥 TOP PICKS") and "1 pick" in tg.sends[0]["text"]
-    assert tg.sends[1]["text"] == f"📋 DAILY PICKS · Sat 1 Jun\n{no_selection_message()}"
+    assert tg.sends[0]["text"].startswith("🔥 BET OF THE DAY") and "1 pick" in tg.sends[0]["text"]
+    assert tg.sends[1]["text"] == f"📋 DAILY PICKS · Sat 1 Jun\n{no_selection_message()}\n\nBet only what you can afford to lose."
 
 
 def test_nothing_at_all_sends_nothing(db):

@@ -65,7 +65,7 @@ def test_completed_empty_generation_publishes_top_once(db, publication):
     publication.service._store(snapshot, NOW)
     publish(db, publication)
     assert len(publication.tg.sends) == 2
-    assert publication.tg.sends[0]['text'] == '🔥 TOP PICKS · Sat 1 Jun\nNo Top Picks for today.\n\nSee other picks:'
+    assert publication.tg.sends[0]['text'] == '🔥 BET OF THE DAY · Sat 1 Jun\nNo Bet of the Day for today.\n\nSee other picks:\n\nBet only what you can afford to lose.'
     assert db.delivery_done('community_picks_top', DAY, COMMUNITY)
 
 
@@ -158,7 +158,7 @@ def test_ungenerated_snapshot_is_not_a_completed_empty_publication(db, publicati
     publish(db, p)
     assert not p.tg.sends and not db.query('SELECT 1 FROM posts')
     text, _ = pagination.render_page(snapshot, 'top', 0, 5, 'UTC')
-    assert 'No Top Picks for today.' not in text
+    assert 'No Bet of the Day for today.' not in text
 
 
 def test_partial_evaluation_with_no_qualifiers_still_publishes_empty_top(db, publication):

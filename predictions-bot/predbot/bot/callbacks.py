@@ -102,7 +102,7 @@ WAVING = "\U0001F44B"        # 👋
 #: What Telegram lists when a reader types "/" (registered at startup with setMyCommands).
 BOT_COMMANDS = [
     {"command": "all", "description": "All model predictions for today"},
-    {"command": "top", "description": "Top picks of the day"},
+    {"command": "top", "description": "Bet of the Day"},
     {"command": "daily", "description": "Daily picks"},
     {"command": "stats", "description": "Results so far: yesterday and the last 7 days"},
     {"command": "yesterday", "description": "Every pick from yesterday, with its result"},
@@ -138,7 +138,7 @@ def commands_text() -> str:
 
 #: The welcome screen's command list, kept exactly as it has always read (/start is unchanged); /help lists all
 #: the view commands via commands_text().
-WELCOME_COMMANDS = ("<b>🏆 /top</b> – Top picks of the day\n"
+WELCOME_COMMANDS = ("<b>🏆 /top</b> – Bet of the Day\n"
                     "<b>📚 /all</b> – All predictions\n"
                     "<b>📋 /daily</b> – Daily picks · Accumulator slip\n"
                     "<b>📊 /stats</b> – See prediction results")

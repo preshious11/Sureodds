@@ -26,7 +26,7 @@ PAGE_SIZE_DEFAULT = 5
 CALLBACK_PREFIX = "pg"
 CALLBACK_NOOP = "noop"
 
-VIEW_TITLES = {VIEW_TOP: "🔥 TOP PICKS", VIEW_DAILY: "📋 DAILY PICKS", VIEW_STATS: "📊 STATS",
+VIEW_TITLES = {VIEW_TOP: "🔥 BET OF THE DAY", VIEW_DAILY: "📋 DAILY PICKS", VIEW_STATS: "📊 STATS",
                VIEW_YESTERDAY: "🗓 YESTERDAY"}
 
 #: The three interactive views: emoji, button label, the command that opens the
@@ -34,9 +34,9 @@ VIEW_TITLES = {VIEW_TOP: "🔥 TOP PICKS", VIEW_DAILY: "📋 DAILY PICKS", VIEW_
 #: menu, the welcome screen and the pagination switch row, so a tap and a type
 #: are guaranteed to be the same action.
 VIEW_ICON = {VIEW_TOP: "🔥", VIEW_DAILY: "📋", VIEW_STATS: "📊", VIEW_YESTERDAY: "🗓"}
-VIEW_LABEL = {VIEW_TOP: "Top Picks", VIEW_DAILY: "Daily Picks", VIEW_STATS: "Stats", VIEW_YESTERDAY: "Yesterday"}
+VIEW_LABEL = {VIEW_TOP: "Bet of the Day", VIEW_DAILY: "Daily Picks", VIEW_STATS: "Stats", VIEW_YESTERDAY: "Yesterday"}
 VIEW_COMMAND = {VIEW_TOP: "/top", VIEW_DAILY: "/daily", VIEW_STATS: "/stats", VIEW_YESTERDAY: "/yesterday"}
-VIEW_DESC = {VIEW_TOP: "Top picks of the day",
+VIEW_DESC = {VIEW_TOP: "Bet of the Day",
              VIEW_DAILY: "Daily picks · Accumulator slip",
              VIEW_STATS: "See prediction results",
              VIEW_YESTERDAY: "Every pick from yesterday, with its result"}
@@ -179,7 +179,7 @@ def empty_view_message(snapshot: DailySnapshot, view: str, tz: str = "UTC") -> s
         return picks_card([], snapshot.date, TOP_TITLE)
     if snapshot.all_predictions and view != VIEW_ALL:
         if view == VIEW_TOP:
-            return f'There are no top picks for today. {len(snapshot.all_predictions)} All Predictions are available in /all.'
+            return f'There is no Bet of the Day for today. {len(snapshot.all_predictions)} All Predictions are available in /all.'
         return f'There are no {VIEW_LABEL[view]} for today. {len(snapshot.all_predictions)} All Predictions are available in /all.'
     if snapshot.status == 'COMPLETE' and not snapshot.total_picks():
         return 'No valid model predictions were generated today.'

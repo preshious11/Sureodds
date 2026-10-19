@@ -184,7 +184,7 @@ def test_render_page_structure_and_keyboard():
     assert nav[1]["callback_data"] == "pg|daily|1|20300601"      # a page turn carries the day of its card
     assert "◀️" not in [b["text"] for b in nav]
     assert [b["text"] for row in markup["inline_keyboard"][-2:] for b in row] == [
-        "🔥 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]      # two buttons a row
+        "🔥 Bet of the Day", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]      # two buttons a row
 
     text_last, markup_last = pagination.render_page(snap, VIEW_DAILY, 2, 10, "UTC")
     assert "Page 3 of 3" in text_last and "23 picks" in text_last       # the count is the whole ticket on every page

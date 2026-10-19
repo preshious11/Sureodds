@@ -154,6 +154,7 @@ class DailySnapshot:
     generation: Dict[str, Any] = field(default_factory=dict)
     status: str = "COMPLETE"
     sport_status: Dict[str, Any] = field(default_factory=dict)
+    bet_image: Optional[Dict[str, Any]] = None  # presentation only; never selection/settlement input
 
     def view_items(self, view: str) -> List[PickRecord]:
         if view == VIEW_ALL:
@@ -173,6 +174,7 @@ class DailySnapshot:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            **({'bet_image': self.bet_image} if self.bet_image else {}),
             "schema_version": self.schema_version,
             "date": self.date,
             "generated_at": self.generated_at,
@@ -202,6 +204,7 @@ class DailySnapshot:
             generation=dict(data.get("generation") or {}),
             status=str(data.get("status", "COMPLETE")),
             sport_status=dict(data.get("sport_status") or {}),
+            bet_image=data.get('bet_image'),
             top_picks=[PickRecord.from_dict(p) for p in data.get("top_picks", [])],
             daily_picks=[PickRecord.from_dict(p) for p in data.get("daily_picks", [])],
             all_predictions=[PickRecord.from_dict(p) for p in data.get("all_predictions", [])],

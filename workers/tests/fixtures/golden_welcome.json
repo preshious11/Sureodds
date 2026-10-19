@@ -2,11 +2,11 @@
   "cases": [
     {
       "first_name": "Ada",
-      "expected": "👋 Hi, Ada\n\nUse the menu below or these commands:\n\n<b>🏆 /top</b> – Top picks of the day\n<b>📚 /all</b> – All predictions\n<b>📋 /daily</b> – Daily picks · Accumulator slip\n<b>📊 /stats</b> – See prediction results"
+      "expected": "👋 Hi, Ada\n\nUse the menu below or these commands:\n\n<b>🏆 /top</b> – Bet of the Day\n<b>📚 /all</b> – All predictions\n<b>📋 /daily</b> – Daily picks · Accumulator slip\n<b>📊 /stats</b> – See prediction results"
     },
     {
       "first_name": "A&B <admin>",
-      "expected": "👋 Hi, A&amp;B &lt;admin&gt;\n\nUse the menu below or these commands:\n\n<b>🏆 /top</b> – Top picks of the day\n<b>📚 /all</b> – All predictions\n<b>📋 /daily</b> – Daily picks · Accumulator slip\n<b>📊 /stats</b> – See prediction results"
+      "expected": "👋 Hi, A&amp;B &lt;admin&gt;\n\nUse the menu below or these commands:\n\n<b>🏆 /top</b> – Bet of the Day\n<b>📚 /all</b> – All predictions\n<b>📋 /daily</b> – Daily picks · Accumulator slip\n<b>📊 /stats</b> – See prediction results"
     }
   ]
 }

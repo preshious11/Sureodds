@@ -38,7 +38,7 @@ def snapshot(**_read_only):
 NL = "\n"
 
 
-@pytest.mark.parametrize('view,title,total,count', [('top', '🔥 TOP PICKS · Sat 1 Jun', '2.00', 1),
+@pytest.mark.parametrize('view,title,total,count', [('top', '🔥 BET OF THE DAY · Sat 1 Jun', '2.00', 1),
                                                     ('daily', '📋 DAILY PICKS · Sat 1 Jun', '7.97', 2)])
 @pytest.mark.parametrize('zone,time,label', [('Africa/Lagos', '7:00 PM', 'WAT'), ('America/New_York', '2:00 PM', 'EDT')])
 def test_commands_and_buttons_have_exact_layout_and_subscriber_timezone(db, view, title, total, count, zone, time, label):
@@ -69,7 +69,7 @@ def test_every_daily_page_uses_entire_ticket_total_and_count():
         assert fixture + ' vs Chelsea' in text
         assert text.count('📊 84%') == 1
         assert '🎟 Combined odds 7.97 · 2 picks' in text        # the whole ticket, on every page
-        assert text.endswith(f'Page {page + 1} of 2')
+        assert text.endswith(f'Page {page + 1} of 2\n\nBet only what you can afford to lose.')
 
 
 @pytest.mark.parametrize('zone', ['', 'Not/AZone'])

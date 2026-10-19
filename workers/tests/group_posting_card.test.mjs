@@ -121,7 +121,7 @@ describe("automatic group post renders the whole ticket, never paginated", () =>
       return { ok: true, messageId: 1 };
     });
     assert.equal(outcome, "sent");
-    assert.match(sentPayload.text, /No Top Picks for today/);
+    assert.match(sentPayload.text, /No Bet of the Day for today/);
     const kb = JSON.stringify(sentPayload.reply_markup);
     assert.match(kb, /✨ Custom Picks/);
     assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=custom_picks/);

@@ -40,6 +40,7 @@ import {
 import { lagosDateString, renderGroupCard, renderGroupRecap, renderRecapStats, renderView } from "./views.ts";
 import { shiftDate, splitMessage } from "./format.ts";
 import { allButtonModeFor, topEmptyKeyboard, menuKeyboard, isAdmin } from "./telegram.ts";
+import { ticketPhoto, type TicketPhoto } from './ticket_image.ts';
 
 export const BROADCAST_PER_SECOND = 25;
 
@@ -92,10 +93,16 @@ export async function sendTelegram(
   // One Retry-After honour + one retry; a second 429 is recorded as failure
   // (receipt NOT written) so the next sweep retries — never a silent drop.
   for (let attempt = 0; attempt < 2; attempt++) {
+    const form = method === 'sendPhoto' && typeof payload.photo_base64 === 'string' ? new FormData() : undefined;
+    if (form) {
+      const bytes = Uint8Array.from(atob(payload.photo_base64 as string), c=>c.charCodeAt(0));
+      form.append('photo',new Blob([bytes],{type:'image/jpeg'}),'kovqi-bet-of-the-day.jpg');
+      for (const [key,value] of Object.entries(payload)) if (key !== 'photo_base64') form.append(key,typeof value === 'object' ? JSON.stringify(value) : String(value));
+    }
     const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
+      headers: form ? undefined : { "content-type": "application/json" },
+      body: form ?? JSON.stringify(payload),
     });
     if (res.status === 429) {
       let waitS = 2;
@@ -112,10 +119,13 @@ export async function sendTelegram(
     }
     if (!res.ok) return { ok: false };
     try {
-      const body = (await res.json()) as { result?: { message_id?: number } };
+      const body = (await res.json()) as { ok?: boolean; result?: { message_id?: number } };
       const messageId = body.result?.message_id;
+      if (body.ok === false) return {ok:false};
+      if (method === 'sendPhoto' && (body.ok !== true || typeof messageId !== 'number')) throw Error('photo receipt unavailable');
       return { ok: true, messageId: typeof messageId === "number" ? messageId : undefined };
-    } catch {
+    } catch (error) {
+      if (method === 'sendPhoto') throw error;
       return { ok: true };
     }
   }
@@ -266,12 +276,15 @@ async function postToOwner(
   text: string,
   replyMarkup: Record<string, unknown> | undefined,
   sender: typeof sendTelegram,
+  photo?: TicketPhoto,
 ): Promise<void> {
   const owner = ownerChatId(env);
   if (!owner) return; // no admin configured — never a dead destination, just skipped
   const ownerKind = `${kind}_owner`;
   if (!(await claimPost(env.DB, ownerKind, localDate))) return;
-  const { ok, messageId } = await sendSplit(env, owner, text, replyMarkup ? menuKeyboard(isAdmin(env, owner) ? "admin" : "callback") : undefined, sender);
+  const { ok, messageId } = photo
+    ? await sender(env,'sendPhoto',{chat_id:owner,photo_base64:photo.jpeg,caption:photo.caption,parse_mode:'HTML'})
+    : await sendSplit(env, owner, text, replyMarkup ? menuKeyboard(isAdmin(env, owner) ? "admin" : "callback") : undefined, sender);
   if (!ok) {
     await recordDeliveryFailure(env, "owner", `${kind} ${localDate}`);
     await releaseClaim(env.DB, ownerKind, localDate);
@@ -322,6 +335,7 @@ export async function postGroupPicks(
   // broadcast.py picks_messages/summary_card) — renderView()'s paginated
   // /top /daily output is for interactive replies, not this automatic post.
   const { text, isEmpty } = await renderGroupCard(env, kind, localDate);
+  const photo = kind === 'top' && !isEmpty ? await ticketPhoto(env,localDate,cache.payload_json) : undefined;
   // predbot/jobs/daily_picks.py: markup is None for every automatic group
   // card EXCEPT the genuinely-empty Top card, which swaps in the Custom
   // Picks deep-link keyboard (top_empty_markup). Never shown without a
@@ -334,14 +348,16 @@ export async function postGroupPicks(
       : undefined;
   if (!env.TELEGRAM_CHAT_ID) {
     // No group configured: the owner leg still gets this card (independent destination).
-    await postToOwner(env, kind, localDate, text, replyMarkup, sender);
+    await postToOwner(env, kind, localDate, text, replyMarkup, sender, photo);
     return "no-chat";
   }
   if (!claimedGroup) {
-    await postToOwner(env, kind, localDate, text, replyMarkup, sender);
+    await postToOwner(env, kind, localDate, text, replyMarkup, sender, photo);
     return "skipped";
   }
-  const { ok, messageId } = await sendSplit(env, env.TELEGRAM_CHAT_ID, text, replyMarkup, sender);
+  const { ok, messageId } = photo
+    ? await sender(env,'sendPhoto',{chat_id:env.TELEGRAM_CHAT_ID,photo_base64:photo.jpeg,caption:photo.caption,parse_mode:'HTML'})
+    : await sendSplit(env, env.TELEGRAM_CHAT_ID, text, replyMarkup, sender);
   if (!ok) {
     await recordDeliveryFailure(env, "group", `${kind} ${localDate}`);
     // Release the claim so the very next sweep retries immediately rather
@@ -352,7 +368,7 @@ export async function postGroupPicks(
   }
   await confirmPosted(env.DB, kind, localDate, messageId != null ? String(messageId) : null);
   await setJobResult(env.DB, "post", `${kind} ${localDate}: posted message=${messageId ?? "?"}`);
-  await postToOwner(env, kind, localDate, text, replyMarkup, sender);
+  await postToOwner(env, kind, localDate, text, replyMarkup, sender, photo);
   return "sent";
 }
 
@@ -600,7 +616,7 @@ interface ResultTicket {
   file_id:string|null;fixtures:string;pending_ends:string;
 }
 async function getResultTickets(env:Env,nowMs:number,fixtures?:{date:string;fixture:string}[]):Promise<ResultTicket[]> {
-  if (!env.TELEGRAM_CHAT_ID || !/^\d{4}-\d{2}-\d{2}$/.test(env.RESULT_GIFS_START_DATE??'')) return [];
+  if ((!env.TELEGRAM_CHAT_ID && !ownerChatId(env)) || !/^\d{4}-\d{2}-\d{2}$/.test(env.RESULT_GIFS_START_DATE??'')) return [];
   const day=lagosDateString(nowMs);
   // WHY: one aggregate covers all recent posted tickets, not one read per ticket or leg.
   const {results}=await env.DB.prepare(`WITH tickets AS (SELECT po.kind,po.post_date,po.message_id,COUNT(p.id) AS legs,
@@ -608,7 +624,7 @@ async function getResultTickets(env:Env,nowMs:number,fixtures?:{date:string;fixt
     (SELECT json_group_array(me.pick_date||'|'||me.fixture_key) FROM match_events me
       WHERE me.pick_date=po.post_date AND me.event_type='end'
       AND EXISTS(SELECT 1 FROM picks ep JOIN prediction_memberships em ON em.prediction_id=ep.id
-        WHERE ep.pick_date=po.post_date AND ep.fixture_key=me.fixture_key AND em.collection=po.kind)
+        WHERE ep.pick_date=po.post_date AND ep.fixture_key=me.fixture_key AND em.collection=replace(po.kind,'_owner',''))
       AND NOT EXISTS(SELECT 1 FROM posts er WHERE er.post_date=me.pick_date
         AND er.kind='evt_'||me.fixture_key||'_end' AND er.message_id IS NOT NULL)
       AND NOT EXISTS(SELECT 1 FROM posts expired WHERE expired.post_date=me.pick_date
@@ -624,12 +640,12 @@ async function getResultTickets(env:Env,nowMs:number,fixtures?:{date:string;fixt
     SUM(CASE WHEN p.status='void' THEN 1 ELSE 0 END) AS void_legs,
     SUM(CASE WHEN p.status='pending' THEN 1 ELSE 0 END) AS pending_legs
     FROM posts po LEFT JOIN picks p ON p.pick_date=po.post_date AND EXISTS(
-      SELECT 1 FROM prediction_memberships pm WHERE pm.prediction_id=p.id AND pm.collection=po.kind)
-    WHERE po.kind IN ('top','daily') AND po.message_id IS NOT NULL AND po.post_date>=?1 AND po.post_date>=?2
+      SELECT 1 FROM prediction_memberships pm WHERE pm.prediction_id=p.id AND pm.collection=replace(po.kind,'_owner',''))
+    WHERE po.kind IN ('top','daily','top_owner','daily_owner') AND po.message_id IS NOT NULL AND po.post_date>=?1 AND po.post_date>=?2
       AND po.post_date<=?3
       AND (?5 IS NULL OR EXISTS(SELECT 1 FROM picks fp JOIN prediction_memberships fm ON fm.prediction_id=fp.id
         JOIN json_each(?5) ef ON json_extract(ef.value,'$.date')=fp.pick_date AND json_extract(ef.value,'$.fixture')=fp.fixture_key
-        WHERE fp.pick_date=po.post_date AND fm.collection=po.kind))
+        WHERE fp.pick_date=po.post_date AND fm.collection=replace(po.kind,'_owner','')))
       AND NOT EXISTS(SELECT 1 FROM posts done WHERE done.kind='result_gif_'||po.kind
         AND done.post_date=po.post_date AND (done.message_id IS NOT NULL OR julianday(done.created_at)>julianday(?4,'-5 minutes')))
     GROUP BY po.kind,po.post_date,po.message_id)
@@ -662,8 +678,9 @@ async function sendReadyResultGifs(env:Env,nowMs:number,sender:typeof sendTelegr
       continue;
     }
     try {
-      const {ok,messageId}=await sender(env,'sendAnimation',{chat_id:env.TELEGRAM_CHAT_ID,animation:ticket.file_id,
-        reply_parameters:{message_id:Number(ticket.message_id),allow_sending_without_reply:true}});
+      const {ok,messageId}=await sender(env,'sendAnimation',{chat_id:ticket.kind.endsWith('_owner')?ownerChatId(env):env.TELEGRAM_CHAT_ID,animation:ticket.file_id,
+        caption:kind==='won'?'Won':'Lost',
+        reply_parameters:{message_id:Number(ticket.message_id),allow_sending_without_reply:false}});
       if (!ok) await releaseClaim(env.DB,receipt,ticket.post_date);
       else await confirmPosted(env.DB,receipt,ticket.post_date,messageId!=null?String(messageId):'sent');
     } catch {await releaseClaim(env.DB,receipt,ticket.post_date);}

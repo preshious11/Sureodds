@@ -442,7 +442,7 @@ class Telegram:
         return [u for u in result if isinstance(u, dict) and isinstance(u.get("update_id"), int)]
 
 
-_STICKY_HEADER = re.compile(r"^(?:🔥 TOP PICKS|📋 DAILY PICKS) · ")
+_STICKY_HEADER = re.compile(r"^(?:🔥 BET OF THE DAY|📋 DAILY PICKS) · ")
 _TAG = re.compile(r"<[^<>]*>")
 
 

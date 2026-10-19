@@ -977,6 +977,7 @@ export function formatTicket(ticket: Ticket): string {
         `Odds: ${pick.price.toFixed(2)} · Confidence: ${Math.round(pick.probability * 100)}%`,
     );
   }
+  blocks.push("Bet only what you can afford to lose.");
   return blocks.join("\n\n");
 }
 

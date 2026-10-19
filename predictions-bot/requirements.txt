@@ -1,2 +1,5 @@
 requests>=2.33,<3
 tzdata>=2024.1; sys_platform == "win32"
+
+Pillow>=11,<14
+qrcode>=8,<9

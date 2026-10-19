@@ -55,8 +55,8 @@ describe("format.ts unit coverage (predbot/bot/format.py port)", () => {
   });
 
   it("picksCard renders production's exact empty-state text per title", () => {
-    assert.match(picksCard([], "2026-09-19", TOP_TITLE), /No Top Picks for today\.\n\nSee other picks:$/);
-    assert.match(picksCard([], "2026-09-19", DAILY_TITLE), /No selections qualified today\.$/);
+    assert.match(picksCard([], "2026-09-19", TOP_TITLE), /No Bet of the Day for today\.\n\nSee other picks:/);
+    assert.match(picksCard([], "2026-09-19", DAILY_TITLE), /No selections qualified today\./);
   });
 
   it("picksCard sorts by kickoff and appends the Page X of Y footer", () => {
@@ -66,7 +66,7 @@ describe("format.ts unit coverage (predbot/bot/format.py port)", () => {
     const aIdx = text.indexOf("A vs D");
     const bIdx = text.indexOf("B vs C");
     assert.ok(aIdx > -1 && bIdx > -1 && aIdx < bIdx, "earlier kickoff must render first");
-    assert.match(text, /Page 1 of 3$/);
+    assert.match(text, /Page 1 of 3\n\nBet only what you can afford to lose\.$/);
   });
 
   it("picksCard's combined odds use totalPrices across the whole ticket, not just the page shown", () => {

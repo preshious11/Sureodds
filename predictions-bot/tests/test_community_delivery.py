@@ -66,7 +66,7 @@ def test_community_picks_and_recap_continue_without_subscriber_broadcasts(db, co
     history = [dict(r) for r in db.query("SELECT * FROM subscribers")]
     monkeypatch.setattr(db, "subscribers_active", Mock(side_effect=AssertionError("subscriber enumeration")))
     snapshot = publish(db, cfg, tg)
-    assert [s["text"].split(" · ")[0] for s in tg.sends] == ["🔥 TOP PICKS", "📋 DAILY PICKS"]
+    assert [s["text"].split(" · ")[0] for s in tg.sends] == ["🔥 BET OF THE DAY", "📋 DAILY PICKS"]
     assert all(s["chat_id"] == COMMUNITY and s["reply_markup"] is None for s in tg.sends)
     assert [dict(r) for r in db.picks_for_date(DAY)] == before
     assert broadcast.deliver_picks(db, cfg, tg, snapshot, now=NOW) == 0

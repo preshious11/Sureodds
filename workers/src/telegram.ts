@@ -99,7 +99,7 @@ export function parseCallback(
 const VIEW_ICON: Record<string, string> = { all: "📚", top: "🔥", daily: "📋", stats: "📊", yesterday: "🗓" };
 const VIEW_LABEL: Record<string, string> = {
   all: "All Predictions",
-  top: "Top Picks",
+  top: "Bet of the Day",
   daily: "Daily Picks",
   stats: "Stats",
   yesterday: "Yesterday",
@@ -242,7 +242,7 @@ export function restrictedView(view: string): boolean {
 }
 
 const WELCOME_COMMANDS =
-  "<b>🏆 /top</b> – Top picks of the day\n" +
+  "<b>🏆 /top</b> – Bet of the Day\n" +
   "<b>📚 /all</b> – All predictions\n" +
   "<b>📋 /daily</b> – Daily picks · Accumulator slip";
 

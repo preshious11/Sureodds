@@ -194,7 +194,7 @@ async function renderTicket(
 }
 
 // picksCard() returns plain text with the title as its first line's leading
-// segment (e.g. "🔥 TOP PICKS · Sat 19 Sep"); Telegram HTML needs that title
+// segment (e.g. "🔥 BET OF THE DAY · Sat 19 Sep"); Telegram HTML needs that title
 // bolded like every other view, without bolding the rest of the line.
 function wrapTitleHtml(body: string, title: string): string {
   if (body.startsWith(title)) {

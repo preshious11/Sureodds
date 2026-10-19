@@ -53,7 +53,7 @@ describe("commands (mirror of callbacks.py COMMANDS)", () => {
   });
   it("menu has 4 group-safe buttons, no Open-Bot URL", () => {
     const kb = JSON.stringify(menuKeyboard());
-    assert.match(kb, /Top Picks/);
+    assert.match(kb, /Bet of the Day/);
     assert.match(kb, /Daily Picks/);
     assert.doesNotMatch(kb, /t\.me\//);
   });

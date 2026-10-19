@@ -290,7 +290,7 @@ describe("/pinmenu admin command — private-chat only, posts + pins the group m
     const kb = JSON.stringify(posted.body.reply_markup);
     // Reuses the exact same keyboard /menu already posts: Top/Daily, All
     // (private deep link), Stats/Yesterday, Custom Picks (private deep link).
-    assert.match(kb, /Top Picks/);
+    assert.match(kb, /Bet of the Day/);
     assert.match(kb, /Daily Picks/);
     assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=all/);
     assert.doesNotMatch(kb, /Stats/);
@@ -698,7 +698,7 @@ describe("All Predictions: group-to-private flow", () => {
     assert.equal(fetchImpl.calls[0].body.url, undefined, "never a dead link without a configured username");
     assert.match(fetchImpl.calls[0].body.text, /\/daily/);
   });
-  it("/start top (the group Top button's deep link) renders today's Top Picks immediately in the private chat", async () => {
+  it("/start top (the group Top button's deep link) renders today's Bet of the Day immediately in the private chat", async () => {
     const db = realDb();
     const day = "2026-10-14";
     seedAllPick(db._sql, day);
@@ -712,7 +712,7 @@ describe("All Predictions: group-to-private flow", () => {
       Date.now = realNow;
     }
     assert.equal(fetchImpl.calls.length, 1);
-    assert.match(fetchImpl.calls[0].body.text, /TOP PICKS/i);
+    assert.match(fetchImpl.calls[0].body.text, /BET OF THE DAY/i);
     const sub = db._sql.prepare("SELECT active FROM subscribers WHERE chat_id='c1'").get();
     assert.equal(sub.active, 1, "a valid /start <view> param still subscribes, same as /start all");
   });
@@ -772,7 +772,7 @@ describe("All Predictions: group-to-private flow", () => {
     const originalKeyboard = {
       inline_keyboard: [
         [{ text: "📚 All Predictions", callback_data: "pg|all|0" }],
-        [{ text: "🔥 Top Picks", callback_data: "pg|top|0" }, { text: "📋 Daily Picks", callback_data: "pg|daily|0" }],
+        [{ text: "🔥 Bet of the Day", callback_data: "pg|top|0" }, { text: "📋 Daily Picks", callback_data: "pg|daily|0" }],
         [{ text: "📊 Stats", callback_data: "pg|stats|0" }, { text: "🗓 Yesterday", callback_data: "pg|yesterday|0" }],
       ],
     };

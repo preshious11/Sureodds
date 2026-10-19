@@ -89,7 +89,7 @@ def test_exact_community_menu_layout_and_private_deep_link(menu_loop):
     assert menu["text"] == "⚽ Predictions\n\nToday's picks, results and more."
     rows = menu["reply_markup"]["inline_keyboard"]
     assert [[b["text"] for b in row] for row in rows] == [
-        ["🔥 Top Picks", "📋 Daily Picks"], ["📚 All Predictions"],
+        ["🔥 Bet of the Day", "📋 Daily Picks"], ["📚 All Predictions"],
         ["📊 Stats", "🗓 Yesterday"], ["✨ Custom Picks"],
     ]
     assert [b["callback_data"] for row in rows[:3] for b in row] == [
@@ -120,7 +120,7 @@ def test_ordinary_member_buttons_use_existing_views_in_supergroup(cached_loop, d
     sent = loop.tg.sends[0]
     assert sent["chat_id"] == COMMUNITY and sent["reply_markup"]["inline_keyboard"]
     assert "Something went wrong" not in sent["text"]
-    expected_title = {"top": "TOP PICKS", "daily": "DAILY PICKS", "all": "ALL PREDICTIONS",
+    expected_title = {"top": "BET OF THE DAY", "daily": "DAILY PICKS", "all": "ALL PREDICTIONS",
                       "stats": "STATS", "yesterday": "YESTERDAY"}[view]
     assert expected_title in sent["text"]
     if view in ("stats", "yesterday"):

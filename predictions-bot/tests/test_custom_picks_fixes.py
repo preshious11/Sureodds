@@ -2,7 +2,7 @@
 
 Covers: universal 1.25 floor, count/target mixups, heading accuracy, ticket
 variety, fixture validation, market labels, 50-odds recovery, and the final
-delivery boundary. Top Picks and Daily Picks are untouched.
+delivery boundary. Bet of the Day and Daily Picks are untouched.
 """
 from dataclasses import replace
 from math import prod

@@ -268,7 +268,7 @@ def test_compact_natural_output_uses_stored_competition_and_confidence():
     pick = candidates([row])[0]
     text = cp.format_ticket(cp.State((pick,), 2), True, ZONE)
     assert text == ('🔥 2.00 ODDS\n\n⚽ Arsenal vs Chelsea\nPremier League\n'
-                    'Arsenal to Win\nOdds: 2.00 · Confidence: 72%')
+                    'Arsenal to Win\nOdds: 2.00 · Confidence: 72%\n\nBet only what you can afford to lose.')
     for term in ['Combined Odds', 'Custom Picks', 'Stronger available', 'selection', 'pool', 'Moneyline', 'result3']:
         assert term not in text
     row.update(league=None, market='result2', sport='tennis')

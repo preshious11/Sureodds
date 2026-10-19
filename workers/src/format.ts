@@ -38,7 +38,7 @@ const DURATION_H: Record<string, number> = {
 const STARTED_MARK = " 🔴";
 const FINISHED_MARK = " · Finished";
 
-export const TOP_TITLE = "🔥 TOP PICKS";
+export const TOP_TITLE = "🔥 BET OF THE DAY";
 export const DAILY_TITLE = "📋 DAILY PICKS";
 export const ALL_TITLE = "📚 ALL PREDICTIONS";
 
@@ -187,7 +187,7 @@ export function picksCard(
   const lines = cardHeader(title, day, sorted.length ? prices : [], opts.zone ?? "");
   if (!sorted.length) {
     lines.push(
-      title === TOP_TITLE ? "No Top Picks for today.\n\nSee other picks:" : noSelectionMessage(),
+      title === TOP_TITLE ? "No Bet of the Day for today.\n\nSee other picks:" : noSelectionMessage(),
     );
   }
   for (const p of sorted) {
@@ -196,6 +196,7 @@ export function picksCard(
   if (opts.pages && opts.pages > 1 && opts.page) {
     lines.push("", `Page ${opts.page} of ${opts.pages}`);
   }
+  lines.push("", "Bet only what you can afford to lose.");
   return lines.join("\n");
 }
 
@@ -435,7 +436,7 @@ export function compactRecapSection(title: string, statuses: string[]): string[]
 
 export function compactRecapText(top: string[], daily: string[]): string | null {
   const sections: string[][] = [];
-  if (top.length) sections.push(compactRecapSection("🏆 TOP PICKS", top));
+  if (top.length) sections.push(compactRecapSection("🏆 BET OF THE DAY", top));
   if (daily.length) sections.push(compactRecapSection("⚽ DAILY PICKS", daily));
   if (!sections.length) return null;
   return ["<b>📊 SUREODDS RESULTS</b>", ...sections.map((s) => ["", ...s].join("\n"))].join("\n");
@@ -557,7 +558,7 @@ export function statsBlockFromAggregate(agg: {
 // helpers) — so this port of predbot/bot/telegram.py's _split/_split_long
 // works directly in .length/.slice space, with no codepoint<->UTF-16
 // conversion needed.
-const STICKY_HEADER = /^(?:🔥 TOP PICKS|📋 DAILY PICKS) · /;
+const STICKY_HEADER = /^(?:🔥 BET OF THE DAY|📋 DAILY PICKS) · /;
 const TAG_RE = /<[^<>]*>/g;
 
 /** The largest UTF-16 offset <= limit that never splits a surrogate pair (an emoji outside the BMP). */
@@ -614,7 +615,7 @@ function splitLong(paragraph: string, limit: number): string[] {
  * predbot/bot/telegram.py _split: splits `text` into messages of at most
  * `limit` UTF-16 code units, only BETWEEN blocks (a blank line), so a
  * three-line pick block is never cut in half, and never inside an HTML tag
- * or entity. A ticket header ("🔥 TOP PICKS · ..." / "📋 DAILY PICKS · ...")
+ * or entity. A ticket header ("🔥 BET OF THE DAY · ..." / "📋 DAILY PICKS · ...")
  * is carried over to the chunk that follows it rather than left alone at
  * the end of a chunk with nothing under it.
  */

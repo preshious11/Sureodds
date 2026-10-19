@@ -44,7 +44,7 @@ def no_providers(monkeypatch):
 
 def legs_of(text):
     """Selections in a rendered ticket: the header block, then one block per pick."""
-    return len(text.split("\n\n")) - 1 if text.startswith("🔥 ") else 0
+    return sum("Odds:" in block for block in text.split("\n\n")) if text.startswith("🔥 ") else 0
 
 
 def prepared(loop, button):

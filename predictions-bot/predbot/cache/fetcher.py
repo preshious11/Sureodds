@@ -233,6 +233,8 @@ class UnifiedFetcher:
         return f'{h:02d}:{m:02d} {local.tzname() or self.cfg.timezone}'
 
     def _store(self, snapshot, now):
+        from ..bot.ticket_image import attach_image
+        attach_image(snapshot)
         _, midnight = day_bounds(now, self.cfg.timezone)
         retry = iso(now + timedelta(seconds=self.cfg.cache_retry_seconds))
         self.db.upsert_prediction_cache(dict(

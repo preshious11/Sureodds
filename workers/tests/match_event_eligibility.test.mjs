@@ -517,7 +517,7 @@ describe("integration: publication -> kickoff -> settlement -> full time -> next
       const recap = sent[0].text.split("\n\nYesterday")[0];
       assert.equal(
         recap,
-        "<b>📊 SUREODDS RESULTS</b>\n\n🏆 TOP PICKS\n\n✅ ✅\n\n2 Wins | 0 Losses\n\n⚽ DAILY PICKS\n\n❌ ✅\n\n1 Win | 1 Loss"
+        "<b>📊 SUREODDS RESULTS</b>\n\n🏆 BET OF THE DAY\n\n✅ ✅\n\n2 Wins | 0 Losses\n\n⚽ DAILY PICKS\n\n❌ ✅\n\n1 Win | 1 Loss"
           .replace("❌ ✅", recap.includes("✅ ❌") ? "✅ ❌" : "❌ ✅"),
       );
       assert.doesNotMatch(recap, /Hidden|H to Win|@|vs/);

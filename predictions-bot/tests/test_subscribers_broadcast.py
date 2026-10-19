@@ -119,7 +119,7 @@ def test_menu_has_no_subscription_button():
     """The subscribe/unsubscribe toggle was removed - it must not come back."""
     buttons = [b for row in menu_markup()["inline_keyboard"] for b in row]
     assert [b["text"] for b in buttons] == [
-        "\U0001f4da All Predictions", "\U0001f525 Top Picks", "\U0001f4cb Daily Picks", "\U0001f4ca Stats",
+        "\U0001f4da All Predictions", "\U0001f525 Bet of the Day", "\U0001f4cb Daily Picks", "\U0001f4ca Stats",
         "\U0001f5d3 Yesterday"]
     assert [b["callback_data"] for b in buttons] == ["pg|all|0", "pg|top|0", "pg|daily|0", "pg|stats|0",
                                                      "pg|yesterday|0"]
@@ -160,7 +160,7 @@ def test_deliver_picks_reaches_all_subscribers_once(db, monkeypatch):
     assert [s["chat_id"] for s in tg.sends] == ["42", "42", "77", "77"]      # two messages each, Top then Daily
     top, daily = tg.sends[0]["text"], tg.sends[1]["text"]
     card = top + daily
-    assert top.startswith("🔥 TOP PICKS · Sat 1 Jun")         # the canonical cards
+    assert top.startswith("🔥 BET OF THE DAY · Sat 1 Jun")         # the canonical cards
     assert daily.startswith("📋 DAILY PICKS · Sat 1 Jun") and "DAILY" not in top
     assert "predictions——" not in card                      # old copy stays gone
     assert card.count("📊") == 4                      # 1 top + 3 daily picks, one block each
@@ -484,10 +484,10 @@ def test_page_callbacks_still_work_after_router_change(db):
     handle_callback(_cb("pg|top|0"), service=fetcher, tg=tg, db=db, cfg=Config())
 
     assert len(tg.edits) == 1
-    assert tg.edits[0]["text"].startswith("🔥 TOP PICKS · ")
+    assert tg.edits[0]["text"].startswith("🔥 BET OF THE DAY · ")
     assert "predictions——" not in tg.edits[0]["text"]          # old copy stays gone
     assert [b["text"] for row in tg.edits[0]["reply_markup"]["inline_keyboard"] for b in row] == \
-        ["📚 All Predictions", "🔥 Top Picks", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
+        ["📚 All Predictions", "🔥 Bet of the Day", "📋 Daily Picks", "📊 Stats", "🗓 Yesterday"]
 
 
 # ----------------------------------------------------------------- helpers

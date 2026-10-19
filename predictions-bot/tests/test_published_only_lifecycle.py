@@ -83,7 +83,7 @@ def test_published_only_lifecycle(db):
     daily = [r["status"] for r in sorted(db.collection_predictions("daily", DAY), key=lambda r: r["collection_rank"])]
     recap = compact_recap_message(top, daily)
     lines = recap.split(chr(10))
-    assert lines[:8] == ["📊 SUREODDS RESULTS", "", "🏆 TOP PICKS", "", "✅ ✅", "", "2 Wins | 0 Losses", ""]
+    assert lines[:8] == ["📊 SUREODDS RESULTS", "", "🏆 BET OF THE DAY", "", "✅ ✅", "", "2 Wins | 0 Losses", ""]
     assert lines[8] == "⚽ DAILY PICKS" and sorted(lines[10].split()) == ["✅", "❌"] and lines[12] == "1 Win | 1 Loss"
     assert "FC" not in recap and "@" not in recap
 

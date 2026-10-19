@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {handleUpdate} from '../src/index.ts';
 import {renderView} from '../src/views.ts';
 import {menuKeyboard,communityMenuKeyboard,topEmptyKeyboard,buildKeyboard,allButtonModeFor,isAdmin} from '../src/telegram.ts';
-import {sweepResultGifs,sweepMatchEvents,handleScheduled,CRON_POST_SWEEP,postGroupRecap} from '../src/cron.ts';
+import {sweepResultGifs,sweepMatchEvents,handleScheduled,CRON_POST_SWEEP,postGroupRecap,postGroupPicks,sendTelegram} from '../src/cron.ts';
 const NOW=Date.UTC(2026,9,18,10),DAY='2026-10-18';
 function world(){
  const sql=new DatabaseSync(':memory:');
@@ -34,6 +34,69 @@ function ticket(w,statuses,kind='top',day=DAY){
 }
 function gif(w,kind='won'){w.sql.prepare('INSERT INTO result_gifs VALUES(?,?,?,?)').run(kind,`${kind}-file`,`${kind}-unique`,new Date(NOW).toISOString());}
 
+function photoCache(w, broken=false) {
+ ticket(w,['pending']);w.sql.prepare("DELETE FROM posts").run();
+ w.sql.prepare("UPDATE picks SET fixture_key='test:fixture'").run();
+ const row=w.sql.prepare('SELECT * FROM picks').get();
+ const p={...row,pick_id:row.id,fixture_id:'test:fixture',kickoff_utc:row.start_utc};
+ const identity=JSON.stringify([DAY,[[p.pick_id,p.fixture_id,p.market,p.selection,p.price,p.home,p.away,p.label,p.kickoff_utc]]]);
+ const data={date:DAY,top_picks:[p],bet_image:{date:DAY,identity,jpeg:broken?'invalid':'/9j/AAAA',link:'https://t.me/SampleCommunity'}};
+ w.sql.prepare(`INSERT INTO prediction_cache(cache_key,local_date,timezone,status,payload_json,generated_at,updated_at,expires_at)
+ VALUES('test',?,'Africa/Lagos','COMPLETE',?,?,?,?)`).run(DAY,JSON.stringify(data),'now','now','later');
+}
+
+describe('Bet of the Day photo publications',()=>{
+ it('persists separate photo ids; retries owner only, Daily remains text',async()=>{
+  const w=world();photoCache(w);let failOwner=true;
+  const sender=async(e,m,p)=>{w.sent.push({method:m,...p});return p.chat_id==='999'&&failOwner?{ok:false}:{ok:true,messageId:p.chat_id==='999'?202:101};};
+  await postGroupPicks(w.env,'top',NOW,sender);failOwner=false;await postGroupPicks(w.env,'top',NOW,sender);
+  assert.equal(w.sent.filter(p=>p.chat_id==='-100').length,1);
+  assert.ok(w.sent.every(p=>p.method==='sendPhoto'&&p.caption.includes('Join the Kovqi community')));
+  assert.equal(w.sql.prepare("SELECT message_id FROM posts WHERE kind='top'").get().message_id,'101');
+  assert.equal(w.sql.prepare("SELECT message_id FROM posts WHERE kind='top_owner'").get().message_id,'202');
+  await postGroupPicks(w.env,'daily',NOW,w.sender);assert.equal(w.sent.at(-1).method,'sendMessage');
+ });
+ it('invalid media falls back once and upload failures stay retryable',async()=>{
+  const w=world();photoCache(w,true);await postGroupPicks(w.env,'top',NOW,w.sender);await postGroupPicks(w.env,'top',NOW,w.sender);
+  assert.equal(w.sent.length,2);assert.ok(w.sent.every(p=>p.method==='sendMessage'&&p.text.includes('Bet only what you can afford to lose.')));
+  const v=world();photoCache(v);await postGroupPicks(v.env,'top',NOW,async()=>({ok:false}));
+  assert.equal(v.sql.prepare("SELECT COUNT(*) n FROM posts WHERE message_id IS NOT NULL").get().n,0);
+  await postGroupPicks(v.env,'top',NOW,v.sender);assert.equal(v.sent[0].method,'sendPhoto');
+ });
+ it('stale image selections cannot override structured storage',async()=>{
+  const w=world();photoCache(w);
+  w.sql.prepare('UPDATE picks SET price=1.7').run();
+  await postGroupPicks(w.env,'top',NOW,w.sender);
+  assert.ok(w.sent.every(p=>p.method==='sendMessage'&&p.text.includes('1.70')));
+ });
+ it('receipt write failure never triggers a second text publication',async()=>{
+  const w=world();photoCache(w);const prepare=w.env.DB.prepare;
+  w.env.DB.prepare=query=>{
+   if(query.startsWith('UPDATE posts SET message_id')) return {bind(){return this;},async run(){throw Error('D1 unavailable');}};
+   return prepare(query);
+  };
+  await assert.rejects(()=>postGroupPicks(w.env,'top',NOW,w.sender));
+  assert.equal(w.sent.length,1);assert.equal(w.sent[0].method,'sendPhoto');
+ });
+ it('GIF replies use each destination photo id and dedupe independently',async()=>{
+  const w=world();ticket(w,['won']);gif(w);
+  w.sql.prepare("INSERT INTO posts(kind,post_date,message_id,created_at) VALUES('top_owner',?,'789',?)").run(DAY,new Date(NOW).toISOString());
+  await sweepResultGifs(w.env,NOW,w.sender);await sweepResultGifs(w.env,NOW,w.sender);
+  assert.deepEqual(w.sent.map(p=>[p.chat_id,p.reply_parameters.message_id,p.caption]),[['-100',123,'Won'],['999',789,'Won']]);
+ });
+ it('uploads multipart JPEG and requires a Telegram photo receipt',async()=>{
+  const old=globalThis.fetch;
+  try {globalThis.fetch=async(url,init)=>{
+   assert.ok(init.body instanceof FormData);assert.equal(init.body.get('photo').type,'image/jpeg');
+   assert.equal(init.body.get('chat_id'),'-100');return new Response(JSON.stringify({ok:true,result:{message_id:77}}));
+  };
+  assert.deepEqual(await sendTelegram(world().env,'sendPhoto',{chat_id:'-100',photo_base64:'/9j/AAAA'}),{ok:true,messageId:77});
+  globalThis.fetch=async()=>new Response(JSON.stringify({ok:true}));
+  await assert.rejects(()=>sendTelegram(world().env,'sendPhoto',{chat_id:'-100',photo_base64:'/9j/AAAA'}));
+  } finally {globalThis.fetch=old;}
+ });
+});
+
 describe('access model',()=>{
  it('group keyboards have exactly four URL buttons; regular private keyboards hide admin views',()=>{
  const mode=allButtonModeFor('supergroup','SureOddsBot');
@@ -59,7 +122,7 @@ describe('access model',()=>{
  });
  for(const command of ['/top','/daily','/today','/all','/start'])it(`${command} in the group is only a four-button redirect`,async()=>{
  const w=world();await w.route(w.message(command,1,'supergroup'));assert.equal(w.sent.length,1);assert.equal(w.sent[0].reply_markup.inline_keyboard.flat().length,4);
- assert.doesNotMatch(w.sent[0].text,/TOP PICKS|DAILY PICKS/);
+ assert.doesNotMatch(w.sent[0].text,/BET OF THE DAY|DAILY PICKS/);
  });
  it('admins browse private stats and group /stats sends only to their DM; anonymous admins are ignored',async()=>{
  const w=world();await w.route(w.message('/start',999));assert.match(JSON.stringify(w.sent.at(-1).reply_markup),/Stats/);
@@ -105,7 +168,7 @@ describe('settled ticket GIF replies',()=>{
  it(`${statuses.join('+')} -> ${kind}, one group reply and no owner animation`,async()=>{
  const w=world();ticket(w,statuses);gif(w,kind);await sweepResultGifs(w.env,NOW,w.sender);await sweepResultGifs(w.env,NOW,w.sender);
  assert.equal(w.sent.length,1);assert.equal(w.sent[0].method,'sendAnimation');assert.equal(w.sent[0].animation,`${kind}-file`);
- assert.equal(w.sent[0].chat_id,'-100');assert.deepEqual(w.sent[0].reply_parameters,{message_id:123,allow_sending_without_reply:true});assert.equal(w.sent[0].caption,undefined);
+ assert.equal(w.sent[0].chat_id,'-100');assert.deepEqual(w.sent[0].reply_parameters,{message_id:123,allow_sending_without_reply:false});assert.equal(w.sent[0].caption,kind==='won'?'Won':'Lost');
  });}
  it('all void/push records a receipt without sending; pending/unknown/postponed do nothing',async()=>{
  for(const statuses of [['void','push'],['pending'],['unresolved'],['postponed'],['mystery']]){

@@ -282,7 +282,7 @@ def fixture_block(lines: List[PickLine]) -> List[str]:
     return out
 
 
-TOP_TITLE = "🔥 TOP PICKS"
+TOP_TITLE = "🔥 BET OF THE DAY"
 DAILY_TITLE = "📋 DAILY PICKS"
 
 
@@ -296,7 +296,7 @@ def n_picks(n: int) -> str:
 
 
 def card_header(title: str, day: str, prices: List[float], zone: str = "") -> List[str]:
-    """'🔥 TOP PICKS · Sun 20 Sep' / '🎟 Combined odds 2.01 · 2 picks · 🕘 times in WAT'. The odds and the count
+    """'🔥 BET OF THE DAY · Sun 20 Sep' / '🎟 Combined odds 2.01 · 2 picks · 🕘 times in WAT'. The odds and the count
     are this card's OWN: the whole ticket (every page of it), never the page in hand or another tier."""
     lines = [f"{title} · {day_label(day)}" if day else title]
     if prices:
@@ -317,12 +317,13 @@ def picks_card(picks: List[PickLine], day: str, title: str = DAILY_TITLE,
     prices = list(total_prices) if total_prices is not None else [p.price for p in picks]
     lines = card_header(title, day, prices if picks else [], zone)
     if not picks:
-        lines.append("No Top Picks for today.\n\nSee other picks:" if title == TOP_TITLE
+        lines.append("No Bet of the Day for today.\n\nSee other picks:" if title == TOP_TITLE
                      else no_selection_message())
     for p in picks:
         lines += ["", *pick_lines(p)]
     if pages and pages > 1 and page:
         lines += ["", f"Page {page} of {pages}"]
+    lines += ["", "Bet only what you can afford to lose."]
     return "\n".join(lines)
 
 
@@ -378,6 +379,7 @@ def summary_card(top: List[PickLine], daily: List[PickLine], day: str = "", zone
             lines = card_header(title, day, [p.price for p in picks], zone)
             for p in picks:
                 lines += ["", *pick_lines(p)]
+            lines += ["", "Bet only what you can afford to lose."]
             sections.append("\n".join(lines))
     return "\n\n".join(sections)
 
@@ -534,7 +536,7 @@ def compact_recap_message(top, daily) -> Optional[str]:
     results, pushes and voids keep their own labels and are never folded into full wins or losses."""
     sections = []
     if top:
-        sections.append(_compact_section("🏆 TOP PICKS", top))
+        sections.append(_compact_section("🏆 BET OF THE DAY", top))
     if daily:
         sections.append(_compact_section("⚽ DAILY PICKS", daily))
     if not sections:

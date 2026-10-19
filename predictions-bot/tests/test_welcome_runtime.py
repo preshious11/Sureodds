@@ -25,7 +25,7 @@ def test_repeated_start_has_exact_copy_in_every_state(db, state):
         callbacks.handle_start(db, tg, '42', {'first_name': 'Ada <&>'})
     expected = ('👋 Hi, Ada &lt;&amp;&gt;\n\n'
                 'Use the menu below or these commands:\n\n'
-                '<b>🏆 /top</b> – Top picks of the day\n'
+                '<b>🏆 /top</b> – Bet of the Day\n'
                 '<b>📚 /all</b> – All predictions\n'
                 '<b>📋 /daily</b> – Daily picks · Accumulator slip\n'
                 '<b>📊 /stats</b> – See prediction results')

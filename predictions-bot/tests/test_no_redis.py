@@ -47,6 +47,9 @@ def offenders(files, root: pathlib.Path):
         if path.resolve() == THIS:
             continue
         rel = path.relative_to(root).as_posix()
+        # Bundled font licenses contain "redistributed"; retain their legal text verbatim.
+        if rel in {'predictions-bot/assets/kovqi/OFL.txt', 'predictions-bot/assets/kovqi/OFL-Barlow.txt'}:
+            continue
         if PATTERN.search(rel):
             found.append(f"{rel}  (file name)")
             continue

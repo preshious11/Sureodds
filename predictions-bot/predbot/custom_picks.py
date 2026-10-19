@@ -443,6 +443,7 @@ def format_ticket(state, partial, zone):
         blocks.append(f"{SPORT_ICON.get(pick.sport, '🎯')} {compact(pick.home, 60)} vs {compact(pick.away, 60)}\n"
                       f"{league}{compact(pick.outcome, 140)}\n"
                       f"Odds: {pick.price:.2f} · Confidence: {round(pick.probability * 100)}%")
+    blocks.append('Bet only what you can afford to lose.')
     return '\n\n'.join(blocks)
 
 

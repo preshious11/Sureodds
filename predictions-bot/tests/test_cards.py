@@ -45,7 +45,7 @@ def nl(*lines):
 def test_top_card():
     text, markup = pagination.render_page(snapshot(), "top", 0, 5, LAGOS, now=NOW)
     assert text == nl(
-        "🔥 TOP PICKS · Sat 1 Jun",
+        "🔥 BET OF THE DAY · Sat 1 Jun",
         "🎟 Combined odds 2.00 · 2 picks · 🕘 times in WAT",
         "",
         "⚽ England • Premier League · Chelsea vs Arsenal",
@@ -54,7 +54,7 @@ def test_top_card():
         "",
         "⚽ MLS · DC United vs Charlotte FC",
         "🎯 DC United or Charlotte FC",
-        "💰 1.31  ·  📊 76%  ·  🕘 12:00 AM")
+        "💰 1.31  ·  📊 76%  ·  🕘 12:00 AM", "", "Bet only what you can afford to lose.")
     assert [b["callback_data"] for row in markup["inline_keyboard"] for b in row] == \
         ["pg|all|0", "pg|top|0", "pg|daily|0", "pg|stats|0", "pg|yesterday|0"]
 
@@ -70,7 +70,7 @@ def test_daily_page_2_of_3():
         "⚽ MLS · Home 14 vs Away 14", "🎯 Home 14 to Win", "💰 1.25  ·  📊 70%  ·  🕘 7:00 PM", "",
         "⚽ MLS · Home 13 vs Away 13", "🎯 Home 13 to Win", "💰 1.25  ·  📊 70%  ·  🕘 8:00 PM", "",
         "⚽ MLS · Home 12 vs Away 12", "🎯 Home 12 to Win", "💰 1.25  ·  📊 70%  ·  🕘 9:00 PM", "",
-        "Page 2 of 3")
+        "Page 2 of 3", "", "Bet only what you can afford to lose.")
     assert [b["text"] for b in markup["inline_keyboard"][0]] == ["◀️", "2/3", "▶️"]
 
 
@@ -90,7 +90,7 @@ def test_empty_states_distinguish_generation_from_evaluated_empty_top():
 
     assert view({"reason": "before_post_time", "ready_at": "09:00 WAT"}) == "📋 Today's picks are ready at 09:00 WAT."
     assert view({"reason": "generating"}) == "📋 Today's picks are being generated — try again in a minute."
-    assert view({}) == '🔥 TOP PICKS · Sat 1 Jun\nNo Top Picks for today.\n\nSee other picks:'
+    assert view({}) == '🔥 BET OF THE DAY · Sat 1 Jun\nNo Bet of the Day for today.\n\nSee other picks:\n\nBet only what you can afford to lose.'
     assert view({}, view_="daily") == 'No valid model predictions were generated today.'
     assert view({}, "PARTIAL").startswith("📋 <b>Today's predictions are still being assembled</b>")
 
@@ -117,7 +117,7 @@ def test_every_page_carries_the_whole_tickets_odds_and_count(page, expected_coun
     text, _ = pagination.render_page(snap, "daily", page, 5, LAGOS, now=NOW)
     assert f"🎟 Combined odds {math.prod(p.price for p in snap.daily_picks):.2f} · 12 picks" in text
     assert text.count("💰") == expected_count                                        # only the blocks differ
-    assert text.endswith(f"Page {page + 1} of 3")
+    assert text.endswith(f"Page {page + 1} of 3\n\nBet only what you can afford to lose.")
 
 
 def test_twelve_picks_split_five_four_three_read_twelve_on_each_page():
@@ -229,7 +229,7 @@ def test_split_cuts_only_between_pick_blocks_and_keeps_the_header_with_its_first
         for block in part.split("\n\n"):
             if block.startswith("⚽"):
                 assert block in blocks and block.count("\n") == 2          # every block whole: three lines
-        assert not re.match(r"^(🔥 TOP PICKS|📋 DAILY PICKS) ·[^\n]*\n[^\n]*$", part.split("\n\n")[-1])   # no stranded header
+        assert not re.match(r"^(🔥 BET OF THE DAY|📋 DAILY PICKS) ·[^\n]*\n[^\n]*$", part.split("\n\n")[-1])   # no stranded header
 
 
 def test_split_never_lands_inside_an_html_tag_or_entity():
