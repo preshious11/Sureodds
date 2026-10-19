@@ -66,6 +66,13 @@ def test_curated_professional_nicknames_still_unify_spellings_inside_their_leagu
     assert canonical_team("Penn State Nittany Lions", "american_football", "ncaaf") == "penn state nittany lions"
 
 
+def test_curated_football_short_forms_unify_spellings():
+    assert canonical_team("Tottenham", "football") == canonical_team("Tottenham Hotspur", "football")
+    assert canonical_team("Coventry", "football") == canonical_team("Coventry City", "football")
+    # never outside football: a short form in another sport is not silently adopted
+    assert canonical_team("Tottenham", "basketball") != canonical_team("Tottenham Hotspur", "basketball")
+
+
 @pytest.mark.parametrize("league,teams", [
     ("ncaab", ["Kentucky Wildcats", "Arizona Wildcats", "Villanova Wildcats", "Northwestern Wildcats",
                "Kansas State Wildcats", "Weber State Wildcats"]),
@@ -170,9 +177,24 @@ def test_a_reserve_team_resolves_separately_from_its_first_team(db):
     ("Olympiakos", "Olympiacos", "football"), ("Sheffield Weds", "Sheffield Wednesday", "football"),
     ("Pliskova K.", "Karolina Pliskova", "tennis"), ("Ohio State", "Ohio State Buckeyes", "american_football"),
     ("Valencia Basket Club", "Valencia Basket", "basketball"),
+    ("Tottenham", "Tottenham Hotspur", "football"), ("Coventry", "Coventry City", "football"),
 ])
 def test_genuine_spelling_variants_are_still_one_participant(a, b, sport):
     assert same_participant(a, b, sport)
+    assert same_participant(b, a, sport)
+
+
+# Regression (2026-10-19): a provider sending "Tottenham"/"Coventry" and another sending
+# "Tottenham Hotspur"/"Coventry City" for the SAME kickoff resolved to two different canonical
+# events (same_participant said no), so a ticket could list "Tottenham Over 2.5" and "Coventry
+# City +1.5" as two separate legs of what was really one real match.
+def test_tottenham_and_coventry_short_forms_merge_into_one_real_fixture(db):
+    a = ev("sharpapi", "Tottenham Hotspur", "Coventry City", T, "england_-_efl_cup", "football")
+    b = ev("oddsapi", "Tottenham", "Coventry", T + timedelta(minutes=5), "england_-_efl_cup", "football")
+    resolve_events([a, b], db)
+    assert a.canonical_event_id == b.canonical_event_id
+    assert (a.home_id, a.away_id) == (b.home_id, b.away_id)
+    assert len(merge_events([a], [b])) == 1
 
 
 # ====================================================================== cross-provider merging is preserved

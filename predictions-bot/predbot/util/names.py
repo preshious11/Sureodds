@@ -152,20 +152,41 @@ def _franchise(name: str, league: str) -> str:
     return ""
 
 
+#: English football clubs whose popular short form (what one provider sends) is unambiguous -
+#: no OTHER active club's own name could also reduce to it - mapped to the full name (what another
+#: provider sends). Curated the same way PRO_FRANCHISES is for US sports, and just as narrow: a
+#: bare "City"/"United"/"Town"/"Rovers"/"Albion"/"Wanderers" is NEVER safe to add here, since
+#: several clubs share each of those words (Manchester United/City, Bristol City/Rovers, ...) -
+#: see test_plausible_but_different_names_are_not_the_same_participant's "Manchester United" /
+#: "Manchester City" case. Add an entry only when a genuine duplicate-ticket/duplicate-fixture
+#: case proves two providers send the same club under these two different spellings (2026-10-19:
+#: Tottenham/Coventry sent as short forms by one provider and full names by another produced two
+#: canonical events for one real fixture, which a ticket then listed as two separate legs).
+FOOTBALL_ALIASES = {
+    "tottenham": "tottenham hotspur",
+    "coventry": "coventry city",
+}
+
+
 def canonical_team(name: str, sport: str = "", competition: str = "") -> str:
     """A spelling-independent identity token for a team, used for fixture keys and participant identity.
 
     The normalised full name everywhere, except a curated professional franchise nickname (NBA/MLB/NFL, unique
     within the league): "BOS Red Sox" and "Boston Red Sox" are "red sox". ``competition`` (a canonical competition
     id) scopes that: inside NCAA or EuroLeague nothing is reduced, so "LSU Tigers" never becomes MLB's "tigers".
-    Without a competition the sport's professional league is assumed."""
+    Without a competition the sport's professional league is assumed. Football has its own narrow, curated
+    short-form map (``FOOTBALL_ALIASES``) for the same reason - a provider-specific abbreviation of ONE specific
+    club, never a generic suffix strip."""
     if sport in NICKNAME_SPORTS:
         league = _pro_league(sport, competition)
         if league:
             nickname = _franchise(name, league)
             if nickname:
                 return nickname
-    return normalize(name)
+    normalized = normalize(name)
+    if sport == "football" and normalized in FOOTBALL_ALIASES:
+        return normalize(FOOTBALL_ALIASES[normalized])
+    return normalized
 
 
 def _osa(a: str, b: str) -> int:
