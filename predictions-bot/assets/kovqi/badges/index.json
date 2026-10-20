@@ -1,0 +1,4460 @@
+{
+  "source": "https://github.com/luukhopman/football-logos",
+  "revision": "2a3978f0b4730645c205d855a4bda54c161183e9",
+  "clubs": [
+    {
+      "name": "Austria Vienna",
+      "league": "Austria - Bundesliga",
+      "file": "catalog/1dd4100a0d23afd160b9.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Austria%20-%20Bundesliga/Austria%20Vienna.png",
+      "source_blob": "7b2973ff0f57742c6440c924508198259b0d333b"
+    },
+    {
+      "name": "Grazer AK 1902",
+      "league": "Austria - Bundesliga",
+      "file": "catalog/7a10999fd4be514fd906.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Austria%20-%20Bundesliga/Grazer%20AK%201902.png",
+      "source_blob": "d7d21d3b5cf05a26c1395caa8b97cde31392e61c"
+    },
+    {
+      "name": "LASK",
+      "league": "Austria - Bundesliga",
+      "file": "catalog/f99671a2f52d6a931687.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Austria%20-%20Bundesliga/LASK.png",
+      "source_blob": "44ca0eb54b5f820a6a7f294f3f7230e038bcdc80"
+    },
+    {
+      "name": "Rapid Vienna",
+      "league": "Austria - Bundesliga",
+      "file": "catalog/2585df244a024ecea321.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Austria%20-%20Bundesliga/Rapid%20Vienna.png",
+      "source_blob": "667b3d431362025742016574b5b0cd7458e9dd89"
+    },
+    {
+      "name": "Red Bull Salzburg",
+      "league": "Austria - Bundesliga",
+      "file": "catalog/0f63c20c708248fce81b.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Austria%20-%20Bundesliga/Red%20Bull%20Salzburg.png",
+      "source_blob": "31e95f49ed5da7a789c454a9c3aaef3928ef9b06"
+    },
+    {
+      "name": "SC Austria Lustenau",
+      "league": "Austria - Bundesliga",
+      "file": "catalog/4c7e6c5ec76a50a92371.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Austria%20-%20Bundesliga/SC%20Austria%20Lustenau.png",
+      "source_blob": "0ab49f529ff1cc955bbc352715a52dd5c5a9dd3c"
+    },
+    {
+      "name": "SCR Altach",
+      "league": "Austria - Bundesliga",
+      "file": "catalog/8ad403a1cf286f68cf49.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Austria%20-%20Bundesliga/SCR%20Altach.png",
+      "source_blob": "dced3e7d43b44fdd50ee184f84b0a999b324cb88"
+    },
+    {
+      "name": "SK Sturm Graz",
+      "league": "Austria - Bundesliga",
+      "file": "catalog/86fea0e6ffdac82ba8be.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Austria%20-%20Bundesliga/SK%20Sturm%20Graz.png",
+      "source_blob": "e1cac8a3d9045d1953df624b247019c4a6080f0f"
+    },
+    {
+      "name": "SV Ried",
+      "league": "Austria - Bundesliga",
+      "file": "catalog/f8d175fb9a117ee371a6.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Austria%20-%20Bundesliga/SV%20Ried.png",
+      "source_blob": "ec125a1b5168c7b9e25161715055271b055dbfc5"
+    },
+    {
+      "name": "TSV Hartberg",
+      "league": "Austria - Bundesliga",
+      "file": "catalog/886393822ab399b7f738.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Austria%20-%20Bundesliga/TSV%20Hartberg.png",
+      "source_blob": "9529f14dc1ae848e8f522aa7064cf7ee4195acb3"
+    },
+    {
+      "name": "WSG Tirol",
+      "league": "Austria - Bundesliga",
+      "file": "catalog/9004bb48c03a9e7c7db6.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Austria%20-%20Bundesliga/WSG%20Tirol.png",
+      "source_blob": "dd40c4933eaa82220974d2e562e5f5e692640efc"
+    },
+    {
+      "name": "Wolfsberger AC",
+      "league": "Austria - Bundesliga",
+      "file": "catalog/3d9c97d1cc73673d07e4.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Austria%20-%20Bundesliga/Wolfsberger%20AC.png",
+      "source_blob": "95e38aec0be4a07f0c232528d1ee72c3a4f8aa66"
+    },
+    {
+      "name": "Cercle Brugge",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/b06e6c4db50645d540b8.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/Cercle%20Brugge.png",
+      "source_blob": "33061ad844a502e3358f34adc3c8c1b8b8430a33"
+    },
+    {
+      "name": "Club Brugge KV",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/0f1b141aba05568d20d1.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/Club%20Brugge%20KV.png",
+      "source_blob": "0a85af7d0dabccc1713b929cec01542dd6dd49dc"
+    },
+    {
+      "name": "KAA Gent",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/93f5ef63befdaea76cc2.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/KAA%20Gent.png",
+      "source_blob": "b88c5d7d5d04c62dc83043e1c95fda6411d7abd5"
+    },
+    {
+      "name": "KRC Genk",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/ce208ee70fee446fce40.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/KRC%20Genk.png",
+      "source_blob": "1149d5d2e9a9125dbd9bc918255a000aeb0a4896"
+    },
+    {
+      "name": "KV Kortrijk",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/f8e4fb7161f906c080b4.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/KV%20Kortrijk.png",
+      "source_blob": "508a0a2196bf99baff5e5b23b54a63611676242c"
+    },
+    {
+      "name": "KV Mechelen",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/b1e6452202b2b6374e89.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/KV%20Mechelen.png",
+      "source_blob": "0cbbb0248b1aedf67ba4a78dc296740fb6a8737b"
+    },
+    {
+      "name": "KVC Westerlo",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/a8ac6169c1c7020be332.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/KVC%20Westerlo.png",
+      "source_blob": "c4a9fefb9c67a1aacb4e48737d270e8ad9cc9012"
+    },
+    {
+      "name": "Lommel SK",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/a9d4f953d41f4736dc91.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/Lommel%20SK.png",
+      "source_blob": "b3e452c3464ea50f238d96ebced8b667ee9df63a"
+    },
+    {
+      "name": "Oud-Heverlee Leuven",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/614a90b956de9be55cdc.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/Oud-Heverlee%20Leuven.png",
+      "source_blob": "76ca76a739c57194bc509c63c6ab159d19b63ae3"
+    },
+    {
+      "name": "RAAL La Louvière",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/7e5f35a154a465fe6406.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/RAAL%20La%20Louvi%C3%A8re.png",
+      "source_blob": "55405efed927d3ca2fe0f073f33be94b60c16f96"
+    },
+    {
+      "name": "RSC Anderlecht",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/fbe53414b399e60959f0.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/RSC%20Anderlecht.png",
+      "source_blob": "ab618379b511cd81ce1058716c8ac95b404d3422"
+    },
+    {
+      "name": "Royal Antwerp FC",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/19f9440c71ebc5c441a1.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/Royal%20Antwerp%20FC.png",
+      "source_blob": "c9ecb99fe3a82bf09ec12fa5c2ce8228995d3adf"
+    },
+    {
+      "name": "Royal Charleroi SC",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/0e0fbad8f2542c622b18.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/Royal%20Charleroi%20SC.png",
+      "source_blob": "b29b1687f445b463b3a8cba3f20bb6c56bf94a81"
+    },
+    {
+      "name": "SK Beveren",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/4087bc8a16b0b8ca9592.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/SK%20Beveren.png",
+      "source_blob": "7ae87ffb9ad64b86c9b5f98ea05c97ea598ed5bb"
+    },
+    {
+      "name": "Sint-Truidense VV",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/f69ed8b122f0d6d0415c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/Sint-Truidense%20VV.png",
+      "source_blob": "15fcdb4e7f6d78b0736c722cfa38766d32304ae7"
+    },
+    {
+      "name": "Standard Liège",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/cfe7b87f61ec394bd467.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/Standard%20Li%C3%A8ge.png",
+      "source_blob": "99965141afe0d6c78f9c955de30997bcfff1bc9e"
+    },
+    {
+      "name": "Union Saint-Gilloise",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/3b38d7def380796d9b3a.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/Union%20Saint-Gilloise.png",
+      "source_blob": "b0ad43b8b7d116319ded137e1f6d64b64a8c5388"
+    },
+    {
+      "name": "Zulte Waregem",
+      "league": "Belgium - Jupiler Pro League",
+      "file": "catalog/afd37dad6da9ffa0ed40.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Belgium%20-%20Jupiler%20Pro%20League/Zulte%20Waregem.png",
+      "source_blob": "9dece9bfa0d0a2a677808c99e9cb52a18f4b4913"
+    },
+    {
+      "name": "Arda Kardzhali",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/36cfb24079d10d1d453c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/Arda%20Kardzhali.png",
+      "source_blob": "c3cc0a7addcddfcb18dc3f52295714f5f681a8ec"
+    },
+    {
+      "name": "Botev Plovdiv",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/36e10ac7cfbaf3c6ec55.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/Botev%20Plovdiv.png",
+      "source_blob": "3d3f4f04a4186bb9f28131a2dd60fd15850d5b14"
+    },
+    {
+      "name": "Botev Vratsa",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/3b24d459c89675571a2e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/Botev%20Vratsa.png",
+      "source_blob": "143adbb8c9752c35d189f589e16277c2d687e2ff"
+    },
+    {
+      "name": "CSKA 1948",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/54aa6b0cbc26bcb8df4a.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/CSKA%201948.png",
+      "source_blob": "30b7f97dabf18568de098b625b42efafe32c11de"
+    },
+    {
+      "name": "CSKA Sofia",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/1585a3d9d68e19ed03b3.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/CSKA%20Sofia.png",
+      "source_blob": "9320c28879ea0c997627350b0625b1838fdbaca3"
+    },
+    {
+      "name": "Cherno More Varna",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/a3220a8a25d079566fe5.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/Cherno%20More%20Varna.png",
+      "source_blob": "a441de098ec60c325c2a47ce75ce19893f72f962"
+    },
+    {
+      "name": "Dunav Ruse",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/e78e633963bf799b8419.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/Dunav%20Ruse.png",
+      "source_blob": "07c15948e62c9062a44ac66081b65a21ab1c194a"
+    },
+    {
+      "name": "Levski Sofia",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/385bc97ebedaa989cbb2.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/Levski%20Sofia.png",
+      "source_blob": "84ba744ff0e13e50fa635950a7a2c7ab6c7b9ca9"
+    },
+    {
+      "name": "Lokomotiv Plovdiv",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/b873d44b2966a7419747.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/Lokomotiv%20Plovdiv.png",
+      "source_blob": "7771a0ef3cb13e2047d3e58e492330b5ef68449a"
+    },
+    {
+      "name": "Lokomotiv Sofia",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/f7ca1c70eb29e4ed5890.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/Lokomotiv%20Sofia.png",
+      "source_blob": "50b9be87029a48973fa07ec631175252b019912d"
+    },
+    {
+      "name": "Ludogorets Razgrad",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/e91d6fc3e4a34430ae23.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/Ludogorets%20Razgrad.png",
+      "source_blob": "aebc7cb2f4b861998dc739f17255a993dc416ada"
+    },
+    {
+      "name": "Septemvri Sofia",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/9b1094e150b8899951c9.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/Septemvri%20Sofia.png",
+      "source_blob": "38bf43af56fda74aaf01014e73c4dfd4bbbc36ad"
+    },
+    {
+      "name": "Slavia Sofia",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/2ad9040d1282ceccda74.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/Slavia%20Sofia.png",
+      "source_blob": "d735e3313bc785133041a8ad29af6190e8a3557b"
+    },
+    {
+      "name": "Spartak Varna",
+      "league": "Bulgaria - efbet Liga",
+      "file": "catalog/62f42f1554af61b7aa55.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Bulgaria%20-%20efbet%20Liga/Spartak%20Varna.png",
+      "source_blob": "a83f4f9a9c8b8e389809e85bb9dc43aba4ccd85d"
+    },
+    {
+      "name": "GNK Dinamo Zagreb",
+      "league": "Croatia - SuperSport HNL",
+      "file": "catalog/02c42b37681eee4ab0d4.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Croatia%20-%20SuperSport%20HNL/GNK%20Dinamo%20Zagreb.png",
+      "source_blob": "00540ee78b21d953553d06d16e5adc1f8003e494"
+    },
+    {
+      "name": "HNK Gorica",
+      "league": "Croatia - SuperSport HNL",
+      "file": "catalog/c05775d8536e91e95593.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Croatia%20-%20SuperSport%20HNL/HNK%20Gorica.png",
+      "source_blob": "148d97fb136e326bbb5a7f026575074981cfee98"
+    },
+    {
+      "name": "HNK Hajduk Split",
+      "league": "Croatia - SuperSport HNL",
+      "file": "catalog/5eff5102e964c963aed0.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Croatia%20-%20SuperSport%20HNL/HNK%20Hajduk%20Split.png",
+      "source_blob": "3e2ec46cc8470697776de1b9b90351a9e8626f71"
+    },
+    {
+      "name": "HNK Rijeka",
+      "league": "Croatia - SuperSport HNL",
+      "file": "catalog/df5a025035ab2c44f57d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Croatia%20-%20SuperSport%20HNL/HNK%20Rijeka.png",
+      "source_blob": "103c9ac71ed8a36e06a5c4dfbfb4a6563bf67bb2"
+    },
+    {
+      "name": "NK Istra 1961",
+      "league": "Croatia - SuperSport HNL",
+      "file": "catalog/2a992d7fccf9aa2c6dfa.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Croatia%20-%20SuperSport%20HNL/NK%20Istra%201961.png",
+      "source_blob": "c9cd3b330fe8ca542bb3d6c210096c384e4e178a"
+    },
+    {
+      "name": "NK Lokomotiva Zagreb",
+      "league": "Croatia - SuperSport HNL",
+      "file": "catalog/bbbe4a88f300d9fe559d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Croatia%20-%20SuperSport%20HNL/NK%20Lokomotiva%20Zagreb.png",
+      "source_blob": "3ee50aa5a1ffa487bf81460b68a40a48e615258d"
+    },
+    {
+      "name": "NK Osijek",
+      "league": "Croatia - SuperSport HNL",
+      "file": "catalog/0b401422fd1d0715a3e4.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Croatia%20-%20SuperSport%20HNL/NK%20Osijek.png",
+      "source_blob": "9aa3dedc9f44bcd33b8ca36e7331cc4c79e6348f"
+    },
+    {
+      "name": "NK Rudes",
+      "league": "Croatia - SuperSport HNL",
+      "file": "catalog/4e9218a099f41c760ff1.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Croatia%20-%20SuperSport%20HNL/NK%20Rudes.png",
+      "source_blob": "9ac808effa0be9390048f7769356f4593f179579"
+    },
+    {
+      "name": "NK Varazdin",
+      "league": "Croatia - SuperSport HNL",
+      "file": "catalog/943736d749d2df8387a0.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Croatia%20-%20SuperSport%20HNL/NK%20Varazdin.png",
+      "source_blob": "be896acdd31a0841ccdfaed162a1bfa2fccdf10b"
+    },
+    {
+      "name": "Slaven Belupo Koprivnica",
+      "league": "Croatia - SuperSport HNL",
+      "file": "catalog/15b874adca397cb35da2.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Croatia%20-%20SuperSport%20HNL/Slaven%20Belupo%20Koprivnica.png",
+      "source_blob": "f2c2765b743d25e0f80985f270691c2386cf744e"
+    },
+    {
+      "name": "1.FC Slovacko",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/47380ec93978826a1ff5.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/1.FC%20Slovacko.png",
+      "source_blob": "de701d8aa665d4a0ea976af6fea9aaae44f25011"
+    },
+    {
+      "name": "AC Sparta Prague",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/c1c2cc9e7b7f13995038.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/AC%20Sparta%20Prague.png",
+      "source_blob": "74eeb7b6e8fa0715da0cb1fdc881c20b7f82afea"
+    },
+    {
+      "name": "Bohemians Prague 1905",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/9eb7f914e9a27b3c4966.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/Bohemians%20Prague%201905.png",
+      "source_blob": "999d00c4129cb5795458876c430ffc933b701c10"
+    },
+    {
+      "name": "FC Banik Ostrava",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/068d7438d2495d4291bf.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/FC%20Banik%20Ostrava.png",
+      "source_blob": "749da7f3441f96a4f51d932021bd41170a6cf949"
+    },
+    {
+      "name": "FC Hradec Kralove",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/25c856550b6ff27c6db0.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/FC%20Hradec%20Kralove.png",
+      "source_blob": "e8c1987a8fc0b8a898ec2b4e7456240bcf90fb0a"
+    },
+    {
+      "name": "FC Slovan Liberec",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/58d9dd989940f782dcf1.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/FC%20Slovan%20Liberec.png",
+      "source_blob": "bcddf7e8e879581a4e33456e46473e1e2be1e886"
+    },
+    {
+      "name": "FC Viktoria Plzen",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/8c5121312b3bb2aba1ad.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/FC%20Viktoria%20Plzen.png",
+      "source_blob": "e5da09b87feac80e5da28e73d59b795361991d62"
+    },
+    {
+      "name": "FC Zbrojovka Brno",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/5403d589481c2fbadea4.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/FC%20Zbrojovka%20Brno.png",
+      "source_blob": "ce939c6bbf8338233300c3333ce2cc6d6f9660bf"
+    },
+    {
+      "name": "FC Zlin",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/1b3173976d60a253e0c8.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/FC%20Zlin.png",
+      "source_blob": "57eb3fbfbd70c57784471c47d5b5c5163f2b5b39"
+    },
+    {
+      "name": "FK Jablonec",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/1a958938bc198086bc65.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/FK%20Jablonec.png",
+      "source_blob": "2f5af210f05e722ccc47b3fb56979d95169e9708"
+    },
+    {
+      "name": "FK Mlada Boleslav",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/e4edefafa1662f04e35e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/FK%20Mlada%20Boleslav.png",
+      "source_blob": "32bdd31a6580417582d3f8c3a20f7e52e7daddf1"
+    },
+    {
+      "name": "FK Pardubice",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/950ae964b1c69dd39769.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/FK%20Pardubice.png",
+      "source_blob": "9ed9547dd7f88e3adb517f679d3af89b513b9bb8"
+    },
+    {
+      "name": "FK Teplice",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/86540ea5e4121589b410.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/FK%20Teplice.png",
+      "source_blob": "50eba4c58d64d62bdf6fbd4269f2da5da12580fb"
+    },
+    {
+      "name": "SK Artis Brno",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/aeb9603e5a8c500018f3.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/SK%20Artis%20Brno.png",
+      "source_blob": "ae50e0d11f310462a922961dd6a54aa82be2461d"
+    },
+    {
+      "name": "SK Sigma Olomouc",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/1739d57b708e3dc046e2.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/SK%20Sigma%20Olomouc.png",
+      "source_blob": "3e371874c840c2265a80710830e1cfee58e1e285"
+    },
+    {
+      "name": "SK Slavia Prague",
+      "league": "Czech Republic - Chance Liga",
+      "file": "catalog/9a9b75d4978bf6d6d6a0.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Czech%20Republic%20-%20Chance%20Liga/SK%20Slavia%20Prague.png",
+      "source_blob": "844813da06ba270677d8fffafcc2b304fe0c8e99"
+    },
+    {
+      "name": "AC Horsens",
+      "league": "Denmark - Superliga",
+      "file": "catalog/dcd1d7c6e256bc787ac9.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Denmark%20-%20Superliga/AC%20Horsens.png",
+      "source_blob": "4d322f91937b6e564a401ce16ee7f033fb81b629"
+    },
+    {
+      "name": "Aarhus GF",
+      "league": "Denmark - Superliga",
+      "file": "catalog/04c8b52791a1448cb96c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Denmark%20-%20Superliga/Aarhus%20GF.png",
+      "source_blob": "57c360b5904f918b1674be14853ffa57da67c2fa"
+    },
+    {
+      "name": "Bröndby IF",
+      "league": "Denmark - Superliga",
+      "file": "catalog/0206b063bdcf13670cba.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Denmark%20-%20Superliga/Br%C3%B6ndby%20IF.png",
+      "source_blob": "2d4f109022686f1b61701a7a597386299a2474a3"
+    },
+    {
+      "name": "FC Copenhagen",
+      "league": "Denmark - Superliga",
+      "file": "catalog/651069a98798ef760375.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Denmark%20-%20Superliga/FC%20Copenhagen.png",
+      "source_blob": "1a4daff3d4c0f420ba64b465e2e9d37fcb050e56"
+    },
+    {
+      "name": "FC Midtjylland",
+      "league": "Denmark - Superliga",
+      "file": "catalog/db6113fb4f77bd2d889d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Denmark%20-%20Superliga/FC%20Midtjylland.png",
+      "source_blob": "ec9fab6826cc4d928ea48c6da87e7e7211dd6675"
+    },
+    {
+      "name": "FC Nordsjaelland",
+      "league": "Denmark - Superliga",
+      "file": "catalog/6f14d713d9b1a4aef253.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Denmark%20-%20Superliga/FC%20Nordsjaelland.png",
+      "source_blob": "1a000e1197f3c1827548855014b2329ad05fd9f0"
+    },
+    {
+      "name": "Lyngby Boldklub",
+      "league": "Denmark - Superliga",
+      "file": "catalog/93b34bc3ec48849601f9.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Denmark%20-%20Superliga/Lyngby%20Boldklub.png",
+      "source_blob": "ef409d075408c44a16632b40375f928bf515b2da"
+    },
+    {
+      "name": "Odense Boldklub",
+      "league": "Denmark - Superliga",
+      "file": "catalog/60f515847d3dc6d87949.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Denmark%20-%20Superliga/Odense%20Boldklub.png",
+      "source_blob": "c4721c5afdb8a12323769c91cb989718ac696eda"
+    },
+    {
+      "name": "Randers FC",
+      "league": "Denmark - Superliga",
+      "file": "catalog/3a070d01c909a48afbf4.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Denmark%20-%20Superliga/Randers%20FC.png",
+      "source_blob": "262572f1a346635dd7104a7e7462356ab08f5953"
+    },
+    {
+      "name": "Silkeborg IF",
+      "league": "Denmark - Superliga",
+      "file": "catalog/52f1970e1c3d5840aedb.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Denmark%20-%20Superliga/Silkeborg%20IF.png",
+      "source_blob": "be7bdff6abb00c51f4cb078343c09b8ad4410f24"
+    },
+    {
+      "name": "Sönderjyske Fodbold",
+      "league": "Denmark - Superliga",
+      "file": "catalog/a9fd6dea0d77cd2e1bba.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Denmark%20-%20Superliga/S%C3%B6nderjyske%20Fodbold.png",
+      "source_blob": "dbd8b1f9552dd3d0084c79c2a112cea03a3a25a1"
+    },
+    {
+      "name": "Viborg FF",
+      "league": "Denmark - Superliga",
+      "file": "catalog/9897302ecfa6b82514ed.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Denmark%20-%20Superliga/Viborg%20FF.png",
+      "source_blob": "1078a8f621c73abc575cdd117aac669d1456356e"
+    },
+    {
+      "name": "AFC Bournemouth",
+      "league": "England - Premier League",
+      "file": "catalog/c997f55ac25f03c3e686.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/AFC%20Bournemouth.png",
+      "source_blob": "14810679717c6be956912126c4ab8bd6341971c4"
+    },
+    {
+      "name": "Arsenal FC",
+      "league": "England - Premier League",
+      "file": "catalog/17109ae14671e25a0387.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Arsenal%20FC.png",
+      "source_blob": "24f24c15aa0e0094cbb54fab4c7fc82407b6a0ff"
+    },
+    {
+      "name": "Aston Villa",
+      "league": "England - Premier League",
+      "file": "catalog/a8523a43e1c727d29d12.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Aston%20Villa.png",
+      "source_blob": "f1081b911ae6592533eeb92f0f1cddd661b8e03b"
+    },
+    {
+      "name": "Brentford FC",
+      "league": "England - Premier League",
+      "file": "catalog/2d076a2147a42d636147.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Brentford%20FC.png",
+      "source_blob": "637597914e0f2dde5f3b93f930e990930c76700c"
+    },
+    {
+      "name": "Brighton & Hove Albion",
+      "league": "England - Premier League",
+      "file": "catalog/9e573acc1c092c0e2628.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Brighton%20%26%20Hove%20Albion.png",
+      "source_blob": "da0c49418ff7d70e68fb26e40b4ea5538aeded3b"
+    },
+    {
+      "name": "Chelsea FC",
+      "league": "England - Premier League",
+      "file": "catalog/db30fef78bb6bba9e8be.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Chelsea%20FC.png",
+      "source_blob": "d02c01d8217fe02343489fc29d36ef555def4ace"
+    },
+    {
+      "name": "Coventry City",
+      "league": "England - Premier League",
+      "file": "catalog/511e03d2abc2ed645dfd.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Coventry%20City.png",
+      "source_blob": "085eb2bc2b8ba0b53beb30c3a8d68d88dfb8a8e5"
+    },
+    {
+      "name": "Crystal Palace",
+      "league": "England - Premier League",
+      "file": "catalog/59d440f42e14cc0b50f2.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Crystal%20Palace.png",
+      "source_blob": "2653b2a05078e9d0c21a26a449e0ff469e67f5b1"
+    },
+    {
+      "name": "Everton FC",
+      "league": "England - Premier League",
+      "file": "catalog/883cae5d243b9614d728.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Everton%20FC.png",
+      "source_blob": "96518ec7b0ab58ccabc056f2e80e7a4a92a76027"
+    },
+    {
+      "name": "Fulham FC",
+      "league": "England - Premier League",
+      "file": "catalog/1f58b419d3f098256177.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Fulham%20FC.png",
+      "source_blob": "700ca4f84c96d479a7cd577e0015174638a0ace3"
+    },
+    {
+      "name": "Hull City",
+      "league": "England - Premier League",
+      "file": "catalog/aa41295bb4b3c5791c14.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Hull%20City.png",
+      "source_blob": "102cc3343443e5d0648e746a93d8b8ef63e43790"
+    },
+    {
+      "name": "Ipswich Town",
+      "league": "England - Premier League",
+      "file": "catalog/bfc7d698869315f396bf.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Ipswich%20Town.png",
+      "source_blob": "3c82fdcb8bef0d9b7168542bf5880e91963eaf20"
+    },
+    {
+      "name": "Leeds United",
+      "league": "England - Premier League",
+      "file": "catalog/eec0739e122be5eebddd.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Leeds%20United.png",
+      "source_blob": "01b01a101f2eced1234ab17b8402ecc3b2708cd4"
+    },
+    {
+      "name": "Liverpool FC",
+      "league": "England - Premier League",
+      "file": "catalog/d2dab64e09a5e13c77f7.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Liverpool%20FC.png",
+      "source_blob": "654691d267680a6683fe58c55619de0684185404"
+    },
+    {
+      "name": "Manchester City",
+      "league": "England - Premier League",
+      "file": "catalog/77c3540dce2e90161d27.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Manchester%20City.png",
+      "source_blob": "b55d4568ad21f2c3bd09805a666b3252eda0595a"
+    },
+    {
+      "name": "Manchester United",
+      "league": "England - Premier League",
+      "file": "catalog/bd556682429f65eca102.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Manchester%20United.png",
+      "source_blob": "4e2a112b088c67916aaf973d4eb1a6dfbdb38b88"
+    },
+    {
+      "name": "Newcastle United",
+      "league": "England - Premier League",
+      "file": "catalog/79636af77c8168dc4557.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Newcastle%20United.png",
+      "source_blob": "aaf463cb8a15982bb5a1e0c598a69545b94b6b9d"
+    },
+    {
+      "name": "Nottingham Forest",
+      "league": "England - Premier League",
+      "file": "catalog/3c78e70400a79329d938.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Nottingham%20Forest.png",
+      "source_blob": "a42f47452d42200a0bdea083f09e486155e274fe"
+    },
+    {
+      "name": "Sunderland AFC",
+      "league": "England - Premier League",
+      "file": "catalog/2e04f6a31e6e3a46c517.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Sunderland%20AFC.png",
+      "source_blob": "af221f2cd30474564b0b4c9690e397fc1aaf03e9"
+    },
+    {
+      "name": "Tottenham Hotspur",
+      "league": "England - Premier League",
+      "file": "catalog/358b5e2cec6d9b3025ea.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/England%20-%20Premier%20League/Tottenham%20Hotspur.png",
+      "source_blob": "319fef3bdd51435c92dd8a3c35ce8014b88cd1ae"
+    },
+    {
+      "name": "AJ Auxerre",
+      "league": "France - Ligue 1",
+      "file": "catalog/f1ac12bbbd9be6549679.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/AJ%20Auxerre.png",
+      "source_blob": "2feebe80cf78d7ee47682471c9ccc754865302ff"
+    },
+    {
+      "name": "AS Monaco",
+      "league": "France - Ligue 1",
+      "file": "catalog/ccab051d18f3d9afb6b4.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/AS%20Monaco.png",
+      "source_blob": "710f2c985001b3cd2b0e6048fe756e69c4fd391c"
+    },
+    {
+      "name": "Angers SCO",
+      "league": "France - Ligue 1",
+      "file": "catalog/a16522fc2767c1fd3dde.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/Angers%20SCO.png",
+      "source_blob": "f99ba73cbf3f5151d6637ff9095b7ed24078cb19"
+    },
+    {
+      "name": "ESTAC Troyes",
+      "league": "France - Ligue 1",
+      "file": "catalog/937c06897a0291c08fca.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/ESTAC%20Troyes.png",
+      "source_blob": "a531b3ededb1c4437f2e2b95d337975bcc5cd1ea"
+    },
+    {
+      "name": "FC Lorient",
+      "league": "France - Ligue 1",
+      "file": "catalog/e1310ba6923f60ac649b.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/FC%20Lorient.png",
+      "source_blob": "aa56ddc5d138b2322d88f87fb0a1e10eb0b8779e"
+    },
+    {
+      "name": "FC Toulouse",
+      "league": "France - Ligue 1",
+      "file": "catalog/4dc2960793f1a779adaa.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/FC%20Toulouse.png",
+      "source_blob": "f6ea1dcf309724d70d56a4a78e77633f56365862"
+    },
+    {
+      "name": "LOSC Lille",
+      "league": "France - Ligue 1",
+      "file": "catalog/fc33144baf78f38ab291.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/LOSC%20Lille.png",
+      "source_blob": "318a01561441fae398ba9c90775fe05a60903a1f"
+    },
+    {
+      "name": "Le Havre AC",
+      "league": "France - Ligue 1",
+      "file": "catalog/d75dd51c0a32dc62b206.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/Le%20Havre%20AC.png",
+      "source_blob": "ed84cadf001e8916c6bd097ed17701a4c45122e8"
+    },
+    {
+      "name": "Le Mans FC",
+      "league": "France - Ligue 1",
+      "file": "catalog/502f34a767a621fed958.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/Le%20Mans%20FC.png",
+      "source_blob": "ebf224d1666b00a3e4ccf339cff3ce42edb514de"
+    },
+    {
+      "name": "OGC Nice",
+      "league": "France - Ligue 1",
+      "file": "catalog/a94a7996d1696bf024e3.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/OGC%20Nice.png",
+      "source_blob": "e9d7cff9366b8fdc9b29fd00edc1d098050296c3"
+    },
+    {
+      "name": "Olympique Lyon",
+      "league": "France - Ligue 1",
+      "file": "catalog/705a8bd5120c47e56175.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/Olympique%20Lyon.png",
+      "source_blob": "7390f0bd833cb2a7072cae62a1fe2f59276682a6"
+    },
+    {
+      "name": "Olympique Marseille",
+      "league": "France - Ligue 1",
+      "file": "catalog/43ba60f0720b7c64008c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/Olympique%20Marseille.png",
+      "source_blob": "499c1c14e743ccda34191faa42c536b5f89228fb"
+    },
+    {
+      "name": "Paris FC",
+      "league": "France - Ligue 1",
+      "file": "catalog/0cb6761b2d1a491b5eda.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/Paris%20FC.png",
+      "source_blob": "9989259f9bd5b69d16700d016dc2f32ceb35bf5b"
+    },
+    {
+      "name": "Paris Saint-Germain",
+      "league": "France - Ligue 1",
+      "file": "catalog/2c46365aae0dce35e1a8.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/Paris%20Saint-Germain.png",
+      "source_blob": "823a6035ccfc9a6f120d6fa8c91e0b86a68c0793"
+    },
+    {
+      "name": "RC Lens",
+      "league": "France - Ligue 1",
+      "file": "catalog/bde3a7b825094be9edf7.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/RC%20Lens.png",
+      "source_blob": "eea54b4f024c3c3cf0baee558823579e6f7df612"
+    },
+    {
+      "name": "RC Strasbourg Alsace",
+      "league": "France - Ligue 1",
+      "file": "catalog/452bad7b80d49a376f5a.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/RC%20Strasbourg%20Alsace.png",
+      "source_blob": "e4e96a58efb8329dc2d80867e05cb6ebc9295f17"
+    },
+    {
+      "name": "Stade Brestois 29",
+      "league": "France - Ligue 1",
+      "file": "catalog/e143e83fa5e1f9e7ea83.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/Stade%20Brestois%2029.png",
+      "source_blob": "2a699842d47dde1e9073fcff17b1be16165ba9dc"
+    },
+    {
+      "name": "Stade Rennais FC",
+      "league": "France - Ligue 1",
+      "file": "catalog/4e16bf5183763eb5f2bb.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/France%20-%20Ligue%201/Stade%20Rennais%20FC.png",
+      "source_blob": "8d8f6dc72967d38b80ae257380e0cf13fd270028"
+    },
+    {
+      "name": "1.FC Köln",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/883aeb98d7c8dafbc34b.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/1.FC%20K%C3%B6ln.png",
+      "source_blob": "f945bc1a23480dd7292ca572173231d378541855"
+    },
+    {
+      "name": "1.FC Union Berlin",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/eefb5fc7d1b383652e32.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/1.FC%20Union%20Berlin.png",
+      "source_blob": "d3936bf1d8d13aca786c2164c6e61b34cfb1e3a1"
+    },
+    {
+      "name": "1.FSV Mainz 05",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/48bdc728dcfc05643346.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/1.FSV%20Mainz%2005.png",
+      "source_blob": "a556faf3c101728ed9c84f0be9b1856fbb80b9ed"
+    },
+    {
+      "name": "Bayer 04 Leverkusen",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/09e026d2a81ae2292946.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/Bayer%2004%20Leverkusen.png",
+      "source_blob": "22cef703c4bb657a60d874d4b62f0a6b35ce3e93"
+    },
+    {
+      "name": "Bayern Munich",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/72c1565deb6f4a303601.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/Bayern%20Munich.png",
+      "source_blob": "499ce6f97c63f974b5b439eb977377e127f71a34"
+    },
+    {
+      "name": "Borussia Dortmund",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/9588e5e09dcf32e9c1a8.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/Borussia%20Dortmund.png",
+      "source_blob": "2dc4b0289782930c6b81b40309e81039928225fc"
+    },
+    {
+      "name": "Borussia Mönchengladbach",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/9c41d329eac8e144a39f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/Borussia%20M%C3%B6nchengladbach.png",
+      "source_blob": "288e9b7ac204e28518e388634297f21fc53dcf00"
+    },
+    {
+      "name": "Eintracht Frankfurt",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/dc6550998532ea70ec84.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/Eintracht%20Frankfurt.png",
+      "source_blob": "6818579c2b9af420c5078682b778426016f880b1"
+    },
+    {
+      "name": "FC Augsburg",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/c553414ad056226513e3.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/FC%20Augsburg.png",
+      "source_blob": "36b56e0cecd48142d28862d884a3006a03f403ae"
+    },
+    {
+      "name": "FC Schalke 04",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/6a47e4c004083dec8d1d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/FC%20Schalke%2004.png",
+      "source_blob": "de20ad7334c3f2acb1371fde8a50e24b94365b80"
+    },
+    {
+      "name": "Hamburger SV",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/dee72590f36c7d9a170d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/Hamburger%20SV.png",
+      "source_blob": "1f6063acd89667fd816a23a3fe2cd6008d630186"
+    },
+    {
+      "name": "RB Leipzig",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/5ff8d9ed398764140d7f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/RB%20Leipzig.png",
+      "source_blob": "06a031c8920a0f0dcd3df6b2e95629fa8b99ced9"
+    },
+    {
+      "name": "SC Freiburg",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/0c68d9dec3498d3bab40.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/SC%20Freiburg.png",
+      "source_blob": "426f9fb8812522675b06025adb48857e3b94e090"
+    },
+    {
+      "name": "SC Paderborn 07",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/6ddd6f052f2c7dc896d9.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/SC%20Paderborn%2007.png",
+      "source_blob": "c0209f09a60e9dbadfcf9a5787439b207d74cceb"
+    },
+    {
+      "name": "SV 07 Elversberg",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/00d1de34a0aa61c8d3ac.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/SV%2007%20Elversberg.png",
+      "source_blob": "6f398372139851d542f18a8363d2e28fd6ca5c3a"
+    },
+    {
+      "name": "SV Werder Bremen",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/ec1d820a023eadebc3c7.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/SV%20Werder%20Bremen.png",
+      "source_blob": "5bcd74dddcff71fbe8cd7de60baae2b926e35ba1"
+    },
+    {
+      "name": "TSG 1899 Hoffenheim",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/5e7505ee45815186aad8.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/TSG%201899%20Hoffenheim.png",
+      "source_blob": "dc5fe98029eededad6268a654625eff99a8a364d"
+    },
+    {
+      "name": "VfB Stuttgart",
+      "league": "Germany - Bundesliga",
+      "file": "catalog/86a2739d8ae444b10e20.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Germany%20-%20Bundesliga/VfB%20Stuttgart.png",
+      "source_blob": "c42c4eccbc2c63925567801ce896ef659e143881"
+    },
+    {
+      "name": "AE Kifisia",
+      "league": "Greece - Super League 1",
+      "file": "catalog/3e094510ac8570119f74.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/AE%20Kifisia.png",
+      "source_blob": "55c1947085822801ecb6e4408cbb374abb675590"
+    },
+    {
+      "name": "AEK Athens",
+      "league": "Greece - Super League 1",
+      "file": "catalog/e596a7af6f5b9ae1f8d4.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/AEK%20Athens.png",
+      "source_blob": "3fe7958ca179b78065fcdca8ff1d1e920d739294"
+    },
+    {
+      "name": "Aris Thessaloniki",
+      "league": "Greece - Super League 1",
+      "file": "catalog/a7a68063c05058e27b10.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/Aris%20Thessaloniki.png",
+      "source_blob": "ce7ba507424704f792abc31318bc28f36a2a58c3"
+    },
+    {
+      "name": "Asteras Aktor",
+      "league": "Greece - Super League 1",
+      "file": "catalog/f212fd747edf9fe2c163.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/Asteras%20Aktor.png",
+      "source_blob": "21eb08af6f67813c5b21ffac867c3ca701715f8a"
+    },
+    {
+      "name": "Atromitos Athens",
+      "league": "Greece - Super League 1",
+      "file": "catalog/39357b8730656ff895ba.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/Atromitos%20Athens.png",
+      "source_blob": "9d69e88287009e7132870ae1f0d25dd52c307cd5"
+    },
+    {
+      "name": "Iraklis Thessaloniki",
+      "league": "Greece - Super League 1",
+      "file": "catalog/19740964930d6fca0a61.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/Iraklis%20Thessaloniki.png",
+      "source_blob": "590afcd3f011972c6c515dc610acbf00e8d2cdf6"
+    },
+    {
+      "name": "Kalamata FC",
+      "league": "Greece - Super League 1",
+      "file": "catalog/7ef2e86dee8b89e9a472.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/Kalamata%20FC.png",
+      "source_blob": "5f88dfef52587992e05912a62290c3bb3f2b0208"
+    },
+    {
+      "name": "Levadiakos",
+      "league": "Greece - Super League 1",
+      "file": "catalog/e3f65350724b3ee58975.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/Levadiakos.png",
+      "source_blob": "9a2beb34531975df5812572220d3ffe9e60de2fb"
+    },
+    {
+      "name": "OFI Crete",
+      "league": "Greece - Super League 1",
+      "file": "catalog/6e545bd53e63a73a4eb1.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/OFI%20Crete.png",
+      "source_blob": "0a7e49ae0529aa01618f309d57665dad85f71c97"
+    },
+    {
+      "name": "Olympiacos Piraeus",
+      "league": "Greece - Super League 1",
+      "file": "catalog/5f5e229b9bc40bfa4cf1.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/Olympiacos%20Piraeus.png",
+      "source_blob": "8db40026e792ce1610ef2565ac5c6725ae1fbb39"
+    },
+    {
+      "name": "PAOK Thessaloniki",
+      "league": "Greece - Super League 1",
+      "file": "catalog/752e1df1a052a97b843f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/PAOK%20Thessaloniki.png",
+      "source_blob": "7c5f1fe6b4bb3ed0de552ca90f0b514730c62353"
+    },
+    {
+      "name": "Panathinaikos",
+      "league": "Greece - Super League 1",
+      "file": "catalog/33cd428ba6c5f8ffdec3.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/Panathinaikos.png",
+      "source_blob": "df2ce386f651404cc2ae525bffaedd5c92b145f3"
+    },
+    {
+      "name": "Panetolikos",
+      "league": "Greece - Super League 1",
+      "file": "catalog/91246af29969aae70149.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/Panetolikos.png",
+      "source_blob": "62ba5a1e31aa59c5a1ff8c59c7ac805ecfcb8ed8"
+    },
+    {
+      "name": "Volos NFC",
+      "league": "Greece - Super League 1",
+      "file": "catalog/dfb928bc33390f79f151.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Greece%20-%20Super%20League%201/Volos%20NFC.png",
+      "source_blob": "870ce0edce03df10d243f34647d4ddb1485f9c83"
+    },
+    {
+      "name": "Beitar Jerusalem",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/8b0f7751be99b81344bb.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Beitar%20Jerusalem.png",
+      "source_blob": "23be137916bd667c5a5f90b4678f0f52d923c0ea"
+    },
+    {
+      "name": "Hapoel Beer Sheva",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/f9e6943d1e0a57948c6b.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Hapoel%20Beer%20Sheva.png",
+      "source_blob": "52c936838b0f957d3af34dbbfa5bf0a40f1eda72"
+    },
+    {
+      "name": "Hapoel Haifa",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/3f2996f3743eb3273046.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Hapoel%20Haifa.png",
+      "source_blob": "fe086f7a32cac362d751e6a55037393681eef370"
+    },
+    {
+      "name": "Hapoel Jerusalem",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/dccddd14f976adf29e6d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Hapoel%20Jerusalem.png",
+      "source_blob": "26eed0924fe18abe5783b57b01a6b23e0c49efa6"
+    },
+    {
+      "name": "Hapoel Petah Tikva",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/e233fd2c44b80826b717.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Hapoel%20Petah%20Tikva.png",
+      "source_blob": "95e636d290b9cf8c9e3092e05d0f717b734d96c2"
+    },
+    {
+      "name": "Hapoel Ramat Gan",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/7182e270752428f9adb0.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Hapoel%20Ramat%20Gan.png",
+      "source_blob": "3e4c95e5d1f48be8d32558709713c3145caf9aed"
+    },
+    {
+      "name": "Hapoel Tel Aviv",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/3e99dbe2f48a7e7eadc1.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Hapoel%20Tel%20Aviv.png",
+      "source_blob": "16833f876e611b09c13c60b784a45f19409e08dd"
+    },
+    {
+      "name": "Ihud Bnei Sakhnin",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/073d85c20f27e733b6bc.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Ihud%20Bnei%20Sakhnin.png",
+      "source_blob": "c63c5bc0580ece1a4209892d3b4343e9471ca23f"
+    },
+    {
+      "name": "Ironi Kiryat Shmona",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/e3375373763f57d7bf45.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Ironi%20Kiryat%20Shmona.png",
+      "source_blob": "9ca9cef1f871ce9610734b4b141bc87fc8784163"
+    },
+    {
+      "name": "Ironi Tiberias",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/744f53291cb56f2d21e6.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Ironi%20Tiberias.png",
+      "source_blob": "0afc012505414079fe836d5a473fda383a9a0c40"
+    },
+    {
+      "name": "Maccabi Haifa",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/3e3a8f054215641c7cff.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Maccabi%20Haifa.png",
+      "source_blob": "3d7ba44d6652e14aaf18effa47ffaec117eff2dc"
+    },
+    {
+      "name": "Maccabi Netanya",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/c4c97881b1c1306dd259.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Maccabi%20Netanya.png",
+      "source_blob": "884fef43d92407513e6966471922f2969908eebe"
+    },
+    {
+      "name": "Maccabi Petah Tikva",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/d4179f9f706d4433fce8.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Maccabi%20Petah%20Tikva.png",
+      "source_blob": "3c1da81b870f102ac75674c786e6beb21e024b9b"
+    },
+    {
+      "name": "Maccabi Tel Aviv",
+      "league": "Israel - Ligat ha'Al",
+      "file": "catalog/c9914903ced1d18e32d1.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Israel%20-%20Ligat%20ha%27Al/Maccabi%20Tel%20Aviv.png",
+      "source_blob": "7753da6f917b7bfa4f06d2c049fd1e999d8fb163"
+    },
+    {
+      "name": "AC Milan",
+      "league": "Italy - Serie A",
+      "file": "catalog/96fe05206b278c28f98c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/AC%20Milan.png",
+      "source_blob": "e6209230efa5637278c47ba989f57c60e7fc0b66"
+    },
+    {
+      "name": "AC Monza",
+      "league": "Italy - Serie A",
+      "file": "catalog/b8201182d81c38ba742a.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/AC%20Monza.png",
+      "source_blob": "ab048b64648968d458825891ea031120c914342c"
+    },
+    {
+      "name": "ACF Fiorentina",
+      "league": "Italy - Serie A",
+      "file": "catalog/9f650fdf590213a81ccf.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/ACF%20Fiorentina.png",
+      "source_blob": "563b3b9aebac8570f21d5c760c8fe40071583e8e"
+    },
+    {
+      "name": "AS Roma",
+      "league": "Italy - Serie A",
+      "file": "catalog/91693582cb0249df0cec.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/AS%20Roma.png",
+      "source_blob": "29eb52986c5a31579b6b73ba16ebb6f3d3597554"
+    },
+    {
+      "name": "Atalanta BC",
+      "league": "Italy - Serie A",
+      "file": "catalog/393adaa31dae2bb1bb5e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/Atalanta%20BC.png",
+      "source_blob": "82ff5039e80c07462e3aa571f72c2c6326ced52d"
+    },
+    {
+      "name": "Bologna FC 1909",
+      "league": "Italy - Serie A",
+      "file": "catalog/a46e8d26505144996fdf.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/Bologna%20FC%201909.png",
+      "source_blob": "4d365db8c83e28692456e4f0af6f315455e7644b"
+    },
+    {
+      "name": "Cagliari Calcio",
+      "league": "Italy - Serie A",
+      "file": "catalog/98bbedaab01914b38682.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/Cagliari%20Calcio.png",
+      "source_blob": "fe3af34527dc2a2ddf37a592a7a7da71565f90ae"
+    },
+    {
+      "name": "Como 1907",
+      "league": "Italy - Serie A",
+      "file": "catalog/4c468114ad016f2278f7.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/Como%201907.png",
+      "source_blob": "e2e17a77263e709c88215a02a170b31ac10457bc"
+    },
+    {
+      "name": "Frosinone Calcio",
+      "league": "Italy - Serie A",
+      "file": "catalog/9d1fc542117c3c072909.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/Frosinone%20Calcio.png",
+      "source_blob": "9927deb1f5b13614a08085a9506f8cb4f0106912"
+    },
+    {
+      "name": "Genoa CFC",
+      "league": "Italy - Serie A",
+      "file": "catalog/912ef1ec5842b3d99f5c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/Genoa%20CFC.png",
+      "source_blob": "07ced06487a192fec58ab3a58a3494b0feaf64d7"
+    },
+    {
+      "name": "Inter Milan",
+      "league": "Italy - Serie A",
+      "file": "catalog/8eda9d8a3196feba133e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/Inter%20Milan.png",
+      "source_blob": "3749aa06618e3946683484d069a9ef9a87e52341"
+    },
+    {
+      "name": "Juventus FC",
+      "league": "Italy - Serie A",
+      "file": "catalog/a47ec87772428b342027.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/Juventus%20FC.png",
+      "source_blob": "89d23971e016e5ffc61c6bf86d0b2c1bce887b4a"
+    },
+    {
+      "name": "Parma Calcio 1913",
+      "league": "Italy - Serie A",
+      "file": "catalog/1ff9983f14bd76354b5b.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/Parma%20Calcio%201913.png",
+      "source_blob": "f8b4278bda6cb4d4f09dbc9d989a6f3c7e84196a"
+    },
+    {
+      "name": "SS Lazio",
+      "league": "Italy - Serie A",
+      "file": "catalog/e744e8a6b805383356b9.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/SS%20Lazio.png",
+      "source_blob": "8692b46c3e61cad208042f55199336d7a4a5c5e2"
+    },
+    {
+      "name": "SSC Napoli",
+      "league": "Italy - Serie A",
+      "file": "catalog/cb74a1970752cfb6aa06.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/SSC%20Napoli.png",
+      "source_blob": "31c5cd81086c54d5150b4b767e7d2761dfa4d7c8"
+    },
+    {
+      "name": "Torino FC",
+      "league": "Italy - Serie A",
+      "file": "catalog/218036b245566df2bd78.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/Torino%20FC.png",
+      "source_blob": "b45412aae91d51741984ea6bcb04bc254649b1ea"
+    },
+    {
+      "name": "US Lecce",
+      "league": "Italy - Serie A",
+      "file": "catalog/a67a29a74ffb513a9da9.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/US%20Lecce.png",
+      "source_blob": "c80a4578262c3e419540ca4fb37cc77d5d150a84"
+    },
+    {
+      "name": "US Sassuolo",
+      "league": "Italy - Serie A",
+      "file": "catalog/41acec87b776ccc18720.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/US%20Sassuolo.png",
+      "source_blob": "1df7050fdf1372cdd702d75d4e23a876800662e2"
+    },
+    {
+      "name": "Udinese Calcio",
+      "league": "Italy - Serie A",
+      "file": "catalog/e1f87689b104fc3097d0.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/Udinese%20Calcio.png",
+      "source_blob": "56d2ff97960d742c09508e4fafa8e1ed260d0f51"
+    },
+    {
+      "name": "Venezia FC",
+      "league": "Italy - Serie A",
+      "file": "catalog/54b2657bafd4873b230d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Italy%20-%20Serie%20A/Venezia%20FC.png",
+      "source_blob": "3d4a450766a897d0efc7eb5c7f6dbe35bc20338a"
+    },
+    {
+      "name": "ADO Den Haag",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/ebe760163b472ee0c351.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/ADO%20Den%20Haag.png",
+      "source_blob": "60b20d712456ba100011d8705179dc98024554e4"
+    },
+    {
+      "name": "AZ Alkmaar",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/7a8ee80bc58027b5ce52.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/AZ%20Alkmaar.png",
+      "source_blob": "81a59c1bee5c84ad56677a49df03f8fc9343e135"
+    },
+    {
+      "name": "Ajax Amsterdam",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/50cd41bb97668614119d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/Ajax%20Amsterdam.png",
+      "source_blob": "ce3aa7be9a10680093e35fc4260f0c128e8ba1ff"
+    },
+    {
+      "name": "Excelsior Rotterdam",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/6e91088249afd0b355c2.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/Excelsior%20Rotterdam.png",
+      "source_blob": "1db594d42631cb5261ed514f7448cec4a063e8ee"
+    },
+    {
+      "name": "FC Groningen",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/3f1a8ad471796874d081.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/FC%20Groningen.png",
+      "source_blob": "8800ab23d226780f3b74b86abc1ed1e6bda506bf"
+    },
+    {
+      "name": "FC Twente Enschede",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/f53b7422520740bea26b.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/FC%20Twente%20Enschede.png",
+      "source_blob": "b4e60d027d0659cdbca8cd873ecd5d79d755ddb3"
+    },
+    {
+      "name": "FC Utrecht",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/d09bb81a59de602983e7.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/FC%20Utrecht.png",
+      "source_blob": "ad6ef51d1efd3fe540bf34b9152c3ff822c12793"
+    },
+    {
+      "name": "Feyenoord Rotterdam",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/9f8a77c852ab4a0bdd95.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/Feyenoord%20Rotterdam.png",
+      "source_blob": "7ba0886fc814f4c57e560c3320fdc1f99bed9fec"
+    },
+    {
+      "name": "Fortuna Sittard",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/3832402d2ae1e151b772.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/Fortuna%20Sittard.png",
+      "source_blob": "1420122bbb3172311dcd727bb84acc582d8f9ee9"
+    },
+    {
+      "name": "Go Ahead Eagles",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/9a1ec00332237c7daa06.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/Go%20Ahead%20Eagles.png",
+      "source_blob": "c2c201677e83d0a0f69cb72080e451b6e21f011f"
+    },
+    {
+      "name": "NEC Nijmegen",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/c011cf835d5faeb802aa.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/NEC%20Nijmegen.png",
+      "source_blob": "095802d08b20c08447839ff9ad6183205bb152c9"
+    },
+    {
+      "name": "PEC Zwolle",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/92f754c29585a299cf0e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/PEC%20Zwolle.png",
+      "source_blob": "29e55e7bcf4ef0d50961637e2c81a98ed4e3dcda"
+    },
+    {
+      "name": "PSV Eindhoven",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/2fff19981c610d0f6d28.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/PSV%20Eindhoven.png",
+      "source_blob": "b398db001e288d7261d647188b91782f7ee85f00"
+    },
+    {
+      "name": "SC Cambuur Leeuwarden",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/f8d2e5da4daa8faf6873.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/SC%20Cambuur%20Leeuwarden.png",
+      "source_blob": "4ef1f0546415877c0d0a724b5b7ac863c06290c6"
+    },
+    {
+      "name": "SC Heerenveen",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/d7ebab153c24ca910529.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/SC%20Heerenveen.png",
+      "source_blob": "31e103bf820d98dcd3ee47592230937d42fd2716"
+    },
+    {
+      "name": "SC Telstar",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/69745e952ea37dff805a.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/SC%20Telstar.png",
+      "source_blob": "2f124daafa9e6442fd34ddb43cb46407c9b1e423"
+    },
+    {
+      "name": "Sparta Rotterdam",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/5f3fb74037e5e826d06d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/Sparta%20Rotterdam.png",
+      "source_blob": "19673987529d3dd8fa1f855eacb23709064ab819"
+    },
+    {
+      "name": "Willem II Tilburg",
+      "league": "Netherlands - Eredivisie",
+      "file": "catalog/24cd00142050ea56b77e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Netherlands%20-%20Eredivisie/Willem%20II%20Tilburg.png",
+      "source_blob": "20cea87517d224993e1276b067afeb4728580943"
+    },
+    {
+      "name": "Aalesunds FK",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/8428f164cf4600200c21.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/Aalesunds%20FK.png",
+      "source_blob": "8c2d581dc3d0498c402ab3512c7c743fbed164a0"
+    },
+    {
+      "name": "FK BodøGlimt",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/48ec0e1b8e8c1f004975.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/FK%20Bod%C3%B8Glimt.png",
+      "source_blob": "bfe2c86a333e2556dc5a6dbf7876f63cfa1f517e"
+    },
+    {
+      "name": "Fredrikstad FK",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/5d8f79a8acc29fed2a8f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/Fredrikstad%20FK.png",
+      "source_blob": "c5a36602f10cf50ceb44fd6391d690fb0bce5f0a"
+    },
+    {
+      "name": "Hamarkameratene",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/8bc3ee81104c91a2c4a7.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/Hamarkameratene.png",
+      "source_blob": "01c617d9b4a1eb9dc698ae437cbcea8567d31c7f"
+    },
+    {
+      "name": "IK Start",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/61dabd196fc2923cf3c6.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/IK%20Start.png",
+      "source_blob": "46631cc398a475943047b07d7a96ece6e97b78c9"
+    },
+    {
+      "name": "KFUM-Kameratene Oslo",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/7371b98eafd3f751b9c2.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/KFUM-Kameratene%20Oslo.png",
+      "source_blob": "637c673b0b54e33b5bc19e5c06cee1b61aa50fb8"
+    },
+    {
+      "name": "Kristiansund BK",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/71c8cbaa4de5ba24b813.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/Kristiansund%20BK.png",
+      "source_blob": "ee2c54f382c785d1d1557c2a51bf945e94fda738"
+    },
+    {
+      "name": "Lillestrøm SK",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/1e4db7e228ce290f4f96.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/Lillestr%C3%B8m%20SK.png",
+      "source_blob": "00be5ee373417bac89bb7242e1a66ccd9ab6ab14"
+    },
+    {
+      "name": "Molde FK",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/ed421a3b112aef6d2368.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/Molde%20FK.png",
+      "source_blob": "8d2d4ac5e86218bf6feab55f5183d174fca02a87"
+    },
+    {
+      "name": "Rosenborg BK",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/618cee35575c6c9ce268.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/Rosenborg%20BK.png",
+      "source_blob": "a32a2ef918a3986ba1397f0e9ae3dd8453cda46a"
+    },
+    {
+      "name": "SK Brann",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/a3aa23b50c0ceba966ba.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/SK%20Brann.png",
+      "source_blob": "e04e568cb26756858e202d533f50ebbfb6f53b06"
+    },
+    {
+      "name": "Sandefjord Fotball",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/2be9b6acd0290252684e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/Sandefjord%20Fotball.png",
+      "source_blob": "9f84b17ac445a3bfe619f9d57b61529e641348f1"
+    },
+    {
+      "name": "Sarpsborg 08 FF",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/ff53e181fcb7c1442613.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/Sarpsborg%2008%20FF.png",
+      "source_blob": "7f46d1ddeb64cf93c8a02dbca78f5aea53840418"
+    },
+    {
+      "name": "Tromsø IL",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/4340572c4cdb22b2f101.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/Troms%C3%B8%20IL.png",
+      "source_blob": "9971dba0e538a5fc63c29161721e7f3b141a7d04"
+    },
+    {
+      "name": "Viking FK",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/f91dc3d830dfe724cca5.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/Viking%20FK.png",
+      "source_blob": "8616d4ac676eabd94938492b9098b298fba34145"
+    },
+    {
+      "name": "Vålerenga Fotball Elite",
+      "league": "Norway - Eliteserien",
+      "file": "catalog/e38048f66d81fbdb048c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Norway%20-%20Eliteserien/V%C3%A5lerenga%20Fotball%20Elite.png",
+      "source_blob": "109383a75f7c919225794ba1a7b92ea36a5877ac"
+    },
+    {
+      "name": "Cracovia",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/facf830def733e17b07f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Cracovia.png",
+      "source_blob": "8c0e2de426418303fe6a0af521b0e6206ace801c"
+    },
+    {
+      "name": "GKS Katowice",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/9164a68b00bca4c57419.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/GKS%20Katowice.png",
+      "source_blob": "90662387e0e469591825825e5441742c0af92435"
+    },
+    {
+      "name": "Górnik Zabrze",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/fe735c43c8b1c39f4483.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/G%C3%B3rnik%20Zabrze.png",
+      "source_blob": "b4cdcc283a7406fddb673d5cfe798e79d13d251b"
+    },
+    {
+      "name": "Jagiellonia Bialystok",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/feddbb414cfa7e0cb02f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Jagiellonia%20Bialystok.png",
+      "source_blob": "618cff2f06846e0e7beb564167eb7e3f957a1222"
+    },
+    {
+      "name": "Korona Kielce",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/57fc73271cf72914e15c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Korona%20Kielce.png",
+      "source_blob": "8bf1a663e3bc8ae697a316e1fbedbc41fc0c0981"
+    },
+    {
+      "name": "Lech Poznan",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/63698ffe5141e6df24de.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Lech%20Poznan.png",
+      "source_blob": "2bcab10ccd6ac974db36ffe0ce30516d4c20cec9"
+    },
+    {
+      "name": "Legia Warszawa",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/21a694b2807b119f3168.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Legia%20Warszawa.png",
+      "source_blob": "4c9dceaaeddb7cc98489b2f7a074f648ee956043"
+    },
+    {
+      "name": "Motor Lublin",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/51430b528470c91b12e4.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Motor%20Lublin.png",
+      "source_blob": "83633e623ecd4ee1d90ced90dc9b1798c1c2e28b"
+    },
+    {
+      "name": "Piast Gliwice",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/cab586f70156ee4de4fa.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Piast%20Gliwice.png",
+      "source_blob": "a1205611367064ec4899bf2a554f3bc580df0fce"
+    },
+    {
+      "name": "Pogon Szczecin",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/98ea7f7dd579daa81ead.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Pogon%20Szczecin.png",
+      "source_blob": "4723a62eaf2081b61ef8f90e60abc6a204c69537"
+    },
+    {
+      "name": "Radomiak Radom",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/3b3feb35b4bd62e0e53e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Radomiak%20Radom.png",
+      "source_blob": "b835df1aaed1dcac03146e147ae8d682b247494e"
+    },
+    {
+      "name": "Raków Częstochowa",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/f7426bf3c5b04fe3bc38.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Rak%C3%B3w%20Cz%C4%99stochowa.png",
+      "source_blob": "9f3ab13faedd1e0b05472cd4ed8c380c4b097943"
+    },
+    {
+      "name": "Slask Wroclaw",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/9f6ad4a3b55cf36051f2.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Slask%20Wroclaw.png",
+      "source_blob": "5c84512e159c10062e5f1407789387e6c6c71e7c"
+    },
+    {
+      "name": "Widzew Lodz",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/f555420a3ce277e2f155.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Widzew%20Lodz.png",
+      "source_blob": "73b9061c2d1d1be631f621266818a63a2626dbc0"
+    },
+    {
+      "name": "Wieczysta Krakow",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/aed8dda7958c89fbb1f8.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Wieczysta%20Krakow.png",
+      "source_blob": "16925e8c129721b236f1ee8b50bc028b79758f75"
+    },
+    {
+      "name": "Wisla Kraków",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/3b9bd37e619dc47b5a26.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Wisla%20Krak%C3%B3w.png",
+      "source_blob": "02f639702200faf9f7ccac44403fb0cc509378ea"
+    },
+    {
+      "name": "Wisla Plock",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/79ec9e0fd37fe18a9cb9.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Wisla%20Plock.png",
+      "source_blob": "28d8e7326ad4b32a932cc6b67fb5c44df1919807"
+    },
+    {
+      "name": "Zaglebie Lubin",
+      "league": "Poland - PKO BP Ekstraklasa",
+      "file": "catalog/eae22c66a063d8350882.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Poland%20-%20PKO%20BP%20Ekstraklasa/Zaglebie%20Lubin.png",
+      "source_blob": "854d6919b57749253eedac37c5306cb3e821c854"
+    },
+    {
+      "name": "Académico Viseu FC",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/70c228570ecc0475cb6b.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/Acad%C3%A9mico%20Viseu%20FC.png",
+      "source_blob": "576ba111981ae7fece81713a801f57bfd0280fe4"
+    },
+    {
+      "name": "CD Nacional",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/bfedbaccf4e65633f105.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/CD%20Nacional.png",
+      "source_blob": "40238254730616fb986890fb6ec9adeaf0717937"
+    },
+    {
+      "name": "CD Santa Clara",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/9a058304f35132c2b163.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/CD%20Santa%20Clara.png",
+      "source_blob": "d9c85199dae695259160a3c0d36eea63e43c8913"
+    },
+    {
+      "name": "CF Estrela Amadora",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/13cfeca90349c68905fe.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/CF%20Estrela%20Amadora.png",
+      "source_blob": "a5b9c569659cdfe197f6508cb16bdff0082e683e"
+    },
+    {
+      "name": "CS Marítimo",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/206e9a1fb534fe602df9.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/CS%20Mar%C3%ADtimo.png",
+      "source_blob": "96bdf65a163f58dc48b22064ac5d19b04b49951a"
+    },
+    {
+      "name": "Casa Pia AC",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/4b164f1942ae246412e7.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/Casa%20Pia%20AC.png",
+      "source_blob": "450d28234f60f9ed04bbb3f8d7ca10ac3350d364"
+    },
+    {
+      "name": "FC Alverca",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/6d62ba9f1cd9d402397a.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/FC%20Alverca.png",
+      "source_blob": "8a5c7b37eed76c6347b5e0358107afee82646735"
+    },
+    {
+      "name": "FC Arouca",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/cb73f636a6e1f69edcaf.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/FC%20Arouca.png",
+      "source_blob": "52de58a211fa4ead66dd957bad33c1f1931570d7"
+    },
+    {
+      "name": "FC Famalicão",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/54997f6920d7ab6894c4.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/FC%20Famalic%C3%A3o.png",
+      "source_blob": "e408d0e57be7bf3e23039b49862db5e7a734f286"
+    },
+    {
+      "name": "FC Porto",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/a2542c0544810ae7856e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/FC%20Porto.png",
+      "source_blob": "9cdf906e1870ba57bd97aba929a084f1742f663b"
+    },
+    {
+      "name": "GD Estoril Praia",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/35b18376be995ccef329.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/GD%20Estoril%20Praia.png",
+      "source_blob": "55a03028718eb7abfce89ff4214e5e64809ad485"
+    },
+    {
+      "name": "Gil Vicente FC",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/10f90c9e3e8c4a26888f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/Gil%20Vicente%20FC.png",
+      "source_blob": "8191509f3cb1bf3d78a5abb1d93c6a4cc4b396a2"
+    },
+    {
+      "name": "Moreirense FC",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/1cb02e48c81fd0f9df4f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/Moreirense%20FC.png",
+      "source_blob": "d305781eb250a2b21842a9c78b1137e5aa9010b4"
+    },
+    {
+      "name": "Rio Ave FC",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/6be3713ce54ec7de4ad5.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/Rio%20Ave%20FC.png",
+      "source_blob": "4aa10c8f33835516442e8b8a91171e76d46bfe6c"
+    },
+    {
+      "name": "SC Braga",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/e618f65164336b6d4c2c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/SC%20Braga.png",
+      "source_blob": "9ce5558d441a2b971bef2391734bbc01de8b6048"
+    },
+    {
+      "name": "SL Benfica",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/3debd932804b26fee728.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/SL%20Benfica.png",
+      "source_blob": "8b41b56ef8737217701fdb29b1bdae07b111a4a7"
+    },
+    {
+      "name": "Sporting CP",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/11ccc52c4c18598b5dd2.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/Sporting%20CP.png",
+      "source_blob": "75ec4ab8971a86ca3f327197f0fd3374cf016e75"
+    },
+    {
+      "name": "Vitória Guimarães SC",
+      "league": "Portugal - Liga Portugal",
+      "file": "catalog/3e66e7ec4e9f9b446879.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Portugal%20-%20Liga%20Portugal/Vit%C3%B3ria%20Guimar%C3%A3es%20SC.png",
+      "source_blob": "730afe20f341b75dba1f42ad0e5824c176eb5e8e"
+    },
+    {
+      "name": "ACSC FC Arges",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/e4053f3950b2f75d0c24.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/ACSC%20FC%20Arges.png",
+      "source_blob": "92a79d29808f37580b7c6ba90747b0bef51dfbdc"
+    },
+    {
+      "name": "CFR Cluj",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/067c1364d3dae7627e12.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/CFR%20Cluj.png",
+      "source_blob": "bd6a312fe2e3ebd7fa7d5b6e9d7e713ac697c801"
+    },
+    {
+      "name": "Corvinul Hunedoara",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/f4a9b730c68e8550739c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/Corvinul%20Hunedoara.png",
+      "source_blob": "0cf5430a429ebdb3b0bf49a5054568b11af71e0d"
+    },
+    {
+      "name": "FC Botosani",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/fd2e2bf1923a087d513c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/FC%20Botosani.png",
+      "source_blob": "202ad47d84799fe6e94c0371cce298f37c4820d5"
+    },
+    {
+      "name": "FC Dinamo 1948",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/c6ac0ea7051ff54c3b26.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/FC%20Dinamo%201948.png",
+      "source_blob": "dbde4a9259220750493e6ff1dbf6b8a91e640b28"
+    },
+    {
+      "name": "FC Rapid 1923",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/5ae773466c92e54ca8e5.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/FC%20Rapid%201923.png",
+      "source_blob": "79d70294fdbadd94747fb19911fceab7c7f5e633"
+    },
+    {
+      "name": "FC Universitatea Cluj",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/69f25f50353ccc68a841.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/FC%20Universitatea%20Cluj.png",
+      "source_blob": "eaf00c1e30def4535b85a0c51bf2b53c419b1194"
+    },
+    {
+      "name": "FC Voluntari",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/b8b38a3b26b20c800863.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/FC%20Voluntari.png",
+      "source_blob": "ec9487765ca5372f1bead6ecaee2d9ab41612225"
+    },
+    {
+      "name": "FCSB",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/53f6e1755dcc7f9f505f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/FCSB.png",
+      "source_blob": "a303022b181cbaacdc80e056722beeb066cc4f6a"
+    },
+    {
+      "name": "FCV Farul Constanta",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/e8648e79ef187ef8c913.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/FCV%20Farul%20Constanta.png",
+      "source_blob": "968ed8bcc3d15dd434b5bf37be519f1df82900d3"
+    },
+    {
+      "name": "FK Csikszereda Miercurea Ciuc",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/1faa07351057b099c268.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/FK%20Csikszereda%20Miercurea%20Ciuc.png",
+      "source_blob": "e9673f26f911759be7dcbfdf62ab5e57f0a45db3"
+    },
+    {
+      "name": "Petrolul Ploiesti",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/77576fd6d5e4d59f5883.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/Petrolul%20Ploiesti.png",
+      "source_blob": "a4176de5e120950971bee2b8f070db845a1f0afd"
+    },
+    {
+      "name": "SC Otelul Galati",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/c0c7d93fee5657f32a09.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/SC%20Otelul%20Galati.png",
+      "source_blob": "e0637d439a974f8215b5dd8dce3ce27e42c89a8d"
+    },
+    {
+      "name": "Sepsi OSK Sf. Gheorghe",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/274c2a28aff09b78a998.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/Sepsi%20OSK%20Sf.%20Gheorghe.png",
+      "source_blob": "65924a815246c418cea00e7ebbc3c4aba3d7a1d7"
+    },
+    {
+      "name": "UTA Arad",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/057c5b5913b7d00ad5a0.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/UTA%20Arad.png",
+      "source_blob": "615c9ed3679f4fc733bcba7c3ff9900ad3708c3c"
+    },
+    {
+      "name": "Universitatea Craiova",
+      "league": "Romania - SuperLiga",
+      "file": "catalog/8c97e5683c8c09b4f72d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Romania%20-%20SuperLiga/Universitatea%20Craiova.png",
+      "source_blob": "c01001a35ffaf5636c14293bf2af0efa8fc55e14"
+    },
+    {
+      "name": "Akhmat Grozny",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/493c4ecd4f98f1e7f67e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/Akhmat%20Grozny.png",
+      "source_blob": "067f20c240f511f0cd87d554d66b256919c0fa88"
+    },
+    {
+      "name": "Akron Tolyatti",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/87579108d99cb1561bac.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/Akron%20Tolyatti.png",
+      "source_blob": "3e965bf18ec716dbe91fa50741e069d10404546a"
+    },
+    {
+      "name": "Baltika Kaliningrad",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/6cc3a3e38d970fe36b5f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/Baltika%20Kaliningrad.png",
+      "source_blob": "a027a1a9ce2042deb36c66ce1cc5364d3cde7f4a"
+    },
+    {
+      "name": "CSKA Moscow",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/45cf65d7f88e4c1359e9.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/CSKA%20Moscow.png",
+      "source_blob": "e6c62a8e42fbe519d0071f752431112bbdeeb719"
+    },
+    {
+      "name": "Dinamo Makhachkala",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/01124a1bed57e61bf50f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/Dinamo%20Makhachkala.png",
+      "source_blob": "3b6e4db605b84d6e5f2fffa434688bcb11cf9f75"
+    },
+    {
+      "name": "Dynamo Moscow",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/56e0f61e9e46b2b0b15d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/Dynamo%20Moscow.png",
+      "source_blob": "8a8d66c37ab3b8f5918a140a6b2060e7158c6ac4"
+    },
+    {
+      "name": "FC Krasnodar",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/c441bd93fc1f6340c627.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/FC%20Krasnodar.png",
+      "source_blob": "85c37c7080bedfca96c93fb928f70c4ee9d2603e"
+    },
+    {
+      "name": "FC Orenburg",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/b45f59fed218f3eb7620.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/FC%20Orenburg.png",
+      "source_blob": "e655f009e01834672aabdb9c5a062ed122049ec5"
+    },
+    {
+      "name": "FC Rostov",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/28ed9c9cae4542fc7935.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/FC%20Rostov.png",
+      "source_blob": "f363e5ac27dd8da52a6fb32de3cb63f2f162af6c"
+    },
+    {
+      "name": "Fakel Voronezh",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/7e1af19e4579487aea3a.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/Fakel%20Voronezh.png",
+      "source_blob": "f362a13d79ec57a943f630dae9baa77757739faf"
+    },
+    {
+      "name": "Krylya Sovetov Samara",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/c142a91c08fa97004128.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/Krylya%20Sovetov%20Samara.png",
+      "source_blob": "b05b5685631142d9ff7c6fa4e2255d046c837e9f"
+    },
+    {
+      "name": "Lokomotiv Moscow",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/63a5739ac92b20fb4449.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/Lokomotiv%20Moscow.png",
+      "source_blob": "4e31e625ba978ede24c52feb441b0114f18d11f0"
+    },
+    {
+      "name": "Rodina Moscow",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/39be0915c162f459065d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/Rodina%20Moscow.png",
+      "source_blob": "de7539448b50ff86bf11cea3e6edfb4af4fa8b7e"
+    },
+    {
+      "name": "Rubin Kazan",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/a4ae9b8a18573a17bf55.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/Rubin%20Kazan.png",
+      "source_blob": "4f9a44fc5ba3cab32a131d74c4ba26f5fecd8589"
+    },
+    {
+      "name": "Spartak Moscow",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/4baa1aab0fa2a6f2ae8f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/Spartak%20Moscow.png",
+      "source_blob": "a725643c7b570350a55085914040c420c87356d8"
+    },
+    {
+      "name": "Zenit St. Petersburg",
+      "league": "Russia - Premier Liga",
+      "file": "catalog/c599ca0a280cf83c3802.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Russia%20-%20Premier%20Liga/Zenit%20St.%20Petersburg.png",
+      "source_blob": "2a9de178e9779ad2f9d92d3bca952c4229351a1d"
+    },
+    {
+      "name": "Aberdeen FC",
+      "league": "Scotland - Scottish Premiership",
+      "file": "catalog/1d974ca06cf077257382.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Scotland%20-%20Scottish%20Premiership/Aberdeen%20FC.png",
+      "source_blob": "1378fb95530fc2f4ea60ec01865fab8676a2c5f6"
+    },
+    {
+      "name": "Celtic FC",
+      "league": "Scotland - Scottish Premiership",
+      "file": "catalog/ab0e39f572424e79478a.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Scotland%20-%20Scottish%20Premiership/Celtic%20FC.png",
+      "source_blob": "ef0cadb69e70e950482a58dc230061295f27f20b"
+    },
+    {
+      "name": "Dundee FC",
+      "league": "Scotland - Scottish Premiership",
+      "file": "catalog/8fb26ff1c3b50184f542.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Scotland%20-%20Scottish%20Premiership/Dundee%20FC.png",
+      "source_blob": "3192b2968d133106395d484f8b49c3eac2a0b98b"
+    },
+    {
+      "name": "Dundee United FC",
+      "league": "Scotland - Scottish Premiership",
+      "file": "catalog/b5b354dbb254a1ba1ffd.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Scotland%20-%20Scottish%20Premiership/Dundee%20United%20FC.png",
+      "source_blob": "15813cce0d6de4f7aafdc6d86d22ef1c5169265d"
+    },
+    {
+      "name": "Falkirk FC",
+      "league": "Scotland - Scottish Premiership",
+      "file": "catalog/e7f79ee01ff6ac845666.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Scotland%20-%20Scottish%20Premiership/Falkirk%20FC.png",
+      "source_blob": "485fb0b351d4157932c056e34d0369e2b5b7c962"
+    },
+    {
+      "name": "Heart of Midlothian FC",
+      "league": "Scotland - Scottish Premiership",
+      "file": "catalog/a7a20b08aafa9141d978.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Scotland%20-%20Scottish%20Premiership/Heart%20of%20Midlothian%20FC.png",
+      "source_blob": "32aca7ef13c1aa2bc2787bb88c4206d5d9507bd1"
+    },
+    {
+      "name": "Hibernian FC",
+      "league": "Scotland - Scottish Premiership",
+      "file": "catalog/92597afa9dd635f8638a.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Scotland%20-%20Scottish%20Premiership/Hibernian%20FC.png",
+      "source_blob": "0a1331acf342014eef46a2faf7e8defd4cc24a1a"
+    },
+    {
+      "name": "Kilmarnock FC",
+      "league": "Scotland - Scottish Premiership",
+      "file": "catalog/0912d427fda08e1fc0f2.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Scotland%20-%20Scottish%20Premiership/Kilmarnock%20FC.png",
+      "source_blob": "002ec1902e35b145249ca9ab95292f38c6c0999c"
+    },
+    {
+      "name": "Motherwell FC",
+      "league": "Scotland - Scottish Premiership",
+      "file": "catalog/cd8773790df4632db389.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Scotland%20-%20Scottish%20Premiership/Motherwell%20FC.png",
+      "source_blob": "6d1c531894513376e52d73385c70c291a94249b9"
+    },
+    {
+      "name": "Rangers FC",
+      "league": "Scotland - Scottish Premiership",
+      "file": "catalog/5513d8fdc1f86d27db32.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Scotland%20-%20Scottish%20Premiership/Rangers%20FC.png",
+      "source_blob": "03ca5bbad98b1352f27fffbbfa19a7b5363e1d11"
+    },
+    {
+      "name": "St. Johnstone FC",
+      "league": "Scotland - Scottish Premiership",
+      "file": "catalog/b5867c0f9973a9ffcee5.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Scotland%20-%20Scottish%20Premiership/St.%20Johnstone%20FC.png",
+      "source_blob": "c6efaddc8322291ef74a224b95bde965a02a0458"
+    },
+    {
+      "name": "St. Mirren FC",
+      "league": "Scotland - Scottish Premiership",
+      "file": "catalog/60becfe4287c0cc760da.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Scotland%20-%20Scottish%20Premiership/St.%20Mirren%20FC.png",
+      "source_blob": "7d83229c826430d09c2772c96668bc78485f6c4e"
+    },
+    {
+      "name": "FK Cukaricki",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/7c54a7baa9ddfb6cd528.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/FK%20Cukaricki.png",
+      "source_blob": "984791f19535d39bffaed9f00ccac5ac7a1f2745"
+    },
+    {
+      "name": "FK IMT Belgrad",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/ee94842aab1633ab4a27.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/FK%20IMT%20Belgrad.png",
+      "source_blob": "1f9e03adf4ce196f8accbc922de1969c1b4ab669"
+    },
+    {
+      "name": "FK Macva Sabac",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/f5a1fabfa2166cde11f6.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/FK%20Macva%20Sabac.png",
+      "source_blob": "f77afff034e87064aeee709905ebd425791949c5"
+    },
+    {
+      "name": "FK Mladost Lucani",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/bb1847ee18ce10d44952.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/FK%20Mladost%20Lucani.png",
+      "source_blob": "3b1e72f56fd5cafcec7b9385fe8d1a930ecd2e1b"
+    },
+    {
+      "name": "FK Novi Pazar",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/56d5782a4ed879d42028.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/FK%20Novi%20Pazar.png",
+      "source_blob": "780c94e738f5bd02518258d9b2db3caa9b865da1"
+    },
+    {
+      "name": "FK Partizan Belgrade",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/87385a82c9ede9bd7e8e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/FK%20Partizan%20Belgrade.png",
+      "source_blob": "974989434793959a7776bfee59195939ce1252f4"
+    },
+    {
+      "name": "FK Radnicki 1923 Kragujevac",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/79abbb5079dda1193e5c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/FK%20Radnicki%201923%20Kragujevac.png",
+      "source_blob": "f932218a6eebf2f0fd0d99dbeb8e6ba57d771ed2"
+    },
+    {
+      "name": "FK Radnicki Nis",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/28f8bc1b6e6a1209ba50.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/FK%20Radnicki%20Nis.png",
+      "source_blob": "cc00f986d7bd7b068df7b86b274ff76f550f84d2"
+    },
+    {
+      "name": "FK Radnik Surdulica",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/e2ef1379a71545dd619c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/FK%20Radnik%20Surdulica.png",
+      "source_blob": "ed77a2b9f40f1b646642544e96a7629fd6c5fa9a"
+    },
+    {
+      "name": "FK Vojvodina Novi Sad",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/db4846943cd2a3d669da.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/FK%20Vojvodina%20Novi%20Sad.png",
+      "source_blob": "5f1cfa15d1b3bad80d1b6ac276dd0de6944dde85"
+    },
+    {
+      "name": "FK Zeleznicar Pancevo",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/5bd53e320a04fc411bb5.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/FK%20Zeleznicar%20Pancevo.png",
+      "source_blob": "c98e876623326f4ca2fa9e584ad4427dcb3c06c8"
+    },
+    {
+      "name": "FK Zemun",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/a89cfbacd510a226eb86.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/FK%20Zemun.png",
+      "source_blob": "9c0a82746b9ee7975561a40c5295b656ca680a73"
+    },
+    {
+      "name": "OFK Beograd",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/5b5ff776cc7553b186ae.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/OFK%20Beograd.png",
+      "source_blob": "366b48e8e7e828be1dc8dcb55ff208384261d7f9"
+    },
+    {
+      "name": "Red Star Belgrade",
+      "league": "Serbia - Super liga Srbije",
+      "file": "catalog/74d7090e95f014813c0a.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Serbia%20-%20Super%20liga%20Srbije/Red%20Star%20Belgrade.png",
+      "source_blob": "b082eb18e1442c20e6909deb8fb93a31da61729f"
+    },
+    {
+      "name": "Athletic Bilbao",
+      "league": "Spain - LaLiga",
+      "file": "catalog/77628bf47140c55208e8.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Athletic%20Bilbao.png",
+      "source_blob": "624b9ea0c3115b4c2326726934401a4cf05f5de0"
+    },
+    {
+      "name": "Atlético de Madrid",
+      "league": "Spain - LaLiga",
+      "file": "catalog/9e4478bf79f60923142c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Atl%C3%A9tico%20de%20Madrid.png",
+      "source_blob": "7398c88ac9e34f7bb7df9207802bffe07db5d560"
+    },
+    {
+      "name": "CA Osasuna",
+      "league": "Spain - LaLiga",
+      "file": "catalog/21c8cc093d16d5fe98cb.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/CA%20Osasuna.png",
+      "source_blob": "ab981326964f8b753c78dd48d1b9d1a1ec48104d"
+    },
+    {
+      "name": "Celta de Vigo",
+      "league": "Spain - LaLiga",
+      "file": "catalog/74b506b9bdb6179f3450.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Celta%20de%20Vigo.png",
+      "source_blob": "323bf79463695cde7b996fa4dd3cefa6c0ba1dd0"
+    },
+    {
+      "name": "Deportivo A Coruña",
+      "league": "Spain - LaLiga",
+      "file": "catalog/f15ed392f45b90517a82.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Deportivo%20A%20Coru%C3%B1a.png",
+      "source_blob": "16c57d3baaa40bbc48d7604e32a8729b35e3b3b8"
+    },
+    {
+      "name": "Deportivo Alavés",
+      "league": "Spain - LaLiga",
+      "file": "catalog/b04f75f6a726155d3f33.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Deportivo%20Alav%C3%A9s.png",
+      "source_blob": "e1464ddf254e17f7747a31bef6f744486c1169fa"
+    },
+    {
+      "name": "Elche CF",
+      "league": "Spain - LaLiga",
+      "file": "catalog/3ab1c0707791e759812f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Elche%20CF.png",
+      "source_blob": "739cdce299d3fc7b329b0111d1fe0fddae704a1b"
+    },
+    {
+      "name": "FC Barcelona",
+      "league": "Spain - LaLiga",
+      "file": "catalog/ce67e26349973235c24e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/FC%20Barcelona.png",
+      "source_blob": "bfaffd03668480678408bc5021e592de8f2b8d4e"
+    },
+    {
+      "name": "Getafe CF",
+      "league": "Spain - LaLiga",
+      "file": "catalog/ca1f32c5cdcad0157916.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Getafe%20CF.png",
+      "source_blob": "3140071b8720fab7a36115f9ce63229d938db751"
+    },
+    {
+      "name": "Levante UD",
+      "league": "Spain - LaLiga",
+      "file": "catalog/2519c238e2f8b53320d3.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Levante%20UD.png",
+      "source_blob": "5a79a4981eca1b864ed07e50a4fd8e52b900abb3"
+    },
+    {
+      "name": "Málaga CF",
+      "league": "Spain - LaLiga",
+      "file": "catalog/0adfc737a6b4a838cce8.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/M%C3%A1laga%20CF.png",
+      "source_blob": "4cfbf6eca31f9af03656ab939ec455afa07e9433"
+    },
+    {
+      "name": "RCD Espanyol Barcelona",
+      "league": "Spain - LaLiga",
+      "file": "catalog/2d092c938c7daaed02e9.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/RCD%20Espanyol%20Barcelona.png",
+      "source_blob": "a012d08c45880195db1c0a4f67f695a36767aa30"
+    },
+    {
+      "name": "Racing Santander",
+      "league": "Spain - LaLiga",
+      "file": "catalog/162626c9c8821d544ce3.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Racing%20Santander.png",
+      "source_blob": "998ead86932993257da4fc7ca2f4b60fb55ed39e"
+    },
+    {
+      "name": "Rayo Vallecano",
+      "league": "Spain - LaLiga",
+      "file": "catalog/6b074424f68c10b82d5b.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Rayo%20Vallecano.png",
+      "source_blob": "86f27a83668e0f7f00c8cc53f6d0bb66b6e17ad8"
+    },
+    {
+      "name": "Real Betis Balompié",
+      "league": "Spain - LaLiga",
+      "file": "catalog/0a2594eb8c6a2e154a6c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Real%20Betis%20Balompi%C3%A9.png",
+      "source_blob": "8e3808a0788aa8f7ae7915265544774c9317518d"
+    },
+    {
+      "name": "Real Madrid",
+      "league": "Spain - LaLiga",
+      "file": "catalog/5042445cd03e6c37b7fb.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Real%20Madrid.png",
+      "source_blob": "e713ce0470f9673294c374596889a659b2624dcf"
+    },
+    {
+      "name": "Real Sociedad",
+      "league": "Spain - LaLiga",
+      "file": "catalog/323be9053b3cc034d649.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Real%20Sociedad.png",
+      "source_blob": "b1d8bcdf54803231b466a3b698549eecd55270d2"
+    },
+    {
+      "name": "Sevilla FC",
+      "league": "Spain - LaLiga",
+      "file": "catalog/5ca9f10bcca74a0a48ab.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Sevilla%20FC.png",
+      "source_blob": "a7d6232baa28c7e439287352286162b858ef3cdb"
+    },
+    {
+      "name": "Valencia CF",
+      "league": "Spain - LaLiga",
+      "file": "catalog/329a4e89632f6171955f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Valencia%20CF.png",
+      "source_blob": "0ff1356ce991a5f3c5a8f044d6118377ceb9d95f"
+    },
+    {
+      "name": "Villarreal CF",
+      "league": "Spain - LaLiga",
+      "file": "catalog/f151dcfc22b11d0eb3b2.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Spain%20-%20LaLiga/Villarreal%20CF.png",
+      "source_blob": "f750f3e8ceb5613d439ece556ad6a0edf7a187d0"
+    },
+    {
+      "name": "AIK",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/17f28b18d2d7fb9fcf23.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/AIK.png",
+      "source_blob": "626d1999006b4d3f889e3d757ce4831a191d2009"
+    },
+    {
+      "name": "BK Häcken",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/4bb45b9d80556b84dde1.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/BK%20H%C3%A4cken.png",
+      "source_blob": "43084d6bee3704f651e2ec6d169f0cce99f73fa2"
+    },
+    {
+      "name": "Degerfors IF",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/46446195928c92b60825.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/Degerfors%20IF.png",
+      "source_blob": "011edd63d34d8815acd81c4ec7c851a2d61682be"
+    },
+    {
+      "name": "Djurgårdens IF",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/56bff083d86d1bb54ae3.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/Djurg%C3%A5rdens%20IF.png",
+      "source_blob": "8519689ae7600e82ace1435919a038bb3ea22e88"
+    },
+    {
+      "name": "GAIS",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/74bf65d81897105c8e5d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/GAIS.png",
+      "source_blob": "0ff16dc0e51bbf752441cbeb0c7c078386ccc53a"
+    },
+    {
+      "name": "Halmstads BK",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/9c4f935a094b49fe3ab8.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/Halmstads%20BK.png",
+      "source_blob": "0b147f49075a074e45120c24077376b6d41e4404"
+    },
+    {
+      "name": "Hammarby IF",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/bcce3377b50b717b4ee1.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/Hammarby%20IF.png",
+      "source_blob": "c34476cdeb8587ab000c82cb54569e22bd171aa4"
+    },
+    {
+      "name": "IF Brommapojkarna",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/d6c1a288de6c578a5b3b.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/IF%20Brommapojkarna.png",
+      "source_blob": "f1349a25fc553b555db084ce19f34fc5dbe6d7cd"
+    },
+    {
+      "name": "IF Elfsborg",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/b9a170be5d686a0dfce4.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/IF%20Elfsborg.png",
+      "source_blob": "d7f50befd04278f2ae0fd72cdcfe75d1a1bd5aa7"
+    },
+    {
+      "name": "IFK Göteborg",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/8f5b85fef1c7eaa3e656.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/IFK%20G%C3%B6teborg.png",
+      "source_blob": "0e011e52c161f21291692e54d48e30424de6f071"
+    },
+    {
+      "name": "IK Sirius",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/ab43c61e736223501c86.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/IK%20Sirius.png",
+      "source_blob": "1383c2c6810ea0e7a94e600f4574de7a5cd945a8"
+    },
+    {
+      "name": "Kalmar FF",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/c60045702259cc5085cb.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/Kalmar%20FF.png",
+      "source_blob": "d562d8fcb3249a43271c3ee2d6d88948a94640d7"
+    },
+    {
+      "name": "Malmö FF",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/a4b7766ce309bd6151ff.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/Malm%C3%B6%20FF.png",
+      "source_blob": "433dea64248bd5ceb4a10ffa834e15f26a4eee82"
+    },
+    {
+      "name": "Mjällby AIF",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/041bc5e8d8af3768160d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/Mj%C3%A4llby%20AIF.png",
+      "source_blob": "c544f36c2562548179d1490c9893d52856460a77"
+    },
+    {
+      "name": "Västerås SK",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/d4a1fa56f15ffda12668.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/V%C3%A4ster%C3%A5s%20SK.png",
+      "source_blob": "273d5ce1f08d44ded614a6ff7fbdf3a8ce77f008"
+    },
+    {
+      "name": "Örgryte IS",
+      "league": "Sweden - Allsvenskan",
+      "file": "catalog/cca5959508550702cc2d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Sweden%20-%20Allsvenskan/%C3%96rgryte%20IS.png",
+      "source_blob": "6129b293a5ae4ae0cb7c715ab16d06fe8869c352"
+    },
+    {
+      "name": "BSC Young Boys",
+      "league": "Switzerland - Super League",
+      "file": "catalog/6a426cfb1661b8dae1f0.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Switzerland%20-%20Super%20League/BSC%20Young%20Boys.png",
+      "source_blob": "187bc68bba7b7bd66fb0ba9cb78d3e3de329b11d"
+    },
+    {
+      "name": "FC Basel 1893",
+      "league": "Switzerland - Super League",
+      "file": "catalog/f83aabb2e9dd7551e952.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Switzerland%20-%20Super%20League/FC%20Basel%201893.png",
+      "source_blob": "e612bb37e1439f7b173b524c09422200fa1c32fe"
+    },
+    {
+      "name": "FC Lausanne-Sport",
+      "league": "Switzerland - Super League",
+      "file": "catalog/7652ad0021c4b89b5c43.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Switzerland%20-%20Super%20League/FC%20Lausanne-Sport.png",
+      "source_blob": "d094617db6be06789d6aebb163129c3a231ba0e4"
+    },
+    {
+      "name": "FC Lugano",
+      "league": "Switzerland - Super League",
+      "file": "catalog/61b4f0c047d613dbd3ab.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Switzerland%20-%20Super%20League/FC%20Lugano.png",
+      "source_blob": "3abfa5af324e9c2842f802c150863f67a8420709"
+    },
+    {
+      "name": "FC Luzern",
+      "league": "Switzerland - Super League",
+      "file": "catalog/ac27b854c6770c5c3166.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Switzerland%20-%20Super%20League/FC%20Luzern.png",
+      "source_blob": "df3b23da9171c31e2e32341b860249d73da76b6a"
+    },
+    {
+      "name": "FC Sion",
+      "league": "Switzerland - Super League",
+      "file": "catalog/3dfd438c4580c350b79f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Switzerland%20-%20Super%20League/FC%20Sion.png",
+      "source_blob": "8dd050967a51da7b1350f4156a6e71a3054a10f3"
+    },
+    {
+      "name": "FC St. Gallen 1879",
+      "league": "Switzerland - Super League",
+      "file": "catalog/2eda5f14637123b3b779.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Switzerland%20-%20Super%20League/FC%20St.%20Gallen%201879.png",
+      "source_blob": "735e0af5dee8c393d9eb4109fab0063d80c3abd6"
+    },
+    {
+      "name": "FC Thun",
+      "league": "Switzerland - Super League",
+      "file": "catalog/bfc3c134dd92662bf637.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Switzerland%20-%20Super%20League/FC%20Thun.png",
+      "source_blob": "61bda68a9b373cb1f1333999ef5dbc53ecc3a0b0"
+    },
+    {
+      "name": "FC Vaduz",
+      "league": "Switzerland - Super League",
+      "file": "catalog/89bd63b862e931800954.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Switzerland%20-%20Super%20League/FC%20Vaduz.png",
+      "source_blob": "12046d188bbd978cc3aa79a5a66d509dd1feb17b"
+    },
+    {
+      "name": "FC Zürich",
+      "league": "Switzerland - Super League",
+      "file": "catalog/b3cd887b2c9b681e440f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Switzerland%20-%20Super%20League/FC%20Z%C3%BCrich.png",
+      "source_blob": "bd35b6a3628da824fe1da2328952c07d822a5947"
+    },
+    {
+      "name": "Grasshopper Club Zurich",
+      "league": "Switzerland - Super League",
+      "file": "catalog/3ca65a48b2a2beef8f37.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Switzerland%20-%20Super%20League/Grasshopper%20Club%20Zurich.png",
+      "source_blob": "e41ad7c7fb20927455b717a94c28a6c6086b6b7a"
+    },
+    {
+      "name": "Servette FC",
+      "league": "Switzerland - Super League",
+      "file": "catalog/0a67e87142576da83453.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Switzerland%20-%20Super%20League/Servette%20FC.png",
+      "source_blob": "013050358c589d9eed4963e5c1ccaf214a1d96bc"
+    },
+    {
+      "name": "Alanyaspor",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/ecf5956165534b91834e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Alanyaspor.png",
+      "source_blob": "c4bfc6d52b345460b98f9d02d4ad6f25309a5b98"
+    },
+    {
+      "name": "Amed SK",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/400b84a88a824bfdb6c9.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Amed%20SK.png",
+      "source_blob": "e56a164bf6f2b769e4bee1c15cac7687feafd840"
+    },
+    {
+      "name": "Basaksehir FK",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/5bf16ae193ce7abaabb0.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Basaksehir%20FK.png",
+      "source_blob": "f247cd5d0bd23c592abe307de1e9e3b5b7ac28e6"
+    },
+    {
+      "name": "Besiktas JK",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/0b023c51d1bca7a1338c.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Besiktas%20JK.png",
+      "source_blob": "114a7809a45417c149bc70376014475d677fcca8"
+    },
+    {
+      "name": "Caykur Rizespor",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/fd385b562acb42a0df7f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Caykur%20Rizespor.png",
+      "source_blob": "609c0fecb80c955ff19c42e7f334952bb0a55e2c"
+    },
+    {
+      "name": "Corum FK",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/4dc45c07c109413a5320.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Corum%20FK.png",
+      "source_blob": "28da7cc780e02d5a38e9d0a307ff8382100491c2"
+    },
+    {
+      "name": "Erzurumspor FK",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/373be9ff07560f962a05.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Erzurumspor%20FK.png",
+      "source_blob": "4c2278851ebe90c89b1ab0ce64eff5e1b42dd1e6"
+    },
+    {
+      "name": "Eyüpspor",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/9429a281eab13a446a08.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Ey%C3%BCpspor.png",
+      "source_blob": "d275a3e5cbb1e42915d0d969952b80143f7e14b2"
+    },
+    {
+      "name": "Fenerbahce",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/d5693584aecae7fa475a.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Fenerbahce.png",
+      "source_blob": "028d2942488922fc78ea6e0f336c1400eee198bc"
+    },
+    {
+      "name": "Galatasaray",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/efa87e6d3a33df63301e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Galatasaray.png",
+      "source_blob": "56b20744bc010770258cc64d08235aaede51fd67"
+    },
+    {
+      "name": "Gaziantep FK",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/be5ff9e7d46efe8037f1.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Gaziantep%20FK.png",
+      "source_blob": "94768d3481f7984b0c1826b00ec4005c4d3da95d"
+    },
+    {
+      "name": "Genclerbirligi Ankara",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/9e861eea39d902eb8bfa.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Genclerbirligi%20Ankara.png",
+      "source_blob": "f164c34c893aa5eb11f0ee6e72c4da729b8fdc31"
+    },
+    {
+      "name": "Göztepe",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/51fd0a459582bc15a2b1.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/G%C3%B6ztepe.png",
+      "source_blob": "a4f9189a7c2c75002c74a15a91b36421ca3b71fd"
+    },
+    {
+      "name": "Kasimpasa",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/c6fb89660885d1fdffe7.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Kasimpasa.png",
+      "source_blob": "78887d8478017424b7d64b31f318a1113439e559"
+    },
+    {
+      "name": "Kocaelispor",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/cbbd772078eefa6f1f0b.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Kocaelispor.png",
+      "source_blob": "8f832694f2192642bbcbb3fd66fa8fa41b2c66c1"
+    },
+    {
+      "name": "Konyaspor",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/48fe135dd967863aa08e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Konyaspor.png",
+      "source_blob": "34734085fa697c698a04325f1735ffd1a01d5145"
+    },
+    {
+      "name": "Samsunspor",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/e562fe0fc0827251b0e2.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Samsunspor.png",
+      "source_blob": "38d63a3b208b7d1010fff1963f29efdae68cc6cb"
+    },
+    {
+      "name": "Trabzonspor",
+      "league": "Türkiye - Süper Lig",
+      "file": "catalog/f1b4b144251c139f9c1e.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/T%C3%BCrkiye%20-%20S%C3%BCper%20Lig/Trabzonspor.png",
+      "source_blob": "85ad34ce492a98daa06a7687234361bdc24db1ca"
+    },
+    {
+      "name": "Bukovyna Chernivtsi",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/28fa9390c023e70339cf.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/Bukovyna%20Chernivtsi.png",
+      "source_blob": "c2e7b03e375fa4b3fb9ea773b9de27c8ded1f245"
+    },
+    {
+      "name": "Chornomorets Odesa",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/24e891577fc634bd85ca.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/Chornomorets%20Odesa.png",
+      "source_blob": "c46a1e65e9f9dfe9a5f1ba3a1a3f8560b9a6fbe0"
+    },
+    {
+      "name": "Dynamo Kyiv",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/cea5b543f822045d458d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/Dynamo%20Kyiv.png",
+      "source_blob": "d69985c0cf047f355a04eae6f357fc615635f86b"
+    },
+    {
+      "name": "Epicentr Kamyanets-Podilskyi",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/92359e6e1c7abffcd256.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/Epicentr%20Kamyanets-Podilskyi.png",
+      "source_blob": "9333914d4b02c05b4b97e9cd922c2e281912425a"
+    },
+    {
+      "name": "FC Kharkiv",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/7fc7f95e7557cd45c27b.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/FC%20Kharkiv.png",
+      "source_blob": "7c02c269cebd3d4ed6c169f60f8bf59b2ec14da3"
+    },
+    {
+      "name": "FC Kudrivka",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/2a2acc0207304db52247.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/FC%20Kudrivka.png",
+      "source_blob": "54f551417557be8a9f46d939a1dc7ab299d3893d"
+    },
+    {
+      "name": "Karpaty Lviv",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/9f9e032fe5fc204fac97.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/Karpaty%20Lviv.png",
+      "source_blob": "66c181293a11bf2a4af67386bed88aa774603168"
+    },
+    {
+      "name": "Kolos Kovalivka",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/e4a71135d9fb1c17b507.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/Kolos%20Kovalivka.png",
+      "source_blob": "2cf9d1ef3bb8fccd9d33c632ee11bc7c6feddcd5"
+    },
+    {
+      "name": "Kryvbas Kryvyi Rig",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/e91861f4698cfcbdb8ca.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/Kryvbas%20Kryvyi%20Rig.png",
+      "source_blob": "543e68e95d62cbd4d8f26566455c23c26c4ca0db"
+    },
+    {
+      "name": "LNZ Cherkasy",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/738e35c5888e89d18d2d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/LNZ%20Cherkasy.png",
+      "source_blob": "d5e0fb5900839bc8b3b420c3791dacde0a471c17"
+    },
+    {
+      "name": "Livyi Bereg Kyiv",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/4c557da34bd378bce40a.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/Livyi%20Bereg%20Kyiv.png",
+      "source_blob": "7ee63ab27c06219f5d620f0ff22755208d365cfa"
+    },
+    {
+      "name": "NK Veres Rivne",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/dbfb14bc14cae9a7183d.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/NK%20Veres%20Rivne.png",
+      "source_blob": "c3b580388f85a8814d78e43e824673e1f9081327"
+    },
+    {
+      "name": "Obolon Kyiv",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/5e0a3fc6a24933219a0f.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/Obolon%20Kyiv.png",
+      "source_blob": "04bf0dd9127418825255de418c1e8b0576411479"
+    },
+    {
+      "name": "Polissya Zhytomyr",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/01242b5bef821ac80faa.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/Polissya%20Zhytomyr.png",
+      "source_blob": "dd9e54a0db7bc66fd50f687bee6af8263ab061c3"
+    },
+    {
+      "name": "Shakhtar Donetsk",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/c3164adc0af7b8eb90ff.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/Shakhtar%20Donetsk.png",
+      "source_blob": "f564222a059023f10ee9e58cbf79bd50de543915"
+    },
+    {
+      "name": "Zorya Lugansk",
+      "league": "Ukraine - Premier Liga",
+      "file": "catalog/2b915efca6d35f4db5aa.png",
+      "source": "https://raw.githubusercontent.com/luukhopman/football-logos/2a3978f0b4730645c205d855a4bda54c161183e9/logos/Ukraine%20-%20Premier%20Liga/Zorya%20Lugansk.png",
+      "source_blob": "d329e8c0fcb8f8a5958366e3406bf005a03a3da1"
+    }
+  ],
+  "aliases": {
+    "07 elversberg": [
+      "catalog/00d1de34a0aa61c8d3ac.png"
+    ],
+    "1 fc koln": [
+      "catalog/883aeb98d7c8dafbc34b.png"
+    ],
+    "1 fc slovacko": [
+      "catalog/47380ec93978826a1ff5.png"
+    ],
+    "1 fc union berlin": [
+      "catalog/eefb5fc7d1b383652e32.png"
+    ],
+    "1 fsv mainz 05": [
+      "catalog/48bdc728dcfc05643346.png"
+    ],
+    "1 koln": [
+      "catalog/883aeb98d7c8dafbc34b.png"
+    ],
+    "1 slovacko": [
+      "catalog/47380ec93978826a1ff5.png"
+    ],
+    "1 union berlin": [
+      "catalog/eefb5fc7d1b383652e32.png"
+    ],
+    "aalesunds": [
+      "catalog/8428f164cf4600200c21.png"
+    ],
+    "aalesunds fk": [
+      "catalog/8428f164cf4600200c21.png"
+    ],
+    "aarhus gf": [
+      "catalog/04c8b52791a1448cb96c.png"
+    ],
+    "aberdeen": [
+      "catalog/1d974ca06cf077257382.png"
+    ],
+    "aberdeen fc": [
+      "catalog/1d974ca06cf077257382.png"
+    ],
+    "ac horsens": [
+      "catalog/dcd1d7c6e256bc787ac9.png"
+    ],
+    "ac milan": [
+      "catalog/96fe05206b278c28f98c.png"
+    ],
+    "ac monza": [
+      "catalog/b8201182d81c38ba742a.png"
+    ],
+    "ac sparta prague": [
+      "catalog/c1c2cc9e7b7f13995038.png"
+    ],
+    "academico viseu": [
+      "catalog/70c228570ecc0475cb6b.png"
+    ],
+    "academico viseu fc": [
+      "catalog/70c228570ecc0475cb6b.png"
+    ],
+    "acf fiorentina": [
+      "catalog/9f650fdf590213a81ccf.png"
+    ],
+    "acsc arges": [
+      "catalog/e4053f3950b2f75d0c24.png"
+    ],
+    "acsc fc arges": [
+      "catalog/e4053f3950b2f75d0c24.png"
+    ],
+    "ado den haag": [
+      "catalog/ebe760163b472ee0c351.png"
+    ],
+    "ae kifisia": [
+      "catalog/3e094510ac8570119f74.png"
+    ],
+    "aek athens": [
+      "catalog/e596a7af6f5b9ae1f8d4.png"
+    ],
+    "afc bournemouth": [
+      "catalog/c997f55ac25f03c3e686.png"
+    ],
+    "aik": [
+      "catalog/17f28b18d2d7fb9fcf23.png"
+    ],
+    "aj auxerre": [
+      "catalog/f1ac12bbbd9be6549679.png"
+    ],
+    "ajax amsterdam": [
+      "catalog/50cd41bb97668614119d.png"
+    ],
+    "akhmat grozny": [
+      "catalog/493c4ecd4f98f1e7f67e.png"
+    ],
+    "akron tolyatti": [
+      "catalog/87579108d99cb1561bac.png"
+    ],
+    "alanyaspor": [
+      "catalog/ecf5956165534b91834e.png"
+    ],
+    "alverca": [
+      "catalog/6d62ba9f1cd9d402397a.png"
+    ],
+    "amed": [
+      "catalog/400b84a88a824bfdb6c9.png"
+    ],
+    "amed sk": [
+      "catalog/400b84a88a824bfdb6c9.png"
+    ],
+    "angers sco": [
+      "catalog/a16522fc2767c1fd3dde.png"
+    ],
+    "arda kardzhali": [
+      "catalog/36cfb24079d10d1d453c.png"
+    ],
+    "aris thessaloniki": [
+      "catalog/a7a68063c05058e27b10.png"
+    ],
+    "arouca": [
+      "catalog/cb73f636a6e1f69edcaf.png"
+    ],
+    "arsenal": [
+      "catalog/17109ae14671e25a0387.png"
+    ],
+    "arsenal fc": [
+      "catalog/17109ae14671e25a0387.png"
+    ],
+    "artis brno": [
+      "catalog/aeb9603e5a8c500018f3.png"
+    ],
+    "as monaco": [
+      "catalog/ccab051d18f3d9afb6b4.png"
+    ],
+    "as roma": [
+      "catalog/91693582cb0249df0cec.png"
+    ],
+    "asteras aktor": [
+      "catalog/f212fd747edf9fe2c163.png"
+    ],
+    "aston villa": [
+      "catalog/a8523a43e1c727d29d12.png"
+    ],
+    "atalanta bc": [
+      "catalog/393adaa31dae2bb1bb5e.png"
+    ],
+    "athletic bilbao": [
+      "catalog/77628bf47140c55208e8.png"
+    ],
+    "atletico de madrid": [
+      "catalog/9e4478bf79f60923142c.png"
+    ],
+    "atromitos athens": [
+      "catalog/39357b8730656ff895ba.png"
+    ],
+    "augsburg": [
+      "catalog/c553414ad056226513e3.png"
+    ],
+    "austria lustenau": [
+      "catalog/4c7e6c5ec76a50a92371.png"
+    ],
+    "austria vienna": [
+      "catalog/1dd4100a0d23afd160b9.png"
+    ],
+    "az alkmaar": [
+      "catalog/7a8ee80bc58027b5ce52.png"
+    ],
+    "baltika kaliningrad": [
+      "catalog/6cc3a3e38d970fe36b5f.png"
+    ],
+    "banik ostrava": [
+      "catalog/068d7438d2495d4291bf.png"
+    ],
+    "barcelona": [
+      "catalog/ce67e26349973235c24e.png"
+    ],
+    "basaksehir": [
+      "catalog/5bf16ae193ce7abaabb0.png"
+    ],
+    "basaksehir fk": [
+      "catalog/5bf16ae193ce7abaabb0.png"
+    ],
+    "basel 1893": [
+      "catalog/f83aabb2e9dd7551e952.png"
+    ],
+    "bayer 04 leverkusen": [
+      "catalog/09e026d2a81ae2292946.png"
+    ],
+    "bayern munich": [
+      "catalog/72c1565deb6f4a303601.png"
+    ],
+    "beitar jerusalem": [
+      "catalog/8b0f7751be99b81344bb.png"
+    ],
+    "besiktas jk": [
+      "catalog/0b023c51d1bca7a1338c.png"
+    ],
+    "beveren": [
+      "catalog/4087bc8a16b0b8ca9592.png"
+    ],
+    "bk hacken": [
+      "catalog/4bb45b9d80556b84dde1.png"
+    ],
+    "bodglimt": [
+      "catalog/48ec0e1b8e8c1f004975.png"
+    ],
+    "bohemians prague 1905": [
+      "catalog/9eb7f914e9a27b3c4966.png"
+    ],
+    "bologna 1909": [
+      "catalog/a46e8d26505144996fdf.png"
+    ],
+    "bologna fc 1909": [
+      "catalog/a46e8d26505144996fdf.png"
+    ],
+    "borussia dortmund": [
+      "borussia-dortmund.png"
+    ],
+    "borussia monchengladbach": [
+      "catalog/9c41d329eac8e144a39f.png"
+    ],
+    "botev plovdiv": [
+      "catalog/36e10ac7cfbaf3c6ec55.png"
+    ],
+    "botev vratsa": [
+      "catalog/3b24d459c89675571a2e.png"
+    ],
+    "botosani": [
+      "catalog/fd2e2bf1923a087d513c.png"
+    ],
+    "bournemouth": [
+      "catalog/c997f55ac25f03c3e686.png"
+    ],
+    "braga": [
+      "catalog/e618f65164336b6d4c2c.png"
+    ],
+    "brann": [
+      "catalog/a3aa23b50c0ceba966ba.png"
+    ],
+    "brentford": [
+      "catalog/2d076a2147a42d636147.png"
+    ],
+    "brentford fc": [
+      "catalog/2d076a2147a42d636147.png"
+    ],
+    "brighton hove albion": [
+      "catalog/9e573acc1c092c0e2628.png"
+    ],
+    "brondby if": [
+      "catalog/0206b063bdcf13670cba.png"
+    ],
+    "bsc young boys": [
+      "catalog/6a426cfb1661b8dae1f0.png"
+    ],
+    "bukovyna chernivtsi": [
+      "catalog/28fa9390c023e70339cf.png"
+    ],
+    "ca osasuna": [
+      "catalog/21c8cc093d16d5fe98cb.png"
+    ],
+    "cagliari calcio": [
+      "catalog/98bbedaab01914b38682.png"
+    ],
+    "cambuur leeuwarden": [
+      "catalog/f8d2e5da4daa8faf6873.png"
+    ],
+    "casa pia": [
+      "catalog/4b164f1942ae246412e7.png"
+    ],
+    "casa pia ac": [
+      "catalog/4b164f1942ae246412e7.png"
+    ],
+    "caykur rizespor": [
+      "catalog/fd385b562acb42a0df7f.png"
+    ],
+    "cd nacional": [
+      "catalog/bfedbaccf4e65633f105.png"
+    ],
+    "cd santa clara": [
+      "catalog/9a058304f35132c2b163.png"
+    ],
+    "celta de vigo": [
+      "catalog/74b506b9bdb6179f3450.png"
+    ],
+    "celtic": [
+      "catalog/ab0e39f572424e79478a.png"
+    ],
+    "celtic fc": [
+      "catalog/ab0e39f572424e79478a.png"
+    ],
+    "cercle brugge": [
+      "catalog/b06e6c4db50645d540b8.png"
+    ],
+    "cf estrela amadora": [
+      "catalog/13cfeca90349c68905fe.png"
+    ],
+    "cfr cluj": [
+      "catalog/067c1364d3dae7627e12.png"
+    ],
+    "chelsea": [
+      "catalog/db30fef78bb6bba9e8be.png"
+    ],
+    "chelsea fc": [
+      "catalog/db30fef78bb6bba9e8be.png"
+    ],
+    "cherno more varna": [
+      "catalog/a3220a8a25d079566fe5.png"
+    ],
+    "chornomorets odesa": [
+      "catalog/24e891577fc634bd85ca.png"
+    ],
+    "club brugge kv": [
+      "catalog/0f1b141aba05568d20d1.png"
+    ],
+    "como 1907": [
+      "catalog/4c468114ad016f2278f7.png"
+    ],
+    "copenhagen": [
+      "catalog/651069a98798ef760375.png"
+    ],
+    "corum": [
+      "catalog/4dc45c07c109413a5320.png"
+    ],
+    "corum fk": [
+      "catalog/4dc45c07c109413a5320.png"
+    ],
+    "corvinul hunedoara": [
+      "catalog/f4a9b730c68e8550739c.png"
+    ],
+    "coventry city": [
+      "catalog/511e03d2abc2ed645dfd.png"
+    ],
+    "cracovia": [
+      "catalog/facf830def733e17b07f.png"
+    ],
+    "crystal palace": [
+      "catalog/59d440f42e14cc0b50f2.png"
+    ],
+    "cs maritimo": [
+      "catalog/206e9a1fb534fe602df9.png"
+    ],
+    "csikszereda miercurea ciuc": [
+      "catalog/1faa07351057b099c268.png"
+    ],
+    "cska 1948": [
+      "catalog/54aa6b0cbc26bcb8df4a.png"
+    ],
+    "cska moscow": [
+      "catalog/45cf65d7f88e4c1359e9.png"
+    ],
+    "cska sofia": [
+      "catalog/1585a3d9d68e19ed03b3.png"
+    ],
+    "cukaricki": [
+      "catalog/7c54a7baa9ddfb6cd528.png"
+    ],
+    "degerfors if": [
+      "catalog/46446195928c92b60825.png"
+    ],
+    "deportivo a coruna": [
+      "catalog/f15ed392f45b90517a82.png"
+    ],
+    "deportivo alaves": [
+      "catalog/b04f75f6a726155d3f33.png"
+    ],
+    "dinamo 1948": [
+      "catalog/c6ac0ea7051ff54c3b26.png"
+    ],
+    "dinamo makhachkala": [
+      "catalog/01124a1bed57e61bf50f.png"
+    ],
+    "djurgardens if": [
+      "catalog/56bff083d86d1bb54ae3.png"
+    ],
+    "dunav ruse": [
+      "catalog/e78e633963bf799b8419.png"
+    ],
+    "dundee": [
+      "catalog/8fb26ff1c3b50184f542.png"
+    ],
+    "dundee fc": [
+      "catalog/8fb26ff1c3b50184f542.png"
+    ],
+    "dundee united": [
+      "catalog/b5b354dbb254a1ba1ffd.png"
+    ],
+    "dundee united fc": [
+      "catalog/b5b354dbb254a1ba1ffd.png"
+    ],
+    "dynamo kyiv": [
+      "catalog/cea5b543f822045d458d.png"
+    ],
+    "dynamo moscow": [
+      "catalog/56e0f61e9e46b2b0b15d.png"
+    ],
+    "eintracht frankfurt": [
+      "catalog/dc6550998532ea70ec84.png"
+    ],
+    "elche": [
+      "catalog/3ab1c0707791e759812f.png"
+    ],
+    "elche cf": [
+      "catalog/3ab1c0707791e759812f.png"
+    ],
+    "epicentr kamyanets podilskyi": [
+      "catalog/92359e6e1c7abffcd256.png"
+    ],
+    "erzurumspor": [
+      "catalog/373be9ff07560f962a05.png"
+    ],
+    "erzurumspor fk": [
+      "catalog/373be9ff07560f962a05.png"
+    ],
+    "espanyol barcelona": [
+      "catalog/2d092c938c7daaed02e9.png"
+    ],
+    "estac troyes": [
+      "catalog/937c06897a0291c08fca.png"
+    ],
+    "estrela amadora": [
+      "catalog/13cfeca90349c68905fe.png"
+    ],
+    "everton": [
+      "catalog/883cae5d243b9614d728.png"
+    ],
+    "everton fc": [
+      "catalog/883cae5d243b9614d728.png"
+    ],
+    "excelsior rotterdam": [
+      "catalog/6e91088249afd0b355c2.png"
+    ],
+    "eyupspor": [
+      "catalog/9429a281eab13a446a08.png"
+    ],
+    "fakel voronezh": [
+      "catalog/7e1af19e4579487aea3a.png"
+    ],
+    "falkirk": [
+      "catalog/e7f79ee01ff6ac845666.png"
+    ],
+    "falkirk fc": [
+      "catalog/e7f79ee01ff6ac845666.png"
+    ],
+    "famalicao": [
+      "catalog/54997f6920d7ab6894c4.png"
+    ],
+    "fc alverca": [
+      "catalog/6d62ba9f1cd9d402397a.png"
+    ],
+    "fc arouca": [
+      "catalog/cb73f636a6e1f69edcaf.png"
+    ],
+    "fc augsburg": [
+      "catalog/c553414ad056226513e3.png"
+    ],
+    "fc banik ostrava": [
+      "catalog/068d7438d2495d4291bf.png"
+    ],
+    "fc barcelona": [
+      "catalog/ce67e26349973235c24e.png"
+    ],
+    "fc basel 1893": [
+      "catalog/f83aabb2e9dd7551e952.png"
+    ],
+    "fc botosani": [
+      "catalog/fd2e2bf1923a087d513c.png"
+    ],
+    "fc copenhagen": [
+      "catalog/651069a98798ef760375.png"
+    ],
+    "fc dinamo 1948": [
+      "catalog/c6ac0ea7051ff54c3b26.png"
+    ],
+    "fc famalicao": [
+      "catalog/54997f6920d7ab6894c4.png"
+    ],
+    "fc groningen": [
+      "catalog/3f1a8ad471796874d081.png"
+    ],
+    "fc hradec kralove": [
+      "catalog/25c856550b6ff27c6db0.png"
+    ],
+    "fc kharkiv": [
+      "catalog/7fc7f95e7557cd45c27b.png"
+    ],
+    "fc krasnodar": [
+      "catalog/c441bd93fc1f6340c627.png"
+    ],
+    "fc kudrivka": [
+      "catalog/2a2acc0207304db52247.png"
+    ],
+    "fc lausanne sport": [
+      "catalog/7652ad0021c4b89b5c43.png"
+    ],
+    "fc lorient": [
+      "catalog/e1310ba6923f60ac649b.png"
+    ],
+    "fc lugano": [
+      "catalog/61b4f0c047d613dbd3ab.png"
+    ],
+    "fc luzern": [
+      "catalog/ac27b854c6770c5c3166.png"
+    ],
+    "fc midtjylland": [
+      "catalog/db6113fb4f77bd2d889d.png"
+    ],
+    "fc nordsjaelland": [
+      "catalog/6f14d713d9b1a4aef253.png"
+    ],
+    "fc orenburg": [
+      "catalog/b45f59fed218f3eb7620.png"
+    ],
+    "fc porto": [
+      "catalog/a2542c0544810ae7856e.png"
+    ],
+    "fc rapid 1923": [
+      "catalog/5ae773466c92e54ca8e5.png"
+    ],
+    "fc rostov": [
+      "catalog/28ed9c9cae4542fc7935.png"
+    ],
+    "fc schalke 04": [
+      "catalog/6a47e4c004083dec8d1d.png"
+    ],
+    "fc sion": [
+      "catalog/3dfd438c4580c350b79f.png"
+    ],
+    "fc slovan liberec": [
+      "catalog/58d9dd989940f782dcf1.png"
+    ],
+    "fc st gallen 1879": [
+      "catalog/2eda5f14637123b3b779.png"
+    ],
+    "fc thun": [
+      "catalog/bfc3c134dd92662bf637.png"
+    ],
+    "fc toulouse": [
+      "catalog/4dc2960793f1a779adaa.png"
+    ],
+    "fc twente enschede": [
+      "catalog/f53b7422520740bea26b.png"
+    ],
+    "fc universitatea cluj": [
+      "catalog/69f25f50353ccc68a841.png"
+    ],
+    "fc utrecht": [
+      "catalog/d09bb81a59de602983e7.png"
+    ],
+    "fc vaduz": [
+      "catalog/89bd63b862e931800954.png"
+    ],
+    "fc viktoria plzen": [
+      "catalog/8c5121312b3bb2aba1ad.png"
+    ],
+    "fc voluntari": [
+      "catalog/b8b38a3b26b20c800863.png"
+    ],
+    "fc zbrojovka brno": [
+      "catalog/5403d589481c2fbadea4.png"
+    ],
+    "fc zlin": [
+      "catalog/1b3173976d60a253e0c8.png"
+    ],
+    "fc zurich": [
+      "catalog/b3cd887b2c9b681e440f.png"
+    ],
+    "fcsb": [
+      "catalog/53f6e1755dcc7f9f505f.png"
+    ],
+    "fcv farul constanta": [
+      "catalog/e8648e79ef187ef8c913.png"
+    ],
+    "fenerbahce": [
+      "fenerbahce.png"
+    ],
+    "feyenoord rotterdam": [
+      "catalog/9f8a77c852ab4a0bdd95.png"
+    ],
+    "fk bodglimt": [
+      "catalog/48ec0e1b8e8c1f004975.png"
+    ],
+    "fk csikszereda miercurea ciuc": [
+      "catalog/1faa07351057b099c268.png"
+    ],
+    "fk cukaricki": [
+      "catalog/7c54a7baa9ddfb6cd528.png"
+    ],
+    "fk imt belgrad": [
+      "catalog/ee94842aab1633ab4a27.png"
+    ],
+    "fk jablonec": [
+      "catalog/1a958938bc198086bc65.png"
+    ],
+    "fk macva sabac": [
+      "catalog/f5a1fabfa2166cde11f6.png"
+    ],
+    "fk mlada boleslav": [
+      "catalog/e4edefafa1662f04e35e.png"
+    ],
+    "fk mladost lucani": [
+      "catalog/bb1847ee18ce10d44952.png"
+    ],
+    "fk novi pazar": [
+      "catalog/56d5782a4ed879d42028.png"
+    ],
+    "fk pardubice": [
+      "catalog/950ae964b1c69dd39769.png"
+    ],
+    "fk partizan belgrade": [
+      "catalog/87385a82c9ede9bd7e8e.png"
+    ],
+    "fk radnicki 1923 kragujevac": [
+      "catalog/79abbb5079dda1193e5c.png"
+    ],
+    "fk radnicki nis": [
+      "catalog/28f8bc1b6e6a1209ba50.png"
+    ],
+    "fk radnik surdulica": [
+      "catalog/e2ef1379a71545dd619c.png"
+    ],
+    "fk teplice": [
+      "catalog/86540ea5e4121589b410.png"
+    ],
+    "fk vojvodina novi sad": [
+      "catalog/db4846943cd2a3d669da.png"
+    ],
+    "fk zeleznicar pancevo": [
+      "catalog/5bd53e320a04fc411bb5.png"
+    ],
+    "fk zemun": [
+      "catalog/a89cfbacd510a226eb86.png"
+    ],
+    "fortuna sittard": [
+      "catalog/3832402d2ae1e151b772.png"
+    ],
+    "fredrikstad": [
+      "catalog/5d8f79a8acc29fed2a8f.png"
+    ],
+    "fredrikstad fk": [
+      "catalog/5d8f79a8acc29fed2a8f.png"
+    ],
+    "freiburg": [
+      "catalog/0c68d9dec3498d3bab40.png"
+    ],
+    "frosinone calcio": [
+      "catalog/9d1fc542117c3c072909.png"
+    ],
+    "fulham": [
+      "catalog/1f58b419d3f098256177.png"
+    ],
+    "fulham fc": [
+      "catalog/1f58b419d3f098256177.png"
+    ],
+    "gais": [
+      "catalog/74bf65d81897105c8e5d.png"
+    ],
+    "galatasaray": [
+      "catalog/efa87e6d3a33df63301e.png"
+    ],
+    "gaziantep": [
+      "catalog/be5ff9e7d46efe8037f1.png"
+    ],
+    "gaziantep fk": [
+      "catalog/be5ff9e7d46efe8037f1.png"
+    ],
+    "gd estoril praia": [
+      "catalog/35b18376be995ccef329.png"
+    ],
+    "genclerbirligi ankara": [
+      "catalog/9e861eea39d902eb8bfa.png"
+    ],
+    "genoa cfc": [
+      "catalog/912ef1ec5842b3d99f5c.png"
+    ],
+    "getafe": [
+      "catalog/ca1f32c5cdcad0157916.png"
+    ],
+    "getafe cf": [
+      "catalog/ca1f32c5cdcad0157916.png"
+    ],
+    "gil vicente": [
+      "catalog/10f90c9e3e8c4a26888f.png"
+    ],
+    "gil vicente fc": [
+      "catalog/10f90c9e3e8c4a26888f.png"
+    ],
+    "gks katowice": [
+      "catalog/9164a68b00bca4c57419.png"
+    ],
+    "gnk dinamo zagreb": [
+      "catalog/02c42b37681eee4ab0d4.png"
+    ],
+    "go ahead eagles": [
+      "catalog/9a1ec00332237c7daa06.png"
+    ],
+    "gornik zabrze": [
+      "catalog/fe735c43c8b1c39f4483.png"
+    ],
+    "goztepe": [
+      "catalog/51fd0a459582bc15a2b1.png"
+    ],
+    "grasshopper club zurich": [
+      "catalog/3ca65a48b2a2beef8f37.png"
+    ],
+    "grazer ak 1902": [
+      "catalog/7a10999fd4be514fd906.png"
+    ],
+    "groningen": [
+      "catalog/3f1a8ad471796874d081.png"
+    ],
+    "halmstads bk": [
+      "catalog/9c4f935a094b49fe3ab8.png"
+    ],
+    "hamarkameratene": [
+      "catalog/8bc3ee81104c91a2c4a7.png"
+    ],
+    "hamburger": [
+      "catalog/dee72590f36c7d9a170d.png"
+    ],
+    "hamburger sv": [
+      "catalog/dee72590f36c7d9a170d.png"
+    ],
+    "hammarby if": [
+      "catalog/bcce3377b50b717b4ee1.png"
+    ],
+    "hapoel beer sheva": [
+      "catalog/f9e6943d1e0a57948c6b.png"
+    ],
+    "hapoel haifa": [
+      "catalog/3f2996f3743eb3273046.png"
+    ],
+    "hapoel jerusalem": [
+      "catalog/dccddd14f976adf29e6d.png"
+    ],
+    "hapoel petah tikva": [
+      "catalog/e233fd2c44b80826b717.png"
+    ],
+    "hapoel ramat gan": [
+      "catalog/7182e270752428f9adb0.png"
+    ],
+    "hapoel tel aviv": [
+      "catalog/3e99dbe2f48a7e7eadc1.png"
+    ],
+    "heart of midlothian": [
+      "catalog/a7a20b08aafa9141d978.png"
+    ],
+    "heart of midlothian fc": [
+      "catalog/a7a20b08aafa9141d978.png"
+    ],
+    "heerenveen": [
+      "catalog/d7ebab153c24ca910529.png"
+    ],
+    "hibernian": [
+      "catalog/92597afa9dd635f8638a.png"
+    ],
+    "hibernian fc": [
+      "catalog/92597afa9dd635f8638a.png"
+    ],
+    "hnk gorica": [
+      "catalog/c05775d8536e91e95593.png"
+    ],
+    "hnk hajduk split": [
+      "catalog/5eff5102e964c963aed0.png"
+    ],
+    "hnk rijeka": [
+      "catalog/df5a025035ab2c44f57d.png"
+    ],
+    "horsens": [
+      "catalog/dcd1d7c6e256bc787ac9.png"
+    ],
+    "hradec kralove": [
+      "catalog/25c856550b6ff27c6db0.png"
+    ],
+    "hull city": [
+      "catalog/aa41295bb4b3c5791c14.png"
+    ],
+    "if brommapojkarna": [
+      "catalog/d6c1a288de6c578a5b3b.png"
+    ],
+    "if elfsborg": [
+      "catalog/b9a170be5d686a0dfce4.png"
+    ],
+    "ifk goteborg": [
+      "catalog/8f5b85fef1c7eaa3e656.png"
+    ],
+    "ihud bnei sakhnin": [
+      "catalog/073d85c20f27e733b6bc.png"
+    ],
+    "ik sirius": [
+      "catalog/ab43c61e736223501c86.png"
+    ],
+    "ik start": [
+      "catalog/61dabd196fc2923cf3c6.png"
+    ],
+    "imt belgrad": [
+      "catalog/ee94842aab1633ab4a27.png"
+    ],
+    "inter milan": [
+      "catalog/8eda9d8a3196feba133e.png"
+    ],
+    "ipswich town": [
+      "catalog/bfc7d698869315f396bf.png"
+    ],
+    "iraklis thessaloniki": [
+      "catalog/19740964930d6fca0a61.png"
+    ],
+    "ironi kiryat shmona": [
+      "catalog/e3375373763f57d7bf45.png"
+    ],
+    "ironi tiberias": [
+      "catalog/744f53291cb56f2d21e6.png"
+    ],
+    "jablonec": [
+      "catalog/1a958938bc198086bc65.png"
+    ],
+    "jagiellonia bialystok": [
+      "catalog/feddbb414cfa7e0cb02f.png"
+    ],
+    "juventus": [
+      "catalog/a47ec87772428b342027.png"
+    ],
+    "juventus fc": [
+      "catalog/a47ec87772428b342027.png"
+    ],
+    "kaa gent": [
+      "catalog/93f5ef63befdaea76cc2.png"
+    ],
+    "kalamata": [
+      "catalog/7ef2e86dee8b89e9a472.png"
+    ],
+    "kalamata fc": [
+      "catalog/7ef2e86dee8b89e9a472.png"
+    ],
+    "kalmar ff": [
+      "catalog/c60045702259cc5085cb.png"
+    ],
+    "karpaty lviv": [
+      "catalog/9f9e032fe5fc204fac97.png"
+    ],
+    "kasimpasa": [
+      "catalog/c6fb89660885d1fdffe7.png"
+    ],
+    "kfum kameratene oslo": [
+      "catalog/7371b98eafd3f751b9c2.png"
+    ],
+    "kharkiv": [
+      "catalog/7fc7f95e7557cd45c27b.png"
+    ],
+    "kilmarnock": [
+      "catalog/0912d427fda08e1fc0f2.png"
+    ],
+    "kilmarnock fc": [
+      "catalog/0912d427fda08e1fc0f2.png"
+    ],
+    "kocaelispor": [
+      "catalog/cbbd772078eefa6f1f0b.png"
+    ],
+    "kolos kovalivka": [
+      "catalog/e4a71135d9fb1c17b507.png"
+    ],
+    "konyaspor": [
+      "catalog/48fe135dd967863aa08e.png"
+    ],
+    "korona kielce": [
+      "catalog/57fc73271cf72914e15c.png"
+    ],
+    "krasnodar": [
+      "catalog/c441bd93fc1f6340c627.png"
+    ],
+    "krc genk": [
+      "catalog/ce208ee70fee446fce40.png"
+    ],
+    "kristiansund bk": [
+      "catalog/71c8cbaa4de5ba24b813.png"
+    ],
+    "krylya sovetov samara": [
+      "catalog/c142a91c08fa97004128.png"
+    ],
+    "kryvbas kryvyi rig": [
+      "catalog/e91861f4698cfcbdb8ca.png"
+    ],
+    "kudrivka": [
+      "catalog/2a2acc0207304db52247.png"
+    ],
+    "kv kortrijk": [
+      "catalog/f8e4fb7161f906c080b4.png"
+    ],
+    "kv mechelen": [
+      "catalog/b1e6452202b2b6374e89.png"
+    ],
+    "kvc westerlo": [
+      "catalog/a8ac6169c1c7020be332.png"
+    ],
+    "lask": [
+      "catalog/f99671a2f52d6a931687.png"
+    ],
+    "lausanne sport": [
+      "catalog/7652ad0021c4b89b5c43.png"
+    ],
+    "le havre": [
+      "catalog/d75dd51c0a32dc62b206.png"
+    ],
+    "le havre ac": [
+      "catalog/d75dd51c0a32dc62b206.png"
+    ],
+    "le mans": [
+      "catalog/502f34a767a621fed958.png"
+    ],
+    "le mans fc": [
+      "catalog/502f34a767a621fed958.png"
+    ],
+    "lech poznan": [
+      "catalog/63698ffe5141e6df24de.png"
+    ],
+    "leeds united": [
+      "catalog/eec0739e122be5eebddd.png"
+    ],
+    "legia warszawa": [
+      "catalog/21a694b2807b119f3168.png"
+    ],
+    "levadiakos": [
+      "catalog/e3f65350724b3ee58975.png"
+    ],
+    "levante ud": [
+      "catalog/2519c238e2f8b53320d3.png"
+    ],
+    "levski sofia": [
+      "catalog/385bc97ebedaa989cbb2.png"
+    ],
+    "lillestrm": [
+      "catalog/1e4db7e228ce290f4f96.png"
+    ],
+    "lillestrm sk": [
+      "catalog/1e4db7e228ce290f4f96.png"
+    ],
+    "liverpool": [
+      "catalog/d2dab64e09a5e13c77f7.png"
+    ],
+    "liverpool fc": [
+      "catalog/d2dab64e09a5e13c77f7.png"
+    ],
+    "livyi bereg kyiv": [
+      "catalog/4c557da34bd378bce40a.png"
+    ],
+    "lnz cherkasy": [
+      "catalog/738e35c5888e89d18d2d.png"
+    ],
+    "lokomotiv moscow": [
+      "catalog/63a5739ac92b20fb4449.png"
+    ],
+    "lokomotiv plovdiv": [
+      "catalog/b873d44b2966a7419747.png"
+    ],
+    "lokomotiv sofia": [
+      "catalog/f7ca1c70eb29e4ed5890.png"
+    ],
+    "lommel": [
+      "catalog/a9d4f953d41f4736dc91.png"
+    ],
+    "lommel sk": [
+      "catalog/a9d4f953d41f4736dc91.png"
+    ],
+    "lorient": [
+      "catalog/e1310ba6923f60ac649b.png"
+    ],
+    "losc lille": [
+      "catalog/fc33144baf78f38ab291.png"
+    ],
+    "ludogorets razgrad": [
+      "catalog/e91d6fc3e4a34430ae23.png"
+    ],
+    "lugano": [
+      "catalog/61b4f0c047d613dbd3ab.png"
+    ],
+    "luzern": [
+      "catalog/ac27b854c6770c5c3166.png"
+    ],
+    "lyngby boldklub": [
+      "catalog/93b34bc3ec48849601f9.png"
+    ],
+    "maccabi haifa": [
+      "catalog/3e3a8f054215641c7cff.png"
+    ],
+    "maccabi netanya": [
+      "catalog/c4c97881b1c1306dd259.png"
+    ],
+    "maccabi petah tikva": [
+      "catalog/d4179f9f706d4433fce8.png"
+    ],
+    "maccabi tel aviv": [
+      "catalog/c9914903ced1d18e32d1.png"
+    ],
+    "macva sabac": [
+      "catalog/f5a1fabfa2166cde11f6.png"
+    ],
+    "malaga": [
+      "catalog/0adfc737a6b4a838cce8.png"
+    ],
+    "malaga cf": [
+      "catalog/0adfc737a6b4a838cce8.png"
+    ],
+    "malmo ff": [
+      "catalog/a4b7766ce309bd6151ff.png"
+    ],
+    "manchester city": [
+      "catalog/77c3540dce2e90161d27.png"
+    ],
+    "manchester united": [
+      "catalog/bd556682429f65eca102.png"
+    ],
+    "midtjylland": [
+      "catalog/db6113fb4f77bd2d889d.png"
+    ],
+    "milan": [
+      "catalog/96fe05206b278c28f98c.png"
+    ],
+    "mjallby aif": [
+      "catalog/041bc5e8d8af3768160d.png"
+    ],
+    "mlada boleslav": [
+      "catalog/e4edefafa1662f04e35e.png"
+    ],
+    "mladost lucani": [
+      "catalog/bb1847ee18ce10d44952.png"
+    ],
+    "molde": [
+      "catalog/ed421a3b112aef6d2368.png"
+    ],
+    "molde fk": [
+      "catalog/ed421a3b112aef6d2368.png"
+    ],
+    "monaco": [
+      "catalog/ccab051d18f3d9afb6b4.png"
+    ],
+    "monza": [
+      "catalog/b8201182d81c38ba742a.png"
+    ],
+    "moreirense": [
+      "catalog/1cb02e48c81fd0f9df4f.png"
+    ],
+    "moreirense fc": [
+      "catalog/1cb02e48c81fd0f9df4f.png"
+    ],
+    "motherwell": [
+      "catalog/cd8773790df4632db389.png"
+    ],
+    "motherwell fc": [
+      "catalog/cd8773790df4632db389.png"
+    ],
+    "motor lublin": [
+      "catalog/51430b528470c91b12e4.png"
+    ],
+    "napoli": [
+      "catalog/cb74a1970752cfb6aa06.png"
+    ],
+    "nec nijmegen": [
+      "catalog/c011cf835d5faeb802aa.png"
+    ],
+    "newcastle united": [
+      "catalog/79636af77c8168dc4557.png"
+    ],
+    "nice": [
+      "catalog/a94a7996d1696bf024e3.png"
+    ],
+    "nk istra 1961": [
+      "catalog/2a992d7fccf9aa2c6dfa.png"
+    ],
+    "nk lokomotiva zagreb": [
+      "catalog/bbbe4a88f300d9fe559d.png"
+    ],
+    "nk osijek": [
+      "catalog/0b401422fd1d0715a3e4.png"
+    ],
+    "nk rudes": [
+      "catalog/4e9218a099f41c760ff1.png"
+    ],
+    "nk varazdin": [
+      "catalog/943736d749d2df8387a0.png"
+    ],
+    "nk veres rivne": [
+      "catalog/dbfb14bc14cae9a7183d.png"
+    ],
+    "nordsjaelland": [
+      "catalog/6f14d713d9b1a4aef253.png"
+    ],
+    "nottingham forest": [
+      "catalog/3c78e70400a79329d938.png"
+    ],
+    "novi pazar": [
+      "catalog/56d5782a4ed879d42028.png"
+    ],
+    "obolon kyiv": [
+      "catalog/5e0a3fc6a24933219a0f.png"
+    ],
+    "odense boldklub": [
+      "catalog/60f515847d3dc6d87949.png"
+    ],
+    "ofi crete": [
+      "catalog/6e545bd53e63a73a4eb1.png"
+    ],
+    "ofk beograd": [
+      "catalog/5b5ff776cc7553b186ae.png"
+    ],
+    "ogc nice": [
+      "catalog/a94a7996d1696bf024e3.png"
+    ],
+    "olympiacos piraeus": [
+      "catalog/5f5e229b9bc40bfa4cf1.png"
+    ],
+    "olympique lyon": [
+      "catalog/705a8bd5120c47e56175.png"
+    ],
+    "olympique marseille": [
+      "catalog/43ba60f0720b7c64008c.png"
+    ],
+    "orenburg": [
+      "catalog/b45f59fed218f3eb7620.png"
+    ],
+    "orgryte is": [
+      "catalog/cca5959508550702cc2d.png"
+    ],
+    "otelul galati": [
+      "catalog/c0c7d93fee5657f32a09.png"
+    ],
+    "oud heverlee leuven": [
+      "catalog/614a90b956de9be55cdc.png"
+    ],
+    "paderborn 07": [
+      "catalog/6ddd6f052f2c7dc896d9.png"
+    ],
+    "panathinaikos": [
+      "catalog/33cd428ba6c5f8ffdec3.png"
+    ],
+    "panetolikos": [
+      "catalog/91246af29969aae70149.png"
+    ],
+    "paok thessaloniki": [
+      "catalog/752e1df1a052a97b843f.png"
+    ],
+    "pardubice": [
+      "catalog/950ae964b1c69dd39769.png"
+    ],
+    "paris": [
+      "catalog/0cb6761b2d1a491b5eda.png"
+    ],
+    "paris fc": [
+      "catalog/0cb6761b2d1a491b5eda.png"
+    ],
+    "paris saint germain": [
+      "catalog/2c46365aae0dce35e1a8.png"
+    ],
+    "parma calcio 1913": [
+      "catalog/1ff9983f14bd76354b5b.png"
+    ],
+    "partizan belgrade": [
+      "catalog/87385a82c9ede9bd7e8e.png"
+    ],
+    "pec zwolle": [
+      "catalog/92f754c29585a299cf0e.png"
+    ],
+    "petrolul ploiesti": [
+      "catalog/77576fd6d5e4d59f5883.png"
+    ],
+    "piast gliwice": [
+      "catalog/cab586f70156ee4de4fa.png"
+    ],
+    "pogon szczecin": [
+      "catalog/98ea7f7dd579daa81ead.png"
+    ],
+    "polissya zhytomyr": [
+      "catalog/01242b5bef821ac80faa.png"
+    ],
+    "porto": [
+      "catalog/a2542c0544810ae7856e.png"
+    ],
+    "psv eindhoven": [
+      "catalog/2fff19981c610d0f6d28.png"
+    ],
+    "raal la louviere": [
+      "catalog/7e5f35a154a465fe6406.png"
+    ],
+    "racing santander": [
+      "catalog/162626c9c8821d544ce3.png"
+    ],
+    "radnicki 1923 kragujevac": [
+      "catalog/79abbb5079dda1193e5c.png"
+    ],
+    "radnicki nis": [
+      "catalog/28f8bc1b6e6a1209ba50.png"
+    ],
+    "radnik surdulica": [
+      "catalog/e2ef1379a71545dd619c.png"
+    ],
+    "radomiak radom": [
+      "catalog/3b3feb35b4bd62e0e53e.png"
+    ],
+    "rakow czestochowa": [
+      "catalog/f7426bf3c5b04fe3bc38.png"
+    ],
+    "randers": [
+      "catalog/3a070d01c909a48afbf4.png"
+    ],
+    "randers fc": [
+      "catalog/3a070d01c909a48afbf4.png"
+    ],
+    "rangers": [
+      "catalog/5513d8fdc1f86d27db32.png"
+    ],
+    "rangers fc": [
+      "catalog/5513d8fdc1f86d27db32.png"
+    ],
+    "rapid 1923": [
+      "catalog/5ae773466c92e54ca8e5.png"
+    ],
+    "rapid vienna": [
+      "catalog/2585df244a024ecea321.png"
+    ],
+    "rayo vallecano": [
+      "catalog/6b074424f68c10b82d5b.png"
+    ],
+    "rb leipzig": [
+      "catalog/5ff8d9ed398764140d7f.png"
+    ],
+    "rc lens": [
+      "catalog/bde3a7b825094be9edf7.png"
+    ],
+    "rc strasbourg alsace": [
+      "catalog/452bad7b80d49a376f5a.png"
+    ],
+    "rcd espanyol barcelona": [
+      "catalog/2d092c938c7daaed02e9.png"
+    ],
+    "real betis balompie": [
+      "catalog/0a2594eb8c6a2e154a6c.png"
+    ],
+    "real madrid": [
+      "catalog/5042445cd03e6c37b7fb.png"
+    ],
+    "real sociedad": [
+      "catalog/323be9053b3cc034d649.png"
+    ],
+    "red bull salzburg": [
+      "catalog/0f63c20c708248fce81b.png"
+    ],
+    "red star belgrade": [
+      "catalog/74d7090e95f014813c0a.png"
+    ],
+    "ried": [
+      "catalog/f8d175fb9a117ee371a6.png"
+    ],
+    "rio ave": [
+      "catalog/6be3713ce54ec7de4ad5.png"
+    ],
+    "rio ave fc": [
+      "catalog/6be3713ce54ec7de4ad5.png"
+    ],
+    "rodina moscow": [
+      "catalog/39be0915c162f459065d.png"
+    ],
+    "roma": [
+      "catalog/91693582cb0249df0cec.png"
+    ],
+    "rosenborg bk": [
+      "catalog/618cee35575c6c9ce268.png"
+    ],
+    "rostov": [
+      "catalog/28ed9c9cae4542fc7935.png"
+    ],
+    "royal antwerp": [
+      "catalog/19f9440c71ebc5c441a1.png"
+    ],
+    "royal antwerp fc": [
+      "catalog/19f9440c71ebc5c441a1.png"
+    ],
+    "royal charleroi": [
+      "catalog/0e0fbad8f2542c622b18.png"
+    ],
+    "royal charleroi sc": [
+      "catalog/0e0fbad8f2542c622b18.png"
+    ],
+    "rsc anderlecht": [
+      "catalog/fbe53414b399e60959f0.png"
+    ],
+    "rubin kazan": [
+      "catalog/a4ae9b8a18573a17bf55.png"
+    ],
+    "sabah fk": [
+      "sabah-fk.png"
+    ],
+    "samsunspor": [
+      "catalog/e562fe0fc0827251b0e2.png"
+    ],
+    "sandefjord fotball": [
+      "catalog/2be9b6acd0290252684e.png"
+    ],
+    "sarpsborg 08 ff": [
+      "catalog/ff53e181fcb7c1442613.png"
+    ],
+    "sc austria lustenau": [
+      "catalog/4c7e6c5ec76a50a92371.png"
+    ],
+    "sc braga": [
+      "catalog/e618f65164336b6d4c2c.png"
+    ],
+    "sc cambuur leeuwarden": [
+      "catalog/f8d2e5da4daa8faf6873.png"
+    ],
+    "sc freiburg": [
+      "catalog/0c68d9dec3498d3bab40.png"
+    ],
+    "sc heerenveen": [
+      "catalog/d7ebab153c24ca910529.png"
+    ],
+    "sc otelul galati": [
+      "catalog/c0c7d93fee5657f32a09.png"
+    ],
+    "sc paderborn 07": [
+      "catalog/6ddd6f052f2c7dc896d9.png"
+    ],
+    "sc telstar": [
+      "catalog/69745e952ea37dff805a.png"
+    ],
+    "schalke 04": [
+      "catalog/6a47e4c004083dec8d1d.png"
+    ],
+    "scr altach": [
+      "catalog/8ad403a1cf286f68cf49.png"
+    ],
+    "sepsi osk sf gheorghe": [
+      "catalog/274c2a28aff09b78a998.png"
+    ],
+    "septemvri sofia": [
+      "catalog/9b1094e150b8899951c9.png"
+    ],
+    "servette": [
+      "catalog/0a67e87142576da83453.png"
+    ],
+    "servette fc": [
+      "catalog/0a67e87142576da83453.png"
+    ],
+    "sevilla": [
+      "catalog/5ca9f10bcca74a0a48ab.png"
+    ],
+    "sevilla fc": [
+      "catalog/5ca9f10bcca74a0a48ab.png"
+    ],
+    "shakhtar donetsk": [
+      "catalog/c3164adc0af7b8eb90ff.png"
+    ],
+    "sigma olomouc": [
+      "catalog/1739d57b708e3dc046e2.png"
+    ],
+    "silkeborg if": [
+      "catalog/52f1970e1c3d5840aedb.png"
+    ],
+    "sint truidense vv": [
+      "catalog/f69ed8b122f0d6d0415c.png"
+    ],
+    "sion": [
+      "catalog/3dfd438c4580c350b79f.png"
+    ],
+    "sk artis brno": [
+      "catalog/aeb9603e5a8c500018f3.png"
+    ],
+    "sk beveren": [
+      "catalog/4087bc8a16b0b8ca9592.png"
+    ],
+    "sk brann": [
+      "catalog/a3aa23b50c0ceba966ba.png"
+    ],
+    "sk sigma olomouc": [
+      "catalog/1739d57b708e3dc046e2.png"
+    ],
+    "sk slavia prague": [
+      "catalog/9a9b75d4978bf6d6d6a0.png"
+    ],
+    "sk slavia praha": [
+      "slavia-praha.png"
+    ],
+    "sk sturm graz": [
+      "catalog/86fea0e6ffdac82ba8be.png"
+    ],
+    "sl benfica": [
+      "catalog/3debd932804b26fee728.png"
+    ],
+    "slask wroclaw": [
+      "catalog/9f6ad4a3b55cf36051f2.png"
+    ],
+    "slaven belupo koprivnica": [
+      "catalog/15b874adca397cb35da2.png"
+    ],
+    "slavia prague": [
+      "catalog/9a9b75d4978bf6d6d6a0.png"
+    ],
+    "slavia praha": [
+      "slavia-praha.png"
+    ],
+    "slavia sofia": [
+      "catalog/2ad9040d1282ceccda74.png"
+    ],
+    "slovan liberec": [
+      "catalog/58d9dd989940f782dcf1.png"
+    ],
+    "sonderjyske fodbold": [
+      "catalog/a9fd6dea0d77cd2e1bba.png"
+    ],
+    "sparta prague": [
+      "catalog/c1c2cc9e7b7f13995038.png"
+    ],
+    "sparta rotterdam": [
+      "catalog/5f3fb74037e5e826d06d.png"
+    ],
+    "spartak moscow": [
+      "catalog/4baa1aab0fa2a6f2ae8f.png"
+    ],
+    "spartak varna": [
+      "catalog/62f42f1554af61b7aa55.png"
+    ],
+    "sporting cp": [
+      "catalog/11ccc52c4c18598b5dd2.png"
+    ],
+    "ss lazio": [
+      "catalog/e744e8a6b805383356b9.png"
+    ],
+    "ssc napoli": [
+      "catalog/cb74a1970752cfb6aa06.png"
+    ],
+    "st gallen 1879": [
+      "catalog/2eda5f14637123b3b779.png"
+    ],
+    "st johnstone": [
+      "catalog/b5867c0f9973a9ffcee5.png"
+    ],
+    "st johnstone fc": [
+      "catalog/b5867c0f9973a9ffcee5.png"
+    ],
+    "st mirren": [
+      "catalog/60becfe4287c0cc760da.png"
+    ],
+    "st mirren fc": [
+      "catalog/60becfe4287c0cc760da.png"
+    ],
+    "stade brestois 29": [
+      "catalog/e143e83fa5e1f9e7ea83.png"
+    ],
+    "stade rennais": [
+      "catalog/4e16bf5183763eb5f2bb.png"
+    ],
+    "stade rennais fc": [
+      "catalog/4e16bf5183763eb5f2bb.png"
+    ],
+    "standard liege": [
+      "catalog/cfe7b87f61ec394bd467.png"
+    ],
+    "sturm graz": [
+      "catalog/86fea0e6ffdac82ba8be.png"
+    ],
+    "sunderland": [
+      "catalog/2e04f6a31e6e3a46c517.png"
+    ],
+    "sunderland afc": [
+      "catalog/2e04f6a31e6e3a46c517.png"
+    ],
+    "sv 07 elversberg": [
+      "catalog/00d1de34a0aa61c8d3ac.png"
+    ],
+    "sv ried": [
+      "catalog/f8d175fb9a117ee371a6.png"
+    ],
+    "sv werder bremen": [
+      "catalog/ec1d820a023eadebc3c7.png"
+    ],
+    "telstar": [
+      "catalog/69745e952ea37dff805a.png"
+    ],
+    "teplice": [
+      "catalog/86540ea5e4121589b410.png"
+    ],
+    "thun": [
+      "catalog/bfc3c134dd92662bf637.png"
+    ],
+    "torino": [
+      "catalog/218036b245566df2bd78.png"
+    ],
+    "torino fc": [
+      "catalog/218036b245566df2bd78.png"
+    ],
+    "tottenham hotspur": [
+      "catalog/358b5e2cec6d9b3025ea.png"
+    ],
+    "toulouse": [
+      "catalog/4dc2960793f1a779adaa.png"
+    ],
+    "trabzonspor": [
+      "catalog/f1b4b144251c139f9c1e.png"
+    ],
+    "troms il": [
+      "catalog/4340572c4cdb22b2f101.png"
+    ],
+    "tsg 1899 hoffenheim": [
+      "catalog/5e7505ee45815186aad8.png"
+    ],
+    "tsv hartberg": [
+      "catalog/886393822ab399b7f738.png"
+    ],
+    "twente enschede": [
+      "catalog/f53b7422520740bea26b.png"
+    ],
+    "udinese calcio": [
+      "catalog/e1f87689b104fc3097d0.png"
+    ],
+    "union saint gilloise": [
+      "catalog/3b38d7def380796d9b3a.png"
+    ],
+    "universitatea cluj": [
+      "catalog/69f25f50353ccc68a841.png"
+    ],
+    "universitatea craiova": [
+      "catalog/8c97e5683c8c09b4f72d.png"
+    ],
+    "us lecce": [
+      "catalog/a67a29a74ffb513a9da9.png"
+    ],
+    "us sassuolo": [
+      "catalog/41acec87b776ccc18720.png"
+    ],
+    "uta arad": [
+      "catalog/057c5b5913b7d00ad5a0.png"
+    ],
+    "utrecht": [
+      "catalog/d09bb81a59de602983e7.png"
+    ],
+    "vaduz": [
+      "catalog/89bd63b862e931800954.png"
+    ],
+    "valencia": [
+      "catalog/329a4e89632f6171955f.png"
+    ],
+    "valencia cf": [
+      "catalog/329a4e89632f6171955f.png"
+    ],
+    "valerenga fotball elite": [
+      "catalog/e38048f66d81fbdb048c.png"
+    ],
+    "vasteras": [
+      "catalog/d4a1fa56f15ffda12668.png"
+    ],
+    "vasteras sk": [
+      "catalog/d4a1fa56f15ffda12668.png"
+    ],
+    "venezia": [
+      "catalog/54b2657bafd4873b230d.png"
+    ],
+    "venezia fc": [
+      "catalog/54b2657bafd4873b230d.png"
+    ],
+    "vfb stuttgart": [
+      "catalog/86a2739d8ae444b10e20.png"
+    ],
+    "viborg ff": [
+      "catalog/9897302ecfa6b82514ed.png"
+    ],
+    "viking": [
+      "catalog/f91dc3d830dfe724cca5.png"
+    ],
+    "viking fk": [
+      "catalog/f91dc3d830dfe724cca5.png"
+    ],
+    "viktoria plzen": [
+      "catalog/8c5121312b3bb2aba1ad.png"
+    ],
+    "villarreal": [
+      "catalog/f151dcfc22b11d0eb3b2.png"
+    ],
+    "villarreal cf": [
+      "catalog/f151dcfc22b11d0eb3b2.png"
+    ],
+    "vitoria guimaraes": [
+      "catalog/3e66e7ec4e9f9b446879.png"
+    ],
+    "vitoria guimaraes sc": [
+      "catalog/3e66e7ec4e9f9b446879.png"
+    ],
+    "vojvodina novi sad": [
+      "catalog/db4846943cd2a3d669da.png"
+    ],
+    "volos nfc": [
+      "catalog/dfb928bc33390f79f151.png"
+    ],
+    "voluntari": [
+      "catalog/b8b38a3b26b20c800863.png"
+    ],
+    "werder bremen": [
+      "catalog/ec1d820a023eadebc3c7.png"
+    ],
+    "widzew lodz": [
+      "catalog/f555420a3ce277e2f155.png"
+    ],
+    "wieczysta krakow": [
+      "catalog/aed8dda7958c89fbb1f8.png"
+    ],
+    "willem ii tilburg": [
+      "catalog/24cd00142050ea56b77e.png"
+    ],
+    "wisla krakow": [
+      "catalog/3b9bd37e619dc47b5a26.png"
+    ],
+    "wisla plock": [
+      "catalog/79ec9e0fd37fe18a9cb9.png"
+    ],
+    "wolfsberger": [
+      "catalog/3d9c97d1cc73673d07e4.png"
+    ],
+    "wolfsberger ac": [
+      "catalog/3d9c97d1cc73673d07e4.png"
+    ],
+    "wsg tirol": [
+      "catalog/9004bb48c03a9e7c7db6.png"
+    ],
+    "young boys": [
+      "catalog/6a426cfb1661b8dae1f0.png"
+    ],
+    "zaglebie lubin": [
+      "catalog/eae22c66a063d8350882.png"
+    ],
+    "zbrojovka brno": [
+      "catalog/5403d589481c2fbadea4.png"
+    ],
+    "zeleznicar pancevo": [
+      "catalog/5bd53e320a04fc411bb5.png"
+    ],
+    "zemun": [
+      "catalog/a89cfbacd510a226eb86.png"
+    ],
+    "zenit st petersburg": [
+      "catalog/c599ca0a280cf83c3802.png"
+    ],
+    "zlin": [
+      "catalog/1b3173976d60a253e0c8.png"
+    ],
+    "zorya lugansk": [
+      "catalog/2b915efca6d35f4db5aa.png"
+    ],
+    "zulte waregem": [
+      "catalog/afd37dad6da9ffa0ed40.png"
+    ],
+    "zurich": [
+      "catalog/b3cd887b2c9b681e440f.png"
+    ],
+    "marseille": [
+      "catalog/43ba60f0720b7c64008c.png"
+    ],
+    "man city": [
+      "catalog/77c3540dce2e90161d27.png"
+    ],
+    "man united": [
+      "catalog/bd556682429f65eca102.png"
+    ],
+    "man utd": [
+      "catalog/bd556682429f65eca102.png"
+    ],
+    "tottenham": [
+      "catalog/358b5e2cec6d9b3025ea.png"
+    ],
+    "newcastle": [
+      "catalog/79636af77c8168dc4557.png"
+    ],
+    "brighton": [
+      "catalog/9e573acc1c092c0e2628.png"
+    ],
+    "inter": [
+      "catalog/8eda9d8a3196feba133e.png"
+    ],
+    "internazionale": [
+      "catalog/8eda9d8a3196feba133e.png"
+    ],
+    "psg": [
+      "catalog/2c46365aae0dce35e1a8.png"
+    ],
+    "sporting lisbon": [
+      "catalog/11ccc52c4c18598b5dd2.png"
+    ],
+    "benfica": [
+      "catalog/3debd932804b26fee728.png"
+    ]
+  }
+}
