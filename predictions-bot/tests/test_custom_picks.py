@@ -12,8 +12,9 @@ from predbot.bot import callbacks
 from predbot.bot.commands import CommandLoop
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
+from predbot import custom_picks as cp
 from predbot.custom_picks import (CustomPicks, Request, RequestError, INTRO, UNAVAILABLE, TODAY_ONLY,
-                                  MIN_PROBABILITY, MAX_LEGS, normalize, parse_request, search)
+                                  MIN_PROBABILITY, MAX_LEGS, normalize, parse_request, search, intro_text)
 from predbot.jobs import daily_picks, settle, live_results, stats
 from predbot.model.engine import representative_predictions
 from predbot.model.ensemble import EventModel
@@ -78,10 +79,25 @@ def test_market_aliases(alias, market):
 
 @pytest.mark.parametrize('alias,sport', [('soccer', 'football'), ('NBA', 'basketball'), ('ATP', 'tennis'),
                                        ('American football', 'american_football'), ('NFL', 'american_football'),
-                                       ('baseball', 'baseball'), ('MLB', 'baseball'), ('MMA', 'mma'), ('UFC', 'mma')])
+                                       ('baseball', 'baseball'), ('MLB', 'baseball')])
 def test_sport_aliases_and_extensibility(alias, sport):
     assert parse_request('2 ' + alias + ' picks').sports == {sport}
     assert parse_request('2 hockey picks', {'hockey'}).sports == {'hockey'}
+
+
+@pytest.mark.parametrize('alias', ['MMA', 'UFC'])
+def test_mma_is_recognized_but_disabled_by_default(alias):
+    """MMA stays fully recognized by name (RECOGNIZED_SPORTS, SPORT_ALIASES)
+    even though production's real ALLOWED_SPORTS doesn't enable it yet -
+    recognized and enabled are different questions (2026-10 audit fix)."""
+    with pytest.raises(RequestError) as exc:
+        parse_request('2 ' + alias + ' picks')
+    assert exc.value.reason == 'unsupported_sport'
+    assert str(exc.value).startswith('We do not cover MMA yet. Please choose one of our supported sports.')
+    assert 'MMA' not in str(exc.value).split('\n\n')[-1]  # never listed among the supported sports themselves
+    # Recognition itself is untouched: explicitly enabling it (a future config
+    # change, not simulated here via a hardcoded list) makes it parse clean.
+    assert parse_request('2 ' + alias + ' picks', allowed_sports=['mma']).sports == {'mma'}
 
 
 @pytest.mark.parametrize('text', ['tomorrow', '2 picks tomorrow', '3 picks yesterday', '2 picks next week',
@@ -404,6 +420,37 @@ def test_output_escapes_names_is_compact_and_has_no_internal_data(db):
     assert '<script>' not in reply and '&lt;' in reply
     assert len(reply) < 4000
     assert all(word not in reply for word in ('rank_score', 'p_lcb', 'database', 'provider', 'EV:', 'API'))
+
+
+def test_intro_lists_exactly_the_currently_enabled_sports():
+    # Production's real ALLOWED_SPORTS default excludes MMA (2026-10 audit):
+    # the welcome message must never advertise a sport that can't actually
+    # be served, even though MMA stays fully recognized/parseable.
+    for label in ('Football', 'Basketball', 'American Football', 'Baseball', 'Tennis'):
+        assert label in INTRO
+    assert 'MMA' not in INTRO
+    assert 'Example:' in INTRO
+    for word in ('hockey', 'cricket', 'boxing', 'rugby'):
+        assert word not in INTRO.lower()
+    # Re-enabling MMA is a config change only: intro_text() reflects whatever
+    # allowed_sports it's given, never a separately hardcoded list.
+    assert 'MMA' in intro_text(list(cp.RECOGNIZED_SPORTS))
+
+
+def test_named_team_scopes_the_ticket_to_its_own_fixture(db):
+    store(db, rows_for(1) + rows_for(2))  # 1: Arsenal v Chelsea, 2: Everton v Fulham
+    reply = CustomPicks(db, Config(timezone=ZONE)).reply('1 picks Arsenal', '42', NOW)
+    assert 'Arsenal' in reply
+    assert 'Everton' not in reply and 'Fulham' not in reply
+
+
+def test_a_named_team_persists_across_a_refinement_that_does_not_repeat_it(db):
+    store(db, rows_for(1) + rows_for(2))
+    custom = CustomPicks(db, Config(timezone=ZONE))
+    first = custom.reply('1 picks Arsenal', '42', NOW)
+    assert 'Arsenal' in first
+    second = custom.reply('make it safer instead', '42', NOW)
+    assert 'Arsenal' in second
 
 
 def test_operational_logs_do_not_include_conversation(db, caplog):

@@ -101,6 +101,31 @@ def test_ambiguous_or_unsupported_intent_clarifies(text):
         cp.parse_request(text)
 
 
+@pytest.mark.parametrize('word,label', [
+    ('hockey', 'Hockey'), ('ice hockey', 'Hockey'), ('cricket', 'Cricket'),
+    ('rugby', 'Rugby'), ('boxing', 'Boxing'), ('golf', 'Golf'), ('darts', 'Darts'),
+])
+def test_unsupported_sport_names_the_actual_sport_and_lists_supported_ones(word, label):
+    with pytest.raises(cp.RequestError) as exc:
+        cp.parse_request(f'3 {word} picks')
+    assert exc.value.reason == 'unsupported_sport'
+    assert str(exc.value).startswith(f'We do not cover {label} yet. Please choose one of our supported sports.')
+    for sport_label in ('Football', 'Basketball', 'Tennis'):
+        assert sport_label in str(exc.value)
+
+
+def test_unrecognized_word_never_invents_a_sport_name():
+    try:
+        cp.parse_request('asdkjfh picks please')
+    except cp.RequestError as exc:
+        assert exc.reason != 'unsupported_sport'
+
+
+@pytest.mark.parametrize('word', ['hoops', 'basket'])
+def test_extra_basketball_aliases(word):
+    assert cp.parse_request(f'3 {word} picks').sports == {'basketball'}
+
+
 def test_league_line_and_local_evening_filters():
     rows = []
     for i, line, side, league, start in [
@@ -147,7 +172,7 @@ def test_canonical_and_cross_provider_identity_duplicates(db):
 
 def test_followup_updates_only_explicit_constraints(db):
     store(db, [r for i in range(1, 7) for r in rows_for(i)])
-    custom = cp.CustomPicks(db, Mock(timezone=ZONE, allowed_sports=['football']))
+    custom = cp.CustomPicks(db, Mock(timezone=ZONE, allowed_sports=['football', 'basketball']))
     custom.respond('safe EPL over 1.5 no BTTS around 4 odds', '42', '42', NOW)
     custom.respond('make it 6 odds', '42', '42', NOW)
     spec = custom.recovery.conversations['42', '42'].request

@@ -14,10 +14,9 @@
 
 import { SPORT_ICON, combinedOdds, escHtml } from "./format.ts";
 
-export const INTRO =
-  "✨ Custom Picks\n\nTell me what you want.\n\n" +
-  "• Safe 4 odds\n• 3 basketball picks\n• 5 odds, double chance only\n" +
-  "• 2 strong tennis picks\n• 6 odds from football and basketball";
+// INTRO is assembled further down (introText(), after enabledSports() is
+// defined) from the SAME enabled-sports rule parseRequest uses - the
+// welcome message can never drift out of sync with what's actually enabled.
 export const UNAVAILABLE = "👨‍🍳 Still cooking\n\nToday's picks aren't ready yet. Check back in a bit.";
 export const TODAY_ONLY = "😅 I'm living in today for now\n\nCustom Picks currently works with today's games only.";
 export const HELP = "😅 I didn't quite catch that\n\nWhat odds or how many games would you like?";
@@ -50,11 +49,63 @@ const SPORT_LABEL: Record<string, string> = {
   football: "Football", basketball: "Basketball", american_football: "American Football",
   baseball: "Baseball", tennis: "Tennis", mma: "MMA",
 };
+// Every sport the parser recognizes names/aliases for - this NEVER narrows,
+// so "mma"/"ufc" stay fully parseable even while disabled in production
+// (see ENABLED_SPORTS below). Deterministic order (SPORT_ICON's own
+// insertion order): football, basketball, american_football, baseball,
+// tennis, mma.
 const SUPPORTED_SPORTS = new Set(Object.keys(SPORT_ICON).filter((s) => s !== "other"));
 
+/** SUPPORTED_SPORTS actually enabled in a deployment: the real generation
+ * config (predbot's ALLOWED_SPORTS, mirrored here - see DEFAULT_ENABLED_SPORTS)
+ * intersected with what the parser knows by name. A sport can be recognized
+ * (SUPPORTED_SPORTS) without being enabled, which is exactly MMA's current
+ * state: parseable, not yet advertised or servable (2026-10 production
+ * audit: ALLOWED_SPORTS doesn't include it). */
+function enabledSports(allowed: Iterable<string>): Set<string> {
+  const allowedSet = new Set(allowed);
+  return new Set([...SUPPORTED_SPORTS].filter((s) => allowedSet.has(s)));
+}
+
+function enabledSportsLabel(enabled: Set<string>): string {
+  return [...SUPPORTED_SPORTS].filter((s) => enabled.has(s)).map((s) => SPORT_LABEL[s] ?? s).join(", ");
+}
+
+/** Mirrors predbot/config.py's own ALLOWED_SPORTS default - the one place
+ * this file hardcodes an enabled-sports list, matching production's real
+ * configured value rather than inventing a separate one. The Worker has no
+ * shared runtime config store with the Python generation pipeline, so this
+ * default is kept in lockstep by hand (same pattern already used for
+ * TIMEZONE/POST_TIME/etc. between wrangler.toml and predbot/config.py).
+ * Real callers (index.ts) pass env.ALLOWED_SPORTS instead when configured. */
+const DEFAULT_ENABLED_SPORTS = enabledSports(["football", "basketball", "american_football", "baseball", "tennis"]);
+
+/** env.ALLOWED_SPORTS ("football,basketball,...") -> the enabled-sports set,
+ * same CSV shape as predbot's own ALLOWED_SPORTS env var. Falls back to
+ * DEFAULT_ENABLED_SPORTS when unset, never to "everything recognized". */
+export function parseEnabledSports(csv: string | undefined): Set<string> {
+  if (!csv || !csv.trim()) return DEFAULT_ENABLED_SPORTS;
+  return enabledSports(csv.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
+}
+
+/** The welcome message, built fresh from whatever's actually enabled -
+ * never a separately hardcoded sport list, so it can never advertise a
+ * sport the real pipeline isn't producing. */
+export function introText(enabled: Set<string> = DEFAULT_ENABLED_SPORTS): string {
+  return (
+    "✨ Custom Picks\n\nTell me what you want.\n\n" +
+    `Supported sports: ${enabledSportsLabel(enabled)}\n\n` +
+    'Example: "3 basketball picks at 5 odds"'
+  );
+}
+export const INTRO = introText();
+
 const SPORT_ALIASES: Record<string, string> = {
-  soccer: "football", "american football": "american_football", nfl: "american_football",
-  nba: "basketball", wnba: "basketball", mlb: "baseball", atp: "tennis", wta: "tennis", ufc: "mma",
+  soccer: "football", "association football": "football",
+  "american football": "american_football", nfl: "american_football",
+  gridiron: "american_football", pigskin: "american_football",
+  nba: "basketball", wnba: "basketball", hoops: "basketball", basket: "basketball",
+  mlb: "baseball", atp: "tennis", wta: "tennis", ufc: "mma", "mixed martial arts": "mma",
 };
 // Curated subset of predbot/markets/competitions.py BY_ID — the handful
 // production hardcodes by name in custom_intent.py's LEAGUES.update(). The
@@ -67,10 +118,25 @@ const LEAGUES: Record<string, { id: string; sport: string }> = {
   "la liga": { id: "la_liga", sport: "football" }, laliga: { id: "la_liga", sport: "football" },
   "serie a": { id: "serie_a", sport: "football" },
   "ligue 1": { id: "ligue_1", sport: "football" }, "ligue one": { id: "ligue_1", sport: "football" },
-  "champions league": { id: "ucl", sport: "football" },
-  "europa league": { id: "uel", sport: "football" },
-  "conference league": { id: "uecl", sport: "football" },
+  "champions league": { id: "ucl", sport: "football" }, ucl: { id: "ucl", sport: "football" },
+  "europa league": { id: "uel", sport: "football" }, uel: { id: "uel", sport: "football" },
+  "conference league": { id: "uecl", sport: "football" }, uecl: { id: "uecl", sport: "football" },
 };
+// Sports recognized by NAME but not currently offered, mapped to their
+// canonical display name for the "We do not cover X yet" response (sorted
+// longest-phrase-first so e.g. "ice hockey" is identified before the bare
+// "hockey" substring it contains). Curated, like SPORT_ALIASES/LEAGUES - an
+// unlisted word is never guessed at; it falls through to the generic HELP
+// clarifying question instead of inventing a sport name.
+const UNSUPPORTED_SPORTS: [string, string][] = Object.entries({
+  "ice hockey": "Hockey", "field hockey": "Hockey", hockey: "Hockey",
+  "rugby league": "Rugby", "rugby union": "Rugby", rugby: "Rugby",
+  cricket: "Cricket", volleyball: "Volleyball", handball: "Handball", golf: "Golf",
+  boxing: "Boxing", darts: "Darts", snooker: "Snooker", "table tennis": "Table Tennis",
+  badminton: "Badminton", cycling: "Cycling", "formula 1": "Formula 1", "formula one": "Formula 1",
+  f1: "Formula 1", esports: "Esports", "e-sports": "Esports", swimming: "Swimming",
+  athletics: "Athletics", motorsport: "Motorsport",
+}).sort((a, b) => b[0].length - a[0].length);
 
 const MARKET_ALIASES: Record<string, string> = {
   result2: "result2", result3: "result3", dc: "dc", dnb: "dnb", btts: "btts", total: "total", handicap: "handicap",
@@ -473,6 +539,18 @@ export interface ParsedRequest {
   specifiedFields: Set<string>;
   refinement: boolean;
   qualityUpgrade: boolean;
+  /** Lower-cased team names mentioned by name, matched against the loaded
+   * pool (there's no static team catalog - teams change daily), applied in
+   * scoped(). Populated AFTER parseRequest, in respond(), since it needs the
+   * pool; see matchTeamsInPool(). Persists across refinement turns like any
+   * other field unless the CURRENT message names different teams. */
+  teams: Set<string>;
+  /** An explicit "Over 1.5" / "Under 2.5" style line request: the total
+   * market, a specific side and a specific line value - never relaxed to a
+   * nearby line, so a request for a line nothing today offers fails
+   * honestly (market_unavailable) instead of silently substituting a
+   * different line. */
+  totalLine: { selection: "over" | "under"; line: number } | null;
 }
 
 /** JSON-safe form of a ParsedRequest (Sets -> arrays), for D1 persistence across stateless invocations. */
@@ -482,6 +560,7 @@ export function serializeRequest(req: ParsedRequest): Record<string, unknown> {
     allowedMarkets: [...req.allowedMarkets], excludedMarkets: [...req.excludedMarkets],
     preference: req.preference, competitions: [...req.competitions], timeIntent: req.timeIntent,
     specifiedFields: [...req.specifiedFields], refinement: req.refinement, qualityUpgrade: req.qualityUpgrade,
+    teams: [...req.teams], totalLine: req.totalLine,
   };
 }
 
@@ -498,6 +577,8 @@ export function deserializeRequest(raw: Record<string, unknown>): ParsedRequest 
     specifiedFields: new Set((raw.specifiedFields as string[]) ?? []),
     refinement: !!raw.refinement,
     qualityUpgrade: !!raw.qualityUpgrade,
+    teams: new Set((raw.teams as string[]) ?? []),
+    totalLine: (raw.totalLine as ParsedRequest["totalLine"]) ?? null,
   };
 }
 
@@ -505,7 +586,7 @@ function freshRequest(): ParsedRequest {
   return {
     targetOdds: null, pickCount: null, sports: new Set(), allowedMarkets: new Set(), excludedMarkets: new Set(),
     preference: "best", competitions: new Set(), timeIntent: null, specifiedFields: new Set(),
-    refinement: false, qualityUpgrade: false,
+    refinement: false, qualityUpgrade: false, teams: new Set(), totalLine: null,
   };
 }
 
@@ -522,7 +603,7 @@ const err = (text: string, reason = "invalid_request"): ParseResult => ({ ok: fa
  * typo-correction, and the over/under line-market detection (total market
  * without an explicit line word is still supported via MARKET_ALIASES).
  */
-export function parseRequest(rawText: string): ParseResult {
+export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENABLED_SPORTS): ParseResult {
   const trimmed = rawText.trim();
   if (!trimmed || trimmed.length > 512) return err(HELP);
   const text = trimmed.toLowerCase();
@@ -559,15 +640,30 @@ export function parseRequest(rawText: string): ParseResult {
     if (req.sports.size) return err(HELP, "conflicting_constraints");
     req.specifiedFields.add("sports"); // sports stays empty: explicit "all"
   }
+  // A recognized sport that isn't ENABLED (currently just "mma" - see
+  // DEFAULT_ENABLED_SPORTS) gets the same "we don't cover it yet" message as
+  // a genuinely unrecognized sport, never silently dropped or accepted.
+  const disabled = [...req.sports].filter((s) => SUPPORTED_SPORTS.has(s) && !enabled.has(s)).sort();
+  if (disabled.length) {
+    return err(
+      `We do not cover ${SPORT_LABEL[disabled[0]] ?? disabled[0]} yet. Please choose one of our supported sports.\n\nSupported sports: ${enabledSportsLabel(enabled)}`,
+      "unsupported_sport",
+    );
+  }
   if (req.competitions.size && req.sports.size) {
     const leagueSports = new Set([...req.competitions].map((id) => Object.values(LEAGUES).find((l) => l.id === id)?.sport));
     if (![...leagueSports].every((s) => req.sports.has(s as string))) {
       return err("Those leagues and sports don't match. Which should I use?", "conflicting_constraints");
     }
   }
-  const unsupported = ["hockey", "rugby", "cricket", "volleyball", "handball"].filter((s) => !(s in sportWords));
-  if (unsupported.some((s) => new RegExp(`\\b${s}\\b`).test(text))) {
-    return err("I can't offer that sport right now. Which other sport would you like?", "unsupported_sport");
+  for (const [word, label] of UNSUPPORTED_SPORTS) {
+    if (word in sportWords) continue; // never shadow a genuinely supported alias
+    if (new RegExp(`\\b${word.replace(/\s+/g, "\\s+")}\\b`).test(text)) {
+      return err(
+        `We do not cover ${label} yet. Please choose one of our supported sports.\n\nSupported sports: ${enabledSportsLabel(enabled)}`,
+        "unsupported_sport",
+      );
+    }
   }
 
   const num = "([+-]?\\d+(?:\\.\\d+)?)";
@@ -638,6 +734,19 @@ export function parseRequest(rawText: string): ParseResult {
     previousEnd = index + phrase.length;
   }
   if ([...req.allowedMarkets].some((m) => req.excludedMarkets.has(m))) return err(HELP, "conflicting_constraints");
+
+  // ~ catalog.py selection_label()'s total/handicap line, read back the
+  // other way: "Over 1.5" / "Under 2.5" names an explicit total-market line
+  // (goals/points/sets, whichever the matched sport uses — the stat word
+  // itself is never parsed from text, only rendered). Never widened to a
+  // nearby line: scoped() requires an exact match, so a line nothing today
+  // offers fails honestly instead of silently substituting a close one.
+  const lineMatch = /\b(over|under)\s+(\d+(?:\.\d+)?)\b/.exec(text);
+  if (lineMatch && !req.excludedMarkets.has("total")) {
+    req.totalLine = { selection: lineMatch[1] as "over" | "under", line: Number(lineMatch[2]) };
+    req.allowedMarkets.add("total");
+    req.specifiedFields.add("total_line");
+  }
   if (req.allowedMarkets.size) req.specifiedFields.add("allowed_markets");
   if (req.excludedMarkets.size) req.specifiedFields.add("excluded_markets");
 
@@ -674,7 +783,37 @@ export function scoped(c: Candidate, req: ParsedRequest): boolean {
   if (req.competitions.size && !(c.competition && req.competitions.has(c.competition))) return false;
   if (req.allowedMarkets.size && !req.allowedMarkets.has(c.market)) return false;
   if (req.excludedMarkets.has(c.market)) return false;
+  if (req.teams.size && !req.teams.has(c.home.toLowerCase()) && !req.teams.has(c.away.toLowerCase())) return false;
+  if (req.totalLine) {
+    // ~ custom_recovery.py scoped()'s market_line check: an explicit "Over
+    // 1.5" means the FULL MATCH total specifically — never a team total or
+    // a period-scoped one (a 1st-half "Over 1.5" is a different market the
+    // user didn't ask for), so period/stat/entity are pinned too.
+    const t = req.totalLine;
+    if (c.market !== "total" || c.selection !== t.selection || c.line !== t.line) return false;
+    if (c.entity !== "all" || c.stat !== "points" || (c.period !== "full" && c.period !== "reg")) return false;
+  }
   return true;
+}
+
+/** ~ custom_intent.py parse()'s team-name recognition: there's no static
+ * team catalog (teams change daily), so a team mention is matched against
+ * the names actually IN today's pool, not guessed from free text alone.
+ * Only returns names the pool itself contains - never invents a team. */
+function matchTeamsInPool(text: string, pool: Candidate[]): Set<string> {
+  const lower = text.toLowerCase();
+  const seen = new Set<string>();
+  const matched = new Set<string>();
+  for (const c of pool) {
+    for (const name of [c.home, c.away]) {
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (new RegExp(`\\b${escaped}\\b`).test(lower)) matched.add(key);
+    }
+  }
+  return matched;
 }
 
 /** ~ custom_recovery.py eligible(): scoped candidates that are future, quality-floor, and (if "tonight") evening. */
@@ -1153,6 +1292,7 @@ export function refine(previous: ParsedRequest, current: ParsedRequest): ParsedR
       case "excluded_markets": next.excludedMarkets = new Set([...current.excludedMarkets, ...previous.excludedMarkets]); break;
       case "preference": next.preference = current.preference; break;
       case "time_intent": next.timeIntent = current.timeIntent; break;
+      case "total_line": next.totalLine = current.totalLine; break;
     }
   }
   if (current.specifiedFields.has("sports") && !current.specifiedFields.has("competitions")) {
@@ -1276,8 +1416,9 @@ export async function respond(
   nowMs: number,
   previous: ParsedRequest | null,
   userId = "",
+  enabled: Set<string> = DEFAULT_ENABLED_SPORTS,
 ): Promise<{ result: RespondResult; request: ParsedRequest | null }> {
-  const parsed = parseRequest(text);
+  const parsed = parseRequest(text, enabled);
   if (!parsed.ok) return { result: { text: parsed.text, reason: parsed.reason, suggestions: [] }, request: null };
   let request = parsed.request;
   if (request.refinement && previous) request = refine(previous, request);
@@ -1285,6 +1426,11 @@ export async function respond(
   const loaded = await loadPool(deps, day, zone, nowMs);
   if (loaded === null) return { result: { text: UNAVAILABLE, reason: "archive_unavailable", suggestions: [] }, request };
   const { candidates: pool, diagnostics } = loaded;
+  // Team names mentioned in THIS turn's text win outright (a fresh mention
+  // always means the user is naming a team right now); otherwise whatever
+  // refine() already carried over from the previous turn stands.
+  const mentionedTeams = matchTeamsInPool(text, pool);
+  if (mentionedTeams.size) request.teams = mentionedTeams;
 
   const matches = eligible(pool, request, nowMs);
   const options = matches.length ? shortlist(matches, request) : [];

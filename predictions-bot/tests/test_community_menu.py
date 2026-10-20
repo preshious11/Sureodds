@@ -194,7 +194,7 @@ def test_custom_picks_private_entry_is_distinct_and_does_not_subscribe(menu_loop
     menu_loop.service = Mock()
     before = list(db.conn.iterdump())
     menu_loop._handle_update(message_update("/start custom_picks", user_id="42"))
-    entry.assert_called_once_with(menu_loop.tg, "42")
+    entry.assert_called_once_with(menu_loop.tg, "42", allowed_sports=menu_loop.cfg.allowed_sports)
     from predbot.custom_picks import INTRO
     assert ('42', '42') in menu_loop._custom_users
     assert menu_loop.tg.sends == [{"chat_id": "42", "text": INTRO,

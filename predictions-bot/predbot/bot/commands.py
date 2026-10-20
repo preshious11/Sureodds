@@ -385,7 +385,7 @@ class CommandLoop(threading.Thread):
                     self._custom_users.add((user_id, chat_id))
                     if ticket_audit_switch.ENABLED and self._ticket_audit is not None:
                         self._ticket_audit.leave((user_id, chat_id))
-                    callbacks.handle_custom_picks_start(self.tg, chat_id)
+                    callbacks.handle_custom_picks_start(self.tg, chat_id, allowed_sports=self.cfg.allowed_sports)
                     log.info("custom_picks private entry | update_id=%s", upd.get("update_id"))
                     return
                 self._custom_users.discard((user_id, chat_id))
@@ -419,7 +419,7 @@ class CommandLoop(threading.Thread):
     def _custom_request(self, text: str, user_id: str, chat_id: str) -> None:
         loading_id = None
         try:
-            parse_request(text, set(self.cfg.allowed_sports))
+            parse_request(text, set(self.cfg.allowed_sports), allowed_sports=self.cfg.allowed_sports)
             loading_id = self.tg.send('🔎 Finding your strongest picks...', chat_id=chat_id)
         except RequestError:
             pass  # Clarifications do not pretend a search is underway.

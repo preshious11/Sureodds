@@ -15,9 +15,48 @@ from predbot.providers.base import MarketLine
 from predbot.util.timeutil import parse_iso, to_local, utcnow
 
 log = logging.getLogger(__name__)
-INTRO = ("✨ Custom Picks\n\nTell me what you want.\n\n"
-         "• Safe 4 odds\n• 3 basketball picks\n• 5 odds, double chance only\n"
-         "• 2 strong tennis picks\n• 6 odds from football and basketball")
+#: Every sport the parser recognizes names/aliases for - this NEVER narrows,
+#: so "mma"/"ufc" stay fully parseable even while disabled in production
+#: (see enabled_sports() below). SPORT_LABEL's own keys (minus "other").
+RECOGNIZED_SPORTS = tuple(s for s in SPORT_LABEL if s != 'other')
+
+
+def enabled_sports(allowed_sports):
+    """RECOGNIZED_SPORTS actually enabled in a deployment: the real generation
+    config (Config.allowed_sports) intersected with what the parser knows by
+    name - never a second, separately-maintained sport list. A sport can be
+    recognized (RECOGNIZED_SPORTS) without being enabled (this), which is
+    exactly MMA's current state: parseable, not yet advertised or servable."""
+    allowed = set(allowed_sports)
+    return [s for s in RECOGNIZED_SPORTS if s in allowed]
+
+
+def enabled_sports_label(allowed_sports):
+    return ', '.join(SPORT_LABEL[s] for s in enabled_sports(allowed_sports))
+
+
+def intro_text(allowed_sports):
+    """The welcome message, built fresh from whatever's actually enabled in
+    THIS deployment - never a separately hardcoded sport list, so it can
+    never advertise a sport the real pipeline isn't producing."""
+    return ("✨ Custom Picks\n\nTell me what you want.\n\n"
+            f"Supported sports: {enabled_sports_label(allowed_sports)}\n\n"
+            "Example: \"3 basketball picks at 5 odds\"")
+
+
+#: Mirrors the real production ALLOWED_SPORTS config (predbot/config.py's own
+#: default, read from the SAME env var) - the one place this module hardcodes
+#: an enabled-sports list, kept in lockstep by reading Config's own default
+#: rather than repeating the literal sport names here. Used only where no
+#: live Config/cfg is available (module-level INTRO, and parse_request's
+#: default) - every real request path passes the request's own
+#: cfg.allowed_sports instead, so a config change takes effect immediately.
+def _default_allowed_sports():
+    from predbot.config import Config
+    return Config().allowed_sports
+
+
+INTRO = intro_text(_default_allowed_sports())
 UNAVAILABLE = "👨‍🍳 Still cooking\n\nToday's picks aren't ready yet. Check back in a bit."
 TODAY_ONLY = "😅 I'm living in today for now\n\nCustom Picks currently works with today's games only."
 HELP = '😅 I didn\'t quite catch that\n\nWhat odds or how many games would you like?'
@@ -54,9 +93,24 @@ class WorkBudget:
         return self.remaining <= 0
 TOLERANCE = .10
 MIN_PROBABILITY = {'safe': .65, 'strong': .60, 'best': .50}
-SPORT_ALIASES = {'soccer': 'football', 'american football': 'american_football',
-                 'nfl': 'american_football', 'nba': 'basketball', 'wnba': 'basketball',
-                 'mlb': 'baseball', 'atp': 'tennis', 'wta': 'tennis', 'ufc': 'mma'}
+SPORT_ALIASES = {'soccer': 'football', 'association football': 'football',
+                 'american football': 'american_football', 'nfl': 'american_football',
+                 'gridiron': 'american_football', 'pigskin': 'american_football',
+                 'nba': 'basketball', 'wnba': 'basketball', 'hoops': 'basketball', 'basket': 'basketball',
+                 'mlb': 'baseball', 'atp': 'tennis', 'wta': 'tennis', 'ufc': 'mma',
+                 'mixed martial arts': 'mma'}
+#: Sports recognized by NAME but not currently offered, mapped to their
+#: canonical display name for the "We do not cover X yet" response. Curated
+#: like SPORT_ALIASES/LEAGUES - an unlisted word is never guessed at.
+UNSUPPORTED_SPORTS = dict(sorted({
+    'ice hockey': 'Hockey', 'field hockey': 'Hockey', 'hockey': 'Hockey',
+    'rugby league': 'Rugby', 'rugby union': 'Rugby', 'rugby': 'Rugby',
+    'cricket': 'Cricket', 'volleyball': 'Volleyball', 'handball': 'Handball', 'golf': 'Golf',
+    'boxing': 'Boxing', 'darts': 'Darts', 'snooker': 'Snooker', 'table tennis': 'Table Tennis',
+    'badminton': 'Badminton', 'cycling': 'Cycling', 'formula 1': 'Formula 1', 'formula one': 'Formula 1',
+    'f1': 'Formula 1', 'esports': 'Esports', 'e-sports': 'Esports', 'swimming': 'Swimming',
+    'athletics': 'Athletics', 'motorsport': 'Motorsport',
+}.items(), key=lambda kv: -len(kv[0])))  # longest phrase first: "ice hockey" before bare "hockey"
 MARKET_ALIASES = {**{key: key for key, spec in CATALOG.items() if spec.modelable},
                   **{spec.name.lower(): key for key, spec in CATALOG.items() if spec.modelable},
                   'double chance': 'dc', 'dc': 'dc', 'draw no bet': 'dnb', 'dnb': 'dnb',
@@ -88,15 +142,41 @@ class Request:
     specified_fields: frozenset[str] = field(default=frozenset(), compare=False)
     refinement: bool = field(default=False, compare=False)
     quality_upgrade: bool = field(default=False, compare=False)
+    #: Lower-cased team names mentioned by name, matched against the loaded
+    #: pool (there's no static team catalog - teams change daily). Populated
+    #: AFTER parse_request(), once the pool is loaded; see
+    #: match_teams_in_pool(). Appended last (not inserted among the fields
+    #: above) so custom_intent.py's positional Request(...) construction
+    #: never shifts. Not in specified_fields, so refine() preserves it
+    #: across turns like any other field the current message doesn't
+    #: re-specify.
+    teams: frozenset[str] = frozenset()
 
 
 def phrase_pattern(phrases):
     return r'\b(?:' + '|'.join(re.escape(p) for p in sorted(phrases, key=lambda p: (-len(p), p))) + r')\b'
 
 
-def parse_request(text, supported_sports=()):
+def parse_request(text, supported_sports=(), allowed_sports=None):
     from predbot.custom_intent import parse
-    return parse(text, supported_sports)
+    return parse(text, supported_sports, allowed_sports)
+
+
+def match_teams_in_pool(text, candidates):
+    """Team names mentioned in ``text``, matched against today's actual pool - there's
+    no static team catalog (teams change daily), so a name is only ever recognized
+    because it's genuinely playing today, never guessed from free text alone."""
+    lowered = text.lower()
+    seen, matched = set(), set()
+    for c in candidates:
+        for name in (c.home, c.away):
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            if re.search(r'\b' + re.escape(key) + r'\b', lowered):
+                matched.add(key)
+    return frozenset(matched)
 
 
 def aware_time(value):

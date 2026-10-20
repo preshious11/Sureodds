@@ -196,10 +196,11 @@ def community_menu_markup(bot_username: str) -> Dict[str, Any]:
     return {"inline_keyboard": rows}
 
 
-def handle_custom_picks_start(tg: Telegram, chat_id: str) -> None:
+def handle_custom_picks_start(tg: Telegram, chat_id: str, allowed_sports=None) -> None:
     """Introduction after CommandLoop activates this private user's mode."""
-    from predbot.custom_picks import INTRO
-    tg.send(INTRO, chat_id=chat_id)
+    from predbot.custom_picks import INTRO, intro_text
+    text = INTRO if allowed_sports is None else intro_text(allowed_sports)
+    tg.send(text, chat_id=chat_id)
 
 
 def handle_start(db: Database, tg: Telegram, chat_id: str, user: Optional[Dict[str, Any]]) -> None:

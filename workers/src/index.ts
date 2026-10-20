@@ -31,9 +31,10 @@ import {
   COPY_EXPIRED,
   COPY_EXPIRED_EMPTY,
   CUSTOM_PICKS_TTL_MS,
-  INTRO,
   deserializeRequest,
   formatTicket,
+  introText,
+  parseEnabledSports,
   respond as customPicksRespond,
   serializeRequest,
   type Suggestion,
@@ -519,7 +520,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       return;
     }
     await enterCustomSession(env.DB, userId, chatId);
-    await tgApi(env, "sendMessage", { chat_id: chatId, text: INTRO });
+    await tgApi(env, "sendMessage", { chat_id: chatId, text: introText(parseEnabledSports(env.ALLOWED_SPORTS)) });
     return;
   }
 
@@ -702,6 +703,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
           nowMs,
           previous,
           userId,
+          parseEnabledSports(env.ALLOWED_SPORTS),
         );
         // The cooldown timestamp is recorded ONLY after the request was
         // actually served: recording it up-front poisoned webhook retries —

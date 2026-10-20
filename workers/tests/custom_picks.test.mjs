@@ -2,6 +2,8 @@ import { beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   HELP,
+  INTRO,
+  introText,
   TODAY_ONLY,
   UNAVAILABLE,
   __resetPoolCacheForTests,
@@ -19,6 +21,7 @@ import {
   refine,
   requestKey,
   respond,
+  scoped,
   search,
   shortlist,
   ticketSignature,
@@ -719,5 +722,144 @@ describe("reported-issue regressions (strict floor, labels, counts, fixtures, va
     const text = formatTicket(ticket);
     const product = ticket.picks.reduce((a, c) => a * c.price, 1);
     assert.ok(text.startsWith(`🔥 ${product.toFixed(2)} ODDS`));
+  });
+});
+
+// Kovqi natural-language improvements: welcome message, sport/league/market
+// recognition, unsupported-sport response, team names, explicit lines.
+describe("INTRO lists exactly the currently ENABLED sports, nothing fabricated", () => {
+  it("names every sport production's ALLOWED_SPORTS actually enables, and one example", () => {
+    // Production's real ALLOWED_SPORTS default excludes MMA (2026-10 audit):
+    // the welcome message must never advertise a sport that can't actually
+    // be served, even though MMA stays fully recognized/parseable.
+    for (const label of ["Football", "Basketball", "American Football", "Baseball", "Tennis"]) {
+      assert.ok(INTRO.includes(label), `INTRO should list ${label}`);
+    }
+    assert.ok(!INTRO.includes("MMA"));
+    assert.match(INTRO, /Example:/);
+    for (const sport of ["hockey", "cricket", "boxing", "rugby"]) {
+      assert.ok(!INTRO.toLowerCase().includes(sport));
+    }
+  });
+  it("re-enabling a sport is a config change only, never a separately hardcoded list", () => {
+    assert.ok(introText(new Set(["football", "basketball", "american_football", "baseball", "tennis", "mma"])).includes("MMA"));
+  });
+});
+
+describe("parseRequest: expanded sport/league/market recognition", () => {
+  it('"UCL" alone is recognized as the Champions League', () => {
+    const r = parseRequest("3 picks UCL").request;
+    assert.ok(r.competitions.has("ucl"));
+  });
+  it('"EPL BTTS" recognizes both the league and the market together', () => {
+    const r = parseRequest("EPL BTTS").request;
+    assert.ok(r.competitions.has("epl"));
+    assert.ok(r.allowedMarkets.has("btts"));
+  });
+  it('an explicit "Over 1.5" names the total market and an exact line, never a nearby one', () => {
+    const r = parseRequest("3 picks over 1.5").request;
+    assert.ok(r.allowedMarkets.has("total"));
+    assert.deepEqual(r.totalLine, { selection: "over", line: 1.5 });
+  });
+  it('"Under 2.5" is recognized the same way', () => {
+    const r = parseRequest("under 2.5, 2 picks").request;
+    assert.deepEqual(r.totalLine, { selection: "under", line: 2.5 });
+  });
+  it('an explicit line only matches the FULL MATCH total, never a team total or a period-scoped one', () => {
+    const req = parseRequest("1 picks over 1.5").request;
+    const matchTotal = candidate({ market: "total", selection: "over", line: 1.5, entity: "all" });
+    const teamTotal = candidate({ canonical_event_id: "fx-2", market: "total", selection: "over", line: 1.5, entity: "home" });
+    const halfTotal = candidate({ canonical_event_id: "fx-3", market: "total", selection: "over", line: 1.5, entity: "all", period: "1h" });
+    assert.equal(scoped(matchTotal, req), true);
+    assert.equal(scoped(teamTotal, req), false);
+    assert.equal(scoped(halfTotal, req), false);
+  });
+  it("extra sport aliases: hoops/basket -> basketball", () => {
+    assert.ok(parseRequest("3 hoops picks").request.sports.has("basketball"));
+    assert.ok(parseRequest("3 basket picks").request.sports.has("basketball"));
+  });
+});
+
+describe('unsupported-sport response: "We do not cover X yet"', () => {
+  it("names the actual requested sport and lists the supported ones", () => {
+    const r = parseRequest("3 hockey picks");
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, "unsupported_sport");
+    assert.match(r.text, /^We do not cover Hockey yet\. Please choose one of our supported sports\./);
+    for (const label of ["Football", "Basketball", "Tennis"]) assert.ok(r.text.includes(label));
+  });
+  it("identifies a specific compound phrase correctly (ice hockey, not a bare sport guess)", () => {
+    const r = parseRequest("ice hockey picks please");
+    assert.equal(r.reason, "unsupported_sport");
+    assert.match(r.text, /We do not cover Hockey yet/);
+  });
+  it("covers cricket, rugby, boxing, golf, darts as named, distinct sports", () => {
+    for (const [word, label] of [["cricket", "Cricket"], ["rugby", "Rugby"], ["boxing", "Boxing"], ["golf", "Golf"], ["darts", "Darts"]]) {
+      const r = parseRequest(`3 ${word} picks`);
+      assert.equal(r.reason, "unsupported_sport");
+      assert.match(r.text, new RegExp(`We do not cover ${label} yet`));
+    }
+  });
+  it("never invents a sport name for text that isn't a recognized sport at all", () => {
+    const r = parseRequest("asdkjfh picks please");
+    assert.notEqual(r.reason, "unsupported_sport");
+  });
+  it("MMA is recognized by name but disabled by default (production's real ALLOWED_SPORTS)", () => {
+    const r = parseRequest("3 MMA picks");
+    assert.equal(r.reason, "unsupported_sport");
+    assert.match(r.text, /^We do not cover MMA yet\. Please choose one of our supported sports\./);
+    assert.ok(!r.text.split("\n\n").at(-1).includes("MMA")); // never listed among the supported sports itself
+    // Recognition itself is untouched: explicitly enabling it makes it parse clean.
+    const enabled = parseRequest("3 MMA picks", new Set(["mma"])).request;
+    assert.ok(enabled.sports.has("mma"));
+  });
+  it("a supported sport with no candidates today is a DIFFERENT message (sport_unavailable), never the unsupported-sport text", () => {
+    const pool = [candidate({ sport: "football" })];
+    const req = parseRequest("3 tennis picks").request;
+    assert.equal(req.sports.has("tennis"), true); // parsed fine - tennis IS supported
+    const matches = eligible(pool, req, NOW);
+    assert.equal(failureReason(pool, req, NOW, matches), "sport_unavailable");
+  });
+  it("a supported sport with candidates but no matching market is market_unavailable, not sport_unavailable", () => {
+    const pool = [candidate({ sport: "tennis", market: "result2" })];
+    const req = parseRequest("tennis picks, btts only").request;
+    const matches = eligible(pool, req, NOW);
+    assert.equal(failureReason(pool, req, NOW, matches), "market_unavailable");
+  });
+});
+
+describe("team-name recognition (matched against today's pool, never a static catalog)", () => {
+  function teamPool() {
+    return [
+      candidate({ canonical_event_id: "fx-arsenal", home: "Arsenal", away: "Chelsea" }),
+      candidate({ canonical_event_id: "fx-barca", home: "Barcelona", away: "Real Madrid", price: 1.6, p_model: 0.65 }),
+    ];
+  }
+  it("a named team scopes the ticket to its fixture only", async () => {
+    const rows = teamPool().map((c) => ({
+      payload_json: JSON.stringify(candidatePayload({
+        canonical_event_id: c.fixtureId, home: c.home, away: c.away, price: c.price, p_model: c.probability,
+      })),
+    }));
+    const pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
+    const deps = { getPool: async () => pool, getCandidates: async () => rows };
+    const { result } = await respond(deps, "1 picks Arsenal", ZONE, DAY, NOW, null);
+    assert.equal(result.reason, "success");
+    assert.match(result.text, /Arsenal/);
+    assert.ok(!result.text.includes("Barcelona"));
+  });
+  it("a team mentioned in an earlier turn persists across a refinement that doesn't re-mention it", async () => {
+    const rows = teamPool().map((c) => ({
+      payload_json: JSON.stringify(candidatePayload({
+        canonical_event_id: c.fixtureId, home: c.home, away: c.away, price: c.price, p_model: c.probability,
+      })),
+    }));
+    const pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
+    const deps = { getPool: async () => pool, getCandidates: async () => rows };
+    const first = await respond(deps, "1 picks Arsenal", ZONE, DAY, NOW, null);
+    assert.equal(first.result.reason, "success");
+    const second = await respond(deps, "make it safer instead", ZONE, DAY, NOW, first.request);
+    assert.equal(second.result.reason, "success");
+    assert.match(second.result.text, /Arsenal/);
   });
 });

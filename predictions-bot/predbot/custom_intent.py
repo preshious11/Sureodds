@@ -62,8 +62,15 @@ def competition_id(*values):
     return None
 
 
-def parse(text, supported_sports=()):
+def parse(text, supported_sports=(), allowed_sports=None):
     from predbot import custom_picks as cp
+    # The deployment's actually-ENABLED sports, independent of what the
+    # parser merely RECOGNIZES by name (supported_sports only ever widens
+    # recognition - see test_custom_picks.py's 'hockey' case). Defaults to
+    # Config's own ALLOWED_SPORTS when no live cfg is passed, so a bare
+    # parse_request(text) call (most unit tests) still behaves like
+    # production. Real callers pass their own cfg.allowed_sports.
+    enabled = set(cp.enabled_sports(allowed_sports if allowed_sports is not None else cp._default_allowed_sports()))
     if not str(text).strip() or len(str(text)) > 512:
         raise cp.RequestError(cp.HELP)
     text = normalize_text(text)
@@ -85,6 +92,12 @@ def parse(text, supported_sports=()):
         raise cp.RequestError('Which sports would you like to include?')
     sports = frozenset(aliases[m.group()] for m in sport_matches)
     if sports: fields.add('sports')
+    disabled = sorted(s for s in sports if s in cp.RECOGNIZED_SPORTS and s not in enabled)
+    if disabled:
+        raise cp.RequestError(
+            f'We do not cover {cp.SPORT_LABEL[disabled[0]]} yet. Please choose one of our supported sports.\n\n'
+            f'Supported sports: {cp.enabled_sports_label(enabled)}',
+            'unsupported_sport')
     if re.search(r'\ball sports\b', text):
         if sports: raise cp.RequestError(cp.HELP, 'conflicting_constraints')
         sports = frozenset()
@@ -93,9 +106,14 @@ def parse(text, supported_sports=()):
         league_sports = {BY_ID[c].sport for c in competitions}
         if sports and not league_sports <= sports:
             raise cp.RequestError('Those leagues and sports don’t match. Which should I use?', 'conflicting_constraints')
-    unsupported = {'hockey', 'rugby', 'cricket', 'volleyball', 'handball'} - set(aliases)
-    if unsupported and re.search(cp.phrase_pattern(unsupported), text):
-        raise cp.RequestError('I can’t offer that sport right now. Which other sport would you like?', 'unsupported_sport')
+    for word, label in cp.UNSUPPORTED_SPORTS.items():
+        if word in aliases:
+            continue  # never shadow a genuinely supported alias
+        if re.search(cp.phrase_pattern({word}), text):
+            raise cp.RequestError(
+                f'We do not cover {label} yet. Please choose one of our supported sports.\n\n'
+                f'Supported sports: {cp.enabled_sports_label(enabled)}',
+                'unsupported_sport')
     number = r'([+-]?\d+(?:\.\d+)?)'
     targets, counts = [], []
     for pattern in (r'(?<![\w.])' + number + r'\s*(?:(?:combined|total)\s+)?odds\b',

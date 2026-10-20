@@ -32,6 +32,11 @@ export interface Env {
   GITHUB_REF?: string;
   /** Fine-grained PAT with this repo's "Actions: Read and write" permission, for the workflow_dispatch call. Secret, never a [vars] entry. */
   GITHUB_DISPATCH_TOKEN?: string;
+  /** Custom Picks' enabled-sports list ("football,basketball,..."), the SAME
+   * CSV shape and sport keys as predbot's own ALLOWED_SPORTS env var. Unset
+   * falls back to custom_picks.ts's DEFAULT_ENABLED_SPORTS (production's
+   * current real value) - see parseEnabledSports(). */
+  ALLOWED_SPORTS?: string;
 }
 
 /// Two-phase update claim (Stage 2 reliability).

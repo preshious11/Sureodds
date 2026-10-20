@@ -102,6 +102,7 @@ def scoped(c, request, zone='UTC'):
             (not request.competitions or c.competition in request.competitions) and
             (not request.allowed_markets or c.market in request.allowed_markets) and
             c.market not in request.excluded_markets and
+            (not request.teams or c.home.lower() in request.teams or c.away.lower() in request.teams) and
             (request.market_selection is None or c.selection == request.market_selection) and
             (request.market_line is None or (c.line == request.market_line and
              c.market == 'total' and c.period in ('full', 'reg') and c.stat == 'points' and c.entity == 'all')) and
@@ -481,15 +482,24 @@ class Recovery:
             self.prune(now)
             reason, request = None, cp.Request()
             try:
-                request = cp.parse_request(text, set(cp.SPORT_LABEL) | set(self.cfg.allowed_sports))
+                request = cp.parse_request(text, set(cp.SPORT_LABEL) | set(self.cfg.allowed_sports),
+                                           allowed_sports=self.cfg.allowed_sports)
                 key = (user_id, chat_id)
                 previous = self.conversations.get(key)
                 if request.refinement and previous:
                     request = refine(previous.request, request)
-                self.remember(user_id, chat_id, request, min(now + TTL, day_bounds(now, self.cfg.timezone)[1]))
             except cp.RequestError as exc:
                 return Response(str(exc), exc.reason)
             pool = self.load(now)
+            # A team mentioned in THIS turn's text wins outright; otherwise
+            # whatever refine() already carried over from the previous turn
+            # stands (see Request.teams). Must happen BEFORE remember() -
+            # the NEXT turn's refine() reads back whatever is persisted here.
+            if pool:
+                mentioned = cp.match_teams_in_pool(text, pool.candidates)
+                if mentioned:
+                    request = replace(request, teams=mentioned)
+            self.remember(user_id, chat_id, request, min(now + TTL, day_bounds(now, self.cfg.timezone)[1]))
             budget = cp.WorkBudget()
             self.last_work = 0
             matches = eligible(pool.candidates, request, now, self.cfg.timezone) if pool else []
