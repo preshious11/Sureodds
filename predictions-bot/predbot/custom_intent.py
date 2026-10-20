@@ -19,6 +19,11 @@ for name in ('nba', 'nfl', 'mlb', 'atp', 'wta'):
     LEAGUES.pop(name, None)
     LEAGUES[name + ' league'] = name
 
+# Ordinary request nouns: a number next to any of these is a pick count or
+# a goal/point/set line, never an "unsupported market" or unrecognized
+# word. Shared between the count regex and the general-request signal so
+# "1.5 options"/"3 predictions" are never mistaken for gibberish.
+REQUEST_WORDS = r'picks?|games?|matches?|selections?|options?|predictions?'
 NUMBERS = dict(zip(('one two three four five six seven eight nine ten eleven twelve thirteen fourteen '
                    'fifteen sixteen seventeen eighteen nineteen twenty').split(), map(str, range(1, 21))))
 QUALITY = {'safe': 'safe', 'safest': 'safe', 'safer': 'safe', 'sure': 'safe',
@@ -115,16 +120,30 @@ def parse(text, supported_sports=(), allowed_sports=None):
                 f'Supported sports: {cp.enabled_sports_label(enabled)}',
                 'unsupported_sport')
     number = r'([+-]?\d+(?:\.\d+)?)'
+    # Claimed EARLY (before odds-target/count scanning) so "under 2.5 games"
+    # is never misread as a (non-integer, erroring) pick count: "2.5" sits
+    # right where a count regex would also look, so the explicit over/under
+    # phrase must claim its span first. The actual Request fields (side,
+    # line, allowed markets) are still set further down, unchanged.
+    lines = list(re.finditer(r'\b(over|under)\s*' + number + r'(?![\w.])', text))
+    if len({(m.group(1), m.group(2)) for m in lines}) > 1:
+        raise cp.RequestError('Which over/under selection would you like?', 'conflicting_constraints')
+    line_span = lines[0].span() if lines else None
+
+    def claimed(pos):
+        return any(a <= pos < b for a, b in (x.span() for x in leagues)) or (
+            line_span is not None and line_span[0] <= pos < line_span[1])
+
     targets, counts = [], []
     for pattern in (r'(?<![\w.])' + number + r'\s*(?:(?:combined|total)\s+)?odds\b',
                     r'\bodds\s*(?:(?:of|around|about|near|like)\s+|[:=]\s*)?' + number + r'(?![\w.])'):
         for m in re.finditer(pattern, text):
-            if any(a <= m.start(1) < b for a, b in (x.span() for x in leagues)):
-                continue  # A competition's number is never an odds target.
+            if claimed(m.start(1)):
+                continue  # A competition's or over/under's number is never an odds target.
             targets.append(float(m.group(1))); spans.append(m.span())
     qualifiers = cp.phrase_pattern(set(aliases) | set(QUALITY) | {'and'})
-    for m in re.finditer(r'(?<![\w.])' + number + r'\s+(?:' + qualifiers + r'\s+)*(?:picks?|games?|matches?|selections?)\b', text):
-        if any(a <= m.start(1) < b for a, b in (x.span() for x in leagues)):
+    for m in re.finditer(r'(?<![\w.])' + number + r'\s+(?:' + qualifiers + r'\s+)*(?:' + REQUEST_WORDS + r')\b', text):
+        if claimed(m.start(1)):
             continue
         counts.append(float(m.group(1))); spans.append(m.span())
     if not counts:
@@ -138,16 +157,19 @@ def parse(text, supported_sports=(), allowed_sports=None):
         if not math.isfinite(target) or target <= 1:
             raise cp.RequestError('What combined odds would you like? Choose a number above 1.')
         fields.add('target_odds')
+    ambiguous_line = None
     if count is not None:
-        if not count.is_integer() or not 1 <= count <= cp.MAX_LEGS:
+        # A non-integer "count" (no over/under claimed it above) is never a
+        # pick-count typo - it's a goal/point/set LINE with no named side
+        # ("1.5 options"). Never silently defaulted to Over: respond() asks,
+        # unless the conversation already resolved this exact number.
+        if not count.is_integer():
+            ambiguous_line = count
+            fields.add('ambiguous_line')
+        elif not 1 <= count <= cp.MAX_LEGS:
             raise cp.RequestError(f'I can offer 1–{cp.MAX_LEGS} different games. How many would you like?')
-        fields.add('pick_count')
-    masked = list(text)
-    for a, b in spans: masked[a:b] = ' ' * (b-a)
-    market_text = ''.join(masked)
-    lines = list(re.finditer(r'\b(over|under)\s*' + number + r'(?![\w.])', market_text))
-    if len({(m.group(1), m.group(2)) for m in lines}) > 1:
-        raise cp.RequestError('Which over/under selection would you like?', 'conflicting_constraints')
+        else:
+            fields.add('pick_count')
     side = line = None
     allowed, excluded = set(), set()
     if lines:
@@ -158,7 +180,10 @@ def parse(text, supported_sports=(), allowed_sports=None):
         if not math.isfinite(line) or line < 0: raise cp.RequestError(cp.HELP)
         allowed.add('total')
         fields.update(('allowed_markets', 'market_selection', 'market_line'))
-        spans.extend(m.span() for m in lines)
+        spans.append(m.span())
+    masked = list(text)
+    for a, b in spans: masked[a:b] = ' ' * (b-a)
+    market_text = ''.join(masked)
     previous_end, negative = 0, False
     for m in re.finditer(cp.phrase_pattern(cp.MARKET_ALIASES), market_text):
         prefix = market_text[previous_end:m.start()]
@@ -180,13 +205,15 @@ def parse(text, supported_sports=(), allowed_sports=None):
         raise cp.RequestError('I don’t recognize that league. Which competition would you like?', 'unsupported_competition')
     if re.search(r'(?<![\w.])\d+(?:\.\d+)?(?![\w.])', remaining):
         raise cp.RequestError('Is that number your odds target or the number of picks?')
-    general = bool(re.search(r'\b(picks?|games?|matches?|selections?)\b', text))
+    general = bool(re.search(r'\b(?:' + REQUEST_WORDS + r')\b', text))
     if not fields - {'time_intent'} and not general:
         raise cp.RequestError(cp.HELP)
     if not target and not count and not allowed and not excluded and re.search(r'\b(scores?|results?|news|weather|payment)\b', text):
         raise cp.RequestError(cp.HELP)
     refinement = bool(re.search(r'\b(make|change|switch|instead|same|safer|stronger)\b', text)) or (
+        ambiguous_line is not None) or (  # "unless previous context resolves it" needs respond() to check previous
         not target and not count and bool(fields) and not re.search(r'\b(give|find|research|check|need|want)\b', text))
-    return cp.Request(target, int(count) if count is not None else None, sports,
+    pick_count = int(count) if count is not None and 'pick_count' in fields else None
+    return cp.Request(target, pick_count, sports,
         frozenset(allowed), frozenset(excluded), preference, competitions, side, line, time_intent,
-        frozenset(fields), refinement, bool(re.search(r'\b(safer|stronger)\b', text)))
+        frozenset(fields), refinement, bool(re.search(r'\b(safer|stronger)\b', text)), ambiguous_line=ambiguous_line)

@@ -145,6 +145,12 @@ const MARKET_ALIASES: Record<string, string> = {
   handicaps: "handicap", spread: "handicap", spreads: "handicap", "1x2": "result3", "match result": "result3",
 };
 
+// Ordinary request nouns: a number next to any of these is a pick count or
+// a goal/point/set line, never an "unsupported market" or unrecognized
+// word. Shared between the count regex and the general-request signal so
+// "1.5 options"/"3 predictions" are never mistaken for gibberish.
+const REQUEST_WORDS = "picks?|games?|matches?|selections?|options?|predictions?";
+
 const VALID_SELECTIONS: Record<string, Set<string>> = {
   result3: new Set(["home", "draw", "away"]),
   result2: new Set(["home", "away"]),
@@ -551,6 +557,13 @@ export interface ParsedRequest {
    * honestly (market_unavailable) instead of silently substituting a
    * different line. */
   totalLine: { selection: "over" | "under"; line: number } | null;
+  /** A bare decimal that reads like a goal/point/set line ("1.5 options")
+   * but named no side - set fresh on EVERY parse (never carried forward by
+   * refine() itself; see its "ambiguous_line" case), so respond() can ask
+   * "Over or Under?" unless the conversation already resolved this exact
+   * number via totalLine (carried forward normally). Never silently
+   * defaulted to Over. */
+  ambiguousLine: number | null;
 }
 
 /** JSON-safe form of a ParsedRequest (Sets -> arrays), for D1 persistence across stateless invocations. */
@@ -560,7 +573,7 @@ export function serializeRequest(req: ParsedRequest): Record<string, unknown> {
     allowedMarkets: [...req.allowedMarkets], excludedMarkets: [...req.excludedMarkets],
     preference: req.preference, competitions: [...req.competitions], timeIntent: req.timeIntent,
     specifiedFields: [...req.specifiedFields], refinement: req.refinement, qualityUpgrade: req.qualityUpgrade,
-    teams: [...req.teams], totalLine: req.totalLine,
+    teams: [...req.teams], totalLine: req.totalLine, ambiguousLine: req.ambiguousLine,
   };
 }
 
@@ -579,6 +592,7 @@ export function deserializeRequest(raw: Record<string, unknown>): ParsedRequest 
     qualityUpgrade: !!raw.qualityUpgrade,
     teams: new Set((raw.teams as string[]) ?? []),
     totalLine: (raw.totalLine as ParsedRequest["totalLine"]) ?? null,
+    ambiguousLine: (raw.ambiguousLine as number) ?? null,
   };
 }
 
@@ -586,7 +600,7 @@ function freshRequest(): ParsedRequest {
   return {
     targetOdds: null, pickCount: null, sports: new Set(), allowedMarkets: new Set(), excludedMarkets: new Set(),
     preference: "best", competitions: new Set(), timeIntent: null, specifiedFields: new Set(),
-    refinement: false, qualityUpgrade: false, teams: new Set(), totalLine: null,
+    refinement: false, qualityUpgrade: false, teams: new Set(), totalLine: null, ambiguousLine: null,
   };
 }
 
@@ -666,6 +680,14 @@ export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENA
     }
   }
 
+  // Claimed EARLY (before odds-target/count scanning) so "under 2.5 games"
+  // is never misread as a (non-integer, erroring) pick count: "2.5" sits
+  // right where a count regex would also look, so the explicit over/under
+  // phrase must claim its span first. The actual req mutation (needs
+  // excludedMarkets, computed later) stays below, unchanged.
+  const lineMatch = /\b(over|under)\s+(\d+(?:\.\d+)?)\b/.exec(text);
+  if (lineMatch) spans.push([lineMatch.index, lineMatch.index + lineMatch[0].length]);
+
   const num = "([+-]?\\d+(?:\\.\\d+)?)";
   const targets: number[] = [];
   const counts: number[] = [];
@@ -687,7 +709,7 @@ export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENA
     .sort((a, b) => b.length - a.length)
     .map((w) => w.replace(/\s+/g, "\\s+"));
   const countPattern = new RegExp(
-    `(?<![\\w.])(\\d+(?:\\.\\d+)?)\\s+(?:(?:${qualifierWords.join("|")})\\s+)*(?:picks?|games?|matches?|selections?)\\b`,
+    `(?<![\\w.])(\\d+(?:\\.\\d+)?)\\s+(?:(?:${qualifierWords.join("|")})\\s+)*(?:${REQUEST_WORDS})\\b`,
     "g",
   );
   let cm: RegExpExecArray | null;
@@ -705,9 +727,20 @@ export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENA
     req.specifiedFields.add("target_odds");
   }
   if (count != null) {
-    if (!Number.isInteger(count) || count < 1 || count > MAX_LEGS) return err(`I can offer 1–${MAX_LEGS} different games. How many would you like?`);
-    req.pickCount = count;
-    req.specifiedFields.add("pick_count");
+    // A non-integer "count" (no over/under claimed it above, or it would
+    // never have reached here) is never a pick-count typo - it's a
+    // goal/point/set LINE with no named side ("1.5 options"). Never
+    // silently defaulted to Over: respond() asks, unless the conversation
+    // already resolved this exact number (see ambiguousLine).
+    if (!Number.isInteger(count)) {
+      req.ambiguousLine = count;
+      req.specifiedFields.add("ambiguous_line");
+    } else if (count < 1 || count > MAX_LEGS) {
+      return err(`I can offer 1–${MAX_LEGS} different games. How many would you like?`);
+    } else {
+      req.pickCount = count;
+      req.specifiedFields.add("pick_count");
+    }
   }
 
   // Scan ALL market-alias phrases as one alternation so matches come back
@@ -741,7 +774,8 @@ export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENA
   // itself is never parsed from text, only rendered). Never widened to a
   // nearby line: scoped() requires an exact match, so a line nothing today
   // offers fails honestly instead of silently substituting a close one.
-  const lineMatch = /\b(over|under)\s+(\d+(?:\.\d+)?)\b/.exec(text);
+  // (lineMatch itself was computed earlier, before odds-target/count
+  // scanning, so its span is already claimed - see its definition above.)
   if (lineMatch && !req.excludedMarkets.has("total")) {
     req.totalLine = { selection: lineMatch[1] as "over" | "under", line: Number(lineMatch[2]) };
     req.allowedMarkets.add("total");
@@ -763,7 +797,7 @@ export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENA
   if (/\b(league|cup|liga)\b/.test(text) && req.competitions.size === 0) {
     return err("I don't recognize that league. Which competition would you like?", "unsupported_competition");
   }
-  const general = /\b(picks?|games?|matches?|selections?)\b/.test(text);
+  const general = new RegExp(`\\b(?:${REQUEST_WORDS})\\b`).test(text);
   const hasSignal = req.specifiedFields.size > (req.specifiedFields.has("time_intent") ? 1 : 0);
   if (!hasSignal && !general) return err(HELP);
   if (target == null && count == null && !req.allowedMarkets.size && !req.excludedMarkets.size && /\b(scores?|results?|news|weather|payment)\b/.test(text)) {
@@ -772,6 +806,9 @@ export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENA
 
   req.refinement =
     /\b(make|change|switch|instead|same|safer|stronger)\b/.test(text) ||
+    // An ambiguous bare line always checks the previous turn - that's the
+    // ONLY way "unless previous context already resolves it" can work.
+    req.ambiguousLine != null ||
     (target == null && count == null && req.specifiedFields.size > 0 && !/\b(give|find|research|check|need|want)\b/.test(text));
   req.qualityUpgrade = /\b(safer|stronger)\b/.test(text);
   return { ok: true, request: req };
@@ -1124,6 +1161,7 @@ const COPY: Record<string, string> = {
   archive_unavailable: UNAVAILABLE,
   sport_unavailable: "👀 Nothing cooking today\n\nI don't have usable picks for that sport right now.",
   market_unavailable: "😅 That market is a little dry today\n\nI couldn't find enough matching picks that meet the mark.",
+  line_unavailable: "📏 That exact line isn't up today\n\nTry a different line, or drop it and I'll use what's available.",
   insufficient_count: "😅 We're a few games short\n\nI couldn't find enough strong picks for that request.",
   target_unreachable: "😅 Couldn't stretch it that far\n\nI won't force weaker picks just to hit the number.",
   target_too_low: "👀 That's a tight squeeze\n\nI couldn't build a solid ticket close to that target from what's available.",
@@ -1144,6 +1182,11 @@ export function failureReason(pool: Candidate[], req: ParsedRequest, nowMs: numb
   const sportsFuture = future.filter((c) => !req.sports.size || req.sports.has(c.sport));
   if (req.sports.size && !sportsFuture.length) return "sport_unavailable";
   if (req.allowedMarkets.size && !sportsFuture.some((c) => req.allowedMarkets.has(c.market))) return "market_unavailable";
+  // The "total" market itself exists today, but not at the EXACT requested
+  // line ("Over 1.5" when only 2.5 is offered) - distinct from a generic
+  // confidence-floor miss, so the user isn't told their picks were "too
+  // weak" when the real issue is simply that line isn't offered.
+  if (req.totalLine && !sportsFuture.some((c) => scoped(c, req))) return "line_unavailable";
   if (!matches.length) return "below_quality_floor";
   if (req.pickCount && new Set(matches.map((c) => c.fixtureId)).size < req.pickCount) return "insufficient_count";
   if (req.targetOdds) {
@@ -1293,6 +1336,11 @@ export function refine(previous: ParsedRequest, current: ParsedRequest): ParsedR
       case "preference": next.preference = current.preference; break;
       case "time_intent": next.timeIntent = current.timeIntent; break;
       case "total_line": next.totalLine = current.totalLine; break;
+      // ambiguousLine is THIS message's own bare number, always taken fresh
+      // (never inherited from a stale previous turn) - respond() is what
+      // decides whether previous.totalLine (preserved above, untouched
+      // unless "total_line" is also in current.specifiedFields) resolves it.
+      case "ambiguous_line": next.ambiguousLine = current.ambiguousLine; break;
     }
   }
   if (current.specifiedFields.has("sports") && !current.specifiedFields.has("competitions")) {
@@ -1422,6 +1470,25 @@ export async function respond(
   if (!parsed.ok) return { result: { text: parsed.text, reason: parsed.reason, suggestions: [] }, request: null };
   let request = parsed.request;
   if (request.refinement && previous) request = refine(previous, request);
+
+  // A bare "1.5 options" names no side - ask, unless the conversation
+  // already resolved THIS exact number (request.totalLine, carried
+  // forward by refine() above, matches it). Resolved before touching the
+  // pool: this is a pure clarification, never a search.
+  if (request.ambiguousLine != null) {
+    const resolved = request.totalLine != null && request.totalLine.line === request.ambiguousLine;
+    if (!resolved) {
+      const line = request.ambiguousLine;
+      return {
+        result: {
+          text: `🤔 Over or under?\n\nDo you mean Over ${line} or Under ${line}?`,
+          reason: "ambiguous_line",
+          suggestions: [],
+        },
+        request,
+      };
+    }
+  }
 
   const loaded = await loadPool(deps, day, zone, nowMs);
   if (loaded === null) return { result: { text: UNAVAILABLE, reason: "archive_unavailable", suggestions: [] }, request };

@@ -39,6 +39,7 @@ COPY = {
     'sport_tennis': '🎾 The court is quiet today\n\nNo tennis picks made the cut right now.',
     'sport_unavailable': "👀 Nothing cooking for {sport} today\n\nI don't have usable {sport} picks right now.",
     'market_unavailable': "😅 That market is a little dry today\n\nI couldn't find enough {market} picks that meet the mark.",
+    'line_unavailable': "📏 That exact line isn't up today\n\nTry a different line, or drop it and I'll use what's available.",
     'sport_market_unavailable': "👀 That combo isn't on the board today\n\nI couldn't find usable {market} picks for {sport}.",
     'insufficient_count': "😅 We're a few games short\n\nI couldn’t find enough strong picks for that request.",
     'target_unreachable': "😅 Couldn't stretch it to {target_odds} odds\n\nI won't force weaker picks just to hit the number.",
@@ -192,6 +193,12 @@ def failure_reason(pool, request, now, matches, zone='UTC'):
         return 'competition_unavailable'
     if request.allowed_markets and not any(c.market in request.allowed_markets for c in sports):
         return 'sport_market_unavailable' if request.sports else 'market_unavailable'
+    # The market itself (e.g. totals) exists today, just not at the EXACT
+    # requested line ("Over 1.5" when only 2.5 is offered) - distinct from a
+    # generic confidence-floor miss, so the user isn't told their picks were
+    # "too weak" when the real issue is simply that line isn't offered.
+    if request.market_line is not None and not any(scoped(c, request, zone) for c in sports):
+        return 'line_unavailable'
     if not structural and request.excluded_markets:
         return 'conflicting_constraints'
     if not matches:
@@ -490,6 +497,16 @@ class Recovery:
                     request = refine(previous.request, request)
             except cp.RequestError as exc:
                 return Response(str(exc), exc.reason)
+            # A bare "1.5 options" names no side - ask, unless the
+            # conversation already resolved THIS exact number
+            # (request.market_line, carried forward by refine() above,
+            # matches it). Resolved before touching the pool: this is a
+            # pure clarification, never a search.
+            if request.ambiguous_line is not None:
+                resolved = request.market_line is not None and request.market_line == request.ambiguous_line
+                if not resolved:
+                    n = request.ambiguous_line  # always non-integer here - an integer resolves to pick_count instead
+                    return Response(f'🤔 Over or under?\n\nDo you mean Over {n} or Under {n}?', 'ambiguous_line')
             pool = self.load(now)
             # A team mentioned in THIS turn's text wins outright; otherwise
             # whatever refine() already carried over from the previous turn

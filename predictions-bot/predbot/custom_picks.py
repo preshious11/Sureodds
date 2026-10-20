@@ -151,6 +151,15 @@ class Request:
     #: across turns like any other field the current message doesn't
     #: re-specify.
     teams: frozenset[str] = frozenset()
+    #: A bare decimal that reads like a goal/point/set line ("1.5 options")
+    #: but named no side - set fresh on EVERY parse (never carried forward
+    #: by refine(), which always takes the CURRENT message's own value; see
+    #: its 'ambiguous_line' field name), so Recovery.respond() can ask "Over
+    #: or Under?" unless the conversation already resolved this exact number
+    #: via market_line (carried forward normally). Never silently defaulted
+    #: to Over. Appended last for the same positional-construction reason as
+    #: teams, above.
+    ambiguous_line: float | None = None
 
 
 def phrase_pattern(phrases):

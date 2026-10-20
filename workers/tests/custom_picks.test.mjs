@@ -863,3 +863,77 @@ describe("team-name recognition (matched against today's pool, never a static ca
     assert.match(second.result.text, /Arsenal/);
   });
 });
+
+// Regression: live screenshot, 2026-10-20. "1.5 options" got the generic
+// HELP ("I didn't quite catch that"); "over 1.5 options" got "Nothing made
+// the cut today" even though the real issue was the exact line not being
+// offered. Root causes: (1) "options" wasn't in the request-word vocabulary
+// at all, so a bare ambiguous line had no path but HELP; (2) the pick-count
+// regex greedily claimed "2.5" in "under 2.5 games" BEFORE the over/under
+// line regex ever ran, producing a bogus "I can offer 1-8 games" error;
+// (3) failureReason() never distinguished "this market exists, but not at
+// this exact line" from a generic confidence-floor miss.
+describe("natural-language line/count disambiguation (2026-10-20 screenshot)", () => {
+  it('"1.5 options" is recognized as an ordinary request, not gibberish, and asks Over or Under', async () => {
+    const parsed = parseRequest("1.5 options");
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.request.ambiguousLine, 1.5);
+    assert.equal(parsed.request.totalLine, null);
+    const pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
+    const deps = { getPool: async () => pool, getCandidates: async () => [] };
+    const { result } = await respond(deps, "1.5 options", ZONE, DAY, NOW, null);
+    assert.equal(result.reason, "ambiguous_line");
+    assert.equal(result.text, "🤔 Over or under?\n\nDo you mean Over 1.5 or Under 1.5?");
+  });
+  it('a bare line is never silently defaulted to Over - a DIFFERENT prior line still asks again', async () => {
+    const pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
+    const deps = { getPool: async () => pool, getCandidates: async () => [] };
+    const previous = parseRequest("under 2.5 games").request; // resolves 2.5, not 1.5
+    const { result } = await respond(deps, "1.5 options", ZONE, DAY, NOW, previous);
+    assert.equal(result.reason, "ambiguous_line");
+  });
+  it("previous conversation context resolving the SAME line skips re-asking", async () => {
+    const rows = [{ payload_json: JSON.stringify(candidatePayload({ market: "total", selection: "over", line: 1.5 })) }];
+    const pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
+    const deps = { getPool: async () => pool, getCandidates: async () => rows };
+    const previous = parseRequest("over 1.5 options").request; // already resolved: over 1.5
+    const { result } = await respond(deps, "1.5 options", ZONE, DAY, NOW, previous);
+    assert.notEqual(result.reason, "ambiguous_line");
+  });
+  it('"over 1.5 options" is interpreted as a real request for Over 1.5, not rejected as an unsupported market', () => {
+    const parsed = parseRequest("over 1.5 options");
+    assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.request.totalLine, { selection: "over", line: 1.5 });
+    assert.ok(parsed.request.allowedMarkets.has("total"));
+  });
+  it('"under 2.5 games" is a line, never a bogus "invalid pick count" error', () => {
+    const parsed = parseRequest("under 2.5 games");
+    assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.request.totalLine, { selection: "under", line: 2.5 });
+    assert.equal(parsed.request.pickCount, null);
+  });
+  it('"BTTS picks" and "UCL over 1.5" still parse exactly as before (not broken by the fix)', () => {
+    const btts = parseRequest("BTTS picks").request;
+    assert.ok(btts.allowedMarkets.has("btts"));
+    const ucl = parseRequest("UCL over 1.5").request;
+    assert.ok(ucl.competitions.has("ucl"));
+    assert.deepEqual(ucl.totalLine, { selection: "over", line: 1.5 });
+  });
+  it('an exact line nothing today offers is "line_unavailable", distinct from a generic confidence-floor miss', () => {
+    const pool = [candidate({ market: "total", selection: "over", line: 2.5, entity: "all" })];
+    const req = parseRequest("over 1.5 options").request;
+    const matches = eligible(pool, req, NOW);
+    assert.equal(matches.length, 0);
+    assert.equal(failureReason(pool, req, NOW, matches), "line_unavailable");
+  });
+  it("a genuinely unsupported market is still reported as unavailable, not as a missing line", () => {
+    const pool = [candidate({ market: "result2", selection: "home" })];
+    const req = parseRequest("3 picks, double chance only").request;
+    const matches = eligible(pool, req, NOW);
+    assert.equal(failureReason(pool, req, NOW, matches), "market_unavailable");
+  });
+  it("3 or fewer legitimate integer pick counts are completely unaffected", () => {
+    assert.equal(parseRequest("3 picks").request.pickCount, 3);
+    assert.equal(parseRequest("2 predictions").request.pickCount, 2);
+  });
+});

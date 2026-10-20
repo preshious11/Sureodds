@@ -126,6 +126,64 @@ def test_extra_basketball_aliases(word):
     assert cp.parse_request(f'3 {word} picks').sports == {'basketball'}
 
 
+# Regression: live screenshot, 2026-10-20. "1.5 options" got the generic
+# HELP ("I didn't quite catch that"); "over 1.5 options" got "Nothing made
+# the cut today" even though the real issue was the exact line not being
+# offered. Root causes: (1) "options" wasn't in the request-word vocabulary
+# at all; (2) the pick-count regex greedily claimed "2.5" in "under 2.5
+# games" BEFORE the over/under line regex ever ran, producing a bogus
+# "I can offer 1-8 games" error; (3) failure_reason() never distinguished
+# "this market exists, but not at this exact line" from a generic
+# confidence-floor miss.
+def test_bare_decimal_is_recognized_as_an_ambiguous_line_not_gibberish():
+    r = cp.parse_request('1.5 options')
+    assert r.ambiguous_line == 1.5 and r.market_line is None and r.pick_count is None
+
+
+def test_over_1_5_options_is_a_real_total_request_not_an_unsupported_market():
+    r = cp.parse_request('over 1.5 options')
+    assert (r.market_selection, r.market_line) == ('over', 1.5)
+    assert r.allowed_markets == {'total'}
+
+
+def test_under_2_5_games_is_a_line_never_a_bogus_invalid_count_error():
+    r = cp.parse_request('under 2.5 games')
+    assert (r.market_selection, r.market_line) == ('under', 2.5)
+    assert r.pick_count is None
+
+
+def test_btts_picks_and_ucl_over_1_5_unaffected_by_the_fix():
+    assert cp.parse_request('BTTS picks').allowed_markets == {'btts'}
+    ucl = cp.parse_request('UCL over 1.5')
+    assert 'ucl' in ucl.competitions
+    assert (ucl.market_selection, ucl.market_line) == ('over', 1.5)
+
+
+def test_ambiguous_line_asks_over_or_under_unless_previous_context_resolves_it(db):
+    custom = cp.CustomPicks(db, Mock(timezone=ZONE, allowed_sports=['football']))
+    first = custom.reply('1.5 options', '42', NOW)
+    assert first == '🤔 Over or under?\n\nDo you mean Over 1.5 or Under 1.5?'
+    # A DIFFERENT prior line still asks again - never silently defaults to Over.
+    custom2 = cp.CustomPicks(db, Mock(timezone=ZONE, allowed_sports=['football']))
+    custom2.respond('under 2.5 games', '43', '43', NOW)
+    second = custom2.reply('1.5 options', '43', NOW)
+    assert second == '🤔 Over or under?\n\nDo you mean Over 1.5 or Under 1.5?'
+    # Context that already resolved THIS exact number skips the re-ask.
+    store(db, [dict(r, market='total', selection='over', line=1.5) for r in rows_for(1)])
+    custom3 = cp.CustomPicks(db, Mock(timezone=ZONE, allowed_sports=['football']))
+    custom3.respond('over 1.5 options', '44', '44', NOW)
+    third = custom3.reply('1.5 options', '44', NOW)
+    assert third != '🤔 Over or under?\n\nDo you mean Over 1.5 or Under 1.5?'
+
+
+def test_exact_line_unavailable_is_distinct_from_a_generic_confidence_floor_miss(db):
+    store(db, [dict(r, market='total', selection='over', line=2.5) for r in rows_for(1)])
+    custom = cp.CustomPicks(db, Mock(timezone=ZONE, allowed_sports=['football']))
+    result = custom.respond('over 1.5 options', '42', '42', NOW)
+    assert result.reason == 'line_unavailable'
+    assert 'exact line' in result.text
+
+
 def test_league_line_and_local_evening_filters():
     rows = []
     for i, line, side, league, start in [

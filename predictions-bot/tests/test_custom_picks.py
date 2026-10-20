@@ -107,13 +107,22 @@ def test_other_dates_are_rejected(text):
         parse_request(text)
 
 
-@pytest.mark.parametrize('text', ['0 picks', '9 picks', '2.5 picks', '-4 odds', '1 odds', '0 odds',
+@pytest.mark.parametrize('text', ['0 picks', '9 picks', '-4 odds', '1 odds', '0 odds',
                                 '4 odds 5 odds', '2 picks 3 picks', 'DC only no DC', 'hello',
                                 '3 hockey picks', 'audit this ticket', 'replace Arsenal', '5' * 513, 'football only across all sports',
                                 '3 picks no basketball'])
 def test_unsupported_or_conflicting_constraints_are_not_silently_ignored(text):
     with pytest.raises(RequestError):
         parse_request(text)
+
+
+def test_a_non_integer_count_is_an_ambiguous_line_not_a_silently_ignored_error():
+    # "2.5 picks" used to hard-error ("I can offer 1-8 games"); it's really
+    # an unnamed goal/point/set line (2026-10-20 screenshot fix) - deferred
+    # to Recovery.respond(), which asks "Over or Under?", never silently
+    # ignored or treated as a valid integer count.
+    r = parse_request('2.5 picks')
+    assert r.ambiguous_line == 2.5 and r.pick_count is None
 
 
 def rows_for(i, sport='football', price=1.6, probability=.75, market=None, start=None):
