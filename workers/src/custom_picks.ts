@@ -45,7 +45,7 @@ const MAX_EXPANSIONS = 100_000;
 const ODDS_LADDER = [20, 15, 12, 10, 8, 6, 5, 4, 3, 2];
 const MAX_SUGGESTIONS = 3;
 const MIN_PROBABILITY: Record<string, number> = { safe: 0.65, strong: 0.6, best: 0.5 };
-const SPORT_LABEL: Record<string, string> = {
+export const SPORT_LABEL: Record<string, string> = {
   football: "Football", basketball: "Basketball", american_football: "American Football",
   baseball: "Baseball", tennis: "Tennis", mma: "MMA",
 };
@@ -596,7 +596,7 @@ export function deserializeRequest(raw: Record<string, unknown>): ParsedRequest 
   };
 }
 
-function freshRequest(): ParsedRequest {
+export function freshRequest(): ParsedRequest {
   return {
     targetOdds: null, pickCount: null, sports: new Set(), allowedMarkets: new Set(), excludedMarkets: new Set(),
     preference: "best", competitions: new Set(), timeIntent: null, specifiedFields: new Set(),
@@ -644,7 +644,7 @@ export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENA
     let m: RegExpExecArray | null;
     while ((m = re.exec(text))) {
       if (/\b(no|without|avoid|exclude)\s*$/.test(text.slice(0, m.index))) {
-        return err("Which sports would you like to include?");
+        return err("Which sports would you like to include?", "ask_sport");
       }
       req.sports.add(canonical);
     }
@@ -736,7 +736,7 @@ export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENA
       req.ambiguousLine = count;
       req.specifiedFields.add("ambiguous_line");
     } else if (count < 1 || count > MAX_LEGS) {
-      return err(`I can offer 1–${MAX_LEGS} different games. How many would you like?`);
+      return err(`I can offer 1–${MAX_LEGS} different games. How many would you like?`, "invalid_count");
     } else {
       req.pickCount = count;
       req.specifiedFields.add("pick_count");
@@ -866,6 +866,60 @@ export function eligible(candidates: Candidate[], req: ParsedRequest, nowMs: num
     return true;
   });
 }
+
+/**
+ * Dynamic clarification-button options (~ spec "Dynamic options": never
+ * advertise a sport/market/line nothing today actually has). Each relaxes
+ * exactly ONE dimension of `req` and re-runs the same eligible() pool
+ * filter already used for real search, so a button is never offered for
+ * something `eligible()` itself wouldn't actually find.
+ */
+export function availableSports(pool: Candidate[], req: ParsedRequest, nowMs: number, enabled: Set<string>): string[] {
+  const relaxed: ParsedRequest = { ...req, sports: new Set() };
+  const present = new Set(eligible(pool, relaxed, nowMs).map((c) => c.sport));
+  return [...enabled].filter((s) => present.has(s));
+}
+
+export function availableMarkets(pool: Candidate[], req: ParsedRequest, nowMs: number): string[] {
+  const relaxed: ParsedRequest = { ...req, allowedMarkets: new Set(), excludedMarkets: new Set(), totalLine: null };
+  return [...new Set(eligible(pool, relaxed, nowMs).map((c) => c.market))];
+}
+
+/** Alternative Over/Under total lines actually on offer today, for the
+ * SAME full-match scoping scoped()'s totalLine branch requires (never a
+ * period/team total masquerading as a full-match line). */
+export function availableTotalLines(
+  pool: Candidate[],
+  req: ParsedRequest,
+  nowMs: number,
+): { selection: "over" | "under"; line: number }[] {
+  const relaxed: ParsedRequest = { ...req, totalLine: null, allowedMarkets: new Set(["total"]), excludedMarkets: new Set() };
+  const seen = new Map<string, { selection: "over" | "under"; line: number }>();
+  for (const c of eligible(pool, relaxed, nowMs)) {
+    if (c.market !== "total" || c.line == null) continue;
+    if (c.entity !== "all" || c.stat !== "points" || (c.period !== "full" && c.period !== "reg")) continue;
+    const selection = c.selection as "over" | "under";
+    seen.set(`${selection}:${c.line}`, { selection, line: c.line });
+  }
+  return [...seen.values()].sort((a, b) => a.line - b.line || a.selection.localeCompare(b.selection));
+}
+
+/** Market code -> a phrase MARKET_ALIASES itself recognizes, so a button's
+ * reply round-trips through parseRequest into the SAME market (never a
+ * different one). result3 has no natural standalone phrase (its only alias
+ * is the literal word "result3") and is deliberately left out of button
+ * offers; it's unaffected as a typed request. */
+export const MARKET_REPLY: Record<string, string> = {
+  result2: "moneyline", dc: "double chance", dnb: "draw no bet",
+  btts: "both teams to score", total: "over/under", handicap: "handicap",
+};
+
+/** Display label for a market button — kept in sync with marketName()'s
+ * phrasing below by hand (both are small, static, rarely-changed maps). */
+export const MARKET_LABEL: Record<string, string> = {
+  result2: "To Win", result3: "Match Result", dc: "Double Chance",
+  dnb: "Draw No Bet", btts: "BTTS", total: "Over/Under", handicap: "Handicap",
+};
 
 export interface Ticket {
   picks: Candidate[];
@@ -1368,7 +1422,7 @@ export interface PoolDiagnostics {
   rejectedByReason: Record<string, number>;
 }
 
-type LoadedPool = { candidates: Candidate[]; diagnostics: PoolDiagnostics; poolStatus: string; poolGeneratedAt: string };
+export type LoadedPool = { candidates: Candidate[]; diagnostics: PoolDiagnostics; poolStatus: string; poolGeneratedAt: string };
 
 // Per-isolate cache (bug 13): a Worker isolate can serve several Custom
 // Picks requests back to back, each previously re-running getCandidates'
@@ -1394,7 +1448,10 @@ export function __resetPoolCacheForTests(): void {
   poolCache.clear();
 }
 
-async function loadPool(
+/** Exported so a clarification keyboard can be built straight from the pool
+ * when parseRequest itself produced no usable `request` (the bare HELP
+ * case) — a plain D1 read, same cache, never a provider call. */
+export async function loadPool(
   deps: CustomPicksDeps,
   day: string,
   zone: string,
@@ -1490,6 +1547,36 @@ export async function respond(
     }
   }
 
+  return searchWithRequest(deps, request, text, zone, day, nowMs, userId);
+}
+
+/**
+ * The second half of respond(): given an already-resolved ParsedRequest
+ * (either freshly parsed+refined text, or one a clarification BUTTON built
+ * directly — see index.ts's "cq|z|" actions), loads the pool and searches.
+ * Split out so a button action that isn't literally "replay this text"
+ * (e.g. "drop the stuck exact line but keep the market") can still reuse
+ * the exact same search/failure-reason/alternatives tail respond() uses,
+ * instead of re-deriving it through parseRequest.
+ */
+/** "Any available line" (line_unavailable keyboard): clears the stuck exact
+ * line while KEEPING the total market, bypassing parseRequest/refine
+ * entirely — no typed phrase can express "drop just this one field" (see
+ * refine()'s per-field merge), so this is a direct, structured request edit
+ * instead of a text replay. */
+export function clearTotalLine(request: ParsedRequest): ParsedRequest {
+  return { ...request, totalLine: null, allowedMarkets: new Set(["total"]) };
+}
+
+export async function searchWithRequest(
+  deps: CustomPicksDeps,
+  request: ParsedRequest,
+  text: string,
+  zone: string,
+  day: string,
+  nowMs: number,
+  userId = "",
+): Promise<{ result: RespondResult; request: ParsedRequest | null }> {
   const loaded = await loadPool(deps, day, zone, nowMs);
   if (loaded === null) return { result: { text: UNAVAILABLE, reason: "archive_unavailable", suggestions: [] }, request };
   const { candidates: pool, diagnostics } = loaded;

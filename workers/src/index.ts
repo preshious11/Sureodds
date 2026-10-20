@@ -27,16 +27,27 @@ import {
   type SuggestionRow,
 } from "./db.ts";
 import {
+  availableMarkets,
+  availableSports,
+  availableTotalLines,
   BUSY,
+  clearTotalLine,
   COPY_EXPIRED,
   COPY_EXPIRED_EMPTY,
   CUSTOM_PICKS_TTL_MS,
   deserializeRequest,
   formatTicket,
+  freshRequest,
   introText,
+  loadPool,
+  MARKET_LABEL,
+  MARKET_REPLY,
   parseEnabledSports,
   respond as customPicksRespond,
+  searchWithRequest,
   serializeRequest,
+  SPORT_LABEL,
+  type ParsedRequest,
   type Suggestion,
   validTicket,
 } from "./custom_picks.ts";
@@ -422,6 +433,10 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       await handleCustomPicksSelect(env, cb, cbId, chatId, msg);
       return;
     }
+    if (data.startsWith("cq|")) {
+      await handleCustomPicksClarify(env, cb, cbId, chatId, msg);
+      return;
+    }
     const parsed = parseCallback(data);
     if (!parsed) {
       await answerCallback(env, cbId);
@@ -676,60 +691,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   // mistaken for an unknown command.
   if (chatType === "private" && userId && text.trim() !== "" && !text.startsWith("/")) {
     if (await isCustomSessionActive(env.DB, userId, chatId)) {
-      if (await isCustomOnCooldown(env.DB, userId, chatId, Date.now(), CUSTOM_PICKS_COOLDOWN_MS)) {
-        await tgApi(env, "sendMessage", { chat_id: chatId, text: BUSY });
-        return;
-      }
-      const nowMs = Date.now();
-      const zone = env.TIMEZONE ?? "Africa/Lagos";
-      const day = lagosDateString(nowMs);
-      const previousJson = await getConversationRequest(env.DB, userId, chatId, nowMs);
-      const previous = previousJson ? deserializeRequest(JSON.parse(previousJson)) : null;
-      // A visible "building your picks" status while the request is
-      // processed — best-effort (see sendLoadingIndicator): a failure here
-      // must never block the real ticket. Cleaned up on both the success
-      // and error paths so a crashed/retried attempt never leaves a stuck
-      // "⏳ Building..." message sitting in the chat.
-      const loadingMessageId = await sendLoadingIndicator(env, chatId);
-      try {
-        const { result, request } = await customPicksRespond(
-          {
-            getPool: (d, z) => getCustomPickPool(env.DB, d, z),
-            getCandidates: (d, z) => getCustomPickCandidates(env.DB, d, z),
-          },
-          text,
-          zone,
-          day,
-          nowMs,
-          previous,
-          userId,
-          parseEnabledSports(env.ALLOWED_SPORTS),
-        );
-        // The cooldown timestamp is recorded ONLY after the request was
-        // actually served: recording it up-front poisoned webhook retries —
-        // a throw during respond() left last_request_at set, so the
-        // redelivery was rejected with BUSY instead of doing the real work.
-        // Cooldown enforcement for sequential requests is unchanged (a
-        // completed request still stamps the time before any later message
-        // is checked), and simultaneous duplicates stay fenced by the
-        // update-claim dedupe above.
-        await recordCustomRequest(env.DB, userId, chatId, nowMs);
-        if (request) {
-          const expiresAtMs = Math.min(nowMs + CUSTOM_PICKS_TTL_MS, lagosDayBounds(day).endUtcMs);
-          await setConversationRequest(env.DB, userId, chatId, JSON.stringify(serializeRequest(request)), expiresAtMs);
-        }
-        const replyMarkup = await storeAndBuildSuggestionKeyboard(env, result.suggestions, userId, chatId, nowMs, day);
-        await clearLoadingIndicator(env, chatId, loadingMessageId);
-        await tgApi(env, "sendMessage", {
-          chat_id: chatId,
-          text: result.text,
-          parse_mode: "HTML",
-          ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
-        });
-      } catch (err) {
-        await clearLoadingIndicator(env, chatId, loadingMessageId);
-        throw err;
-      }
+      await processCustomPicksText(env, userId, chatId, text);
       return;
     }
   }
@@ -828,6 +790,259 @@ async function handleGifAdmin(env: Env, msg: Record<string, any>, userId: string
     .bind(kind,media.file_id,media.file_unique_id,new Date().toISOString()).run();
   const count=await env.DB.prepare('SELECT COUNT(*) AS n FROM result_gifs WHERE kind=?1').bind(kind).first<{n:number}>();
   await reply(`Added (${count?.n??0} ${kind} GIFs)`);return true;
+}
+
+/** Builds the {getPool, getCandidates} deps object respond()/loadPool() need,
+ * bound to this Env's D1 — every Custom Picks call site wants the same pair. */
+function customPicksDeps(env: Env) {
+  return {
+    getPool: (d: string, z: string) => getCustomPickPool(env.DB, d, z),
+    getCandidates: (d: string, z: string) => getCustomPickCandidates(env.DB, d, z),
+  };
+}
+
+/** Plain D1 read of today's candidate pool, for keyboard-building only (never
+ * a provider call) — used when a clarification keyboard needs to know what's
+ * actually available (Part C's "never advertise an option that can't be
+ * selected"). Fails open to an empty list: a keyboard that can't confirm
+ * availability shows no options rather than a possibly-wrong one. */
+async function poolCandidates(env: Env, day: string, zone: string, nowMs: number) {
+  const loaded = await loadPool(customPicksDeps(env), day, zone, nowMs);
+  return loaded ? loaded.candidates : [];
+}
+
+const CANCEL_BUTTON = { text: "❌ Cancel", callback_data: "cq|x" };
+
+/**
+ * Builds the inline keyboard for whatever respond()/searchWithRequest just
+ * answered — reusing the SAME pool read `eligible()` itself uses, so a
+ * button is never offered for a sport/market/line nothing today actually
+ * has (spec Part C "Dynamic options"). Appended BELOW any proven `cp|`
+ * ticket-suggestion buttons (storeAndBuildSuggestionKeyboard) rather than
+ * replacing them, so "no suitable predictions" still shows a real proven
+ * alternative first, with Change sport/market/Cancel as a fallback under it.
+ */
+async function buildClarificationKeyboard(
+  env: Env,
+  reason: string,
+  request: ParsedRequest | null,
+  day: string,
+  zone: string,
+  nowMs: number,
+  enabled: Set<string>,
+  suggestionKeyboard: Record<string, unknown> | undefined,
+): Promise<Record<string, unknown> | undefined> {
+  const extraRows: { text: string; callback_data: string }[][] = [];
+
+  if (reason === "ambiguous_line" && request?.ambiguousLine != null) {
+    const line = request.ambiguousLine;
+    extraRows.push([
+      { text: `Over ${line}`, callback_data: `cq|r|over ${line}` },
+      { text: `Under ${line}`, callback_data: `cq|r|under ${line}` },
+    ]);
+  } else if (reason === "invalid_request" || reason === "unsupported_sport" || reason === "ask_sport" || reason === "sport_unavailable") {
+    const pool = await poolCandidates(env, day, zone, nowMs);
+    const sports = availableSports(pool, request ?? freshRequest(), nowMs, enabled);
+    for (const s of sports) extraRows.push([{ text: SPORT_LABEL[s] ?? s, callback_data: `cq|r|${s.replace(/_/g, " ")}` }]);
+  } else if (reason === "market_unavailable") {
+    const pool = await poolCandidates(env, day, zone, nowMs);
+    const markets = availableMarkets(pool, request ?? freshRequest(), nowMs);
+    for (const m of markets) {
+      const reply = MARKET_REPLY[m];
+      if (!reply) continue; // result3 has no standalone reply phrase — see MARKET_REPLY's comment
+      extraRows.push([{ text: MARKET_LABEL[m] ?? m, callback_data: `cq|r|${reply}` }]);
+    }
+    extraRows.push([{ text: "🏷 Change sport", callback_data: "cq|k|sport" }]);
+  } else if (reason === "line_unavailable" && request) {
+    const pool = await poolCandidates(env, day, zone, nowMs);
+    const lines = availableTotalLines(pool, request, nowMs);
+    for (const l of lines.slice(0, 6)) {
+      extraRows.push([{ text: `${l.selection === "over" ? "Over" : "Under"} ${l.line}`, callback_data: `cq|r|${l.selection} ${l.line}` }]);
+    }
+    if (lines.length) extraRows.push([{ text: "🎯 Any available line", callback_data: "cq|z|line" }]);
+    extraRows.push([{ text: "🔁 Change market", callback_data: "cq|k|market" }]);
+  } else if (reason === "invalid_count") {
+    extraRows.push([1, 2, 3, 4].map((n) => ({ text: String(n), callback_data: `cq|r|${n} picks` })));
+    extraRows.push([{ text: "✏️ Custom amount", callback_data: "cq|p|count" }]);
+  } else if (
+    ["below_quality_floor", "search_failed", "insufficient_count", "target_too_low", "target_unreachable", "all_started", "conflicting_constraints"].includes(reason)
+  ) {
+    // "No matching predictions": real proven alternatives already sit above
+    // (suggestionKeyboard) when any exist — this is the fallback underneath.
+    if (reason === "insufficient_count") {
+      extraRows.push([1, 2, 3].map((n) => ({ text: String(n), callback_data: `cq|r|${n} picks` })));
+    }
+    extraRows.push([{ text: "🏷 Change sport", callback_data: "cq|k|sport" }, { text: "🔁 Change market", callback_data: "cq|k|market" }]);
+  } else if (!suggestionKeyboard) {
+    return undefined; // success / archive_unavailable / anything else: no buttons at all, unchanged from before this feature.
+  }
+
+  extraRows.push([CANCEL_BUTTON]);
+  const existingRows = (suggestionKeyboard?.inline_keyboard as unknown[][] | undefined) ?? [];
+  return { inline_keyboard: [...existingRows, ...extraRows] };
+}
+
+/** Persists the resolved request (if any) and delivers respond()'s result —
+ * the common tail shared by a typed free-text reply, a replayed clarification
+ * button, and a structured button action (clear-line) that skips parseRequest
+ * entirely. Always sends exactly one message, with whatever keyboard
+ * buildClarificationKeyboard computes for it. */
+async function deliverCustomPicksResult(
+  env: Env,
+  userId: string,
+  chatId: string,
+  day: string,
+  zone: string,
+  nowMs: number,
+  result: { text: string; reason: string; suggestions: Suggestion[] },
+  request: ParsedRequest | null,
+): Promise<void> {
+  await recordCustomRequest(env.DB, userId, chatId, nowMs);
+  if (request) {
+    const expiresAtMs = Math.min(nowMs + CUSTOM_PICKS_TTL_MS, lagosDayBounds(day).endUtcMs);
+    await setConversationRequest(env.DB, userId, chatId, JSON.stringify(serializeRequest(request)), expiresAtMs);
+  }
+  const suggestionKeyboard = await storeAndBuildSuggestionKeyboard(env, result.suggestions, userId, chatId, nowMs, day);
+  const replyMarkup = await buildClarificationKeyboard(env, result.reason, request, day, zone, nowMs, parseEnabledSports(env.ALLOWED_SPORTS), suggestionKeyboard);
+  await tgApi(env, "sendMessage", {
+    chat_id: chatId,
+    text: result.text,
+    parse_mode: "HTML",
+    ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+  });
+}
+
+/**
+ * Shared by a typed free-text reply AND a replayed clarification button (see
+ * "cq|r|" below) — a button tap is just this same pipeline fed with the
+ * button's own reply phrase as `text`, so it "behave[s] exactly like the
+ * equivalent correctly interpreted text response" (spec Part D). Caller has
+ * already verified an active session/cooldown is appropriate for the text
+ * path; button taps re-check session liveness themselves (see
+ * handleCustomPicksClarify) since the session may have expired between the
+ * question being asked and the button being tapped.
+ */
+async function processCustomPicksText(env: Env, userId: string, chatId: string, text: string): Promise<void> {
+  if (await isCustomOnCooldown(env.DB, userId, chatId, Date.now(), CUSTOM_PICKS_COOLDOWN_MS)) {
+    await tgApi(env, "sendMessage", { chat_id: chatId, text: BUSY });
+    return;
+  }
+  const nowMs = Date.now();
+  const zone = env.TIMEZONE ?? "Africa/Lagos";
+  const day = lagosDateString(nowMs);
+  const previousJson = await getConversationRequest(env.DB, userId, chatId, nowMs);
+  const previous = previousJson ? deserializeRequest(JSON.parse(previousJson)) : null;
+  // A visible "building your picks" status while the request is
+  // processed — best-effort (see sendLoadingIndicator): a failure here
+  // must never block the real ticket. Cleaned up on both the success
+  // and error paths so a crashed/retried attempt never leaves a stuck
+  // "⏳ Building..." message sitting in the chat.
+  const loadingMessageId = await sendLoadingIndicator(env, chatId);
+  try {
+    const { result, request } = await customPicksRespond(customPicksDeps(env), text, zone, day, nowMs, previous, userId, parseEnabledSports(env.ALLOWED_SPORTS));
+    // The cooldown timestamp is recorded ONLY after the request was
+    // actually served: recording it up-front poisoned webhook retries —
+    // a throw during respond() left last_request_at set, so the
+    // redelivery was rejected with BUSY instead of doing the real work.
+    // Cooldown enforcement for sequential requests is unchanged (a
+    // completed request still stamps the time before any later message
+    // is checked), and simultaneous duplicates stay fenced by the
+    // update-claim dedupe above.
+    await clearLoadingIndicator(env, chatId, loadingMessageId);
+    await deliverCustomPicksResult(env, userId, chatId, day, zone, nowMs, result, request);
+  } catch (err) {
+    await clearLoadingIndicator(env, chatId, loadingMessageId);
+    throw err;
+  }
+}
+
+/**
+ * Every Custom Picks clarification-button tap lands here, dispatched by its
+ * "cq|<kind>|..." sub-prefix:
+ *   r|<text>   replay <text> through the exact text pipeline (Over/Under,
+ *              a sport name, a market phrase, a pick count — anything a
+ *              typed reply could also say).
+ *   k|<kind>   re-render a DIFFERENT clarification keyboard ("Change sport"/
+ *              "Change market") from the currently stored request, without
+ *              running a new search.
+ *   z|line     a structured request edit no typed phrase can express
+ *              ("Any available line": drop the stuck exact line, keep the
+ *              market) — see custom_picks.ts clearTotalLine().
+ *   p|count    prompt for free-text input ("Custom amount"); no state change.
+ * Ownership is implicit: a private chat has exactly one user in it, so no
+ * separate user/chat check beyond "is this a private chat" is needed (unlike
+ * CALLBACK_PREFIX's "cp|" tickets, which can be tapped from a forwarded
+ * message). A tap in a chat with no active session (expired, or simply never
+ * started one) gets the same safe "expired" fallback either way — it never
+ * resolves a question it has no record of ever having asked.
+ */
+async function handleCustomPicksClarify(env: Env, cb: Record<string, unknown>, cbId: string, chatId: string, msg: Record<string, unknown> | undefined): Promise<void> {
+  const userId = String((cb.from as Record<string, unknown> | undefined)?.id ?? "");
+  const chatType = String((msg?.chat as Record<string, unknown> | undefined)?.type ?? "private");
+  if (chatType !== "private" || !userId || !chatId) {
+    await answerCallback(env, cbId, "Open your own Custom Picks conversation in a private chat with the bot.");
+    return;
+  }
+  const nowMs = Date.now();
+  if (!(await isCustomSessionActive(env.DB, userId, chatId))) {
+    await answerCallback(env, cbId);
+    await tgApi(env, "sendMessage", { chat_id: chatId, text: "⏰ That question has expired\n\nSend /start to begin again." });
+    return;
+  }
+  const data = String((cb.data as string) ?? "");
+  const [, kind, ...rest] = data.split("|");
+  const arg = rest.join("|");
+
+  if (kind === "x") {
+    await answerCallback(env, cbId);
+    await leaveCustomSession(env.DB, userId, chatId);
+    await tgApi(env, "sendMessage", { chat_id: chatId, text: "❌ Cancelled\n\nSend /start anytime to try again." });
+    return;
+  }
+
+  if (kind === "p") {
+    await answerCallback(env, cbId, "Type the number of picks you'd like (e.g. \"5 picks\").");
+    return;
+  }
+
+  if (kind === "r") {
+    await answerCallback(env, cbId);
+    await processCustomPicksText(env, userId, chatId, arg);
+    return;
+  }
+
+  if (kind === "k") {
+    await answerCallback(env, cbId);
+    const zone = env.TIMEZONE ?? "Africa/Lagos";
+    const day = lagosDateString(nowMs);
+    const previousJson = await getConversationRequest(env.DB, userId, chatId, nowMs);
+    const previous = previousJson ? deserializeRequest(JSON.parse(previousJson)) : null;
+    const base = previous ?? freshRequest();
+    const enabled = parseEnabledSports(env.ALLOWED_SPORTS);
+    const text = arg === "sport" ? "Which sport would you like?" : "Which market would you prefer?";
+    const reason = arg === "sport" ? "sport_unavailable" : "market_unavailable";
+    const keyboard = await buildClarificationKeyboard(env, reason, base, day, zone, nowMs, enabled, undefined);
+    await tgApi(env, "sendMessage", { chat_id: chatId, text, ...(keyboard ? { reply_markup: keyboard } : {}) });
+    return;
+  }
+
+  if (kind === "z" && arg === "line") {
+    await answerCallback(env, cbId);
+    const zone = env.TIMEZONE ?? "Africa/Lagos";
+    const day = lagosDateString(nowMs);
+    const previousJson = await getConversationRequest(env.DB, userId, chatId, nowMs);
+    const previous = previousJson ? deserializeRequest(JSON.parse(previousJson)) : null;
+    if (!previous) {
+      await tgApi(env, "sendMessage", { chat_id: chatId, text: "⏰ That question has expired\n\nSend /start to begin again." });
+      return;
+    }
+    const request = clearTotalLine(previous);
+    const result = await searchWithRequest(customPicksDeps(env), request, "", zone, day, nowMs, userId);
+    await deliverCustomPicksResult(env, userId, chatId, day, zone, nowMs, result.result, result.request);
+    return;
+  }
+
+  await answerCallback(env, cbId);
 }
 
 const CALLBACK_PREFIX = "cp|";

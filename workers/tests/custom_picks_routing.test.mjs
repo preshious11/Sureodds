@@ -197,6 +197,331 @@ describe("Custom Picks: group button -> private deep link -> request -> failure 
   });
 });
 
+describe("Custom Picks: ambiguous-line clarification buttons (cq| callbacks)", () => {
+  it("'1.5 options' asks Over/Under with two tappable buttons, and tapping Over delivers real Over 1.5 selections", async () => {
+    const db = realDb();
+    const day = "2026-10-14";
+    const generatedAt = "2026-10-14T06:00:00Z";
+    db._sql.exec(`INSERT INTO custom_pick_pools VALUES('${day}','Africa/Lagos','${generatedAt}','COMPLETE','{}')`);
+    seedCandidate(db._sql, day, generatedAt, {
+      canonical_event_id: "fx-1", home: "Arsenal", away: "Chelsea",
+      market: "total", selection: "over", line: 1.5, period: "full", stat: "points", entity: "all",
+    });
+    const theEnv = env(db);
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c1", "u1", "/start custom_picks")));
+
+    const askFetch = stubFetch();
+    await withFetch(askFetch, () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "1.5 options")));
+    const askCalls = askFetch.calls.filter((c) => c.url.includes("sendMessage"));
+    const ask = askCalls[askCalls.length - 1]; // calls[0] is the "Building your picks..." loading indicator
+    assert.match(ask.body.text, /Over 1\.5 or Under 1\.5/);
+    const kb = ask.body.reply_markup.inline_keyboard;
+    assert.equal(kb[0][0].callback_data, "cq|r|over 1.5");
+    assert.equal(kb[0][1].callback_data, "cq|r|under 1.5");
+
+    const tapFetch = stubFetch();
+    const realNow = Date.now;
+    Date.now = () => realNow() + 5000; // past the 3s cooldown from the ask, like a real tap moments later
+    try {
+      await withFetch(tapFetch, () => handleUpdate(theEnv, callbackQuery(3, "cbq-1", "c1", "u1", "cq|r|over 1.5")));
+    } finally {
+      Date.now = realNow;
+    }
+    const tapSends = tapFetch.calls.filter((c) => c.url.includes("sendMessage"));
+    const sent = tapSends[tapSends.length - 1];
+    assert.ok(sent, "the tap must deliver the real result, exactly like typing 'over 1.5' would");
+    assert.match(sent.body.text, /Arsenal vs Chelsea/);
+    const toast = tapFetch.calls.find((c) => c.url.includes("answerCallbackQuery"));
+    assert.ok(toast, "the callback must be answered");
+  });
+  it("a tap in a chat with no active session of its own never resolves a stranger's question, no ticket leaked", async () => {
+    const db = realDb();
+    const day = "2026-10-14";
+    const generatedAt = "2026-10-14T06:00:00Z";
+    db._sql.exec(`INSERT INTO custom_pick_pools VALUES('${day}','Africa/Lagos','${generatedAt}','COMPLETE','{}')`);
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1" });
+    const theEnv = env(db);
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c1", "u1", "/start custom_picks")));
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "1.5 options")));
+    const tapFetch = stubFetch();
+    // A different chat (never opened its own session) must never resolve it,
+    // same safe fallback as a genuinely expired session.
+    await withFetch(tapFetch, () => handleUpdate(theEnv, callbackQuery(3, "cbq-1", "c2", "u2", "cq|r|over 1.5")));
+    const sent = tapFetch.calls.find((c) => c.url.includes("sendMessage"));
+    assert.match(sent.body.text, /expired/);
+    assert.equal(tapFetch.calls.some((c) => /Arsenal/.test(c.body.text ?? "")), false);
+  });
+  it("a group-chat tap is refused outright: Custom Picks buttons only resolve in a private chat", async () => {
+    const db = realDb();
+    const day = "2026-10-14";
+    const generatedAt = "2026-10-14T06:00:00Z";
+    db._sql.exec(`INSERT INTO custom_pick_pools VALUES('${day}','Africa/Lagos','${generatedAt}','COMPLETE','{}')`);
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1" });
+    const theEnv = env(db);
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c1", "u1", "/start custom_picks")));
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "1.5 options")));
+    const tapFetch = stubFetch();
+    await withFetch(tapFetch, () =>
+      handleUpdate(theEnv, {
+        update_id: 3,
+        callback_query: {
+          id: "cbq-1", data: "cq|r|over 1.5", from: { id: "u1" },
+          message: { message_id: 3, chat: { id: "g1", type: "supergroup" } },
+        },
+      }),
+    );
+    const toast = tapFetch.calls.find((c) => c.url.includes("answerCallbackQuery"));
+    assert.match(toast.body.text, /Open your own Custom Picks conversation/);
+    assert.equal(tapFetch.calls.some((c) => c.url.includes("sendMessage")), false);
+  });
+  it("a tap after the conversation session has expired says so instead of silently building a stale ticket", async () => {
+    const db = realDb();
+    const day = "2026-10-14";
+    const generatedAt = "2026-10-14T06:00:00Z";
+    db._sql.exec(`INSERT INTO custom_pick_pools VALUES('${day}','Africa/Lagos','${generatedAt}','COMPLETE','{}')`);
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1" });
+    const theEnv = env(db);
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c1", "u1", "/start custom_picks")));
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "1.5 options")));
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(3, "c1", "u1", "/stop")));
+    const tapFetch = stubFetch();
+    await withFetch(tapFetch, () => handleUpdate(theEnv, callbackQuery(4, "cbq-1", "c1", "u1", "cq|r|over 1.5")));
+    const sent = tapFetch.calls.find((c) => c.url.includes("sendMessage"));
+    assert.match(sent.body.text, /expired/);
+  });
+});
+
+describe("Custom Picks: remaining clarification button flows", () => {
+  function seedMarketCandidate(sql, day, generatedAt, overrides = {}) {
+    const base = {
+      prediction_date: day, timezone: "Africa/Lagos", canonical_event_id: overrides.canonical_event_id ?? "fx-1",
+      sport: "football", market: "result2", selection: "home", price: 1.8, p_model: 0.7,
+      start_utc: `${day}T20:00:00Z`, generated_at: generatedAt, home: "Arsenal", away: "Chelsea",
+      league: "Premier League", period: "full", stat: "points", entity: "all", line: null,
+      ...overrides,
+    };
+    const id = base.canonical_event_id;
+    const payload = JSON.stringify(base).replace(/'/g, "''");
+    sql.exec(
+      `INSERT INTO custom_pick_candidates VALUES('${day}','Africa/Lagos','cand-${id}-${base.market}-${base.selection}-${base.line}','${id}','${payload}','${generatedAt}','${generatedAt}',1)`,
+    );
+  }
+  const day = "2026-10-14";
+  const generatedAt = "2026-10-14T06:00:00Z";
+  function seededEnv() {
+    const db = realDb();
+    db._sql.exec(`INSERT INTO custom_pick_pools VALUES('${day}','Africa/Lagos','${generatedAt}','COMPLETE','{}')`);
+    return { db, theEnv: env(db) };
+  }
+  async function start(theEnv, chatId = "c1", userId = "u1") {
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, chatId, userId, "/start custom_picks")));
+  }
+  function lastSend(fetchImpl) {
+    const sends = fetchImpl.calls.filter((c) => c.url.includes("sendMessage"));
+    return sends[sends.length - 1];
+  }
+  // Every tap in this file runs under the SAME frozen Date.now as the ask it
+  // follows, which would otherwise trip the real 3s request cooldown exactly
+  // like two rapid-fire real messages would — nudge the clock forward first,
+  // the way a real "moments later" tap naturally would.
+  let clockOffset = 0;
+  async function tap(theEnv, updateId, chatId, userId, data) {
+    clockOffset += 5000;
+    const realNow = Date.now;
+    Date.now = () => realNow() + clockOffset;
+    try {
+      const fetchImpl = stubFetch();
+      await withFetch(fetchImpl, () => handleUpdate(theEnv, callbackQuery(updateId, `cbq-${updateId}`, chatId, userId, data)));
+      return fetchImpl;
+    } finally {
+      Date.now = realNow;
+    }
+  }
+
+  it("1. sport selection: a bare 'hello' only offers sports the pool actually has today, and tapping one delivers real picks", async () => {
+    const { db, theEnv } = seededEnv();
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", sport: "football" });
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-2", sport: "basketball", home: "Lakers", away: "Celtics" });
+    // baseball/tennis/american_football are enabled but have NO candidates today — must never be offered.
+    await start(theEnv);
+    const askFetch = stubFetch();
+    await withFetch(askFetch, () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "hello")));
+    const ask = lastSend(askFetch);
+    const kb = ask.body.reply_markup.inline_keyboard;
+    const labels = kb.flat().map((b) => b.text);
+    assert.ok(labels.includes("Football"));
+    assert.ok(labels.includes("Basketball"));
+    assert.ok(!labels.includes("Baseball"), "a sport with zero candidates today must never be offered");
+    assert.ok(labels.includes("❌ Cancel"));
+
+    const tapFetch = await tap(theEnv, 3, "c1", "u1", "cq|r|football");
+    assert.match(lastSend(tapFetch).body.text, /Arsenal vs Chelsea/);
+  });
+
+  it("1b. an empty/unavailable pool offers no sport buttons at all, only Cancel", async () => {
+    const db = realDb(); // no seedPool at all
+    const theEnv = env(db);
+    await start(theEnv);
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "hello")));
+    const sent = lastSend(fetchImpl);
+    // UNAVAILABLE (archive_unavailable) is a different reason entirely and gets no keyboard; a
+    // bare parse failure ("hello") still tries to build one, but finds nothing to offer.
+    if (sent.body.reply_markup) {
+      const labels = sent.body.reply_markup.inline_keyboard.flat().map((b) => b.text);
+      assert.deepEqual(labels, ["❌ Cancel"]);
+    }
+  });
+
+  it("2. market selection: asking for an unavailable market offers only markets actually on the board, plus a way back to sport", async () => {
+    const { db, theEnv } = seededEnv();
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", market: "btts", selection: "yes" });
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-2", market: "total", selection: "over", line: 2.5, home: "Barca", away: "Real" });
+    await start(theEnv);
+    const askFetch = stubFetch();
+    // "dnb" (Draw No Bet) isn't in the pool at all today.
+    await withFetch(askFetch, () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "draw no bet picks")));
+    const ask = lastSend(askFetch);
+    assert.match(ask.body.text, /dry today/);
+    const labels = ask.body.reply_markup.inline_keyboard.flat().map((b) => b.text);
+    assert.ok(labels.includes("BTTS"));
+    assert.ok(labels.includes("Over/Under"));
+    assert.ok(labels.includes("🏷 Change sport"));
+
+    const tapFetch = await tap(theEnv, 3, "c1", "u1", "cq|r|both teams to score");
+    assert.match(lastSend(tapFetch).body.text, /Arsenal vs Chelsea/);
+  });
+
+  it("2b. 'Change sport' from the market keyboard re-renders the sport keyboard without running a new search", async () => {
+    const { db, theEnv } = seededEnv();
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", sport: "football" });
+    await start(theEnv);
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () => handleUpdate(theEnv, callbackQuery(2, "cbq-1", "c1", "u1", "cq|k|sport")));
+    const sent = fetchImpl.calls.find((c) => c.url.includes("sendMessage"));
+    assert.match(sent.body.text, /Which sport/);
+    assert.ok(sent.body.reply_markup.inline_keyboard.flat().some((b) => b.text === "Football"));
+  });
+
+  it("3. number of selections: an out-of-range count offers 1-4 plus a custom-amount prompt, and a tapped count validates against real availability", async () => {
+    const { db, theEnv } = seededEnv();
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1" });
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-2", home: "Barca", away: "Real", price: 1.6, p_model: 0.65 });
+    await start(theEnv);
+    const askFetch = stubFetch();
+    await withFetch(askFetch, () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "give me 12 picks")));
+    const ask = lastSend(askFetch);
+    const labels = ask.body.reply_markup.inline_keyboard.flat().map((b) => b.text);
+    assert.deepEqual(labels.slice(0, 4), ["1", "2", "3", "4"]);
+    assert.ok(labels.includes("✏️ Custom amount"));
+
+    // Tapping "2" must actually validate against the real (2-fixture) pool, not just echo the number.
+    const tapFetch = await tap(theEnv, 3, "c1", "u1", "cq|r|2 picks");
+    assert.match(lastSend(tapFetch).body.text, /🔥/);
+
+    // "Custom amount" is a prompt only — no new message, no state change.
+    const promptFetch = await tap(theEnv, 4, "c1", "u1", "cq|p|count");
+    assert.equal(promptFetch.calls.some((c) => c.url.includes("sendMessage")), false);
+    const toast = promptFetch.calls.find((c) => c.url.includes("answerCallbackQuery"));
+    assert.match(toast.body.text, /Type the number/);
+  });
+
+  it("4. available betting lines: an unavailable exact line offers the lines actually on the board, plus 'any available line'", async () => {
+    const { db, theEnv } = seededEnv();
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", market: "total", selection: "over", line: 2.5 });
+    await start(theEnv);
+    const askFetch = stubFetch();
+    await withFetch(askFetch, () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "over 1.5")));
+    const ask = lastSend(askFetch);
+    assert.match(ask.body.text, /exact line isn't up/);
+    const kb = ask.body.reply_markup.inline_keyboard;
+    const labels = kb.flat().map((b) => b.text);
+    assert.ok(labels.includes("Over 2.5"));
+    assert.ok(labels.includes("🎯 Any available line"));
+    assert.ok(labels.includes("🔁 Change market"));
+
+    // Tapping the specific alternative line.
+    const tapFetch = await tap(theEnv, 3, "c1", "u1", "cq|r|over 2.5");
+    assert.match(lastSend(tapFetch).body.text, /Arsenal vs Chelsea/);
+  });
+
+  it("4b. 'Any available line' drops the stuck exact line but keeps the total market, without needing a typed phrase", async () => {
+    const { db, theEnv } = seededEnv();
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", market: "total", selection: "over", line: 2.5 });
+    await start(theEnv);
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "over 1.5")));
+    const tapFetch = await tap(theEnv, 3, "c1", "u1", "cq|z|line");
+    assert.match(lastSend(tapFetch).body.text, /Arsenal vs Chelsea/);
+  });
+
+  it("5. no matching predictions: an unreachable pick count offers count-recovery buttons AND a way to change sport/market", async () => {
+    const { db, theEnv } = seededEnv();
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1" }); // only 1 fixture exists today
+    await start(theEnv);
+    const askFetch = stubFetch();
+    await withFetch(askFetch, () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "3 picks")));
+    const ask = lastSend(askFetch);
+    assert.match(ask.body.text, /few games short/);
+    const labels = ask.body.reply_markup.inline_keyboard.flat().map((b) => b.text);
+    assert.ok(labels.includes("1"), "a count the 1-fixture pool CAN satisfy must be offered");
+    assert.ok(labels.includes("🏷 Change sport"));
+    assert.ok(labels.includes("🔁 Change market"));
+    assert.ok(labels.includes("❌ Cancel"));
+
+    const tapFetch = await tap(theEnv, 3, "c1", "u1", "cq|r|1 picks");
+    assert.match(lastSend(tapFetch).body.text, /🔥/);
+  });
+
+  it("Cancel leaves the session (same effect as /stop) from any clarification keyboard", async () => {
+    const { db, theEnv } = seededEnv();
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1" });
+    await start(theEnv);
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "hello")));
+    const cancelFetch = await tap(theEnv, 3, "c1", "u1", "cq|x");
+    assert.match(lastSend(cancelFetch).body.text, /Cancelled/);
+    const row = db._sql.prepare("SELECT active FROM custom_sessions WHERE user_id='u1' AND chat_id='c1'").get();
+    assert.equal(row.active, 0);
+  });
+
+  it("a duplicate tap on the same button twice delivers the same real result both times, never a crash or a second ticket type", async () => {
+    const { db, theEnv } = seededEnv();
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", market: "total", selection: "over", line: 2.5 });
+    await start(theEnv);
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "over 1.5")));
+    const realNow = Date.now;
+    let offset = 5000;
+    Date.now = () => realNow() + offset;
+    try {
+      const first = stubFetch();
+      await withFetch(first, () => handleUpdate(theEnv, callbackQuery(3, "cbq-1", "c1", "u1", "cq|r|over 2.5")));
+      offset += 5000;
+      const second = stubFetch();
+      await withFetch(second, () => handleUpdate(theEnv, callbackQuery(4, "cbq-2", "c1", "u1", "cq|r|over 2.5")));
+      assert.match(lastSend(first).body.text, /Arsenal vs Chelsea/);
+      assert.match(lastSend(second).body.text, /Arsenal vs Chelsea/);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it("a tap after the chat's session was never started (or already expired) is refused without leaking a result, for every sub-action kind", async () => {
+    const db = realDb();
+    const theEnv = env(db);
+    let updateId = 1;
+    for (const data of ["cq|r|football", "cq|k|sport", "cq|z|line", "cq|p|count", "cq|x"]) {
+      const fetchImpl = stubFetch();
+      const id = updateId++;
+      await withFetch(fetchImpl, () => handleUpdate(theEnv, callbackQuery(id, `cbq-${id}`, "c1", "u1", data)));
+      const sent = fetchImpl.calls.find((c) => c.url.includes("sendMessage"));
+      // The session-liveness check runs before any kind-specific dispatch, so
+      // every sub-action — even "p" (custom-amount prompt), which never sends
+      // a message when the session IS live — gets the same expired notice here.
+      assert.ok(sent, `${data}: must still answer with something, not silently drop the tap`);
+      assert.match(sent.body.text, /expired/);
+    }
+  });
+});
+
 describe("/menu admin command — the group's Custom Picks entry point", () => {
   it("non-admin group /menu is silently ignored", async()=>{
     const db=realDb(); const f=stubFetch();
