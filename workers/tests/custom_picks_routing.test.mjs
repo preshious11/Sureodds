@@ -587,8 +587,10 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     const sent = lastSend(tapFetch);
     assert.match(sent.body.text, /💎 PRO PICKS/, "the FIRST reply must already be a real ticket, not a question");
     assert.doesNotMatch(sent.body.text, /what would you like/i);
-    const row = db._sql.prepare("SELECT mode FROM custom_sessions WHERE user_id='7' AND chat_id='c7'").get();
-    assert.equal(row.mode, "pro");
+    // No session at all — Pro Picks is a stateless, independent pipeline
+    // (see pro_picks.ts), not a mode of Custom Picks' conversational engine.
+    const row = db._sql.prepare("SELECT active FROM custom_sessions WHERE user_id='7' AND chat_id='c7'").get();
+    assert.ok(!row || row.active !== 1, "Pro Picks must never open a Custom Picks session");
   });
 
   it("/propicks alone publishes a ticket in one message — no intermediate question, no typing required", async () => {
@@ -632,7 +634,7 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
     const text = lastSend(proFetch).body.text;
     assert.match(text, /💎 PRO PICKS/);
-    assert.match(text, /📊.*confidence/, "each pick must carry a data-backed reason line");
+    assert.match(text, /📊.*books lined up/, "each pick must carry a data-backed reason line");
     assert.match(text, /6 books lined up/);
     assert.match(text, /\+4\.0% edge/);
     assert.doesNotMatch(text, /Suggested stake|Kelly|bankroll/i);
@@ -660,53 +662,62 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     assert.match(text, /H2H \(Arsenal\): 3W-0L last 3/);
     assert.match(text, /Arsenal form: 4W-1L/);
     assert.match(text, /Chelsea form: 1W-4L/);
-    // Real stats/H2H present -> the generic model-confidence fallback must NOT also appear.
-    assert.doesNotMatch(text, /Model confidence:/);
+    // Real stats/H2H present -> the books/edge fallback must NOT also appear.
+    assert.doesNotMatch(text, /books lined up|% edge/);
   });
 
-  it("an unidentifiable fixture (no ESPN match) falls back to the agreement-based reason — never a fabricated stat/H2H line", async () => {
+  it("an unidentifiable fixture (no ESPN match) falls back to books/edge — never the agreement metric (it isn't a confidence signal, see pickReason's doc comment) and never a fabricated stat/H2H line", async () => {
     const db = realDb();
     const theEnv = adminEnv(db);
     seeded(db);
     // No home_form/away_form/h2h stored at all (the honest ESPN-can't-identify-this case).
+    // agreement: 0.8 deliberately present but must NEVER be surfaced as a reason — it is
+    // not a confidence/strength metric at all, and showing it alongside the real
+    // Confidence: NN% line produced the exact contradiction this test guards against.
     seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.8, bookmaker_count: 6, edge_ev: 0.04 });
     const proFetch = stubFetch();
     await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
     const text = lastSend(proFetch).body.text;
+    const reasonLine = text.split("\n").find((l) => l.startsWith("📊"));
     assert.doesNotMatch(text, /H2H|form:/);
-    assert.match(text, /Model confidence: 80%/);
+    assert.doesNotMatch(reasonLine, /confidence/i, "the agreement metric must never be shown as a confidence/strength signal");
+    assert.match(reasonLine, /^📊 6 books lined up · \+4\.0% edge$/);
   });
 
-  it("Pro Picks accepts more legs than the free tier's cap via a follow-up refinement; free tier is unaffected", async () => {
+  it("when neither real stats/H2H nor books/edge are available, the fallback is a plain honest statement, never a confusing number", async () => {
     const db = realDb();
     const theEnv = adminEnv(db);
     seeded(db);
-    for (let i = 1; i <= 10; i++) {
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.35, bookmaker_count: 1, edge_ev: 0 });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const text = lastSend(proFetch).body.text;
+    const reasonLine = text.split("\n").find((l) => l.startsWith("📊"));
+    assert.match(reasonLine, /^📊 No match history on file for this fixture yet$/);
+    assert.doesNotMatch(reasonLine, /35%|confidence/i);
+  });
+
+  it("Pro Picks builds up to its own 12-leg cap in one stateless call — no conversation, no follow-up, free tier's own 8-leg cap is completely unaffected", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    // 15 eligible fixtures: well over both Pro's 12-leg cap and the free tier's 8-leg cap.
+    for (let i = 1; i <= 15; i++) {
       seedCandidate(db._sql, day, generatedAt, {
         canonical_event_id: `fx-${i}`, home: `Home ${i}`, away: `Away ${i}`, price: 1.4, p_model: 0.8,
       });
     }
-    // The initial /propicks publishes a default-size ticket; a follow-up
-    // free-text message can still refine it (optional continuity, never
-    // required for the first response).
-    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
-    // 9 legs is over the free MAX_LEGS (8) but under MAX_LEGS_PRO (12).
-    // Past the cooldown from the initial /propicks publish, like a real follow-up moments later.
-    const realNow = Date.now;
-    Date.now = () => realNow() + 5000;
-    let proFetch;
-    try {
-      proFetch = stubFetch();
-      await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(2, "c7", "7", "9 picks")));
-    } finally {
-      Date.now = realNow;
-    }
-    assert.match(lastSend(proFetch).body.text, /💎 PRO PICKS/, "a pro session must be able to build a 9-leg ticket");
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const proText = lastSend(proFetch).body.text;
+    assert.match(proText, /💎 PRO PICKS/);
+    assert.equal((proText.match(/ vs /g) ?? []).length, 12, "Pro Picks fills its own 12-leg cap from a single, stateless call");
 
+    // The free tier's own cap (8, independent of Pro's 12) is untouched.
     const freeFetch = stubFetch();
-    await withFetch(freeFetch, () => handleUpdate(theEnv, textMessage(3, "c2", "2", "/start custom_picks")));
+    await withFetch(freeFetch, () => handleUpdate(theEnv, textMessage(2, "c2", "2", "/start custom_picks")));
     const freeAskFetch = stubFetch();
-    await withFetch(freeAskFetch, () => handleUpdate(theEnv, textMessage(4, "c2", "2", "9 picks")));
+    await withFetch(freeAskFetch, () => handleUpdate(theEnv, textMessage(3, "c2", "2", "9 picks")));
     assert.match(lastSend(freeAskFetch).body.text, /I can offer 1–8/, "the free tier's cap must be completely unaffected");
   });
 

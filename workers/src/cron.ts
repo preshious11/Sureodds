@@ -43,7 +43,7 @@ import { lagosDateString, renderGroupCard, renderGroupRecap, renderRecapStats, r
 import { shiftDate, splitMessage } from "./format.ts";
 import { allButtonModeFor, topEmptyKeyboard, menuKeyboard, isAdmin } from "./telegram.ts";
 import { ticketPhoto, type TicketPhoto } from './ticket_image.ts';
-import { respond as customPicksRespond, parseEnabledSports, MAX_LEGS_PRO } from "./custom_picks.ts";
+import { buildProPicks } from "./pro_picks.ts";
 
 export const BROADCAST_PER_SECOND = 25;
 
@@ -402,17 +402,7 @@ export async function postProPicksToAdmin(
     getPool: (d: string, z: string) => getCustomPickPool(env.DB, d, z),
     getCandidates: (d: string, z: string) => getCustomPickCandidates(env.DB, d, z),
   };
-  const { result } = await customPicksRespond(
-    deps,
-    "picks",
-    timezone,
-    localDate,
-    nowMs,
-    null,
-    owner,
-    parseEnabledSports(env.ALLOWED_SPORTS),
-    { maxLegs: MAX_LEGS_PRO, preference: "pro" },
-  );
+  const result = await buildProPicks(deps, localDate, timezone, nowMs);
   if (result.reason !== "success" || !result.text) {
     // Not enough pro-floor picks yet (e.g. generation incomplete for this
     // sport mix) — release the claim so the next sweep fire tries again,

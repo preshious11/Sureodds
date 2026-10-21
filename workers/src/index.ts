@@ -15,7 +15,6 @@ import {
   getSuggestion,
   isCustomOnCooldown,
   isCustomSessionActive,
-  isProSession,
   leaveCustomSession,
   listActiveSuggestions,
   recordCustomRequest,
@@ -46,7 +45,6 @@ import {
   loadPool,
   MARKET_LABEL,
   MARKET_REPLY,
-  MAX_LEGS_PRO,
   parseEnabledSports,
   respond as customPicksRespond,
   searchWithRequest,
@@ -56,6 +54,7 @@ import {
   type Suggestion,
   validTicket,
 } from "./custom_picks.ts";
+import { buildProPicks } from "./pro_picks.ts";
 import {
   isAdmin, restrictedView, welcomeMessage,
   allButtonModeFor,
@@ -838,24 +837,32 @@ function customPicksDeps(env: Env) {
 }
 
 /**
- * Admin-only Pro Picks entry point (see migrations/0013_pro_picks.sql —
- * `mode` on the session row is how respond()/processCustomPicksText later
- * know this is a Pro session, not a free one: a higher leg cap
- * (MAX_LEGS_PRO), the "pro" confidence floor stricter than Bet of the Day's
- * own, and a reason line per pick — see custom_picks.ts MIN_PROBABILITY and
- * formatTicket). No paywall: gated entirely by the isAdmin() check at the
- * call site, for internal testing before any public rollout.
+ * Admin-only Pro Picks entry point. Deliberately NOT routed through Custom
+ * Picks at all — see pro_picks.ts's own header comment: independent floor
+ * (PRO_MIN_PROBABILITY), independent leg cap (PRO_MAX_LEGS), independent
+ * selection and formatting, no session, no conversation, no refinement. No
+ * paywall: gated entirely by the isAdmin() check at the call site, for
+ * internal testing before any public rollout.
  *
- * Unlike Custom Picks, this is NOT a conversation — it never asks "what
- * would you like?". Entering publishes a ready ticket immediately, exactly
- * like Bet of the Day on demand, just held to a stricter bar. A session is
- * still opened (mode "pro") purely so a follow-up free-text message (e.g.
- * "basketball only") can refine THIS ticket afterward, the same way Custom
- * Picks supports refinement — but that is optional, never required.
+ * One call in, one message out: publishes a ready ticket immediately (or an
+ * honest "nothing qualifies yet"), exactly like Bet of the Day on demand.
  */
 async function enterProPicks(env: Env, userId: string, chatId: string): Promise<void> {
-  await enterCustomSession(env.DB, userId, chatId, "pro");
-  await processCustomPicksText(env, userId, chatId, "picks");
+  const nowMs = Date.now();
+  const zone = env.TIMEZONE ?? "Africa/Lagos";
+  const day = lagosDateString(nowMs);
+  const loadingMessageId = await sendLoadingIndicator(env, chatId);
+  try {
+    const result = await buildProPicks(customPicksDeps(env), day, zone, nowMs);
+    await clearLoadingIndicator(env, chatId, loadingMessageId);
+    const text = result.reason === "success"
+      ? result.text
+      : "💎 No Pro Picks qualify yet today — nothing has cleared the floor.";
+    await tgApi(env, "sendMessage", { chat_id: chatId, text, parse_mode: "HTML" });
+  } catch (err) {
+    await clearLoadingIndicator(env, chatId, loadingMessageId);
+    throw err;
+  }
 }
 
 /** Plain D1 read of today's candidate pool, for keyboard-building only (never
@@ -994,7 +1001,6 @@ async function processCustomPicksText(env: Env, userId: string, chatId: string, 
   const day = lagosDateString(nowMs);
   const previousJson = await getConversationRequest(env.DB, userId, chatId, nowMs);
   const previous = previousJson ? deserializeRequest(JSON.parse(previousJson)) : null;
-  const pro = await isProSession(env.DB, userId, chatId);
   // A visible "building your picks" status while the request is
   // processed — best-effort (see sendLoadingIndicator): a failure here
   // must never block the real ticket. Cleaned up on both the success
@@ -1011,7 +1017,6 @@ async function processCustomPicksText(env: Env, userId: string, chatId: string, 
       previous,
       userId,
       parseEnabledSports(env.ALLOWED_SPORTS),
-      pro ? { maxLegs: MAX_LEGS_PRO, preference: "pro" } : {},
     );
     // The cooldown timestamp is recorded ONLY after the request was
     // actually served: recording it up-front poisoned webhook retries —

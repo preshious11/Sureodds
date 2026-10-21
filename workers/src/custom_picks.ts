@@ -27,11 +27,6 @@ export const CUSTOM_PICKS_TTL_MS = 10 * 60_000; // ~ custom_recovery.py TTL = ti
 
 const DEFAULT_COUNT = 3;
 const MAX_LEGS = 8;
-/** Pro Picks (admin-only preview, see db.ts isProSession): a higher leg cap
- * than the free tier. Threaded through as ParsedRequest.maxLegs rather than
- * read as a module constant, so a single process still serves both free and
- * pro sessions correctly at once (Workers are multi-tenant per isolate). */
-export const MAX_LEGS_PRO = 12;
 /** Strict minimum individual price for EVERY Custom Picks selection, at any
  * target odds, in any sport, including fallback and recovery tickets. Never
  * relaxed to complete a ticket. */
@@ -49,12 +44,7 @@ const ODDS_BUCKETS = 12;
 const MAX_EXPANSIONS = 100_000;
 const ODDS_LADDER = [20, 15, 12, 10, 8, 6, 5, 4, 3, 2];
 const MAX_SUGGESTIONS = 3;
-// "pro" is never user-typed — respond() forces it for an admin Pro Picks
-// session (see RespondOptions.preference) regardless of whatever preference
-// word the text itself contains, so a Pro ticket is ALWAYS held to a
-// stricter floor than both Custom Picks' own strictest tier ("safe", 0.65)
-// and predbot's Bet of the Day floor (TOP_MIN_PROB, 0.62 - config.py).
-const MIN_PROBABILITY: Record<string, number> = { safe: 0.65, strong: 0.6, best: 0.5, pro: 0.72 };
+const MIN_PROBABILITY: Record<string, number> = { safe: 0.65, strong: 0.6, best: 0.5 };
 export const SPORT_LABEL: Record<string, string> = {
   football: "Football", basketball: "Basketball", american_football: "American Football",
   baseball: "Baseball", tennis: "Tennis", mma: "MMA",
@@ -586,9 +576,7 @@ export interface ParsedRequest {
   sports: Set<string>;
   allowedMarkets: Set<string>;
   excludedMarkets: Set<string>;
-  /** "pro" is never typed by a user — only respond() sets it, forced for
-   * an admin Pro Picks session (see RespondOptions.preference). */
-  preference: "safe" | "strong" | "best" | "pro";
+  preference: "safe" | "strong" | "best";
   competitions: Set<string>;
   timeIntent: "today" | "tonight" | null;
   specifiedFields: Set<string>;
@@ -613,12 +601,6 @@ export interface ParsedRequest {
    * number via totalLine (carried forward normally). Never silently
    * defaulted to Over. */
   ambiguousLine: number | null;
-  /** The leg cap THIS parse was allowed to validate against (MAX_LEGS for a
-   * free session, MAX_LEGS_PRO for an admin Pro Picks session - see
-   * parseRequest's `maxLegs` param). Not a user-specified field: refine()
-   * always takes the CURRENT turn's value, never a stale one carried over
-   * from an earlier turn in a different session mode. */
-  maxLegs: number;
 }
 
 /** JSON-safe form of a ParsedRequest (Sets -> arrays), for D1 persistence across stateless invocations. */
@@ -628,7 +610,7 @@ export function serializeRequest(req: ParsedRequest): Record<string, unknown> {
     allowedMarkets: [...req.allowedMarkets], excludedMarkets: [...req.excludedMarkets],
     preference: req.preference, competitions: [...req.competitions], timeIntent: req.timeIntent,
     specifiedFields: [...req.specifiedFields], refinement: req.refinement, qualityUpgrade: req.qualityUpgrade,
-    teams: [...req.teams], totalLine: req.totalLine, ambiguousLine: req.ambiguousLine, maxLegs: req.maxLegs,
+    teams: [...req.teams], totalLine: req.totalLine, ambiguousLine: req.ambiguousLine,
   };
 }
 
@@ -648,15 +630,14 @@ export function deserializeRequest(raw: Record<string, unknown>): ParsedRequest 
     teams: new Set((raw.teams as string[]) ?? []),
     totalLine: (raw.totalLine as ParsedRequest["totalLine"]) ?? null,
     ambiguousLine: (raw.ambiguousLine as number) ?? null,
-    maxLegs: (raw.maxLegs as number) ?? MAX_LEGS,
   };
 }
 
-export function freshRequest(maxLegs: number = MAX_LEGS): ParsedRequest {
+export function freshRequest(): ParsedRequest {
   return {
     targetOdds: null, pickCount: null, sports: new Set(), allowedMarkets: new Set(), excludedMarkets: new Set(),
     preference: "best", competitions: new Set(), timeIntent: null, specifiedFields: new Set(),
-    refinement: false, qualityUpgrade: false, teams: new Set(), totalLine: null, ambiguousLine: null, maxLegs,
+    refinement: false, qualityUpgrade: false, teams: new Set(), totalLine: null, ambiguousLine: null,
   };
 }
 
@@ -673,7 +654,7 @@ const err = (text: string, reason = "invalid_request"): ParseResult => ({ ok: fa
  * typo-correction, and the over/under line-market detection (total market
  * without an explicit line word is still supported via MARKET_ALIASES).
  */
-export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENABLED_SPORTS, maxLegs: number = MAX_LEGS): ParseResult {
+export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENABLED_SPORTS): ParseResult {
   const trimmed = rawText.trim();
   if (!trimmed || trimmed.length > 512) return err(HELP);
   const text = trimmed.toLowerCase();
@@ -682,7 +663,7 @@ export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENA
     return err(TODAY_ONLY, "future_date");
   }
 
-  const req = freshRequest(maxLegs);
+  const req = freshRequest();
   const spans: [number, number][] = [];
 
   if (/\b(tonight|this evening)\b/.test(text)) { req.timeIntent = "tonight"; req.specifiedFields.add("time_intent"); }
@@ -791,8 +772,8 @@ export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENA
     if (!Number.isInteger(count)) {
       req.ambiguousLine = count;
       req.specifiedFields.add("ambiguous_line");
-    } else if (count < 1 || count > maxLegs) {
-      return err(`I can offer 1–${maxLegs} different games. How many would you like?`, "invalid_count");
+    } else if (count < 1 || count > MAX_LEGS) {
+      return err(`I can offer 1–${MAX_LEGS} different games. How many would you like?`, "invalid_count");
     } else {
       req.pickCount = count;
       req.specifiedFields.add("pick_count");
@@ -1028,7 +1009,7 @@ function minPriceFor(_req: ParsedRequest): number {
 function maxLegsFor(req: ParsedRequest): number {
   if (req.pickCount) return req.pickCount;
   if (req.targetOdds != null && req.targetOdds <= LOW_TARGET_CEILING) return LOW_TARGET_MAX_LEGS;
-  if (req.targetOdds) return req.maxLegs;
+  if (req.targetOdds) return MAX_LEGS;
   return DEFAULT_COUNT;
 }
 
@@ -1231,7 +1212,7 @@ export function chooseTicket(options: Ticket[], userId: string, day: string, req
  * suggestions alike: legacy stored rows lacking market coordinates fail here
  * and fall through to the expired-suggestion path, never to a guessed label. */
 export function validTicket(ticket: Ticket | null, req: ParsedRequest, nowMs: number): boolean {
-  const cap = req.targetOdds && !req.pickCount ? maxLegsFor(req) : req.maxLegs;
+  const cap = req.targetOdds && !req.pickCount ? maxLegsFor(req) : MAX_LEGS;
   if (!ticket || ticket.picks.length < 1 || ticket.picks.length > cap) return false;
   if (new Set(ticket.picks.map((c) => c.fixtureId)).size !== ticket.picks.length) return false;
   if (new Set(ticket.picks.map((c) => c.fixtureIdentity || c.fixtureId)).size !== ticket.picks.length) return false;
@@ -1266,53 +1247,19 @@ export function marketComplete(ticket: Ticket): boolean {
  * meaningfully above baseline, rather than always padding out three clauses
  * regardless of whether they say anything. */
 /** "3W-2L" from a newest-first W/L list. */
-function wlRecord(results: string[]): string {
-  const wins = results.filter((r) => r === "W").length;
-  return `${wins}W-${results.length - wins}L`;
-}
-
-/** Real stats/H2H when ESPN could identify this fixture (see
- * ESPNProvider.team_insight — ".homeForm"/".awayForm"/".h2h" on Candidate),
- * falling back to the always-present model-confidence signals when it
- * couldn't. Never fabricates a stats/H2H line it doesn't actually have. */
-function pickReason(c: Candidate): string {
-  const parts: string[] = [];
-  if (c.h2h.length) parts.push(`H2H (${c.home}): ${wlRecord(c.h2h)} last ${c.h2h.length}`);
-  if (c.homeForm.length) parts.push(`${c.home} form: ${wlRecord(c.homeForm)}`);
-  if (c.awayForm.length) parts.push(`${c.away} form: ${wlRecord(c.awayForm)}`);
-  if (parts.length) return parts.join(" · ");
-  const fallback: string[] = [`Model confidence: ${Math.round(c.agreement * 100)}%`];
-  if (c.books >= 3) fallback.push(`${Math.round(c.books)} books lined up`);
-  if (c.referenceEv > 0.01) fallback.push(`+${(c.referenceEv * 100).toFixed(1)}% edge`);
-  return fallback.join(" · ");
-}
-
-/** ~ custom_picks.py format_ticket(). `pro`, when true (Pro Picks only —
- * see RespondOptions), labels the header distinctly from a regular Custom
- * Picks ticket and appends a one-line "why" under each pick. */
-/** "HH:MM" in Africa/Lagos (UTC+1, no DST — same fixed offset `eligible()`
- * already uses for "tonight"). Kickoff time shown only on Pro Picks: the
- * free-tier ticket format is unchanged. */
-function lagosTimeLabel(startMs: number): string {
-  const local = new Date(startMs + 60 * 60_000);
-  const hh = String(local.getUTCHours()).padStart(2, "0");
-  const mm = String(local.getUTCMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
-}
-
-export function formatTicket(ticket: Ticket, opts: { pro?: boolean } = {}): string {
-  const header = opts.pro ? "💎 PRO PICKS" : "🔥";
-  const blocks = [`${header} ${combinedOdds(ticket.picks.map((p) => p.price)).toFixed(2)} ODDS`];
+/** ~ custom_picks.py format_ticket(). Free-tier Custom Picks only — Pro
+ * Picks has its own independent formatter (pro_picks.ts formatProTicket),
+ * never this function. */
+export function formatTicket(ticket: Ticket): string {
+  const blocks = [`🔥 ${combinedOdds(ticket.picks.map((p) => p.price)).toFixed(2)} ODDS`];
   const sorted = [...ticket.picks].sort((a, b) => a.startMs - b.startMs);
   for (const pick of sorted) {
     const icon = SPORT_ICON[pick.sport] ?? SPORT_ICON.other;
     const league = pick.competitionLabel ? `${escHtml(pick.competitionLabel)}\n` : "";
-    const reason = opts.pro ? `\n📊 ${escHtml(pickReason(pick))}` : "";
-    const kickoff = opts.pro ? ` · 🕒 ${lagosTimeLabel(pick.startMs)}` : "";
     blocks.push(
       `${icon} ${escHtml(pick.home)} vs ${escHtml(pick.away)}\n` +
         `${league}${escHtml(pick.outcome)}\n` +
-        `Odds: ${pick.price.toFixed(2)} · Confidence: ${Math.round(pick.probability * 100)}%${kickoff}${reason}`,
+        `Odds: ${pick.price.toFixed(2)} · Confidence: ${Math.round(pick.probability * 100)}%`,
     );
   }
   blocks.push("Bet only what you can afford to lose.");
@@ -1382,8 +1329,8 @@ function alternatives(req: ParsedRequest, reason: string): ParsedRequest[] {
     const ladder = reason === "target_too_low" ? [...ODDS_LADDER].reverse().filter((n) => n > req.targetOdds!) : ODDS_LADDER.filter((n) => n < req.targetOdds!);
     for (const target of ladder.slice(0, 2)) out.push({ ...req, targetOdds: target });
   }
-  out.push({ ...freshRequest(req.maxLegs), sports: new Set(req.sports) });
-  out.push(freshRequest(req.maxLegs));
+  out.push({ ...freshRequest(), sports: new Set(req.sports) });
+  out.push(freshRequest());
   return out.slice(0, MAX_SUGGESTIONS);
 }
 
@@ -1486,11 +1433,7 @@ export function prepareAlternatives(pool: Candidate[], req: ParsedRequest, reaso
 
 /** ~ custom_recovery.py refine(): merge a follow-up message into the stored prior request. */
 export function refine(previous: ParsedRequest, current: ParsedRequest): ParsedRequest {
-  // maxLegs is never user-specified - it's a per-call capability (which
-  // session mode THIS turn parsed under), so the current turn's value
-  // always wins, never a stale one a prior (possibly different-mode) turn
-  // left behind.
-  const next: ParsedRequest = { ...previous, maxLegs: current.maxLegs };
+  const next: ParsedRequest = { ...previous };
   for (const field of current.specifiedFields) {
     switch (field) {
       case "target_odds": next.targetOdds = current.targetOdds; break;
@@ -1625,16 +1568,6 @@ export interface RespondResult {
   suggestions: Suggestion[];
 }
 
-export interface RespondOptions {
-  /** Pro Picks leg cap (MAX_LEGS_PRO) for an admin Pro session; omitted/undefined uses the free-tier MAX_LEGS default. */
-  maxLegs?: number;
-  /** Pro Picks only: forces the "pro" confidence floor (MIN_PROBABILITY.pro,
-   * stricter than Bet of the Day's own floor — see MIN_PROBABILITY's
-   * comment) regardless of whatever preference word the text itself
-   * contains. Never set for a free session. */
-  preference?: "pro";
-}
-
 export async function respond(
   deps: CustomPicksDeps,
   text: string,
@@ -1644,13 +1577,11 @@ export async function respond(
   previous: ParsedRequest | null,
   userId = "",
   enabled: Set<string> = DEFAULT_ENABLED_SPORTS,
-  options: RespondOptions = {},
 ): Promise<{ result: RespondResult; request: ParsedRequest | null }> {
-  const parsed = parseRequest(text, enabled, options.maxLegs);
+  const parsed = parseRequest(text, enabled);
   if (!parsed.ok) return { result: { text: parsed.text, reason: parsed.reason, suggestions: [] }, request: null };
   let request = parsed.request;
   if (request.refinement && previous) request = refine(previous, request);
-  if (options.preference) request.preference = options.preference;
 
   // A bare "1.5 options" names no side - ask, unless the conversation
   // already resolved THIS exact number (request.totalLine, carried
@@ -1671,7 +1602,7 @@ export async function respond(
     }
   }
 
-  return searchWithRequest(deps, request, text, zone, day, nowMs, userId, options.preference === "pro");
+  return searchWithRequest(deps, request, text, zone, day, nowMs, userId);
 }
 
 /**
@@ -1700,7 +1631,6 @@ export async function searchWithRequest(
   day: string,
   nowMs: number,
   userId = "",
-  pro = false,
 ): Promise<{ result: RespondResult; request: ParsedRequest | null }> {
   const loaded = await loadPool(deps, day, zone, nowMs);
   if (loaded === null) return { result: { text: UNAVAILABLE, reason: "archive_unavailable", suggestions: [] }, request };
@@ -1736,7 +1666,7 @@ export async function searchWithRequest(
     matchFixtures: new Set(matches.map((c) => c.fixtureId)).size,
   }));
   if (validTicket(ticket, request, nowMs)) {
-    return { result: { text: formatTicket(ticket!, { pro }), reason: "success", suggestions: [] }, request };
+    return { result: { text: formatTicket(ticket!), reason: "success", suggestions: [] }, request };
   }
   const reason = failureReason(pool, request, nowMs, matches);
   const suggestions = prepareAlternatives(pool, request, reason, nowMs);
