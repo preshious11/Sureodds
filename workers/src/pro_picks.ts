@@ -25,7 +25,11 @@ import { loadPool, type Candidate, type CustomPicksDeps } from "./custom_picks.t
 /** Independent of Custom Picks' MIN_PROBABILITY table (0.65/0.6/0.5) — this
  * number is never read by, or derived from, anything over there. */
 export const PRO_MIN_PROBABILITY = 0.72;
-export const PRO_MAX_LEGS = 12;
+/** Pro Picks is not about filling a slip — it's about how close to sure a
+ * handful of picks are. A small cap, kept deliberately low so adding more
+ * eligible fixtures on a busy day can never dilute the ticket with a
+ * weaker 9th or 10th leg just to hit a bigger number. */
+export const PRO_MAX_LEGS = 5;
 /** Same floor-odds notion as Custom Picks' own MIN_PRICE, defined
  * independently so a change to that constant can never move this one. */
 const PRO_MIN_PRICE = 1.25;
@@ -52,8 +56,10 @@ function byProbabilityDesc(a: Candidate, b: Candidate): number {
   return a.fixtureIdentity < b.fixtureIdentity ? -1 : a.fixtureIdentity > b.fixtureIdentity ? 1 : 0;
 }
 
-/** One pick per fixture (never two correlated legs on the same game), the
- * PRO_MAX_LEGS highest-probability eligible picks, in ranked order. */
+/** One pick per fixture (never two correlated legs on the same game): the
+ * PRO_MAX_LEGS *surest* eligible picks, ranked purely by probability. On a
+ * day with few eligible fixtures this returns fewer than PRO_MAX_LEGS — it
+ * never pads out a weaker pick just to reach the cap. */
 export function buildProTicket(pool: Candidate[], nowMs: number): ProTicket | null {
   const seenFixtures = new Set<string>();
   const picks: Candidate[] = [];
