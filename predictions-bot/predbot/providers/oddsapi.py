@@ -446,6 +446,8 @@ class OddsApiProvider(BaseProvider):
                         continue
                     ml = self._market_to_lines(market, bm_key, home, away)
                     for line in ml:
+                        if sport == 'tennis' and line.market in ('total', 'handicap'):
+                            line.stat = 'games'
                         k = line.key()
                         if k in merged:
                             m = merged[k]

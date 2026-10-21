@@ -68,6 +68,28 @@ def competition_id(*values):
 
 
 def parse(text, supported_sports=(), allowed_sports=None):
+    from dataclasses import replace
+    from predbot import custom_picks as cp
+    from predbot.market_request import coordinates
+    raw = str(text).lower().strip()
+    if len(raw) > 512:
+        raise cp.RequestError(cp.HELP)
+    try:
+        clean, scope = coordinates(raw)
+    except ValueError as exc:
+        raise cp.RequestError(str(exc), 'conflicting_constraints') from exc
+    request = _parse(clean, supported_sports, allowed_sports)
+    changes = {'market_' + k: v for k, v in scope.items() if k in ('period', 'stat', 'entity', 'selection', 'line')}
+    if scope.get('market'):
+        if scope['market'] in request.excluded_markets:
+            raise cp.RequestError(cp.HELP, 'conflicting_constraints')
+        changes['allowed_markets'] = frozenset({scope['market']})
+    if changes:
+        request = replace(request, **changes, specified_fields=request.specified_fields | frozenset(changes))
+    return request
+
+
+def _parse(text, supported_sports=(), allowed_sports=None):
     from predbot import custom_picks as cp
     # The deployment's actually-ENABLED sports, independent of what the
     # parser merely RECOGNIZES by name (supported_sports only ever widens

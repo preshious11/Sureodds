@@ -1,0 +1,12 @@
+[
+  {"text":"over 2.5 match goals","market":"total","period":"full","stat":"points","entity":"all","selection":"over","line":2.5},
+  {"text":"home team over 1.5 goals","market":"total","period":"full","stat":"points","entity":"home","selection":"over","line":1.5},
+  {"text":"first-half over 0.5 goals","market":"total","period":"1h","stat":"points","entity":"all","selection":"over","line":0.5},
+  {"text":"away team +1.5 handicap","market":"handicap","period":"full","stat":"points","entity":"all","selection":"away","line":1.5},
+  {"text":"basketball first-quarter total","market":"total","period":"1q","stat":"points","entity":"all","selection":"over","line":45.5},
+  {"text":"tennis match games over 21.5","market":"total","period":"full","stat":"games","entity":"all","selection":"over","line":21.5},
+  {"text":"away team under 2.5 goals","market":"total","period":"full","stat":"points","entity":"away","selection":"under","line":2.5},
+  {"text":"home team -2.5 spread","market":"handicap","period":"full","stat":"points","entity":"all","selection":"home","line":-2.5},
+  {"text":"basketball second-half home team under 55.5 points","market":"total","period":"2h","stat":"points","entity":"home","selection":"under","line":55.5},
+  {"text":"tennis match sets under 2.5","market":"total","period":"full","stat":"sets","entity":"all","selection":"under","line":2.5}
+]

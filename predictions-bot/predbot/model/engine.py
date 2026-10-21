@@ -6,11 +6,13 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from predbot.markets.catalog import spec
+from predbot.markets.contracts import ambiguous_contract
 from predbot.markets.settlement import unsettleable_reason
 from predbot.model.calibration import Calibrator
 from predbot.model.elo import Elo
 from predbot.model.ensemble import EventModel
 from predbot.model.candidates import capture_candidate
+from predbot.model.coverage import coverage_stages
 from predbot.selection.representatives import select_representatives
 
 
@@ -47,7 +49,9 @@ def representative_predictions(scored, results_gate=None, insight_fetcher=None):
     for s in scored:
         m = s.line
         reason = None
-        if not math.isfinite(s.p_model) or not 0 < s.p_model < 1:
+        if ambiguous_contract(m.market_name):
+            reason = 'ambiguous_contract'
+        elif not math.isfinite(s.p_model) or not 0 < s.p_model < 1:
             reason = "invalid_probability"
         elif not math.isfinite(m.price) or m.price <= 1:
             reason = "missing_odds"
@@ -90,6 +94,7 @@ def representative_predictions(scored, results_gate=None, insight_fetcher=None):
     no_rep = chosen.without_representative
     if no_rep:
         no_valid["no_representative"] += len(no_rep)
+    validated = [s for values in groups.values() for s in values]
     return Generation(chosen.predictions, {
         "valid_predictions_generated": len(chosen.predictions),
         "fixtures_with_valid_candidates": len(groups),
@@ -101,7 +106,9 @@ def representative_predictions(scored, results_gate=None, insight_fetcher=None):
         "line_rejections": dict(rejected),
         "line_rejections_by_market": {m: dict(c) for m, c in sorted(by_market.items())},
         "event_no_valid_market": dict(no_valid),
-        "markets_evaluated": len(scored)}, candidates=candidates, ticket_predictions=[s for values in groups.values() for s in values])
+        "markets_evaluated": len(scored),
+        "market_coverage": coverage_stages(scored, validated, chosen.predictions)},
+        candidates=candidates, ticket_predictions=validated)
 
 
 def generate(events, db, settings: ModelSettings, results_gate=None, scorer=None, insight_fetcher=None):

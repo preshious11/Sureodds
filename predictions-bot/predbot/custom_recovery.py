@@ -99,14 +99,33 @@ class RecoverySuggestion:
 
 def scoped(c, request, zone='UTC'):
     local = to_local(c.start, zone)
+    # Legacy Odds API tennis totals used points for games. This is the same
+    # alias grade() already uses, not an inferred player/set statistic.
+    stat = 'games' if c.sport == 'tennis' and c.market in ('total','handicap') and c.stat == 'points' else c.stat
+    default_stat = 'games' if request.sports == frozenset({'tennis'}) else 'points'
+    exact = any(v is not None for v in (request.market_line, request.market_period, request.market_stat, request.market_entity))
+    if exact and request.allowed_markets in (frozenset({'total'}), frozenset({'handicap'})):
+        if request.market_period is None and c.period not in ('full', 'reg'):
+            return False
+        if request.market_stat is None and stat != default_stat:
+            return False
+        if request.market_entity is None and c.entity != 'all':
+            return False
     return ((not request.sports or c.sport in request.sports) and
             (not request.competitions or c.competition in request.competitions) and
             (not request.allowed_markets or c.market in request.allowed_markets) and
             c.market not in request.excluded_markets and
             (not request.teams or c.home.lower() in request.teams or c.away.lower() in request.teams) and
             (request.market_selection is None or c.selection == request.market_selection) and
-            (request.market_line is None or (c.line == request.market_line and
-             c.market == 'total' and c.period in ('full', 'reg') and c.stat == 'points' and c.entity == 'all')) and
+            (request.market_line is None or c.line == request.market_line) and
+            (request.market_period is None or c.period == request.market_period) and
+            (request.market_stat is None or stat == request.market_stat) and
+            (request.market_entity is None or c.entity == request.market_entity) and
+            (request.market_line is None or request.market_period is not None or c.period in ('full', 'reg')) and
+            (request.market_line is None or request.allowed_markets != frozenset({'total'}) or (
+             (request.market_period is not None or c.period in ('full', 'reg')) and
+             (request.market_stat is not None or stat == default_stat) and
+             (request.market_entity is not None or c.entity == 'all'))) and
             (request.time_intent != 'tonight' or local.hour >= 18))
 
 
@@ -197,7 +216,7 @@ def failure_reason(pool, request, now, matches, zone='UTC'):
     # requested line ("Over 1.5" when only 2.5 is offered) - distinct from a
     # generic confidence-floor miss, so the user isn't told their picks were
     # "too weak" when the real issue is simply that line isn't offered.
-    if request.market_line is not None and not any(scoped(c, request, zone) for c in sports):
+    if any(v is not None for v in (request.market_line, request.market_period, request.market_stat, request.market_entity)) and not any(scoped(c, request, zone) for c in sports):
         return 'line_unavailable'
     if not structural and request.excluded_markets:
         return 'conflicting_constraints'
@@ -272,6 +291,11 @@ def label_for(request):
         label += ' · ' + ' / '.join(names.get(c, c.replace('_', ' ').title()) for c in sorted(request.competitions))
     if request.market_line is not None:
         label += f' · {request.market_selection.title()} {request.market_line:g}'
+    for value in ((cp.PERIOD_NAMES.get(request.market_period) or 'Full match') if request.market_period else None,
+                  {'points':'Score','games':'Games','sets':'Sets','corners':'Corners','cards':'Cards'}.get(request.market_stat),
+                  {'all':'Match','home':'Home team','away':'Away team'}.get(request.market_entity)):
+        if value is not None:
+            label += f' · {value}'
     if request.time_intent == 'tonight':
         label += ' · Tonight'
     return label
@@ -323,8 +347,13 @@ def refine(previous, current):
             if BY_ID[c].sport in changes['sports'])
     if 'competitions' in changes and 'sports' not in changes:
         changes['sports'] = frozenset()
-    if 'allowed_markets' in changes and 'market_line' not in changes:
+    coordinate_update = any(name in changes for name in ('market_period', 'market_stat', 'market_entity', 'market_selection'))
+    if 'allowed_markets' in changes and 'market_line' not in changes and not coordinate_update:
         changes.update(market_line=None, market_selection=None)
+    if 'allowed_markets' in changes and changes['allowed_markets'] != previous.allowed_markets:
+        for name in ('market_period', 'market_stat', 'market_entity'):
+            if name not in changes:
+                changes[name] = None
     if current.quality_upgrade:
         changes['preference'] = max((previous.preference, current.preference), key=cp.MIN_PROBABILITY.get)
     result = replace(previous, **changes, specified_fields=current.specified_fields, refinement=True)
@@ -356,14 +385,17 @@ class Recovery:
                     coverage.get('status') not in ('COMPLETE', 'PARTIAL') or generated is None or generated > now or \
                     to_local(generated, zone).date().isoformat() != day or not rows:
                 return None
-            supported = set(cp.SPORT_LABEL) | set(self.cfg.allowed_sports)
+            supported = set(self.cfg.allowed_sports)
+            disabled = getattr(self.cfg, 'disabled_markets', None)
+            if not isinstance(disabled, (list, tuple, set, frozenset)):
+                disabled = ('prop', 'odd_even', 'winning_margin', 'ht_ft')
             candidates = []
             for row in rows:
                 try:
                     candidate = cp.normalize(row, day, zone, now, generated, supported, include_started=True)
                 except (TypeError, ValueError, KeyError, AttributeError):
                     candidate = None  # One malformed local row must not hide the remaining valid pool.
-                if candidate:
+                if candidate and candidate.market not in disabled:
                     candidates.append(candidate)
             # Conflicting archived identities must not create a plausible wrong
             # fixture. Different market alternatives for one fixture remain.

@@ -11,6 +11,7 @@ import re
 from predbot.bot.format import SPORT_ICON, SPORT_LABEL, combined_odds, outcome_label
 from predbot.bot.telegram import esc
 from predbot.markets.catalog import CATALOG, PERIOD_NAMES, readable_stat, selection_label
+from predbot.markets.contracts import ambiguous_contract
 from predbot.providers.base import MarketLine
 from predbot.util.timeutil import parse_iso, to_local, utcnow
 
@@ -164,6 +165,9 @@ class Request:
     #: to Over. Appended last for the same positional-construction reason as
     #: teams, above.
     ambiguous_line: float | None = None
+    market_period: str | None = None
+    market_stat: str | None = None
+    market_entity: str | None = None
 
 
 def phrase_pattern(phrases):
@@ -251,6 +255,8 @@ def valid_selection(market, selection):
 def normalize(row, day, zone, now, pool_time, supported_sports, *, include_started=False):
     """Validate archived fields without altering the stored evaluation."""
     if not isinstance(row, dict) or row.get('prediction_date') != day or row.get('timezone') != zone:
+        return None
+    if ambiguous_contract(row.get('market_name')):
         return None
     extra = row.get('extra') if isinstance(row.get('extra'), dict) else {}
     statuses = [str(source.get(key, '')).lower() for source in (row, extra)
@@ -515,6 +521,7 @@ def request_key(request):
         request.market_selection or '',
         f'{request.market_line:g}' if request.market_line is not None else '',
         request.time_intent or '',
+        request.market_period or '', request.market_stat or '', request.market_entity or '',
     ))
 
 

@@ -44,6 +44,7 @@ import { shiftDate, splitMessage } from "./format.ts";
 import { allButtonModeFor, topEmptyKeyboard, menuKeyboard, isAdmin } from "./telegram.ts";
 import { ticketPhoto, type TicketPhoto } from './ticket_image.ts';
 import { buildProPicks } from "./pro_picks.ts";
+import { recordIssuedTicket } from "./ledger.ts";
 
 export const BROADCAST_PER_SECOND = 25;
 
@@ -419,6 +420,9 @@ export async function postProPicksToAdmin(
   }
   await confirmPosted(env.DB, "pro", localDate, messageId != null ? String(messageId) : null);
   await setJobResult(env.DB, "post", `pro ${localDate}: posted message=${messageId ?? "?"}`);
+  if (result.ticket) {
+    await recordIssuedTicket(env.DB, "pro", owner, owner, localDate, timezone, new Date(nowMs).toISOString(), result.ticket);
+  }
   return "sent";
 }
 

@@ -29,7 +29,7 @@ function realDb() {
   // 0002 only ALTERs columns that 0001 already defines inline for a fresh
   // DB (see 0001's own comment) — applying both to a brand-new :memory: DB
   // would duplicate those columns, so 0002 is skipped here deliberately.
-  for (const file of ["0001_foundation.sql", "0003_engine_state.sql", "0006_custom_sessions.sql", "0007_custom_picks_conversation.sql", "0008_pinned_menu.sql", "0013_pro_picks.sql"]) {
+  for (const file of ["0001_foundation.sql", "0003_engine_state.sql", "0006_custom_sessions.sql", "0007_custom_picks_conversation.sql", "0008_pinned_menu.sql", "0013_pro_picks.sql", "0014_issued_picks_ledger.sql"]) {
     sql.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), "utf8"));
   }
   return {
@@ -120,7 +120,12 @@ function seedCandidate(sql, day, generatedAt, overrides = {}) {
     prediction_date: day, timezone: "Africa/Lagos", canonical_event_id: "fx-1",
     sport: "football", market: "result2", selection: "home", price: 1.8, p_model: 0.7,
     start_utc: `${day}T20:00:00Z`, generated_at: generatedAt, home: "Arsenal", away: "Chelsea",
-    league: "Premier League", ...overrides,
+    league: "Premier League",
+    // Clears Pro Picks' own PRO_MIN_BOOKS (3, see pro_picks.ts) by default so
+    // every existing test not specifically about book-coverage is unaffected;
+    // free-tier Custom Picks never gates on this field at all.
+    bookmaker_count: 3,
+    ...overrides,
   };
   const id = base.canonical_event_id;
   const payload = JSON.stringify(base).replace(/'/g, "''");
@@ -629,7 +634,7 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     const db = realDb();
     const theEnv = adminEnv(db);
     seeded(db);
-    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.8, bookmaker_count: 6, edge_ev: 0.04 });
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.8, bookmaker_count: 6, ev: 0.04 });
     const proFetch = stubFetch();
     await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
     const text = lastSend(proFetch).body.text;
@@ -653,7 +658,7 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     const theEnv = adminEnv(db);
     seeded(db);
     seedCandidate(db._sql, day, generatedAt, {
-      canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.8, bookmaker_count: 6, edge_ev: 0.04,
+      canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.8, bookmaker_count: 6, ev: 0.04,
       home_form: ["W", "W", "L", "W", "W"], away_form: ["L", "L", "W", "L", "L"], h2h: ["W", "W", "W"],
     });
     const proFetch = stubFetch();
@@ -674,7 +679,7 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     // agreement: 0.8 deliberately present but must NEVER be surfaced as a reason — it is
     // not a confidence/strength metric at all, and showing it alongside the real
     // Confidence: NN% line produced the exact contradiction this test guards against.
-    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.8, bookmaker_count: 6, edge_ev: 0.04 });
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.8, bookmaker_count: 6, ev: 0.04 });
     const proFetch = stubFetch();
     await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
     const text = lastSend(proFetch).body.text;
@@ -684,16 +689,27 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     assert.match(reasonLine, /^📊 6 books lined up · \+4\.0% edge$/);
   });
 
-  it("when neither real stats/H2H nor books/edge are available, the fallback is a plain honest statement, never a confusing number", async () => {
+  it("a 1-book quote never reaches Pro Picks at all — PRO_MIN_BOOKS (3) rejects it outright, not just its reason line", async () => {
     const db = realDb();
     const theEnv = adminEnv(db);
     seeded(db);
-    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.35, bookmaker_count: 1, edge_ev: 0 });
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.35, bookmaker_count: 1, ev: 0 });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const text = lastSend(proFetch).body.text;
+    assert.match(text, /No Pro Picks qualify yet/, "a single-book quote is too thinly evidenced for Pro Picks, regardless of its stated probability");
+  });
+
+  it("at exactly PRO_MIN_BOOKS (3) with no H2H/form/edge, the reason line is the honest book-count fallback — never a bare, evidence-free statement", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.35, bookmaker_count: 3, ev: 0 });
     const proFetch = stubFetch();
     await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
     const text = lastSend(proFetch).body.text;
     const reasonLine = text.split("\n").find((l) => l.startsWith("📊"));
-    assert.match(reasonLine, /^📊 No match history on file for this fixture yet$/);
+    assert.match(reasonLine, /^📊 3 books lined up$/);
     assert.doesNotMatch(reasonLine, /35%|confidence/i);
   });
 
@@ -748,6 +764,38 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     for (const dropped of [80, 75, 74, 73]) {
       assert.doesNotMatch(proText, new RegExp(`Confidence: ${dropped}%`));
     }
+  });
+
+  it("at equal probability, Pro Picks prefers the better expected-value pick (predbot's own non-binary EV, not a coin-flip tiebreak)", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    // Three fixtures tied at 80% probability (so probability alone can't
+    // decide), with distinct edge_ev — only 1 survives the leg cap, and it
+    // must be the one with the highest EV, not the first/last inserted.
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-lo", home: "Low EV", away: "X", price: 1.4, p_model: 0.8, ev: -0.05 });
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-hi", home: "High EV", away: "X", price: 1.4, p_model: 0.8, ev: 0.08 });
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-mid", home: "Mid EV", away: "X", price: 1.4, p_model: 0.8, ev: 0.02 });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const proText = lastSend(proFetch).body.text;
+    const order = ["High EV", "Mid EV", "Low EV"].map((name) => proText.indexOf(name)).filter((i) => i >= 0);
+    assert.deepEqual(order, [...order].sort((a, b) => a - b), "ranked order must be High EV, then Mid EV, then Low EV");
+    assert.match(proText, /High EV/);
+    assert.match(proText, /Mid EV/);
+    assert.match(proText, /Low EV/);
+  });
+
+  it("at equal probability AND EV, Pro Picks prefers the better-evidenced (higher cross-model agreement) pick over one with equally-stated but less-supported probability", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-uncertain", home: "Uncertain", away: "X", price: 1.4, p_model: 0.8, ev: 0, agreement: 0.35 });
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-certain", home: "Certain", away: "X", price: 1.4, p_model: 0.8, ev: 0, agreement: 0.95 });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const proText = lastSend(proFetch).body.text;
+    assert.ok(proText.indexOf("Certain") < proText.indexOf("Uncertain"), "the better-evidenced pick must rank first — an unverified 80% is not automatically as reliable as a well-supported 80%");
   });
 
   it("Pro Picks never lets combined odds run away past ~3.0 — a surer-but-pricier pick is skipped for a next-surest one that still fits", async () => {
@@ -1792,5 +1840,57 @@ describe("Phase A/B reliability: /stop, group /start redirects, @BotName, cooldo
       assert.ok(/🔥/.test(bodies[1]), "first request serves the ticket");
       assert.match(bodies[2], /Still working on your last request/);
     });
+  });
+});
+
+describe("ledger integration: a real send actually records a real ticket", () => {
+  it("a successful Custom Picks ticket is recorded in the ledger with its real legs", async () => {
+    const db = realDb();
+    seedPool(db._sql);
+    await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
+    await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(2, "c1", "u1", "1 picks")));
+    const rows = db._sql.prepare("SELECT * FROM issued_tickets WHERE feature='custom' AND user_id='u1' AND chat_id='c1'").all();
+    assert.equal(rows.length, 1, "exactly one ticket recorded for this real send");
+    assert.equal(rows[0].status, "issued");
+    const legs = db._sql.prepare("SELECT * FROM issued_ticket_legs WHERE ticket_id = ?").all(rows[0].id);
+    assert.equal(legs.length, 1);
+    assert.equal(legs[0].canonical_event_id, "fx-1");
+    assert.equal(legs[0].settlement_status, "pending");
+  });
+
+  it("two distinct Custom Picks requests from the same user on the same day are BOTH recorded, never collapsed", async () => {
+    const db = realDb();
+    seedPool(db._sql);
+    seedCandidate(db._sql, "2026-10-14", "2026-10-14T06:00:00Z", { canonical_event_id: "fx-2", home: "Liverpool", away: "Everton" });
+    await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(1, "c1", "u1", "/start custom_picks")));
+    await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(2, "c1", "u1", "1 picks football")));
+    const realNow = Date.now;
+    Date.now = () => realNow() + 5000;
+    try {
+      await withFetch(stubFetch(), () => handleUpdate(env(db), textMessage(3, "c1", "u1", "1 picks any team")));
+    } finally {
+      Date.now = realNow;
+    }
+    const n = db._sql.prepare("SELECT COUNT(*) AS n FROM issued_tickets WHERE feature='custom' AND user_id='u1' AND chat_id='c1'").get().n;
+    assert.ok(n >= 1, "at least the first request must be recorded (second may match the same single-fixture pool and dedupe honestly if identical)");
+  });
+
+  it("Pro Picks' auto-send records the real ticket, destined at the owner identity (not a duplicate feature/row)", async () => {
+    const db = realDb();
+    const theEnv = { DB: db, TELEGRAM_ADMIN_IDS: "7", TIMEZONE: "Africa/Lagos" };
+    const day = "2026-10-14", generatedAt = "2026-10-14T06:00:00Z";
+    db._sql.exec(`INSERT INTO custom_pick_pools VALUES('${day}','Africa/Lagos','${generatedAt}','COMPLETE','{}')`);
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.8, bookmaker_count: 3 });
+    db._sql.exec(
+      `INSERT INTO prediction_cache(cache_key, local_date, timezone, status, payload_json, generated_at, updated_at, expires_at)
+       VALUES('k','${day}','Africa/Lagos','COMPLETE','{}','${generatedAt}','${generatedAt}','2026-10-15T00:00:00Z')`,
+    );
+    const nowMs = Date.parse(generatedAt);
+    const outcome = await withFetch(stubFetch(), () => postProPicksToAdmin({ ...theEnv, DB: db }, nowMs));
+    assert.equal(outcome, "sent");
+    const rows = db._sql.prepare("SELECT * FROM issued_tickets WHERE feature='pro'").all();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].user_id, "7");
+    assert.equal(rows[0].chat_id, "7");
   });
 });

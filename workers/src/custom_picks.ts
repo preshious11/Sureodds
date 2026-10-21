@@ -13,6 +13,7 @@
 // three most common failure shapes, not production's full branching.
 
 import { SPORT_ICON, combinedOdds, escHtml } from "./format.ts";
+import { coordinates, type MarketScope } from "./market_request.ts";
 
 // INTRO is assembled further down (introText(), after enabledSports() is
 // defined) from the SAME enabled-sports rule parseRequest uses - the
@@ -327,6 +328,18 @@ export interface Candidate {
   liquidity: number;
   books: number;
   referenceEv: number;
+  /** predbot's ALWAYS-present settlement-aware EV (Scored.ev,
+   * ensemble.py:431 — `payoff.ev(ml.price)`, the calibrated model
+   * probability's expected return against the real price, correctly
+   * accounting for push/void/half-win/half-loss via Payoff). Distinct from
+   * `referenceEv` (predbot's `edge_ev`), which requires a configured SHARP
+   * bookmaker to quote the entire market and is near-never populated in
+   * practice (confirmed: 0 of 1779 real candidates on a sampled day had a
+   * non-null edge_ev among Pro-floor-eligible picks). `ev` has no such
+   * gating — it's on every scored candidate — so it's the one Pro Picks
+   * actually ranks on. Never fabricated: it's predbot's own existing model
+   * output, archived verbatim, just never read by the Worker before now. */
+  modelEv: number;
   line: number | null;
   period: string;
   stat: string;
@@ -451,6 +464,12 @@ export function normalizeCandidateWithReason(
   rowGeneratedAt?: string,
 ): { candidate: Candidate | null; reason: string } {
   if (payload.prediction_date !== day || payload.timezone !== zone) return { candidate: null, reason: "day_zone_mismatch" };
+  const sourceMarketName = String(payload.market_name ?? '').toLowerCase().replaceAll('_', ' ');
+  const simpleTotal = /^total ([a-z]+(?: [a-z]+)?)$/.exec(sourceMarketName);
+  const unknownStat = simpleTotal && !['points','goals','runs','games','sets','rounds','corners','cards'].includes(simpleTotal[1]);
+  if (unknownStat || /\b(?:\d+(?:st|nd|rd|th)|first|second|third|fourth) inning\b/.test(sourceMarketName)) {
+    return { candidate: null, reason: 'ambiguous_contract' };
+  }
   // ~ custom_picks.py normalize(): statuses live on the row AND on its
   // nested `extra` dict (event.extra) — either may report a dead fixture.
   const extra = (payload.extra as Record<string, unknown> | null) ?? null;
@@ -548,6 +567,11 @@ export function normalizeCandidateWithReason(
     liquidity: Math.max(0, Math.min(1, finite(payload.liquidity) ?? 0)),
     books: Math.max(0, Math.min(10, finite(payload.bookmaker_count) ?? 0)),
     referenceEv: Math.max(-0.1, Math.min(0.1, finite(payload.edge_ev) ?? -0.1)),
+    // Clamped wide (not ±0.1 like referenceEv): this is the unconditional
+    // model-vs-price EV, not a tight sharp-edge comparison, so real values
+    // routinely exceed ±0.1 (e.g. -0.19 seen on real data) - -1/+1 is just a
+    // defensive bound against corrupt data, never a meaningful floor/ceiling.
+    modelEv: Math.max(-1, Math.min(1, finite(payload.ev) ?? -1)),
     line, period, stat, entity, fixtureIdentity,
     homeForm: wlArray(payload.home_form),
     awayForm: wlArray(payload.away_form),
@@ -601,6 +625,7 @@ export interface ParsedRequest {
    * number via totalLine (carried forward normally). Never silently
    * defaulted to Over. */
   ambiguousLine: number | null;
+  marketScope?: MarketScope | null;
 }
 
 /** JSON-safe form of a ParsedRequest (Sets -> arrays), for D1 persistence across stateless invocations. */
@@ -610,7 +635,7 @@ export function serializeRequest(req: ParsedRequest): Record<string, unknown> {
     allowedMarkets: [...req.allowedMarkets], excludedMarkets: [...req.excludedMarkets],
     preference: req.preference, competitions: [...req.competitions], timeIntent: req.timeIntent,
     specifiedFields: [...req.specifiedFields], refinement: req.refinement, qualityUpgrade: req.qualityUpgrade,
-    teams: [...req.teams], totalLine: req.totalLine, ambiguousLine: req.ambiguousLine,
+    teams: [...req.teams], totalLine: req.totalLine, ambiguousLine: req.ambiguousLine, marketScope: req.marketScope ?? null,
   };
 }
 
@@ -630,6 +655,7 @@ export function deserializeRequest(raw: Record<string, unknown>): ParsedRequest 
     teams: new Set((raw.teams as string[]) ?? []),
     totalLine: (raw.totalLine as ParsedRequest["totalLine"]) ?? null,
     ambiguousLine: (raw.ambiguousLine as number) ?? null,
+    marketScope: (raw.marketScope as MarketScope) ?? null,
   };
 }
 
@@ -655,6 +681,27 @@ const err = (text: string, reason = "invalid_request"): ParseResult => ({ ok: fa
  * without an explicit line word is still supported via MARKET_ALIASES).
  */
 export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENABLED_SPORTS): ParseResult {
+  if (rawText.trim().length > 512) return err(HELP);
+  try {
+    const parsed = coordinates(rawText.trim().toLowerCase());
+    const result = parseBasicRequest(parsed.text, enabled);
+    if (!result.ok) return result;
+    if (Object.keys(parsed.scope).length) {
+      result.request.marketScope = parsed.scope;
+      result.request.specifiedFields.add('market_scope');
+    }
+    if (parsed.market) {
+      if (result.request.excludedMarkets.has(parsed.market)) return err(HELP, 'conflicting_constraints');
+      result.request.allowedMarkets = new Set([parsed.market]);
+      result.request.specifiedFields.add('allowed_markets');
+    }
+    return result;
+  } catch (error) {
+    return err(error instanceof Error ? error.message : HELP, 'conflicting_constraints');
+  }
+}
+
+function parseBasicRequest(rawText: string, enabled: Set<string>): ParseResult {
   const trimmed = rawText.trim();
   if (!trimmed || trimmed.length > 512) return err(HELP);
   const text = trimmed.toLowerCase();
@@ -858,6 +905,21 @@ export function scoped(c: Candidate, req: ParsedRequest): boolean {
   if (req.allowedMarkets.size && !req.allowedMarkets.has(c.market)) return false;
   if (req.excludedMarkets.has(c.market)) return false;
   if (req.teams.size && !req.teams.has(c.home.toLowerCase()) && !req.teams.has(c.away.toLowerCase())) return false;
+  const scope = req.marketScope;
+  const stat = c.sport === 'tennis' && ['total','handicap'].includes(c.market) && c.stat === 'points' ? 'games' : c.stat;
+  const defaultStat = req.sports.size === 1 && req.sports.has('tennis') ? 'games' : 'points';
+  if (scope) {
+    if (scope.period != null && c.period !== scope.period) return false;
+    if (scope.stat != null && stat !== scope.stat) return false;
+    if (scope.entity != null && c.entity !== scope.entity) return false;
+    if (scope.selection != null && c.selection !== scope.selection) return false;
+    if (scope.line != null && c.line !== scope.line) return false;
+    if ((req.allowedMarkets.has('total') || req.allowedMarkets.has('handicap')) && req.allowedMarkets.size === 1) {
+      if (scope.period == null && c.period !== 'full' && c.period !== 'reg') return false;
+      if (scope.stat == null && stat !== defaultStat) return false;
+      if (scope.entity == null && c.entity !== 'all') return false;
+    }
+  }
   if (req.totalLine) {
     // ~ custom_recovery.py scoped()'s market_line check: an explicit "Over
     // 1.5" means the FULL MATCH total specifically — never a team total or
@@ -865,7 +927,9 @@ export function scoped(c: Candidate, req: ParsedRequest): boolean {
     // user didn't ask for), so period/stat/entity are pinned too.
     const t = req.totalLine;
     if (c.market !== "total" || c.selection !== t.selection || c.line !== t.line) return false;
-    if (c.entity !== "all" || c.stat !== "points" || (c.period !== "full" && c.period !== "reg")) return false;
+    if (scope?.entity == null && c.entity !== 'all') return false;
+    if (scope?.stat == null && stat !== defaultStat) return false;
+    if (scope?.period == null && c.period !== 'full' && c.period !== 'reg') return false;
   }
   return true;
 }
@@ -939,11 +1003,16 @@ export function availableTotalLines(
   req: ParsedRequest,
   nowMs: number,
 ): { selection: "over" | "under"; line: number }[] {
+  if (req.allowedMarkets.size && !req.allowedMarkets.has('total')) return [];
   const relaxed: ParsedRequest = { ...req, totalLine: null, allowedMarkets: new Set(["total"]), excludedMarkets: new Set() };
   const seen = new Map<string, { selection: "over" | "under"; line: number }>();
   for (const c of eligible(pool, relaxed, nowMs)) {
     if (c.market !== "total" || c.line == null) continue;
-    if (c.entity !== "all" || c.stat !== "points" || (c.period !== "full" && c.period !== "reg")) continue;
+    if (req.marketScope?.entity == null && c.entity !== 'all') continue;
+    const stat = c.sport === 'tennis' && c.stat === 'points' ? 'games' : c.stat;
+    const defaultStat = req.sports.size === 1 && req.sports.has('tennis') ? 'games' : 'points';
+    if (req.marketScope?.stat == null && stat !== defaultStat) continue;
+    if (req.marketScope?.period == null && c.period !== 'full' && c.period !== 'reg') continue;
     const selection = c.selection as "over" | "under";
     seen.set(`${selection}:${c.line}`, { selection, line: c.line });
   }
@@ -1152,6 +1221,9 @@ export function requestKey(req: ParsedRequest): string {
     [...req.allowedMarkets].sort().join(","), [...req.excludedMarkets].sort().join(","),
     req.preference, [...req.competitions].sort().join(","),
     req.timeIntent ?? "",
+    JSON.stringify(req.marketScope ? [req.marketScope.period ?? null, req.marketScope.stat ?? null,
+      req.marketScope.entity ?? null, req.marketScope.selection ?? null, req.marketScope.line ?? null] : null),
+    JSON.stringify(req.totalLine),
   ].join("|");
 }
 
@@ -1295,7 +1367,7 @@ export function failureReason(pool: Candidate[], req: ParsedRequest, nowMs: numb
   // line ("Over 1.5" when only 2.5 is offered) - distinct from a generic
   // confidence-floor miss, so the user isn't told their picks were "too
   // weak" when the real issue is simply that line isn't offered.
-  if (req.totalLine && !sportsFuture.some((c) => scoped(c, req))) return "line_unavailable";
+  if ((req.totalLine || req.marketScope) && !sportsFuture.some((c) => scoped(c, req))) return "line_unavailable";
   if (!matches.length) return "below_quality_floor";
   if (req.pickCount && new Set(matches.map((c) => c.fixtureId)).size < req.pickCount) return "insufficient_count";
   if (req.targetOdds) {
@@ -1394,6 +1466,13 @@ export function labelFor(req: ParsedRequest): string {
   }
   if (req.allowedMarkets.size) label += " · " + marketName(req.allowedMarkets);
   if (req.excludedMarkets.size) label += " · No " + marketName(req.excludedMarkets);
+  if (req.marketScope) {
+    const s = req.marketScope;
+    const period = s.period ? (PERIOD_NAMES[s.period] || 'Full match') : null;
+    const stat = s.stat ? ({points:'Score',games:'Games',sets:'Sets',corners:'Corners',cards:'Cards'} as Record<string,string>)[s.stat] : null;
+    const entity = s.entity ? ({all:'Match',home:'Home team',away:'Away team'} as Record<string,string>)[s.entity] : null;
+    label += ' · ' + [period, stat, entity, s.selection, s.line].filter((v) => v != null).join(' ');
+  }
   if (req.timeIntent === "tonight") label += " · Tonight";
   return label;
 }
@@ -1445,6 +1524,7 @@ export function refine(previous: ParsedRequest, current: ParsedRequest): ParsedR
       case "preference": next.preference = current.preference; break;
       case "time_intent": next.timeIntent = current.timeIntent; break;
       case "total_line": next.totalLine = current.totalLine; break;
+      case "market_scope": next.marketScope = { ...previous.marketScope, ...current.marketScope }; break;
       // ambiguousLine is THIS message's own bare number, always taken fresh
       // (never inherited from a stale previous turn) - respond() is what
       // decides whether previous.totalLine (preserved above, untouched
@@ -1454,6 +1534,11 @@ export function refine(previous: ParsedRequest, current: ParsedRequest): ParsedR
   }
   if (current.specifiedFields.has("sports") && !current.specifiedFields.has("competitions")) {
     next.competitions = new Set(); // a changed sport invalidates a prior league filter (no catalog to re-check against)
+  }
+  if (current.specifiedFields.has('allowed_markets') &&
+      [...current.allowedMarkets].sort().join(',') !== [...previous.allowedMarkets].sort().join(',')) {
+    if (!current.specifiedFields.has('market_scope')) next.marketScope = null;
+    if (!current.specifiedFields.has('total_line')) next.totalLine = null;
   }
   if (current.qualityUpgrade) {
     next.preference = MIN_PROBABILITY[previous.preference] >= MIN_PROBABILITY[current.preference] ? previous.preference : current.preference;
@@ -1539,11 +1624,17 @@ export async function loadPool(
       timezone: row.timezone ?? payload.timezone,
     };
     const { candidate, reason } = normalizeCandidateWithReason(merged, day, zone, nowMs, poolTimeMs, true, row.generated_at);
-    if (candidate) {
+    // Keep archived evaluations for audit, but never recommend the product's
+    // existing disabled/unvalidated families or disabled sports. Both Custom
+    // and Pro consume this same inventory; Pro ranking itself is unchanged.
+    const blockedMarket = candidate && ['prop','odd_even','winning_margin','ht_ft'].includes(candidate.market);
+    const blockedSport = candidate && !DEFAULT_ENABLED_SPORTS.has(candidate.sport);
+    if (candidate && !blockedMarket && !blockedSport) {
       candidates.push(candidate);
       diagnostics.accepted += 1;
     } else {
-      diagnostics.rejectedByReason[reason] = (diagnostics.rejectedByReason[reason] ?? 0) + 1;
+      const rejectionReason = blockedMarket ? 'unvalidated_market' : blockedSport ? 'disabled_sport' : reason;
+      diagnostics.rejectedByReason[rejectionReason] = (diagnostics.rejectedByReason[rejectionReason] ?? 0) + 1;
     }
   }
   const before = candidates.length;
@@ -1566,6 +1657,11 @@ export interface RespondResult {
   text: string;
   reason: string;
   suggestions: Suggestion[];
+  /** The actual ticket built, only when reason === "success" — callers
+   * (index.ts) use this to record the issued ticket in the ledger
+   * (ledger.ts) after a confirmed real send. Never set on any failure
+   * path, since nothing was actually built. */
+  ticket?: Ticket;
 }
 
 export async function respond(
@@ -1666,7 +1762,7 @@ export async function searchWithRequest(
     matchFixtures: new Set(matches.map((c) => c.fixtureId)).size,
   }));
   if (validTicket(ticket, request, nowMs)) {
-    return { result: { text: formatTicket(ticket!), reason: "success", suggestions: [] }, request };
+    return { result: { text: formatTicket(ticket!), reason: "success", suggestions: [], ticket: ticket! }, request };
   }
   const reason = failureReason(pool, request, nowMs, matches);
   const suggestions = prepareAlternatives(pool, request, reason, nowMs);

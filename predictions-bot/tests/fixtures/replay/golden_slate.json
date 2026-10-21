@@ -273,6 +273,2360 @@
     "missing_required_stats": 2
    }
   },
+  "market_coverage": {
+   "representatives": [
+    {
+     "entity": "all",
+     "lines": [
+      -2.5,
+      1.5
+     ],
+     "market": "handicap",
+     "outcomes": 15,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result2",
+     "outcomes": 15,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      7.5,
+      8.0,
+      8.5,
+      9.5,
+      11.0
+     ],
+     "market": "total",
+     "outcomes": 15,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "btts",
+     "outcomes": 20,
+     "period": "full",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "dc",
+     "outcomes": 20,
+     "period": "full",
+     "selections": [
+      "away_draw",
+      "home_away",
+      "home_draw"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "dnb",
+     "outcomes": 20,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -1.5,
+      -1.0,
+      1.5,
+      2.5
+     ],
+     "market": "handicap",
+     "outcomes": 6,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result3",
+     "outcomes": 20,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      2.5,
+      3.0,
+      3.5
+     ],
+     "market": "total",
+     "outcomes": 20,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result2",
+     "outcomes": 7,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "tennis",
+     "stat": "points"
+    }
+   ],
+   "scored": [
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "dc",
+     "outcomes": 45,
+     "period": "1h",
+     "selections": [
+      "away_draw",
+      "home_away",
+      "home_draw"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -1.5,
+      -0.5,
+      0.5,
+      1.5
+     ],
+     "market": "handicap",
+     "outcomes": 30,
+     "period": "1h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -2.5,
+      -1.5,
+      1.5,
+      2.5
+     ],
+     "market": "handicap",
+     "outcomes": 32,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 30,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 28,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 28,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [],
+     "market": "prop",
+     "outcomes": 2,
+     "period": "1h",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [],
+     "market": "prop",
+     "outcomes": 30,
+     "period": "full",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [],
+     "market": "prop",
+     "outcomes": 30,
+     "period": "full",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result2",
+     "outcomes": 30,
+     "period": "1h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result2",
+     "outcomes": 30,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result3",
+     "outcomes": 45,
+     "period": "1h",
+     "selections": [
+      "away",
+      "draw",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result3",
+     "outcomes": 45,
+     "period": "reg",
+     "selections": [
+      "away",
+      "draw",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      3.5,
+      4.0,
+      4.5,
+      5.0,
+      6.0
+     ],
+     "market": "total",
+     "outcomes": 30,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      0.5,
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 30,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 30,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      7.5,
+      8.0,
+      8.5,
+      9.5,
+      10.5,
+      11.0
+     ],
+     "market": "total",
+     "outcomes": 38,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      2.5,
+      3.5,
+      4.5,
+      5.5
+     ],
+     "market": "total",
+     "outcomes": 30,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      2.5,
+      3.5,
+      4.5
+     ],
+     "market": "total",
+     "outcomes": 30,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "btts",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "btts",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "btts",
+     "outcomes": 40,
+     "period": "full",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "dc",
+     "outcomes": 36,
+     "period": "1h",
+     "selections": [
+      "away_draw",
+      "home_away",
+      "home_draw"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "dc",
+     "outcomes": 60,
+     "period": "full",
+     "selections": [
+      "away_draw",
+      "home_away",
+      "home_draw"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "dnb",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "dnb",
+     "outcomes": 40,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -0.5,
+      0.5
+     ],
+     "market": "handicap",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -0.5,
+      0.0,
+      0.5
+     ],
+     "market": "handicap",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -0.5,
+      0.5
+     ],
+     "market": "handicap",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -2.5,
+      2.5
+     ],
+     "market": "handicap",
+     "outcomes": 2,
+     "period": "2h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -1.5,
+      -0.5,
+      0.5,
+      1.5
+     ],
+     "market": "handicap",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -2.5,
+      -1.5,
+      -1.0,
+      -0.5,
+      0.0,
+      0.5,
+      1.0,
+      1.5,
+      2.5
+     ],
+     "market": "handicap",
+     "outcomes": 52,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "prop",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [],
+     "market": "prop",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [],
+     "market": "prop",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "prop",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [],
+     "market": "prop",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [],
+     "market": "prop",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "prop",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [],
+     "market": "prop",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [],
+     "market": "prop",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result3",
+     "outcomes": 36,
+     "period": "1h",
+     "selections": [
+      "away",
+      "draw",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result3",
+     "outcomes": 36,
+     "period": "2h",
+     "selections": [
+      "away",
+      "draw",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result3",
+     "outcomes": 60,
+     "period": "full",
+     "selections": [
+      "away",
+      "draw",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      4.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      1.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      0.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      0.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      4.5,
+      5.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      1.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      0.5,
+      1.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      0.5,
+      1.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      3.5,
+      4.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "cards"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "cards"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "cards"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      9.5,
+      10.5
+     ],
+     "market": "total",
+     "outcomes": 28,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      3.5,
+      4.5,
+      5.5
+     ],
+     "market": "total",
+     "outcomes": 28,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      3.5,
+      4.5,
+      5.5
+     ],
+     "market": "total",
+     "outcomes": 26,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      2.5,
+      3.0,
+      3.5
+     ],
+     "market": "total",
+     "outcomes": 46,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      0.5,
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 38,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      0.5,
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 44,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -2.5,
+      2.5
+     ],
+     "market": "handicap",
+     "outcomes": 2,
+     "period": "1s",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "tennis",
+     "stat": "games"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -3.5,
+      3.5
+     ],
+     "market": "handicap",
+     "outcomes": 2,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "tennis",
+     "stat": "games"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -1.5,
+      1.5
+     ],
+     "market": "handicap",
+     "outcomes": 2,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "tennis",
+     "stat": "sets"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result2",
+     "outcomes": 14,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "tennis",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      9.5
+     ],
+     "market": "total",
+     "outcomes": 2,
+     "period": "1s",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "tennis",
+     "stat": "games"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      20.5
+     ],
+     "market": "total",
+     "outcomes": 2,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "tennis",
+     "stat": "games"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 2,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "tennis",
+     "stat": "sets"
+    }
+   ],
+   "validated": [
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "dc",
+     "outcomes": 45,
+     "period": "1h",
+     "selections": [
+      "away_draw",
+      "home_away",
+      "home_draw"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -1.5,
+      -0.5,
+      0.5,
+      1.5
+     ],
+     "market": "handicap",
+     "outcomes": 30,
+     "period": "1h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -2.5,
+      -1.5,
+      1.5,
+      2.5
+     ],
+     "market": "handicap",
+     "outcomes": 32,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 30,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 28,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 28,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result2",
+     "outcomes": 30,
+     "period": "1h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result2",
+     "outcomes": 30,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result3",
+     "outcomes": 45,
+     "period": "1h",
+     "selections": [
+      "away",
+      "draw",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result3",
+     "outcomes": 45,
+     "period": "reg",
+     "selections": [
+      "away",
+      "draw",
+      "home"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      3.5,
+      4.0,
+      4.5,
+      5.0,
+      6.0
+     ],
+     "market": "total",
+     "outcomes": 30,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      0.5,
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 30,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 30,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      7.5,
+      8.0,
+      8.5,
+      9.5,
+      10.5,
+      11.0
+     ],
+     "market": "total",
+     "outcomes": 38,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      2.5,
+      3.5,
+      4.5,
+      5.5
+     ],
+     "market": "total",
+     "outcomes": 30,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      2.5,
+      3.5,
+      4.5
+     ],
+     "market": "total",
+     "outcomes": 30,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "baseball",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "btts",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "btts",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "btts",
+     "outcomes": 40,
+     "period": "full",
+     "selections": [
+      "no",
+      "yes"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "dc",
+     "outcomes": 36,
+     "period": "1h",
+     "selections": [
+      "away_draw",
+      "home_away",
+      "home_draw"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "dc",
+     "outcomes": 60,
+     "period": "full",
+     "selections": [
+      "away_draw",
+      "home_away",
+      "home_draw"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "dnb",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "dnb",
+     "outcomes": 40,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -0.5,
+      0.5
+     ],
+     "market": "handicap",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -0.5,
+      0.0,
+      0.5
+     ],
+     "market": "handicap",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -0.5,
+      0.5
+     ],
+     "market": "handicap",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -2.5,
+      2.5
+     ],
+     "market": "handicap",
+     "outcomes": 2,
+     "period": "2h",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -1.5,
+      -0.5,
+      0.5,
+      1.5
+     ],
+     "market": "handicap",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -2.5,
+      -1.5,
+      -1.0,
+      -0.5,
+      0.0,
+      0.5,
+      1.0,
+      1.5,
+      2.5
+     ],
+     "market": "handicap",
+     "outcomes": 52,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [],
+     "market": "odd_even",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "even",
+      "odd"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result3",
+     "outcomes": 36,
+     "period": "1h",
+     "selections": [
+      "away",
+      "draw",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result3",
+     "outcomes": 36,
+     "period": "2h",
+     "selections": [
+      "away",
+      "draw",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result3",
+     "outcomes": 60,
+     "period": "full",
+     "selections": [
+      "away",
+      "draw",
+      "home"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      4.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      1.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      0.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      0.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "1h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      4.5,
+      5.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      1.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      0.5,
+      1.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      0.5,
+      1.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "2h",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      3.5,
+      4.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "cards"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "cards"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 24,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "cards"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      9.5,
+      10.5
+     ],
+     "market": "total",
+     "outcomes": 28,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      3.5,
+      4.5,
+      5.5
+     ],
+     "market": "total",
+     "outcomes": 28,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      3.5,
+      4.5,
+      5.5
+     ],
+     "market": "total",
+     "outcomes": 26,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "corners"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      2.5,
+      3.0,
+      3.5
+     ],
+     "market": "total",
+     "outcomes": 46,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "away",
+     "lines": [
+      0.5,
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 38,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "home",
+     "lines": [
+      0.5,
+      1.5,
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 44,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "football",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -3.5,
+      3.5
+     ],
+     "market": "handicap",
+     "outcomes": 2,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "tennis",
+     "stat": "games"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      -1.5,
+      1.5
+     ],
+     "market": "handicap",
+     "outcomes": 2,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "tennis",
+     "stat": "sets"
+    },
+    {
+     "entity": "all",
+     "lines": [],
+     "market": "result2",
+     "outcomes": 14,
+     "period": "full",
+     "selections": [
+      "away",
+      "home"
+     ],
+     "sport": "tennis",
+     "stat": "points"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      20.5
+     ],
+     "market": "total",
+     "outcomes": 2,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "tennis",
+     "stat": "games"
+    },
+    {
+     "entity": "all",
+     "lines": [
+      2.5
+     ],
+     "market": "total",
+     "outcomes": 2,
+     "period": "full",
+     "selections": [
+      "over",
+      "under"
+     ],
+     "sport": "tennis",
+     "stat": "sets"
+    }
+   ]
+  },
   "markets_by_sport": {
    "baseball": 593,
    "football": 1508,

@@ -24,12 +24,16 @@ class PickSet:
 def prediction_identity(row):
     """WHY: compare prediction semantics, never display labels or provider spellings."""
     from predbot.selection.representatives import FAMILY_OF_MARKET
+    from predbot.providers.base import SIDE_MARKETS
     market = str(row.get('market') or '').lower()
     market = {'1x2': 'result3', 'moneyline': 'result2', 'over_under': 'total',
               'spread': 'handicap', 'double_chance': 'dc', 'draw_no_bet': 'dnb'}.get(market, market)
     line = row.get('line')
+    entity = row.get('entity') or 'all'
+    if market in SIDE_MARKETS and entity in ('home', 'away'):
+        entity = 'all'  # same canonicalization as MarketLine; the side is selection
     return (row.get('canonical_event_id') or row.get('fixture_key'),
-            FAMILY_OF_MARKET.get(market, market), row.get('stat'), row.get('selection'),
+            FAMILY_OF_MARKET.get(market, market), row.get('stat'), entity, row.get('selection'),
             None if line is None else round(float(line), 2), row.get('period'))
 
 

@@ -51,10 +51,12 @@ import {
   serializeRequest,
   SPORT_LABEL,
   type ParsedRequest,
+  type RespondResult,
   type Suggestion,
   validTicket,
 } from "./custom_picks.ts";
 import { buildProPicks } from "./pro_picks.ts";
+import { recordIssuedTicket } from "./ledger.ts";
 import {
   isAdmin, restrictedView, welcomeMessage,
   allButtonModeFor,
@@ -858,7 +860,16 @@ async function enterProPicks(env: Env, userId: string, chatId: string): Promise<
     const text = result.reason === "success"
       ? result.text
       : "💎 No Pro Picks qualify yet today — nothing has cleared the floor.";
-    await tgApi(env, "sendMessage", { chat_id: chatId, text, parse_mode: "HTML" });
+    const sent = await tgApi(env, "sendMessage", { chat_id: chatId, text, parse_mode: "HTML" });
+    // Ledger: recorded only after a confirmed real send, never before — see
+    // ledger.ts's own doc comment ("a recorded-but-never-sent ticket would
+    // be a ledger that lies"). A manual /propicks tap can resend the same
+    // day's ticket (e.g. the admin re-triggering after the auto-send) —
+    // recordIssuedTicket's content-derived id makes that a safe no-op, not
+    // a duplicate ledger row.
+    if (result.reason === "success" && result.ticket && sent.ok) {
+      await recordIssuedTicket(env.DB, "pro", userId, chatId, day, zone, new Date(nowMs).toISOString(), result.ticket);
+    }
   } catch (err) {
     await clearLoadingIndicator(env, chatId, loadingMessageId);
     throw err;
@@ -963,7 +974,7 @@ async function deliverCustomPicksResult(
   day: string,
   zone: string,
   nowMs: number,
-  result: { text: string; reason: string; suggestions: Suggestion[] },
+  result: RespondResult,
   request: ParsedRequest | null,
 ): Promise<void> {
   await recordCustomRequest(env.DB, userId, chatId, nowMs);
@@ -973,12 +984,21 @@ async function deliverCustomPicksResult(
   }
   const suggestionKeyboard = await storeAndBuildSuggestionKeyboard(env, result.suggestions, userId, chatId, nowMs, day);
   const replyMarkup = await buildClarificationKeyboard(env, result.reason, request, day, zone, nowMs, parseEnabledSports(env.ALLOWED_SPORTS), suggestionKeyboard);
-  await tgApi(env, "sendMessage", {
+  const sent = await tgApi(env, "sendMessage", {
     chat_id: chatId,
     text: result.text,
     parse_mode: "HTML",
     ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
   });
+  // Ledger: recorded only after a confirmed real send of a REAL ticket
+  // (reason === "success", never a clarification/failure message). Custom
+  // Picks is conversational and can issue several genuinely different
+  // tickets per user per day — recordIssuedTicket's content-derived id
+  // (legsKey, see ledger.ts) tells those apart from an actual retry of the
+  // same ticket, so none of them are ever incorrectly deduplicated.
+  if (result.reason === "success" && result.ticket && sent.ok) {
+    await recordIssuedTicket(env.DB, "custom", userId, chatId, day, zone, new Date(nowMs).toISOString(), result.ticket);
+  }
 }
 
 /**

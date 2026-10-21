@@ -21,6 +21,7 @@ of a league feed.  Two consequences drive this module:
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from collections import defaultdict, Counter
@@ -457,6 +458,10 @@ class SharpApiProvider(BaseProvider):
         return events
 
     def _row_to_line(self, r: Dict, sport: str) -> Optional[MarketLine]:
+        if r.get('is_active') is False or any(r.get(k) is True for k in (
+                'is_live', 'is_stale_pregame_price', 'is_impossible_scoreline')):
+            self.parse_counts['UNUSABLE_QUOTE'] += 1
+            return None
         price = parse_decimal(r.get("odds_decimal"))
         if not price:
             self.parse_counts["MISSING_PRICE"] += 1
@@ -468,11 +473,25 @@ class SharpApiProvider(BaseProvider):
             line = float(line) if line is not None else None
         except (TypeError, ValueError):
             line = None
-        period = SEGMENT_PERIOD.get(str(r.get("market_segment", "full_game")).lower(), "full")
+        segment = str(r.get("market_segment") or "full_game").lower()
+        if segment not in SEGMENT_PERIOD:
+            self.parse_counts["UNSUPPORTED_PERIOD"] += 1
+            return None
+        period = SEGMENT_PERIOD[segment]
         m = _PERIOD_PREFIX.match(mtype)
         if m:
-            period = SEGMENT_PERIOD.get(m.group(1), period)
+            prefix_period = SEGMENT_PERIOD[m.group(1)]
+            if segment != "full_game" and prefix_period != period:
+                self.parse_counts["CONFLICTING_PERIOD"] += 1
+                return None
+            period = prefix_period
             mtype = mtype[m.end():]
+        elif re.match(r"^(?:\d+(?:st|nd|rd|th)|first|second|third|fourth)_", mtype):
+            self.parse_counts["UNSUPPORTED_PERIOD"] += 1
+            return None
+        if line is not None and not math.isfinite(line):
+            self.parse_counts["INVALID_LINE"] += 1
+            return None
         if r.get("is_player_prop") or mtype.startswith("player_"):
             self.parse_counts["PLAYER_PROP_UNSETTLEABLE"] += 1
             return None  # unsettleable from this provider's free tier
@@ -483,6 +502,19 @@ class SharpApiProvider(BaseProvider):
         market: Optional[str] = None
         selection = stype
         stat, entity = "points", "all"
+
+        # Exact aliases only: a substring such as "total" cannot establish
+        # the statistic (home runs, shots, fouls, etc. are NOT match runs).
+        total_stats = {"total": "points", "totals": "points", "total_points": "points",
+                       "total_goals": "points", "total_runs": "points",
+                       "total_games": "games", "total_sets": "sets", "total_rounds": "rounds",
+                       "total_corners": "corners", "total_cards": "cards"}
+        handicap_stats = {"spread": "points", "point_spread": "points", "handicap": "points",
+                          "asian_handicap": "points", "run_line": "points", "puck_line": "points",
+                          "game_handicap": "games", "games_handicap": "games",
+                          "set_handicap": "sets", "sets_handicap": "sets",
+                          "corner_handicap": "corners", "corners_handicap": "corners",
+                          "card_handicap": "cards", "cards_handicap": "cards"}
 
         if mtype in ("moneyline", "moneyline_3-way", "moneyline_3way", "3way_moneyline", "match_winner"):
             if stype not in ("home", "away", "draw"):
@@ -500,9 +532,13 @@ class SharpApiProvider(BaseProvider):
         elif mtype in ("both_teams_to_score", "btts"):
             market = "btts"
         elif "spread" in mtype or "handicap" in mtype or mtype in ("run_line", "puck_line"):
+            if mtype not in handicap_stats:
+                self.parse_counts["UNSUPPORTED_STAT_CONTRACT"] += 1
+                return None
             if stype not in ("home", "away") or line is None:
                 return None
             market = "handicap"
+            stat = handicap_stats[mtype]
             if "corner" in mtype:
                 stat = "corners"
             elif "card" in mtype:
@@ -529,9 +565,13 @@ class SharpApiProvider(BaseProvider):
                 return None
             market = "result_total"
         elif "total" in mtype:
+            if mtype not in total_stats:
+                self.parse_counts["UNSUPPORTED_STAT_CONTRACT"] += 1
+                return None
             if stype not in ("over", "under") or line is None:
                 return None
             market = "total"
+            stat = total_stats[mtype]
             if "corner" in mtype:
                 stat = "corners"
             elif "card" in mtype:

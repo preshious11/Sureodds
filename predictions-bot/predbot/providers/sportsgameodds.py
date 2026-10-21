@@ -570,10 +570,10 @@ class SportsGameOddsProvider(BaseProvider):
             self.parse_counts["NO_BOOK_ODDS"] += 1
             return None
         stat_id = o.get("statID", "")
-        if stat_id not in self.allowed_stats:
+        if stat_id not in self.allowed_stats or stat_id not in STAT_MAP:
             self.parse_counts["UNSUPPORTED_STAT"] += 1
             return None
-        if o.get("periodID", "game") not in self.allowed_periods:
+        if o.get("periodID", "game") not in self.allowed_periods or o.get("periodID", "game") not in PERIOD_MAP:
             self.parse_counts["UNSUPPORTED_PERIOD"] += 1
             return None
         # A missing statEntityID means "the match itself", not "a player" -
