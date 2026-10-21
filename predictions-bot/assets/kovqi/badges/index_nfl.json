@@ -1,0 +1,520 @@
+{
+  "source": "https://a.espncdn.com/i/teamlogos/nfl/",
+  "built_at": "2026-10-21T08:51:30Z",
+  "clubs": [
+    {
+      "name": "Arizona Cardinals",
+      "abbreviation": "ARI",
+      "file": "catalog/espn-nfl-ari.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png",
+      "source_sha256": "f870b58b43585a5b7717d578dd433b0b1e0c462d64ef4bea2aeb8c03f4ae7854"
+    },
+    {
+      "name": "Atlanta Falcons",
+      "abbreviation": "ATL",
+      "file": "catalog/espn-nfl-atl.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/atl.png",
+      "source_sha256": "fe566e9da6f7986b2bac321571bd751247ff93af15c51ae555486fb1bee90c91"
+    },
+    {
+      "name": "Baltimore Ravens",
+      "abbreviation": "BAL",
+      "file": "catalog/espn-nfl-bal.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
+      "source_sha256": "67796023c172c9aeab5bcdac9204823d3590097246ad1cb92971134b5f26dcc0"
+    },
+    {
+      "name": "Buffalo Bills",
+      "abbreviation": "BUF",
+      "file": "catalog/espn-nfl-buf.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png",
+      "source_sha256": "79b71e2f536ee29f9d23834e89828883af2d95bf6968cbd07a505444229cdd20"
+    },
+    {
+      "name": "Carolina Panthers",
+      "abbreviation": "CAR",
+      "file": "catalog/espn-nfl-car.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/car.png",
+      "source_sha256": "2cebc1bbdcfd89f28c1578b397f440d229d93fa9a30bfa1193cc286482c82298"
+    },
+    {
+      "name": "Chicago Bears",
+      "abbreviation": "CHI",
+      "file": "catalog/espn-nfl-chi.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/chi.png",
+      "source_sha256": "fd7b5a207b9ad443f950b384d43dba6cb367c5737ad50a51a15e3893fa31753b"
+    },
+    {
+      "name": "Cincinnati Bengals",
+      "abbreviation": "CIN",
+      "file": "catalog/espn-nfl-cin.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/cin.png",
+      "source_sha256": "8e549c0ecac92453140370b2aef3e4a140139b50d16e92507532e8ee49930d4e"
+    },
+    {
+      "name": "Cleveland Browns",
+      "abbreviation": "CLE",
+      "file": "catalog/espn-nfl-cle.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/cle.png",
+      "source_sha256": "9b286fc4286dc39b1b5a6a08aab042b456ba5fdce99e45e49a4d1e2672411fa2"
+    },
+    {
+      "name": "Dallas Cowboys",
+      "abbreviation": "DAL",
+      "file": "catalog/espn-nfl-dal.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/dal.png",
+      "source_sha256": "f4ea9a2ec7d7d500f08db94c8c6f1b23f75361ffe39c4d4b480a684a511ce61e"
+    },
+    {
+      "name": "Denver Broncos",
+      "abbreviation": "DEN",
+      "file": "catalog/espn-nfl-den.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/den.png",
+      "source_sha256": "c98bec2be32e27b19f79f5da86ac6ef133c78d75ab78aadb28ef36696c3213e8"
+    },
+    {
+      "name": "Detroit Lions",
+      "abbreviation": "DET",
+      "file": "catalog/espn-nfl-det.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/det.png",
+      "source_sha256": "9776b567ebab0bd3640165e915d948d8e736e35967dfc19ce62b967cfe7b4eb1"
+    },
+    {
+      "name": "Green Bay Packers",
+      "abbreviation": "GB",
+      "file": "catalog/espn-nfl-gb.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/gb.png",
+      "source_sha256": "7ea8154cdbff5db84d248f235c1f1c78a1a8b4cb8c14335b5886ec10ee20b00e"
+    },
+    {
+      "name": "Houston Texans",
+      "abbreviation": "HOU",
+      "file": "catalog/espn-nfl-hou.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/hou.png",
+      "source_sha256": "54b0fe559761860e4953851c197d995b2f9c0c4e278164edda7b608ffd64f39b"
+    },
+    {
+      "name": "Indianapolis Colts",
+      "abbreviation": "IND",
+      "file": "catalog/espn-nfl-ind.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/ind.png",
+      "source_sha256": "f1f5222a876f810956aa8d4e75d4e6b47bcb3a6d11f876642b674010233c8a97"
+    },
+    {
+      "name": "Jacksonville Jaguars",
+      "abbreviation": "JAX",
+      "file": "catalog/espn-nfl-jax.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/jax.png",
+      "source_sha256": "15cb9a1c77ebfaea885d0d3a34f33dabc4e6a00eb7d5462148fceed641d49397"
+    },
+    {
+      "name": "Kansas City Chiefs",
+      "abbreviation": "KC",
+      "file": "catalog/espn-nfl-kc.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
+      "source_sha256": "3d77958dc6373768919bb2681cbe1b143f56c07a1f013460def665a5026a7f3d"
+    },
+    {
+      "name": "Las Vegas Raiders",
+      "abbreviation": "LV",
+      "file": "catalog/espn-nfl-lv.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/lv.png",
+      "source_sha256": "25fbb03e972ae872fa024026b73c7b63ef9f23c2f2c51f87d1614d800dcee6e7"
+    },
+    {
+      "name": "Los Angeles Chargers",
+      "abbreviation": "LAC",
+      "file": "catalog/espn-nfl-lac.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/lac.png",
+      "source_sha256": "5400f85bd93129c056717a771da57a97225e15f39c0022107ce89ef993f15bb0"
+    },
+    {
+      "name": "Los Angeles Rams",
+      "abbreviation": "LAR",
+      "file": "catalog/espn-nfl-lar.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/lar.png",
+      "source_sha256": "e289b738a5e1259cccea921bee02eec881d35b4241761a8c4e12fe5964cab75c"
+    },
+    {
+      "name": "Miami Dolphins",
+      "abbreviation": "MIA",
+      "file": "catalog/espn-nfl-mia.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/mia.png",
+      "source_sha256": "b9631269a82abda39bd748afc82390679ca67bfc167bc3581665e237407de8e0"
+    },
+    {
+      "name": "Minnesota Vikings",
+      "abbreviation": "MIN",
+      "file": "catalog/espn-nfl-min.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/min.png",
+      "source_sha256": "72759956b149bc1c9496ea6ebb9a6ae34093dfed371cc6abb425c13f14f53448"
+    },
+    {
+      "name": "New England Patriots",
+      "abbreviation": "NE",
+      "file": "catalog/espn-nfl-ne.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/ne.png",
+      "source_sha256": "dac19aa9a573dcf9075e2422bee3e35a4955b9ab494bb3191ab3bacfd3609729"
+    },
+    {
+      "name": "New Orleans Saints",
+      "abbreviation": "NO",
+      "file": "catalog/espn-nfl-no.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/no.png",
+      "source_sha256": "68ddfdf1d7ee8317f1af083a0c6d59142a11e8af4dad73c3c50bbafc338e0a94"
+    },
+    {
+      "name": "New York Giants",
+      "abbreviation": "NYG",
+      "file": "catalog/espn-nfl-nyg.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/nyg.png",
+      "source_sha256": "62e361850e7ba3a50dfd09cbb38429e994d1c23b0f999c74421f10e37c7067e7"
+    },
+    {
+      "name": "New York Jets",
+      "abbreviation": "NYJ",
+      "file": "catalog/espn-nfl-nyj.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/nyj.png",
+      "source_sha256": "5de8d029f3602c97ffe02bd636eb2630e55d019d1a37cf819d3b9e39a219487b"
+    },
+    {
+      "name": "Philadelphia Eagles",
+      "abbreviation": "PHI",
+      "file": "catalog/espn-nfl-phi.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/phi.png",
+      "source_sha256": "2875f50f8b756ed5ea3866105b4683f5c603aa542e2c7f7870287e1d3d006100"
+    },
+    {
+      "name": "Pittsburgh Steelers",
+      "abbreviation": "PIT",
+      "file": "catalog/espn-nfl-pit.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/pit.png",
+      "source_sha256": "806bcb72e75ed184a99bea34df458e6cd87145fc9a863945f3356b01122aeb6f"
+    },
+    {
+      "name": "San Francisco 49ers",
+      "abbreviation": "SF",
+      "file": "catalog/espn-nfl-sf.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
+      "source_sha256": "82ae812f6c15718ce5abdd402863e8b4553fa9971e4baa5d45ff585c52948a45"
+    },
+    {
+      "name": "Seattle Seahawks",
+      "abbreviation": "SEA",
+      "file": "catalog/espn-nfl-sea.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/sea.png",
+      "source_sha256": "2546b1d4fe5cf6c2d75cda53d3fb56bbc4dd43c6b00200586dab5a85df8fa492"
+    },
+    {
+      "name": "Tampa Bay Buccaneers",
+      "abbreviation": "TB",
+      "file": "catalog/espn-nfl-tb.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/tb.png",
+      "source_sha256": "bcc5d267024650938c9f35558077fe00a31913b89c61768d4ebb63d1ea31fbfd"
+    },
+    {
+      "name": "Tennessee Titans",
+      "abbreviation": "TEN",
+      "file": "catalog/espn-nfl-ten.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/ten.png",
+      "source_sha256": "27cf283fca5b2e9e1c5e995a465a54223424c157d2013b603a6491f99333cf45"
+    },
+    {
+      "name": "Washington Commanders",
+      "abbreviation": "WSH",
+      "file": "catalog/espn-nfl-wsh.png",
+      "source": "https://a.espncdn.com/i/teamlogos/nfl/500/wsh.png",
+      "source_sha256": "2f67805ef9e385a4c67adb0a9320706bd481a52e3aa0e0faea995dad2b501112"
+    }
+  ],
+  "aliases": {
+    "49ers": [
+      "catalog/espn-nfl-sf.png"
+    ],
+    "ari": [
+      "catalog/espn-nfl-ari.png"
+    ],
+    "arizona cardinals": [
+      "catalog/espn-nfl-ari.png"
+    ],
+    "atl": [
+      "catalog/espn-nfl-atl.png"
+    ],
+    "atlanta falcons": [
+      "catalog/espn-nfl-atl.png"
+    ],
+    "bal": [
+      "catalog/espn-nfl-bal.png"
+    ],
+    "baltimore ravens": [
+      "catalog/espn-nfl-bal.png"
+    ],
+    "bears": [
+      "catalog/espn-nfl-chi.png"
+    ],
+    "bengals": [
+      "catalog/espn-nfl-cin.png"
+    ],
+    "bills": [
+      "catalog/espn-nfl-buf.png"
+    ],
+    "broncos": [
+      "catalog/espn-nfl-den.png"
+    ],
+    "browns": [
+      "catalog/espn-nfl-cle.png"
+    ],
+    "buccaneers": [
+      "catalog/espn-nfl-tb.png"
+    ],
+    "buf": [
+      "catalog/espn-nfl-buf.png"
+    ],
+    "buffalo bills": [
+      "catalog/espn-nfl-buf.png"
+    ],
+    "car": [
+      "catalog/espn-nfl-car.png"
+    ],
+    "cardinals": [
+      "catalog/espn-nfl-ari.png"
+    ],
+    "carolina panthers": [
+      "catalog/espn-nfl-car.png"
+    ],
+    "chargers": [
+      "catalog/espn-nfl-lac.png"
+    ],
+    "chi": [
+      "catalog/espn-nfl-chi.png"
+    ],
+    "chicago bears": [
+      "catalog/espn-nfl-chi.png"
+    ],
+    "chiefs": [
+      "catalog/espn-nfl-kc.png"
+    ],
+    "cin": [
+      "catalog/espn-nfl-cin.png"
+    ],
+    "cincinnati bengals": [
+      "catalog/espn-nfl-cin.png"
+    ],
+    "cle": [
+      "catalog/espn-nfl-cle.png"
+    ],
+    "cleveland browns": [
+      "catalog/espn-nfl-cle.png"
+    ],
+    "colts": [
+      "catalog/espn-nfl-ind.png"
+    ],
+    "commanders": [
+      "catalog/espn-nfl-wsh.png"
+    ],
+    "cowboys": [
+      "catalog/espn-nfl-dal.png"
+    ],
+    "dal": [
+      "catalog/espn-nfl-dal.png"
+    ],
+    "dallas cowboys": [
+      "catalog/espn-nfl-dal.png"
+    ],
+    "den": [
+      "catalog/espn-nfl-den.png"
+    ],
+    "denver broncos": [
+      "catalog/espn-nfl-den.png"
+    ],
+    "det": [
+      "catalog/espn-nfl-det.png"
+    ],
+    "detroit lions": [
+      "catalog/espn-nfl-det.png"
+    ],
+    "dolphins": [
+      "catalog/espn-nfl-mia.png"
+    ],
+    "eagles": [
+      "catalog/espn-nfl-phi.png"
+    ],
+    "falcons": [
+      "catalog/espn-nfl-atl.png"
+    ],
+    "gb": [
+      "catalog/espn-nfl-gb.png"
+    ],
+    "giants": [
+      "catalog/espn-nfl-nyg.png"
+    ],
+    "green bay packers": [
+      "catalog/espn-nfl-gb.png"
+    ],
+    "hou": [
+      "catalog/espn-nfl-hou.png"
+    ],
+    "houston texans": [
+      "catalog/espn-nfl-hou.png"
+    ],
+    "ind": [
+      "catalog/espn-nfl-ind.png"
+    ],
+    "indianapolis colts": [
+      "catalog/espn-nfl-ind.png"
+    ],
+    "jacksonville jaguars": [
+      "catalog/espn-nfl-jax.png"
+    ],
+    "jaguars": [
+      "catalog/espn-nfl-jax.png"
+    ],
+    "jax": [
+      "catalog/espn-nfl-jax.png"
+    ],
+    "jets": [
+      "catalog/espn-nfl-nyj.png"
+    ],
+    "kansas city chiefs": [
+      "catalog/espn-nfl-kc.png"
+    ],
+    "kc": [
+      "catalog/espn-nfl-kc.png"
+    ],
+    "lac": [
+      "catalog/espn-nfl-lac.png"
+    ],
+    "lar": [
+      "catalog/espn-nfl-lar.png"
+    ],
+    "las vegas raiders": [
+      "catalog/espn-nfl-lv.png"
+    ],
+    "lions": [
+      "catalog/espn-nfl-det.png"
+    ],
+    "los angeles chargers": [
+      "catalog/espn-nfl-lac.png"
+    ],
+    "los angeles rams": [
+      "catalog/espn-nfl-lar.png"
+    ],
+    "lv": [
+      "catalog/espn-nfl-lv.png"
+    ],
+    "mia": [
+      "catalog/espn-nfl-mia.png"
+    ],
+    "miami dolphins": [
+      "catalog/espn-nfl-mia.png"
+    ],
+    "min": [
+      "catalog/espn-nfl-min.png"
+    ],
+    "minnesota vikings": [
+      "catalog/espn-nfl-min.png"
+    ],
+    "ne": [
+      "catalog/espn-nfl-ne.png"
+    ],
+    "new england patriots": [
+      "catalog/espn-nfl-ne.png"
+    ],
+    "new orleans saints": [
+      "catalog/espn-nfl-no.png"
+    ],
+    "new york giants": [
+      "catalog/espn-nfl-nyg.png"
+    ],
+    "new york jets": [
+      "catalog/espn-nfl-nyj.png"
+    ],
+    "no": [
+      "catalog/espn-nfl-no.png"
+    ],
+    "nyg": [
+      "catalog/espn-nfl-nyg.png"
+    ],
+    "nyj": [
+      "catalog/espn-nfl-nyj.png"
+    ],
+    "packers": [
+      "catalog/espn-nfl-gb.png"
+    ],
+    "panthers": [
+      "catalog/espn-nfl-car.png"
+    ],
+    "patriots": [
+      "catalog/espn-nfl-ne.png"
+    ],
+    "phi": [
+      "catalog/espn-nfl-phi.png"
+    ],
+    "philadelphia eagles": [
+      "catalog/espn-nfl-phi.png"
+    ],
+    "pit": [
+      "catalog/espn-nfl-pit.png"
+    ],
+    "pittsburgh steelers": [
+      "catalog/espn-nfl-pit.png"
+    ],
+    "raiders": [
+      "catalog/espn-nfl-lv.png"
+    ],
+    "rams": [
+      "catalog/espn-nfl-lar.png"
+    ],
+    "ravens": [
+      "catalog/espn-nfl-bal.png"
+    ],
+    "saints": [
+      "catalog/espn-nfl-no.png"
+    ],
+    "san francisco 49ers": [
+      "catalog/espn-nfl-sf.png"
+    ],
+    "sea": [
+      "catalog/espn-nfl-sea.png"
+    ],
+    "seahawks": [
+      "catalog/espn-nfl-sea.png"
+    ],
+    "seattle seahawks": [
+      "catalog/espn-nfl-sea.png"
+    ],
+    "sf": [
+      "catalog/espn-nfl-sf.png"
+    ],
+    "steelers": [
+      "catalog/espn-nfl-pit.png"
+    ],
+    "tampa bay buccaneers": [
+      "catalog/espn-nfl-tb.png"
+    ],
+    "tb": [
+      "catalog/espn-nfl-tb.png"
+    ],
+    "ten": [
+      "catalog/espn-nfl-ten.png"
+    ],
+    "tennessee titans": [
+      "catalog/espn-nfl-ten.png"
+    ],
+    "texans": [
+      "catalog/espn-nfl-hou.png"
+    ],
+    "titans": [
+      "catalog/espn-nfl-ten.png"
+    ],
+    "vikings": [
+      "catalog/espn-nfl-min.png"
+    ],
+    "washington commanders": [
+      "catalog/espn-nfl-wsh.png"
+    ],
+    "wsh": [
+      "catalog/espn-nfl-wsh.png"
+    ]
+  }
+}

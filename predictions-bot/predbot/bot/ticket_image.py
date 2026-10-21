@@ -18,10 +18,8 @@ ASSETS = Path(__file__).resolve().parents[2] / 'assets' / 'kovqi'
 DISCLAIMER = 'Bet only what you can afford to lose.'
 log = logging.getLogger(__name__)
 
-def team_badge(name, assets=ASSETS):
+def _open_badge(file):
     from PIL import Image
-    from .club_badges import badge_file
-    file = badge_file(name,assets)
     if file is None:
         return None
     try:
@@ -30,8 +28,27 @@ def team_badge(name, assets=ASSETS):
         bounds = badge.getbbox()
         return badge.crop(bounds) if bounds else None
     except (OSError, ValueError):
-        log.warning('Kovqi verified club badge unavailable; using text fixture')
+        log.warning('Kovqi verified badge unavailable; using text fixture')
         return None
+
+
+def team_badge(name, assets=ASSETS, index='index.json'):
+    from .club_badges import badge_file
+    return _open_badge(badge_file(name,assets,index))
+
+
+def pick_badges(p, assets=ASSETS):
+    """(home_badge, away_badge) for one pick, resolved per its OWN sport -
+    a basketball pick never checks the football crest catalog and vice
+    versa (see club_badges.SPORT_INDEX). Tennis has no team crest (players,
+    not teams): both slots get the SAME league/tournament badge, since the
+    user asked for a tournament logo rather than per-player art."""
+    from .club_badges import team_badge_file, tennis_badge_file
+    if p.sport == 'tennis':
+        badge_path = tennis_badge_file(p.league,assets)
+        return _open_badge(badge_path),_open_badge(badge_path)
+    return (_open_badge(team_badge_file(p.sport,p.home,assets)),
+            _open_badge(team_badge_file(p.sport,p.away,assets)))
 
 
 def group_link(value):
@@ -199,7 +216,7 @@ def render_ticket(day, picks, link='', assets=ASSETS, sample=False):
         needed = max(fixture_height+len(metadata[0])*metadata[2]+34,
                      len(market[0])*market[2]+len(prediction[0])*prediction[2]+34)
         row_height = max(166 if count == 1 else 150,needed)
-        home_badge,away_badge = team_badge(p.home,assets),team_badge(p.away,assets)
+        home_badge,away_badge = pick_badges(p,assets)
         plans.append((p,home,away,metadata,market,prediction,row_height,home_badge,away_badge))
     rows_height = sum(plan[6] for plan in plans)
     ticket_top = max(476,min(504,1124-rows_height-122))

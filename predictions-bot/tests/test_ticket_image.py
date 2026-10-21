@@ -156,6 +156,57 @@ def test_catalog_covers_clubs_outside_current_ticket():
     assert len(index['clubs']) >= 300
 
 
+def test_nba_nfl_mlb_catalogs_cover_the_full_league_each():
+    from predbot.bot.club_badges import team_badge_file
+    assert team_badge_file('basketball','Washington Wizards',ASSETS) is not None
+    assert team_badge_file('basketball','Milwaukee Bucks',ASSETS) is not None
+    assert team_badge_file('american_football','Kansas City Chiefs',ASSETS) is not None
+    assert team_badge_file('baseball','New York Yankees',ASSETS) is not None
+    # Unknown/mismatched sport-team pairing never cross-resolves into the
+    # wrong catalog (a football club name must not "find" an NBA crest).
+    assert team_badge_file('basketball','Arsenal',ASSETS) is None
+    assert team_badge_file('tennis','Washington Wizards',ASSETS) is None  # no SPORT_INDEX entry for tennis
+    for index_name,count in (('index_nba.json',30),('index_nfl.json',32),('index_mlb.json',30)):
+        index = json.loads((ASSETS/'badges'/index_name).read_text(encoding='utf-8'))
+        assert len(index['clubs']) == count,index_name
+
+
+def test_tennis_badge_resolves_by_tour_or_slam_not_player_name():
+    from predbot.bot.club_badges import tennis_badge_file
+    assert tennis_badge_file('ATP Paris',ASSETS) is not None  # falls back to the generic ATP mark
+    assert tennis_badge_file('WTA Miami',ASSETS) is not None
+    assert tennis_badge_file('Australian Open',ASSETS) is not None
+    assert tennis_badge_file('France • Roland Garros',ASSETS) is not None
+    assert tennis_badge_file('US Open',ASSETS) is not None
+    # A named Slam wins over the generic tour fallback when both appear.
+    rg = tennis_badge_file('ATP Roland Garros',ASSETS)
+    atp = tennis_badge_file('ATP Paris',ASSETS)
+    assert rg is not None and rg != atp
+    # No crest fabricated for an unrecognized/absent tournament name.
+    assert tennis_badge_file('Challenger Bratislava',ASSETS) is None
+    assert tennis_badge_file('',ASSETS) is None
+
+
+def test_pick_badges_routes_by_the_picks_own_sport():
+    from predbot.bot.ticket_image import pick_badges
+    nba = replace(pick(),sport='basketball',home='Washington Wizards',away='Milwaukee Bucks')
+    home,away = pick_badges(nba)
+    assert home is not None and away is not None
+    tennis = replace(pick(),sport='tennis',home='Novak Djokovic',away='Carlos Alcaraz',league='ATP Paris')
+    home,away = pick_badges(tennis)
+    # Same tournament badge on both sides - tennis has no per-player crest.
+    assert home is not None and away is not None
+    unknown_sport = replace(pick(),sport='mma',home='Sample United',away='Example City')
+    assert pick_badges(unknown_sport) == (None,None)
+
+
+def test_known_fixture_with_nba_crests_renders(monkeypatch):
+    monkeypatch.setenv('TELEGRAM_GROUP_INVITE_URL','https://t.me/SampleCommunity')
+    p = replace(pick(),sport='basketball',home='Washington Wizards',away='Milwaukee Bucks',
+                market='result2',selection='home',label='Washington Wizards to Win',league='NBA')
+    assert render_ticket('2026-10-20',[p],'https://t.me/SampleCommunity')
+
+
 def test_catalog_rejects_ambiguous_and_unsafe_paths(tmp_path):
     from predbot.bot.club_badges import badge_file
     directory = tmp_path/'badges'

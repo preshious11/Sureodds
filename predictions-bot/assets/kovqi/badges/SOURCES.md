@@ -42,3 +42,41 @@ To maintain the bundle, fetch a newer recursive Git tree JSON for the source
 repository, then run `tools/build_club_catalog.py --tree <file> --download`
 explicitly. Review the resulting source/alias diff before release. Daily
 prediction, delivery and settlement jobs never invoke this maintenance tool.
+
+## NBA / NFL / MLB (`index_nba.json` / `index_nfl.json` / `index_mlb.json`)
+
+Built from ESPN's public team-logo CDN (`a.espncdn.com/i/teamlogos/<league>/500/<abbr>.png`)
+via `tools/build_espn_catalog.py --sport {nba,nfl,mlb} --download`. 30 NBA, 32
+NFL and 30 MLB teams, keyed by full team name, bare nickname and abbreviation.
+Same runtime discipline as football: team marks remain their owners' property,
+included for fixture identification only, never implying endorsement; an
+unknown/ambiguous name omits the crest rather than guessing. ESPN does not
+expose a content hash the way the GitHub tree API does, so each record stores
+the downloaded file's own SHA-256 for audit instead of a pre-known value to
+verify against.
+
+## Tennis (`index_tennis.json`)
+
+Tennis picks name players, not teams, so there is no per-player crest -
+`tennis_badge_file()` in `club_badges.py` matches the TOURNAMENT/TOUR text
+instead (e.g. "ATP Paris", "Australian Open"), falling back to the generic
+ATP/WTA tour mark when no specific Slam is named. A small, hand-curated set
+built by `tools/build_tennis_catalog.py --download`, every source checked
+individually for a free license before inclusion (Wikimedia
+`imageinfo.extmetadata.LicenseShortName`):
+
+- ATP Tour mark — Public domain, Wikimedia Commons `File:ATP Tour logo.svg`
+- WTA Tour mark — Public domain, English Wikipedia `File:WTA Tour logo.png`
+- Australian Open — Public domain, Wikimedia Commons `File:Australian Open Logo 2017.svg`
+- French Open / Roland-Garros — CC0, Wikimedia Commons `File:RG-Logo.png`
+- US Open — Public domain, Wikimedia Commons `File:Usopen-horizontal-logo.svg`
+
+**Wimbledon is deliberately NOT bundled.** Its crossed-rackets mark is not
+mirrored on Wikimedia Commons under any free license (unlike the four marks
+above) — that absence is the usual sign of a trademark the rights holder
+treats as non-free, so nothing was downloaded for it. An "ATP Wimbledon" /
+"WTA Wimbledon" league string still gets a crest: it falls back to the
+generic ATP/WTA tour badge via the same longest-alias-match rule that
+resolves any other unlisted tournament. If a verified free-license Wimbledon
+mark is found later, add it to `SOURCES` in `build_tennis_catalog.py` and
+rerun with `--download`.
