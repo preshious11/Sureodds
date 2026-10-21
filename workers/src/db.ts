@@ -732,26 +732,39 @@ export async function isCustomSessionActive(db: D1Database, userId: string, chat
   return !!row && row.active === 1;
 }
 
-export async function enterCustomSession(db: D1Database, userId: string, chatId: string): Promise<void> {
+/** `mode` ("free" | "pro") defaults to "free" for every existing call site -
+ * only the admin-only Pro Picks entry point passes "pro". */
+export async function enterCustomSession(db: D1Database, userId: string, chatId: string, mode: "free" | "pro" = "free"): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO custom_sessions (user_id, chat_id, active, last_request_at, updated_at)
-       VALUES (?1, ?2, 1, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-       ON CONFLICT(user_id, chat_id) DO UPDATE SET active = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+      `INSERT INTO custom_sessions (user_id, chat_id, active, mode, last_request_at, updated_at)
+       VALUES (?1, ?2, 1, ?3, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+       ON CONFLICT(user_id, chat_id) DO UPDATE SET active = 1, mode = ?3, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
     )
-    .bind(userId, chatId)
+    .bind(userId, chatId, mode)
     .run();
 }
 
 export async function leaveCustomSession(db: D1Database, userId: string, chatId: string): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO custom_sessions (user_id, chat_id, active, last_request_at, updated_at)
-       VALUES (?1, ?2, 0, NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-       ON CONFLICT(user_id, chat_id) DO UPDATE SET active = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+      `INSERT INTO custom_sessions (user_id, chat_id, active, mode, last_request_at, updated_at)
+       VALUES (?1, ?2, 0, 'free', NULL, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+       ON CONFLICT(user_id, chat_id) DO UPDATE SET active = 0, mode = 'free', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
     )
     .bind(userId, chatId)
     .run();
+}
+
+/** Whether (user_id, chat_id) is an ACTIVE Pro Picks session specifically -
+ * never true for a plain/free Custom Picks session, even one the admin is
+ * also in. See migrations/0013_pro_picks.sql. */
+export async function isProSession(db: D1Database, userId: string, chatId: string): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT active, mode FROM custom_sessions WHERE user_id = ?1 AND chat_id = ?2")
+    .bind(userId, chatId)
+    .first<{ active: number; mode: string }>();
+  return !!row && row.active === 1 && row.mode === "pro";
 }
 
 /**

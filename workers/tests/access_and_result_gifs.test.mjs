@@ -11,7 +11,7 @@ function world(){
  const sql=new DatabaseSync(':memory:');
  for(const file of ['0001_foundation.sql','0003_engine_state.sql','0004_sync_state.sql','0005_ticket_candidates.sql',
  '0006_custom_sessions.sql','0007_custom_picks_conversation.sql','0008_pinned_menu.sql','0009_match_events.sql',
- '0010_sync_lease.sql','0011_pipeline_dispatch.sql','0012_result_gifs.sql'])sql.exec(readFileSync(new URL(`../migrations/${file}`,import.meta.url),'utf8'));
+ '0010_sync_lease.sql','0011_pipeline_dispatch.sql','0012_result_gifs.sql','0013_pro_picks.sql'])sql.exec(readFileSync(new URL(`../migrations/${file}`,import.meta.url),'utf8'));
  let count=0;
  const DB={prepare(query){count++;return {args:[],bind(...a){this.args=a;return this;},async first(){return sql.prepare(query).get(...this.args)??null;},
  async all(){return {results:sql.prepare(query).all(...this.args)};},async run(){return {meta:{changes:sql.prepare(query).run(...this.args).changes}};}};}};

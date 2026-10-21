@@ -15,6 +15,7 @@ import {
   getSuggestion,
   isCustomOnCooldown,
   isCustomSessionActive,
+  isProSession,
   leaveCustomSession,
   listActiveSuggestions,
   recordCustomRequest,
@@ -45,6 +46,7 @@ import {
   loadPool,
   MARKET_LABEL,
   MARKET_REPLY,
+  MAX_LEGS_PRO,
   parseEnabledSports,
   respond as customPicksRespond,
   searchWithRequest,
@@ -440,6 +442,17 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       await handleCustomPicksClarify(env, cb, cbId, chatId, msg);
       return;
     }
+    if (data === "admin|propicks") {
+      const tapUserId = String((cb.from as Record<string, unknown> | undefined)?.id ?? "");
+      const tapChatType = String((msg?.chat as Record<string, unknown> | undefined)?.type ?? "private");
+      if (tapChatType !== "private" || !isAdmin(env, tapUserId) || !tapUserId) {
+        await answerCallback(env, cbId);
+        return;
+      }
+      await answerCallback(env, cbId);
+      await enterProPicks(env, tapUserId, chatId);
+      return;
+    }
     const parsed = parseCallback(data);
     if (!parsed) {
       await answerCallback(env, cbId);
@@ -581,11 +594,15 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       });
     }
     const name = String(from.first_name ?? "there");
+    const keyboard = menuKeyboard(allButtonModeFor(chatType, env.TELEGRAM_BOT_USERNAME, admin)) as { inline_keyboard: unknown[][] };
+    // Admin-only, private-chat-only: no other user's /start ever sees this
+    // row, matching the "keep it invisible until it's ready" preview rule.
+    if (admin && chatType === "private") keyboard.inline_keyboard.push([{ text: "💎 Pro Picks", callback_data: "admin|propicks" }]);
     await tgApi(env, "sendMessage", {
       chat_id: chatId,
       text: welcomeMessage(name),
       parse_mode: "HTML",
-      reply_markup: menuKeyboard(allButtonModeFor(chatType, env.TELEGRAM_BOT_USERNAME, admin)),
+      reply_markup: keyboard,
     });
     return;
   }
@@ -666,6 +683,22 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
     const top = await postGroupPicks(env, "top");
     const daily = await postGroupPicks(env, "daily");
     await tgApi(env, "sendMessage", { chat_id: chatId, text: `Top: ${top}\nDaily: ${daily}` });
+    return;
+  }
+
+  // /propicks (admin-only, private chat only, NO paywall yet): the Pro
+  // Picks preview entry point — see enterProPicks for what "pro mode"
+  // actually changes. Deliberately not advertised anywhere a non-admin
+  // would see it; the only visible entry points are this command and the
+  // "💎 Pro Picks" button /start adds to an admin's own keyboard.
+  if (cmd === "/propicks" && args.length === 0) {
+    if (chatType !== "private") return;
+    if (!admin) {
+      await tgApi(env, "sendMessage", { chat_id: chatId, text: "Not allowed." });
+      return;
+    }
+    if (!userId) return;
+    await enterProPicks(env, userId, chatId);
     return;
   }
 
@@ -804,6 +837,20 @@ function customPicksDeps(env: Env) {
   };
 }
 
+const PRO_PICKS_INTRO =
+  "💎 <b>Pro Picks</b> (admin preview)\n\nSame engine as Custom Picks, with a higher leg cap and a stricter confidence floor than Bet of the Day itself — every pick here clears a higher bar than what goes out publicly.";
+
+/** Admin-only Pro Picks entry point (see migrations/0013_pro_picks.sql —
+ * `mode` on the session row is how respond()/processCustomPicksText later
+ * know this is a Pro session, not a free one: a higher leg cap (MAX_LEGS_PRO)
+ * and the "pro" confidence floor, see custom_picks.ts MIN_PROBABILITY). No
+ * paywall: gated entirely by the isAdmin() check at the call site, for
+ * internal testing before any public rollout. */
+async function enterProPicks(env: Env, userId: string, chatId: string): Promise<void> {
+  await enterCustomSession(env.DB, userId, chatId, "pro");
+  await tgApi(env, "sendMessage", { chat_id: chatId, text: `${PRO_PICKS_INTRO}\n\nWhat would you like?`, parse_mode: "HTML" });
+}
+
 /** Plain D1 read of today's candidate pool, for keyboard-building only (never
  * a provider call) — used when a clarification keyboard needs to know what's
  * actually available (Part C's "never advertise an option that can't be
@@ -940,6 +987,7 @@ async function processCustomPicksText(env: Env, userId: string, chatId: string, 
   const day = lagosDateString(nowMs);
   const previousJson = await getConversationRequest(env.DB, userId, chatId, nowMs);
   const previous = previousJson ? deserializeRequest(JSON.parse(previousJson)) : null;
+  const pro = await isProSession(env.DB, userId, chatId);
   // A visible "building your picks" status while the request is
   // processed — best-effort (see sendLoadingIndicator): a failure here
   // must never block the real ticket. Cleaned up on both the success
@@ -947,7 +995,17 @@ async function processCustomPicksText(env: Env, userId: string, chatId: string, 
   // "⏳ Building..." message sitting in the chat.
   const loadingMessageId = await sendLoadingIndicator(env, chatId);
   try {
-    const { result, request } = await customPicksRespond(customPicksDeps(env), text, zone, day, nowMs, previous, userId, parseEnabledSports(env.ALLOWED_SPORTS));
+    const { result, request } = await customPicksRespond(
+      customPicksDeps(env),
+      text,
+      zone,
+      day,
+      nowMs,
+      previous,
+      userId,
+      parseEnabledSports(env.ALLOWED_SPORTS),
+      pro ? { maxLegs: MAX_LEGS_PRO, preference: "pro" } : {},
+    );
     // The cooldown timestamp is recorded ONLY after the request was
     // actually served: recording it up-front poisoned webhook retries —
     // a throw during respond() left last_request_at set, so the

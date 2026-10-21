@@ -27,6 +27,11 @@ export const CUSTOM_PICKS_TTL_MS = 10 * 60_000; // ~ custom_recovery.py TTL = ti
 
 const DEFAULT_COUNT = 3;
 const MAX_LEGS = 8;
+/** Pro Picks (admin-only preview, see db.ts isProSession): a higher leg cap
+ * than the free tier. Threaded through as ParsedRequest.maxLegs rather than
+ * read as a module constant, so a single process still serves both free and
+ * pro sessions correctly at once (Workers are multi-tenant per isolate). */
+export const MAX_LEGS_PRO = 12;
 /** Strict minimum individual price for EVERY Custom Picks selection, at any
  * target odds, in any sport, including fallback and recovery tickets. Never
  * relaxed to complete a ticket. */
@@ -44,7 +49,12 @@ const ODDS_BUCKETS = 12;
 const MAX_EXPANSIONS = 100_000;
 const ODDS_LADDER = [20, 15, 12, 10, 8, 6, 5, 4, 3, 2];
 const MAX_SUGGESTIONS = 3;
-const MIN_PROBABILITY: Record<string, number> = { safe: 0.65, strong: 0.6, best: 0.5 };
+// "pro" is never user-typed — respond() forces it for an admin Pro Picks
+// session (see RespondOptions.preference) regardless of whatever preference
+// word the text itself contains, so a Pro ticket is ALWAYS held to a
+// stricter floor than both Custom Picks' own strictest tier ("safe", 0.65)
+// and predbot's Bet of the Day floor (TOP_MIN_PROB, 0.62 - config.py).
+const MIN_PROBABILITY: Record<string, number> = { safe: 0.65, strong: 0.6, best: 0.5, pro: 0.72 };
 export const SPORT_LABEL: Record<string, string> = {
   football: "Football", basketball: "Basketball", american_football: "American Football",
   baseball: "Baseball", tennis: "Tennis", mma: "MMA",
@@ -560,7 +570,9 @@ export interface ParsedRequest {
   sports: Set<string>;
   allowedMarkets: Set<string>;
   excludedMarkets: Set<string>;
-  preference: "safe" | "strong" | "best";
+  /** "pro" is never typed by a user — only respond() sets it, forced for
+   * an admin Pro Picks session (see RespondOptions.preference). */
+  preference: "safe" | "strong" | "best" | "pro";
   competitions: Set<string>;
   timeIntent: "today" | "tonight" | null;
   specifiedFields: Set<string>;
@@ -585,6 +597,12 @@ export interface ParsedRequest {
    * number via totalLine (carried forward normally). Never silently
    * defaulted to Over. */
   ambiguousLine: number | null;
+  /** The leg cap THIS parse was allowed to validate against (MAX_LEGS for a
+   * free session, MAX_LEGS_PRO for an admin Pro Picks session - see
+   * parseRequest's `maxLegs` param). Not a user-specified field: refine()
+   * always takes the CURRENT turn's value, never a stale one carried over
+   * from an earlier turn in a different session mode. */
+  maxLegs: number;
 }
 
 /** JSON-safe form of a ParsedRequest (Sets -> arrays), for D1 persistence across stateless invocations. */
@@ -594,7 +612,7 @@ export function serializeRequest(req: ParsedRequest): Record<string, unknown> {
     allowedMarkets: [...req.allowedMarkets], excludedMarkets: [...req.excludedMarkets],
     preference: req.preference, competitions: [...req.competitions], timeIntent: req.timeIntent,
     specifiedFields: [...req.specifiedFields], refinement: req.refinement, qualityUpgrade: req.qualityUpgrade,
-    teams: [...req.teams], totalLine: req.totalLine, ambiguousLine: req.ambiguousLine,
+    teams: [...req.teams], totalLine: req.totalLine, ambiguousLine: req.ambiguousLine, maxLegs: req.maxLegs,
   };
 }
 
@@ -614,14 +632,15 @@ export function deserializeRequest(raw: Record<string, unknown>): ParsedRequest 
     teams: new Set((raw.teams as string[]) ?? []),
     totalLine: (raw.totalLine as ParsedRequest["totalLine"]) ?? null,
     ambiguousLine: (raw.ambiguousLine as number) ?? null,
+    maxLegs: (raw.maxLegs as number) ?? MAX_LEGS,
   };
 }
 
-export function freshRequest(): ParsedRequest {
+export function freshRequest(maxLegs: number = MAX_LEGS): ParsedRequest {
   return {
     targetOdds: null, pickCount: null, sports: new Set(), allowedMarkets: new Set(), excludedMarkets: new Set(),
     preference: "best", competitions: new Set(), timeIntent: null, specifiedFields: new Set(),
-    refinement: false, qualityUpgrade: false, teams: new Set(), totalLine: null, ambiguousLine: null,
+    refinement: false, qualityUpgrade: false, teams: new Set(), totalLine: null, ambiguousLine: null, maxLegs,
   };
 }
 
@@ -638,7 +657,7 @@ const err = (text: string, reason = "invalid_request"): ParseResult => ({ ok: fa
  * typo-correction, and the over/under line-market detection (total market
  * without an explicit line word is still supported via MARKET_ALIASES).
  */
-export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENABLED_SPORTS): ParseResult {
+export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENABLED_SPORTS, maxLegs: number = MAX_LEGS): ParseResult {
   const trimmed = rawText.trim();
   if (!trimmed || trimmed.length > 512) return err(HELP);
   const text = trimmed.toLowerCase();
@@ -647,7 +666,7 @@ export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENA
     return err(TODAY_ONLY, "future_date");
   }
 
-  const req = freshRequest();
+  const req = freshRequest(maxLegs);
   const spans: [number, number][] = [];
 
   if (/\b(tonight|this evening)\b/.test(text)) { req.timeIntent = "tonight"; req.specifiedFields.add("time_intent"); }
@@ -756,8 +775,8 @@ export function parseRequest(rawText: string, enabled: Set<string> = DEFAULT_ENA
     if (!Number.isInteger(count)) {
       req.ambiguousLine = count;
       req.specifiedFields.add("ambiguous_line");
-    } else if (count < 1 || count > MAX_LEGS) {
-      return err(`I can offer 1–${MAX_LEGS} different games. How many would you like?`, "invalid_count");
+    } else if (count < 1 || count > maxLegs) {
+      return err(`I can offer 1–${maxLegs} different games. How many would you like?`, "invalid_count");
     } else {
       req.pickCount = count;
       req.specifiedFields.add("pick_count");
@@ -993,7 +1012,7 @@ function minPriceFor(_req: ParsedRequest): number {
 function maxLegsFor(req: ParsedRequest): number {
   if (req.pickCount) return req.pickCount;
   if (req.targetOdds != null && req.targetOdds <= LOW_TARGET_CEILING) return LOW_TARGET_MAX_LEGS;
-  if (req.targetOdds) return MAX_LEGS;
+  if (req.targetOdds) return req.maxLegs;
   return DEFAULT_COUNT;
 }
 
@@ -1196,7 +1215,7 @@ export function chooseTicket(options: Ticket[], userId: string, day: string, req
  * suggestions alike: legacy stored rows lacking market coordinates fail here
  * and fall through to the expired-suggestion path, never to a guessed label. */
 export function validTicket(ticket: Ticket | null, req: ParsedRequest, nowMs: number): boolean {
-  const cap = req.targetOdds && !req.pickCount ? maxLegsFor(req) : MAX_LEGS;
+  const cap = req.targetOdds && !req.pickCount ? maxLegsFor(req) : req.maxLegs;
   if (!ticket || ticket.picks.length < 1 || ticket.picks.length > cap) return false;
   if (new Set(ticket.picks.map((c) => c.fixtureId)).size !== ticket.picks.length) return false;
   if (new Set(ticket.picks.map((c) => c.fixtureIdentity || c.fixtureId)).size !== ticket.picks.length) return false;
@@ -1304,8 +1323,8 @@ function alternatives(req: ParsedRequest, reason: string): ParsedRequest[] {
     const ladder = reason === "target_too_low" ? [...ODDS_LADDER].reverse().filter((n) => n > req.targetOdds!) : ODDS_LADDER.filter((n) => n < req.targetOdds!);
     for (const target of ladder.slice(0, 2)) out.push({ ...req, targetOdds: target });
   }
-  out.push({ ...freshRequest(), sports: new Set(req.sports) });
-  out.push(freshRequest());
+  out.push({ ...freshRequest(req.maxLegs), sports: new Set(req.sports) });
+  out.push(freshRequest(req.maxLegs));
   return out.slice(0, MAX_SUGGESTIONS);
 }
 
@@ -1408,7 +1427,11 @@ export function prepareAlternatives(pool: Candidate[], req: ParsedRequest, reaso
 
 /** ~ custom_recovery.py refine(): merge a follow-up message into the stored prior request. */
 export function refine(previous: ParsedRequest, current: ParsedRequest): ParsedRequest {
-  const next: ParsedRequest = { ...previous };
+  // maxLegs is never user-specified - it's a per-call capability (which
+  // session mode THIS turn parsed under), so the current turn's value
+  // always wins, never a stale one a prior (possibly different-mode) turn
+  // left behind.
+  const next: ParsedRequest = { ...previous, maxLegs: current.maxLegs };
   for (const field of current.specifiedFields) {
     switch (field) {
       case "target_odds": next.targetOdds = current.targetOdds; break;
@@ -1543,6 +1566,16 @@ export interface RespondResult {
   suggestions: Suggestion[];
 }
 
+export interface RespondOptions {
+  /** Pro Picks leg cap (MAX_LEGS_PRO) for an admin Pro session; omitted/undefined uses the free-tier MAX_LEGS default. */
+  maxLegs?: number;
+  /** Pro Picks only: forces the "pro" confidence floor (MIN_PROBABILITY.pro,
+   * stricter than Bet of the Day's own floor — see MIN_PROBABILITY's
+   * comment) regardless of whatever preference word the text itself
+   * contains. Never set for a free session. */
+  preference?: "pro";
+}
+
 export async function respond(
   deps: CustomPicksDeps,
   text: string,
@@ -1552,11 +1585,13 @@ export async function respond(
   previous: ParsedRequest | null,
   userId = "",
   enabled: Set<string> = DEFAULT_ENABLED_SPORTS,
+  options: RespondOptions = {},
 ): Promise<{ result: RespondResult; request: ParsedRequest | null }> {
-  const parsed = parseRequest(text, enabled);
+  const parsed = parseRequest(text, enabled, options.maxLegs);
   if (!parsed.ok) return { result: { text: parsed.text, reason: parsed.reason, suggestions: [] }, request: null };
   let request = parsed.request;
   if (request.refinement && previous) request = refine(previous, request);
+  if (options.preference) request.preference = options.preference;
 
   // A bare "1.5 options" names no side - ask, unless the conversation
   // already resolved THIS exact number (request.totalLine, carried

@@ -28,7 +28,7 @@ function realDb() {
   // 0002 only ALTERs columns that 0001 already defines inline for a fresh
   // DB (see 0001's own comment) — applying both to a brand-new :memory: DB
   // would duplicate those columns, so 0002 is skipped here deliberately.
-  for (const file of ["0001_foundation.sql", "0003_engine_state.sql", "0006_custom_sessions.sql", "0007_custom_picks_conversation.sql", "0008_pinned_menu.sql"]) {
+  for (const file of ["0001_foundation.sql", "0003_engine_state.sql", "0006_custom_sessions.sql", "0007_custom_picks_conversation.sql", "0008_pinned_menu.sql", "0013_pro_picks.sql"]) {
     sql.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), "utf8"));
   }
   return {
@@ -540,6 +540,106 @@ describe("Custom Picks: remaining clarification button flows", () => {
       assert.ok(sent, `${data}: must still answer with something, not silently drop the tap`);
       assert.match(sent.body.text, /expired/);
     }
+  });
+});
+
+describe("Pro Picks (admin-only preview, no paywall)", () => {
+  const day = "2026-10-14";
+  const generatedAt = "2026-10-14T06:00:00Z";
+  function adminEnv(db) {
+    return { ...env(db), TELEGRAM_ADMIN_IDS: "7" };
+  }
+  function seeded(db) {
+    db._sql.exec(`INSERT INTO custom_pick_pools VALUES('${day}','Africa/Lagos','${generatedAt}','COMPLETE','{}')`);
+  }
+  function lastSend(fetchImpl) {
+    const sends = fetchImpl.calls.filter((c) => c.url.includes("sendMessage"));
+    return sends[sends.length - 1];
+  }
+
+  it("a non-admin never sees the Pro Picks button, and /propicks is refused", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db); // admin IS configured (id 7) — this user (9) just isn't them
+    const startFetch = stubFetch();
+    await withFetch(startFetch, () => handleUpdate(theEnv, textMessage(1, "c9", "9", "/start")));
+    const kb = JSON.stringify(startFetch.calls[0].body.reply_markup);
+    assert.doesNotMatch(kb, /Pro Picks/);
+
+    const cmdFetch = stubFetch();
+    await withFetch(cmdFetch, () => handleUpdate(theEnv, textMessage(2, "c9", "9", "/propicks")));
+    assert.match(cmdFetch.calls[0].body.text, /Not allowed/);
+  });
+
+  it("the admin's own /start DOES show the Pro Picks button, and tapping it starts a pro session straight away", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    const startFetch = stubFetch();
+    await withFetch(startFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/start")));
+    const kb = startFetch.calls[0].body.reply_markup.inline_keyboard;
+    const button = kb.flat().find((b) => b.text === "💎 Pro Picks");
+    assert.ok(button, "admin's own /start must offer the Pro Picks button");
+
+    const tapFetch = stubFetch();
+    await withFetch(tapFetch, () => handleUpdate(theEnv, callbackQuery(2, "cbq-1", "c7", "7", button.callback_data)));
+    assert.match(lastSend(tapFetch).body.text, /Pro Picks.*What would you like/s);
+    const row = db._sql.prepare("SELECT mode FROM custom_sessions WHERE user_id='7' AND chat_id='c7'").get();
+    assert.equal(row.mode, "pro");
+  });
+
+  it("Pro Picks holds to a stricter confidence floor than Bet of the Day — a pick that clears Bet of the Day's floor but not Pro's is still rejected", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    // 0.68 clears Bet of the Day's TOP_MIN_PROB (0.62, predbot/config.py) and
+    // even Custom Picks' own strictest free tier ("safe", 0.65) — but NOT
+    // the pro floor (0.72, MIN_PROBABILITY.pro in custom_picks.ts).
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.68 });
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(2, "c7", "7", "1 picks")));
+    assert.doesNotMatch(lastSend(proFetch).body.text, /🔥/, "0.68 confidence must not clear the pro floor");
+
+    // The exact same candidate DOES build a ticket for a free session.
+    const freeEnv = adminEnv(db);
+    await withFetch(stubFetch(), () => handleUpdate(freeEnv, textMessage(3, "c2", "2", "/start custom_picks")));
+    const freeFetch = stubFetch();
+    await withFetch(freeFetch, () => handleUpdate(freeEnv, textMessage(4, "c2", "2", "1 picks")));
+    assert.match(lastSend(freeFetch).body.text, /🔥/, "the SAME candidate must still be usable by a free session");
+  });
+
+  it("a pro-floor candidate (0.75) builds a real ticket, with no stake/Kelly line (removed — not needed yet)", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75 });
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(2, "c7", "7", "1 picks")));
+    const text = lastSend(proFetch).body.text;
+    assert.match(text, /🔥/);
+    assert.doesNotMatch(text, /Suggested stake|Kelly|bankroll/i);
+  });
+
+  it("Pro Picks accepts more legs than the free tier's cap, free tier is unaffected", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    for (let i = 1; i <= 10; i++) {
+      seedCandidate(db._sql, day, generatedAt, {
+        canonical_event_id: `fx-${i}`, home: `Home ${i}`, away: `Away ${i}`, price: 1.4, p_model: 0.8,
+      });
+    }
+    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    // 9 legs is over the free MAX_LEGS (8) but under MAX_LEGS_PRO (12).
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(2, "c7", "7", "9 picks")));
+    assert.match(lastSend(proFetch).body.text, /🔥/, "a pro session must be able to build a 9-leg ticket");
+
+    const freeFetch = stubFetch();
+    await withFetch(freeFetch, () => handleUpdate(theEnv, textMessage(3, "c2", "2", "/start custom_picks")));
+    const freeAskFetch = stubFetch();
+    await withFetch(freeAskFetch, () => handleUpdate(theEnv, textMessage(4, "c2", "2", "9 picks")));
+    assert.match(lastSend(freeAskFetch).body.text, /I can offer 1–8/, "the free tier's cap must be completely unaffected");
   });
 });
 
