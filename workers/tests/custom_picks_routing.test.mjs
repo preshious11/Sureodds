@@ -697,11 +697,13 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     assert.doesNotMatch(reasonLine, /35%|confidence/i);
   });
 
-  it("Pro Picks is capped small (5) on purpose — it never pads the ticket with weaker picks just to reach a bigger number", async () => {
+  it("Pro Picks is capped small (3) on purpose — it never pads the ticket with weaker picks just to reach a bigger number", async () => {
     const db = realDb();
     const theEnv = adminEnv(db);
     seeded(db);
-    // 15 eligible fixtures: well over Pro's own 5-leg cap and the free tier's 8-leg cap.
+    // 15 eligible fixtures: well over Pro's own 3-leg cap and the free tier's 8-leg cap.
+    // Combined odds of any 3 at price 1.4 is 2.74 — under the 3.0 ceiling,
+    // so the leg cap (not the odds ceiling) is what's being tested here.
     for (let i = 1; i <= 15; i++) {
       seedCandidate(db._sql, day, generatedAt, {
         canonical_event_id: `fx-${i}`, home: `Home ${i}`, away: `Away ${i}`, price: 1.4, p_model: 0.8,
@@ -711,7 +713,7 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
     const proText = lastSend(proFetch).body.text;
     assert.match(proText, /💎 PRO PICKS/);
-    assert.equal((proText.match(/ vs /g) ?? []).length, 5, "Pro Picks caps at 5 legs even with 15 eligible fixtures on offer");
+    assert.equal((proText.match(/ vs /g) ?? []).length, 3, "Pro Picks caps at 3 legs even with 15 eligible fixtures on offer");
 
     // The free tier's own cap (8, independent of Pro's) is untouched.
     const freeFetch = stubFetch();
@@ -726,8 +728,9 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     const theEnv = adminEnv(db);
     seeded(db);
     // 7 eligible fixtures, all clearing the 0.72 floor, with DELIBERATELY
-    // varied probability so only the top 5 by probability should survive —
-    // not the first 5 inserted, not a random 5.
+    // varied probability so only the top 3 by probability should survive —
+    // not the first 3 inserted, not a random 3. Same price for every
+    // fixture, so the odds ceiling never factors in here.
     const probs = [0.73, 0.99, 0.75, 0.9, 0.74, 0.95, 0.8];
     probs.forEach((p, i) => {
       seedCandidate(db._sql, day, generatedAt, {
@@ -737,13 +740,35 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     const proFetch = stubFetch();
     await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
     const proText = lastSend(proFetch).body.text;
-    // Top 5 probabilities: 0.99, 0.95, 0.9, 0.8, 0.75 -> confidences 99/95/90/80/75.
-    for (const expected of [99, 95, 90, 80, 75]) {
+    // Top 3 probabilities: 0.99, 0.95, 0.9 -> confidences 99/95/90.
+    for (const expected of [99, 95, 90]) {
       assert.match(proText, new RegExp(`Confidence: ${expected}%`), `the ${expected}% pick must survive`);
     }
-    // The two weakest (73%, 74%) must be dropped even though they clear the floor.
-    assert.doesNotMatch(proText, /Confidence: 73%/);
-    assert.doesNotMatch(proText, /Confidence: 74%/);
+    // Everything weaker must be dropped even though it clears the floor.
+    for (const dropped of [80, 75, 74, 73]) {
+      assert.doesNotMatch(proText, new RegExp(`Confidence: ${dropped}%`));
+    }
+  });
+
+  it("Pro Picks never lets combined odds run away past ~3.0 — a surer-but-pricier pick is skipped for a next-surest one that still fits", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    // Three eligible picks, all priced at 1.5. The first two combined
+    // (1.5 * 1.5 = 2.25) stay under the 3.0 ceiling, but adding the third
+    // (2.25 * 1.5 = 3.375) would not — so only the 2 surest legs survive,
+    // even though a 3rd eligible fixture exists and the leg cap (3) alone
+    // would have allowed it.
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", home: "A", away: "B", price: 1.5, p_model: 0.95 });
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-2", home: "C", away: "D", price: 1.5, p_model: 0.9 });
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-3", home: "E", away: "F", price: 1.5, p_model: 0.85 });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const proText = lastSend(proFetch).body.text;
+    assert.equal((proText.match(/ vs /g) ?? []).length, 2, "a 3rd leg must be skipped once it would push combined odds past ~3.0");
+    assert.match(proText, /Confidence: 95%/);
+    assert.match(proText, /Confidence: 90%/);
+    assert.doesNotMatch(proText, /Confidence: 85%/);
   });
 
   it("Pro Picks shows each pick's kickoff time (Africa/Lagos), free-tier tickets do not", async () => {

@@ -28,8 +28,17 @@ export const PRO_MIN_PROBABILITY = 0.72;
 /** Pro Picks is not about filling a slip — it's about how close to sure a
  * handful of picks are. A small cap, kept deliberately low so adding more
  * eligible fixtures on a busy day can never dilute the ticket with a
- * weaker 9th or 10th leg just to hit a bigger number. */
-export const PRO_MAX_LEGS = 5;
+ * weaker 4th or 5th leg just to hit a bigger number. */
+export const PRO_MAX_LEGS = 3;
+/** A combined-odds ceiling, not a target to hit: the ticket is built from
+ * the surest picks first (see byProbabilityDesc) and stops there, but a
+ * pick is skipped (in favour of the next-surest one) if adding it would
+ * push the running combined odds past this — so the ticket never balloons
+ * into a long-shot parlay just because 3 slots are available. Applied
+ * identically regardless of sport/market; the FIRST pick is always kept
+ * even if its own price alone exceeds this, so a single very sure pick is
+ * never rejected outright. */
+const PRO_MAX_COMBINED_ODDS = 3.0;
 /** Same floor-odds notion as Custom Picks' own MIN_PRICE, defined
  * independently so a change to that constant can never move this one. */
 const PRO_MIN_PRICE = 1.25;
@@ -56,18 +65,25 @@ function byProbabilityDesc(a: Candidate, b: Candidate): number {
   return a.fixtureIdentity < b.fixtureIdentity ? -1 : a.fixtureIdentity > b.fixtureIdentity ? 1 : 0;
 }
 
-/** One pick per fixture (never two correlated legs on the same game): the
- * PRO_MAX_LEGS *surest* eligible picks, ranked purely by probability. On a
- * day with few eligible fixtures this returns fewer than PRO_MAX_LEGS — it
- * never pads out a weaker pick just to reach the cap. */
+/** One pick per fixture (never two correlated legs on the same game): up to
+ * PRO_MAX_LEGS of the *surest* eligible picks, ranked purely by probability,
+ * skipping over any pick that would push the combined odds past
+ * PRO_MAX_COMBINED_ODDS (trying the next-surest one instead). On a day with
+ * few eligible fixtures, or few that fit under the odds ceiling, this
+ * returns fewer than PRO_MAX_LEGS — it never pads out a weaker or
+ * longer-priced pick just to reach either cap. */
 export function buildProTicket(pool: Candidate[], nowMs: number): ProTicket | null {
   const seenFixtures = new Set<string>();
   const picks: Candidate[] = [];
+  let odds = 1;
   for (const c of eligible(pool, nowMs).sort(byProbabilityDesc)) {
+    if (picks.length >= PRO_MAX_LEGS) break;
     if (seenFixtures.has(c.fixtureIdentity)) continue;
+    const nextOdds = odds * c.price;
+    if (picks.length > 0 && nextOdds > PRO_MAX_COMBINED_ODDS) continue;
     seenFixtures.add(c.fixtureIdentity);
     picks.push(c);
-    if (picks.length >= PRO_MAX_LEGS) break;
+    odds = nextOdds;
   }
   if (!picks.length) return null;
   return { picks, odds: combinedOdds(picks.map((p) => p.price)) };
