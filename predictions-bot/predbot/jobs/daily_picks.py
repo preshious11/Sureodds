@@ -142,10 +142,19 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
 
     gate = make_results_gate(cfg, providers_map) if providers_map else None
     independent = IndependentModels.default(db, cfg, now) if cfg.independent_model_mode != "off" else None
+    # Real recent-form/head-to-head for Pro Picks' reason line (see
+    # ESPNProvider.team_insight) - reuses the SAME espn provider instance
+    # (and its scoreboard cache) settlement already uses; skipped entirely
+    # when ESPN results aren't configured. Never required: engine.py already
+    # treats a None/failing fetcher as "no insight for this fixture".
+    espn_provider = (providers_map or {}).get('espn')
+    insight_fetcher = (lambda event: espn_provider.team_insight(
+        event.sport, event.home, event.away, event.start, event.league_id, event.league)) if espn_provider else None
     with timings.stage('analyze'):
         generation = generate(events, db, ModelSettings(cfg.model_shrink, tuple(cfg.sharp_books),
                                                        cfg.elo_min_games, cfg.edge_price), gate,
-                              scorer=lambda batch: score_events(batch, db, cfg, independent))
+                              scorer=lambda batch: score_events(batch, db, cfg, independent),
+                              insight_fetcher=insight_fetcher)
     tables = {}
     for s in generation.ticket_predictions:
         evidence = assess(s, cfg, tables)

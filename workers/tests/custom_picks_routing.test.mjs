@@ -570,9 +570,11 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     assert.match(cmdFetch.calls[0].body.text, /Not allowed/);
   });
 
-  it("the admin's own /start DOES show the Pro Picks button, and tapping it starts a pro session straight away", async () => {
+  it("the admin's own /start DOES show the Pro Picks button, and tapping it PUBLISHES a ticket immediately — no question asked", async () => {
     const db = realDb();
     const theEnv = adminEnv(db);
+    seeded(db);
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.8 });
     const startFetch = stubFetch();
     await withFetch(startFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/start")));
     const kb = startFetch.calls[0].body.reply_markup.inline_keyboard;
@@ -581,12 +583,26 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
 
     const tapFetch = stubFetch();
     await withFetch(tapFetch, () => handleUpdate(theEnv, callbackQuery(2, "cbq-1", "c7", "7", button.callback_data)));
-    assert.match(lastSend(tapFetch).body.text, /Pro Picks.*What would you like/s);
+    const sent = lastSend(tapFetch);
+    assert.match(sent.body.text, /💎 PRO PICKS/, "the FIRST reply must already be a real ticket, not a question");
+    assert.doesNotMatch(sent.body.text, /what would you like/i);
     const row = db._sql.prepare("SELECT mode FROM custom_sessions WHERE user_id='7' AND chat_id='c7'").get();
     assert.equal(row.mode, "pro");
   });
 
-  it("Pro Picks holds to a stricter confidence floor than Bet of the Day — a pick that clears Bet of the Day's floor but not Pro's is still rejected", async () => {
+  it("/propicks alone publishes a ticket in one message — no intermediate question, no typing required", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.8 });
+    const fetchImpl = stubFetch();
+    await withFetch(fetchImpl, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    // calls[0] is the "Building your picks..." loading indicator; calls[1] is the real ticket — nothing else.
+    assert.equal(fetchImpl.calls.length, 2, "exactly loading + ticket, no question in between");
+    assert.match(lastSend(fetchImpl).body.text, /💎 PRO PICKS/);
+  });
+
+  it("Pro Picks holds to a stricter confidence floor than Bet of the Day — a pick that clears Bet of the Day's floor but not Pro's is honestly rejected", async () => {
     const db = realDb();
     const theEnv = adminEnv(db);
     seeded(db);
@@ -594,33 +610,73 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     // even Custom Picks' own strictest free tier ("safe", 0.65) — but NOT
     // the pro floor (0.72, MIN_PROBABILITY.pro in custom_picks.ts).
     seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.68 });
-    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
     const proFetch = stubFetch();
-    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(2, "c7", "7", "1 picks")));
-    assert.doesNotMatch(lastSend(proFetch).body.text, /🔥/, "0.68 confidence must not clear the pro floor");
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    assert.doesNotMatch(lastSend(proFetch).body.text, /💎 PRO PICKS/, "0.68 confidence must not clear the pro floor");
 
     // The exact same candidate DOES build a ticket for a free session.
     const freeEnv = adminEnv(db);
-    await withFetch(stubFetch(), () => handleUpdate(freeEnv, textMessage(3, "c2", "2", "/start custom_picks")));
+    await withFetch(stubFetch(), () => handleUpdate(freeEnv, textMessage(2, "c2", "2", "/start custom_picks")));
     const freeFetch = stubFetch();
-    await withFetch(freeFetch, () => handleUpdate(freeEnv, textMessage(4, "c2", "2", "1 picks")));
+    await withFetch(freeFetch, () => handleUpdate(freeEnv, textMessage(3, "c2", "2", "1 picks")));
     assert.match(lastSend(freeFetch).body.text, /🔥/, "the SAME candidate must still be usable by a free session");
   });
 
-  it("a pro-floor candidate (0.75) builds a real ticket, with no stake/Kelly line (removed — not needed yet)", async () => {
+  it("a pro-floor candidate (0.75) publishes a real ticket with a per-pick reason line, no stake/Kelly line (removed — not needed)", async () => {
     const db = realDb();
     const theEnv = adminEnv(db);
     seeded(db);
-    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75 });
-    await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.8, bookmaker_count: 6, edge_ev: 0.04 });
     const proFetch = stubFetch();
-    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(2, "c7", "7", "1 picks")));
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
     const text = lastSend(proFetch).body.text;
-    assert.match(text, /🔥/);
+    assert.match(text, /💎 PRO PICKS/);
+    assert.match(text, /📊.*confidence/, "each pick must carry a data-backed reason line");
+    assert.match(text, /6 books lined up/);
+    assert.match(text, /\+4\.0% edge/);
     assert.doesNotMatch(text, /Suggested stake|Kelly|bankroll/i);
+
+    // A free-tier ticket never gets the pro header or the reason line.
+    const freeEnv = adminEnv(db);
+    await withFetch(stubFetch(), () => handleUpdate(freeEnv, textMessage(2, "c2", "2", "/start custom_picks")));
+    const freeFetch = stubFetch();
+    await withFetch(freeFetch, () => handleUpdate(freeEnv, textMessage(3, "c2", "2", "1 picks")));
+    const freeText = lastSend(freeFetch).body.text;
+    assert.doesNotMatch(freeText, /💎 PRO PICKS|📊/);
   });
 
-  it("Pro Picks accepts more legs than the free tier's cap, free tier is unaffected", async () => {
+  it("when real head-to-head/form data is stored (ESPNProvider.team_insight), the reason line uses it INSTEAD of the generic agreement fallback", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    seedCandidate(db._sql, day, generatedAt, {
+      canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.8, bookmaker_count: 6, edge_ev: 0.04,
+      home_form: ["W", "W", "L", "W", "W"], away_form: ["L", "L", "W", "L", "L"], h2h: ["W", "W", "W"],
+    });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const text = lastSend(proFetch).body.text;
+    assert.match(text, /H2H \(Arsenal\): 3W-0L last 3/);
+    assert.match(text, /Arsenal form: 4W-1L/);
+    assert.match(text, /Chelsea form: 1W-4L/);
+    // Real stats/H2H present -> the generic model-confidence fallback must NOT also appear.
+    assert.doesNotMatch(text, /Model confidence:/);
+  });
+
+  it("an unidentifiable fixture (no ESPN match) falls back to the agreement-based reason — never a fabricated stat/H2H line", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    // No home_form/away_form/h2h stored at all (the honest ESPN-can't-identify-this case).
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.8, bookmaker_count: 6, edge_ev: 0.04 });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const text = lastSend(proFetch).body.text;
+    assert.doesNotMatch(text, /H2H|form:/);
+    assert.match(text, /Model confidence: 80%/);
+  });
+
+  it("Pro Picks accepts more legs than the free tier's cap via a follow-up refinement; free tier is unaffected", async () => {
     const db = realDb();
     const theEnv = adminEnv(db);
     seeded(db);
@@ -629,11 +685,22 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
         canonical_event_id: `fx-${i}`, home: `Home ${i}`, away: `Away ${i}`, price: 1.4, p_model: 0.8,
       });
     }
+    // The initial /propicks publishes a default-size ticket; a follow-up
+    // free-text message can still refine it (optional continuity, never
+    // required for the first response).
     await withFetch(stubFetch(), () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
     // 9 legs is over the free MAX_LEGS (8) but under MAX_LEGS_PRO (12).
-    const proFetch = stubFetch();
-    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(2, "c7", "7", "9 picks")));
-    assert.match(lastSend(proFetch).body.text, /🔥/, "a pro session must be able to build a 9-leg ticket");
+    // Past the cooldown from the initial /propicks publish, like a real follow-up moments later.
+    const realNow = Date.now;
+    Date.now = () => realNow() + 5000;
+    let proFetch;
+    try {
+      proFetch = stubFetch();
+      await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(2, "c7", "7", "9 picks")));
+    } finally {
+      Date.now = realNow;
+    }
+    assert.match(lastSend(proFetch).body.text, /💎 PRO PICKS/, "a pro session must be able to build a 9-leg ticket");
 
     const freeFetch = stubFetch();
     await withFetch(freeFetch, () => handleUpdate(theEnv, textMessage(3, "c2", "2", "/start custom_picks")));

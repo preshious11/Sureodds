@@ -101,13 +101,15 @@ class ESPNProvider(BaseProvider):
         self.http = Http(BASE_URL, headers={"User-Agent": requests.utils.default_user_agent()},
                          rate=RateLimiter(min_interval), retries=0)
         self._days: Dict[Tuple[str, str, str], List[Dict]] = {}
+        self._schedules: Dict[Tuple[str, str, int], List[Dict]] = {}
 
     def enabled(self) -> bool:
         return True
 
     def begin_run(self) -> None:
-        """Forget cached scoreboards: results change between settlement runs."""
+        """Forget cached scoreboards/schedules: results change between runs."""
         self._days = {}
+        self._schedules = {}
 
     def fetch_events(self, start: datetime, end: datetime) -> List[Event]:
         return []                                   # results-only
@@ -140,6 +142,139 @@ class ESPNProvider(BaseProvider):
             if found is not None:
                 return found
         return None
+
+    # ---------------------------------------------------------------- recent form / head-to-head
+    def team_insight(self, sport: str, home: str, away: str, start: datetime,
+                     league_id: str = "", league: str = "") -> Optional[Dict]:
+        """Real recent form (last 5 completed games, either side) and real
+        head-to-head (last 5 completed meetings between these exact two
+        teams), built ONLY from ESPN's own schedule data for teams it can
+        positively identify. Returns None - never a guess, never a
+        fabricated line - when the competition, either team, or any
+        meaningful history can't be resolved. Tennis is excluded: ESPN has
+        no per-player "team" schedule to walk (see _candidates' tennis
+        special-case above), and `espn.py` already treats tennis legs as
+        player names, not teams.
+
+        Reuses exactly the matching this provider's settlement path already
+        trusts (`lookup`, `_scoreboard`, `_matches`/`same_team`) - no new
+        provider, no new API, just a second use of the same free endpoint.
+        """
+        if sport == "tennis":
+            return None
+        comp = lookup(league_id, league)
+        if comp is None or not comp.espn or (sport and comp.sport != sport) or comp.sport == "tennis":
+            return None
+        utc_day = start.astimezone(timezone.utc)
+        home_id = away_id = None
+        for day in (utc_day, utc_day - timedelta(days=1), utc_day + timedelta(days=1)):
+            try:
+                events = self._scoreboard(comp, day)
+            except ProviderError:
+                continue
+            for c in self._candidates(comp, events):
+                pair = _by_side(c.get("competitors") or [])
+                if pair is None:
+                    continue
+                h, a = pair
+                if _matches(home, h) and _matches(away, a):
+                    home_id, away_id = h.get("team", {}).get("id"), a.get("team", {}).get("id")
+                elif _matches(home, a) and _matches(away, h):
+                    home_id, away_id = a.get("team", {}).get("id"), h.get("team", {}).get("id")
+                if home_id and away_id:
+                    break
+            if home_id and away_id:
+                break
+        if not home_id or not away_id:
+            return None
+        home_games = self._team_schedule(comp, home_id, start)
+        if not home_games:
+            return None
+        home_form = self._recent_results(home_games, home_id, start)
+        h2h = self._recent_meetings(home_games, home_id, away_id, start)
+        away_games = self._team_schedule(comp, away_id, start)
+        away_form = self._recent_results(away_games, away_id, start) if away_games else []
+        if not home_form and not away_form and not h2h:
+            return None
+        return {"home_form": home_form, "away_form": away_form, "h2h": h2h}
+
+    def _team_schedule(self, comp: Competition, team_id: str, start: datetime) -> List[Dict]:
+        """A team's schedule, spanning the CURRENT season and - only if that
+        alone has fewer than 5 completed games strictly before `start` -
+        the prior season too (cross-conference/cup pairings can need more
+        than one season to find 5 real meetings). Cached per (league, team,
+        season) for the run, same discipline as `_scoreboard`."""
+        season = start.year if start.month >= 7 else start.year - 1    # ESPN's "season" label (e.g. NBA 2025-26 -> 2026)
+        games = self._schedule_season(comp, team_id, season + 1)
+        completed = [g for g in games if self._before(g, start)]
+        if len(completed) < 5:
+            games = self._schedule_season(comp, team_id, season) + games
+        return games
+
+    def _schedule_season(self, comp: Competition, team_id: str, season: int) -> List[Dict]:
+        key = (comp.espn, team_id, season)
+        if key not in self._schedules:
+            try:
+                data = self.http.get(f"/{comp.espn}/teams/{team_id}/schedule", {"season": season})
+            except ProviderError as e:
+                log.warning("ESPN schedule lookup failed (%s team %s season %s): %s", comp.espn, team_id, season, e)
+                self._schedules[key] = []
+            else:
+                events = data.get("events", []) if isinstance(data, dict) else []
+                self._schedules[key] = [e for e in events if isinstance(e, dict)]
+        return self._schedules[key]
+
+    @staticmethod
+    def _before(game: Dict, start: datetime) -> bool:
+        when = parse_iso(str(game.get("date") or ""))
+        comp0 = (game.get("competitions") or [{}])[0]
+        status = str(((comp0.get("status") or game.get("status") or {}).get("type") or {}).get("name", "")).upper()
+        return when is not None and when < start and (status in FINAL or status in BEYOND_REGULATION)
+
+    @staticmethod
+    def _result_for(game: Dict, team_id: str) -> Optional[str]:
+        comp0 = (game.get("competitions") or [{}])[0]
+        for c in comp0.get("competitors") or []:
+            if str(c.get("id") or c.get("team", {}).get("id")) == str(team_id):
+                if c.get("winner") is True:
+                    return "W"
+                if c.get("winner") is False:
+                    return "L"
+                return None
+        return None
+
+    def _recent_results(self, games: List[Dict], team_id: str, start: datetime, limit: int = 5) -> List[str]:
+        completed = [g for g in games if self._before(g, start)]
+        completed.sort(key=lambda g: parse_iso(str(g.get("date") or "")) or start, reverse=True)
+        out = []
+        for g in completed:
+            r = self._result_for(g, team_id)
+            if r:
+                out.append(r)
+            if len(out) >= limit:
+                break
+        return out
+
+    def _recent_meetings(self, home_games: List[Dict], home_id: str, away_id: str,
+                         start: datetime, limit: int = 5) -> List[str]:
+        """Last `limit` completed meetings between these two teams specifically,
+        from the HOME team's own schedule (any game the away team also appears
+        in), newest first - e.g. ["W", "W", "L", "W", "W"] from the home
+        team's perspective."""
+        completed = [g for g in home_games if self._before(g, start)]
+        meetings = []
+        for g in completed:
+            comp0 = (g.get("competitions") or [{}])[0]
+            ids = {str(c.get("id") or c.get("team", {}).get("id")) for c in comp0.get("competitors") or []}
+            if str(away_id) in ids:
+                meetings.append(g)
+        meetings.sort(key=lambda g: parse_iso(str(g.get("date") or "")) or start, reverse=True)
+        out = []
+        for g in meetings[:limit]:
+            r = self._result_for(g, home_id)
+            if r:
+                out.append(r)
+        return out
 
     # ---------------------------------------------------------------- matching
     @staticmethod

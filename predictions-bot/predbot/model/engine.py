@@ -30,12 +30,19 @@ class Generation:
     ticket_predictions: list = field(default_factory=list)
 
 
-def representative_predictions(scored, results_gate=None):
+def representative_predictions(scored, results_gate=None, insight_fetcher=None):
     """Validate mathematical predictions and keep ONE eligible representative per fixture x market family.
 
     Value is recorded, never used as an existence gate or to choose a representative. A fixture may carry several
     predictions (at most one per family: 1X2 / Moneyline, Double Chance, Draw No Bet, Handicap, Over/Under, BTTS); which
-    line and side represent a family is decided by ``selection.representatives`` from the markets' own structure."""
+    line and side represent a family is decided by ``selection.representatives`` from the markets' own structure.
+
+    ``insight_fetcher`` (optional): ``event -> dict | None``, e.g.
+    ``ESPNProvider.team_insight`` - called AT MOST ONCE per fixture (cached
+    here by canonical_event_id, never per market line) regardless of how
+    many candidates that fixture produces. Any exception is swallowed and
+    treated as "no insight available" - enrichment data must never be able
+    to break generation itself."""
     groups, rejected, by_market, per_event = {}, Counter(), {}, {}
     for s in scored:
         m = s.line
@@ -60,7 +67,20 @@ def representative_predictions(scored, results_gate=None):
             per_event.setdefault(key, Counter())[reason] += 1
             continue
         groups.setdefault(key, []).append(s)
-    candidates = [capture_candidate(s) for values in groups.values() for s in values]
+    insight_cache = {}
+
+    def event_insight(event):
+        if insight_fetcher is None:
+            return None
+        key = event.canonical_event_id
+        if key not in insight_cache:
+            try:
+                insight_cache[key] = insight_fetcher(event)
+            except Exception:
+                insight_cache[key] = None
+        return insight_cache[key]
+
+    candidates = [capture_candidate(s, event_insight(s.event)) for values in groups.values() for s in values]
     chosen = select_representatives(groups)
     # An event-level rejection: the event produced market lines but no representative. Its reason is the most common
     # line-level reason (ties by name) when no line was valid, else "no_representative", so event counts stay separate
@@ -84,7 +104,7 @@ def representative_predictions(scored, results_gate=None):
         "markets_evaluated": len(scored)}, candidates=candidates, ticket_predictions=[s for values in groups.values() for s in values])
 
 
-def generate(events, db, settings: ModelSettings, results_gate=None, scorer=None):
+def generate(events, db, settings: ModelSettings, results_gate=None, scorer=None, insight_fetcher=None):
     elo, calibrator = Elo(db), Calibrator(db, scope="settlement_v2")
     scored, failures, sufficient = [], Counter(), 0
     for event in events:
@@ -104,7 +124,7 @@ def generate(events, db, settings: ModelSettings, results_gate=None, scorer=None
             continue
         sufficient += 1
         scored.extend(values)
-    result = representative_predictions(scored, results_gate)
+    result = representative_predictions(scored, results_gate, insight_fetcher)
     for reason, n in result.diagnostics["event_no_valid_market"].items():
         failures[reason] += n
     result.diagnostics.update(sufficient_analytical_data=sufficient, analyzed=sufficient,

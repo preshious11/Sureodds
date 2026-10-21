@@ -837,18 +837,25 @@ function customPicksDeps(env: Env) {
   };
 }
 
-const PRO_PICKS_INTRO =
-  "💎 <b>Pro Picks</b> (admin preview)\n\nSame engine as Custom Picks, with a higher leg cap and a stricter confidence floor than Bet of the Day itself — every pick here clears a higher bar than what goes out publicly.";
-
-/** Admin-only Pro Picks entry point (see migrations/0013_pro_picks.sql —
+/**
+ * Admin-only Pro Picks entry point (see migrations/0013_pro_picks.sql —
  * `mode` on the session row is how respond()/processCustomPicksText later
- * know this is a Pro session, not a free one: a higher leg cap (MAX_LEGS_PRO)
- * and the "pro" confidence floor, see custom_picks.ts MIN_PROBABILITY). No
- * paywall: gated entirely by the isAdmin() check at the call site, for
- * internal testing before any public rollout. */
+ * know this is a Pro session, not a free one: a higher leg cap
+ * (MAX_LEGS_PRO), the "pro" confidence floor stricter than Bet of the Day's
+ * own, and a reason line per pick — see custom_picks.ts MIN_PROBABILITY and
+ * formatTicket). No paywall: gated entirely by the isAdmin() check at the
+ * call site, for internal testing before any public rollout.
+ *
+ * Unlike Custom Picks, this is NOT a conversation — it never asks "what
+ * would you like?". Entering publishes a ready ticket immediately, exactly
+ * like Bet of the Day on demand, just held to a stricter bar. A session is
+ * still opened (mode "pro") purely so a follow-up free-text message (e.g.
+ * "basketball only") can refine THIS ticket afterward, the same way Custom
+ * Picks supports refinement — but that is optional, never required.
+ */
 async function enterProPicks(env: Env, userId: string, chatId: string): Promise<void> {
   await enterCustomSession(env.DB, userId, chatId, "pro");
-  await tgApi(env, "sendMessage", { chat_id: chatId, text: `${PRO_PICKS_INTRO}\n\nWhat would you like?`, parse_mode: "HTML" });
+  await processCustomPicksText(env, userId, chatId, "picks");
 }
 
 /** Plain D1 read of today's candidate pool, for keyboard-building only (never

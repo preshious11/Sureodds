@@ -203,6 +203,12 @@ function finite(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** A stored "W"/"L" list (recent-form or head-to-head), never trusted blindly
+ * — anything not an array of exactly those two strings becomes []. */
+function wlArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => v === "W" || v === "L") : [];
+}
+
 const RESULT2_LABELS = (home: string, away: string): Record<string, string> => ({
   home: `${home} to Win`, away: `${away} to Win`,
 });
@@ -339,6 +345,13 @@ export interface Candidate {
    * real fixture even if fixture-id strings drift, and conflicting rows for
    * one id are dropped before search. */
   fixtureIdentity: string;
+  /** Real recent-form/head-to-head, newest-first ("W"/"L" per game), from
+   * ESPN's own schedule data (predbot/providers/espn.py team_insight()) -
+   * empty when ESPN couldn't positively identify this fixture/the history
+   * doesn't exist. NEVER fabricated; see pickReason(). */
+  homeForm: string[];
+  awayForm: string[];
+  h2h: string[];
 }
 
 /** ~ predbot/markets/catalog.py STAT_NAMES / PERIOD_NAMES / SPORT_POINTS_WORD. */
@@ -546,6 +559,9 @@ export function normalizeCandidateWithReason(
     books: Math.max(0, Math.min(10, finite(payload.bookmaker_count) ?? 0)),
     referenceEv: Math.max(-0.1, Math.min(0.1, finite(payload.edge_ev) ?? -0.1)),
     line, period, stat, entity, fixtureIdentity,
+    homeForm: wlArray(payload.home_form),
+    awayForm: wlArray(payload.away_form),
+    h2h: wlArray(payload.h2h),
   };
   return { candidate, reason: "accepted" };
 }
@@ -1244,16 +1260,48 @@ export function marketComplete(ticket: Ticket): boolean {
 }
 
 /** ~ custom_picks.py format_ticket(). */
-export function formatTicket(ticket: Ticket): string {
-  const blocks = [`🔥 ${combinedOdds(ticket.picks.map((p) => p.price)).toFixed(2)} ODDS`];
+/** A one-line rationale for a pro pick, built ONLY from data already stored
+ * on the candidate (agreement/books/edge — see normalizeCandidate) - never
+ * a fabricated explanation. Omits a clause entirely when its number isn't
+ * meaningfully above baseline, rather than always padding out three clauses
+ * regardless of whether they say anything. */
+/** "3W-2L" from a newest-first W/L list. */
+function wlRecord(results: string[]): string {
+  const wins = results.filter((r) => r === "W").length;
+  return `${wins}W-${results.length - wins}L`;
+}
+
+/** Real stats/H2H when ESPN could identify this fixture (see
+ * ESPNProvider.team_insight — ".homeForm"/".awayForm"/".h2h" on Candidate),
+ * falling back to the always-present model-confidence signals when it
+ * couldn't. Never fabricates a stats/H2H line it doesn't actually have. */
+function pickReason(c: Candidate): string {
+  const parts: string[] = [];
+  if (c.h2h.length) parts.push(`H2H (${c.home}): ${wlRecord(c.h2h)} last ${c.h2h.length}`);
+  if (c.homeForm.length) parts.push(`${c.home} form: ${wlRecord(c.homeForm)}`);
+  if (c.awayForm.length) parts.push(`${c.away} form: ${wlRecord(c.awayForm)}`);
+  if (parts.length) return parts.join(" · ");
+  const fallback: string[] = [`Model confidence: ${Math.round(c.agreement * 100)}%`];
+  if (c.books >= 3) fallback.push(`${Math.round(c.books)} books lined up`);
+  if (c.referenceEv > 0.01) fallback.push(`+${(c.referenceEv * 100).toFixed(1)}% edge`);
+  return fallback.join(" · ");
+}
+
+/** ~ custom_picks.py format_ticket(). `pro`, when true (Pro Picks only —
+ * see RespondOptions), labels the header distinctly from a regular Custom
+ * Picks ticket and appends a one-line "why" under each pick. */
+export function formatTicket(ticket: Ticket, opts: { pro?: boolean } = {}): string {
+  const header = opts.pro ? "💎 PRO PICKS" : "🔥";
+  const blocks = [`${header} ${combinedOdds(ticket.picks.map((p) => p.price)).toFixed(2)} ODDS`];
   const sorted = [...ticket.picks].sort((a, b) => a.startMs - b.startMs);
   for (const pick of sorted) {
     const icon = SPORT_ICON[pick.sport] ?? SPORT_ICON.other;
     const league = pick.competitionLabel ? `${escHtml(pick.competitionLabel)}\n` : "";
+    const reason = opts.pro ? `\n📊 ${escHtml(pickReason(pick))}` : "";
     blocks.push(
       `${icon} ${escHtml(pick.home)} vs ${escHtml(pick.away)}\n` +
         `${league}${escHtml(pick.outcome)}\n` +
-        `Odds: ${pick.price.toFixed(2)} · Confidence: ${Math.round(pick.probability * 100)}%`,
+        `Odds: ${pick.price.toFixed(2)} · Confidence: ${Math.round(pick.probability * 100)}%${reason}`,
     );
   }
   blocks.push("Bet only what you can afford to lose.");
@@ -1612,7 +1660,7 @@ export async function respond(
     }
   }
 
-  return searchWithRequest(deps, request, text, zone, day, nowMs, userId);
+  return searchWithRequest(deps, request, text, zone, day, nowMs, userId, options.preference === "pro");
 }
 
 /**
@@ -1641,6 +1689,7 @@ export async function searchWithRequest(
   day: string,
   nowMs: number,
   userId = "",
+  pro = false,
 ): Promise<{ result: RespondResult; request: ParsedRequest | null }> {
   const loaded = await loadPool(deps, day, zone, nowMs);
   if (loaded === null) return { result: { text: UNAVAILABLE, reason: "archive_unavailable", suggestions: [] }, request };
@@ -1676,7 +1725,7 @@ export async function searchWithRequest(
     matchFixtures: new Set(matches.map((c) => c.fixtureId)).size,
   }));
   if (validTicket(ticket, request, nowMs)) {
-    return { result: { text: formatTicket(ticket!), reason: "success", suggestions: [] }, request };
+    return { result: { text: formatTicket(ticket!, { pro }), reason: "success", suggestions: [] }, request };
   }
   const reason = failureReason(pool, request, nowMs, matches);
   const suggestions = prepareAlternatives(pool, request, reason, nowMs);
