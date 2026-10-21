@@ -919,6 +919,27 @@ describe("natural-language line/count disambiguation (2026-10-20 screenshot)", (
     assert.ok(ucl.competitions.has("ucl"));
     assert.deepEqual(ucl.totalLine, { selection: "over", line: 1.5 });
   });
+  it('"GG" and "NG" (common BTTS slang) restrict the request to the btts market, never left unconstrained', () => {
+    // Before this fix, "gg"/"ng" matched no known word at all: a request
+    // like "GG picks" still passed the generic "is this a real request?"
+    // check (via "picks") but with allowedMarkets left EMPTY, so the search
+    // silently mixed in whatever market it liked (e.g. a 2.5 total) instead
+    // of restricting to BTTS as the user actually asked.
+    for (const text of ["GG", "gg picks", "give me some GG options", "3 GG picks"]) {
+      const parsed = parseRequest(text);
+      assert.equal(parsed.ok, true, text);
+      assert.deepEqual([...parsed.request.allowedMarkets], ["btts"], text);
+    }
+    for (const text of ["NG", "ng picks"]) {
+      const parsed = parseRequest(text);
+      assert.equal(parsed.ok, true, text);
+      assert.deepEqual([...parsed.request.allowedMarkets], ["btts"], text);
+    }
+    // Never a false positive on an unrelated word that merely CONTAINS "ng" —
+    // \b word-boundary matching, not a bare substring search.
+    const unrelated = parseRequest("going to watch the game tonight");
+    assert.ok(!unrelated.ok || !unrelated.request.allowedMarkets.has("btts"));
+  });
   it('an exact line nothing today offers is "line_unavailable", distinct from a generic confidence-floor miss', () => {
     const pool = [candidate({ market: "total", selection: "over", line: 2.5, entity: "all" })];
     const req = parseRequest("over 1.5 options").request;

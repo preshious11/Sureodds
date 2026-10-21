@@ -143,6 +143,11 @@ const MARKET_ALIASES: Record<string, string> = {
   "double chance": "dc", "draw no bet": "dnb", moneyline: "result2", "money line": "result2", ml: "result2",
   totals: "total", "over under": "total", "over/under": "total", "both teams to score": "btts",
   handicaps: "handicap", spread: "handicap", spreads: "handicap", "1x2": "result3", "match result": "result3",
+  // Common betting-slang shorthand for BTTS: "GG" (Goal-Goal, both teams
+  // score) / "NG" (No Goal, at least one team doesn't) - both name the SAME
+  // market, just opposite sides of it, same as "btts" itself names the
+  // market without picking yes/no.
+  gg: "btts", ng: "btts",
 };
 
 // Ordinary request nouns: a number next to any of these is a pick count or

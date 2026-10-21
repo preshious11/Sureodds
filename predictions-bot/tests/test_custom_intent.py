@@ -159,6 +159,24 @@ def test_btts_picks_and_ucl_over_1_5_unaffected_by_the_fix():
     assert (ucl.market_selection, ucl.market_line) == ('over', 1.5)
 
 
+def test_gg_and_ng_betting_slang_restrict_to_btts_instead_of_being_silently_dropped():
+    # Before this fix, "gg"/"ng" matched no known word: a request like "GG
+    # picks" still passed the generic "is this a real request?" check (via
+    # "picks") but with allowed_markets left EMPTY, so the search silently
+    # mixed in whatever market it liked instead of restricting to BTTS.
+    # ("3 GG picks" is left out here: a number sitting next to an unclaimed
+    # word already raises "is that your odds target or pick count?" in this
+    # parser, a separate pre-existing adjacency quirk unrelated to this fix.)
+    for text in ('GG', 'gg picks', 'give me some GG options'):
+        assert cp.parse_request(text).allowed_markets == {'btts'}, text
+    for text in ('NG', 'ng picks'):
+        assert cp.parse_request(text).allowed_markets == {'btts'}, text
+    # Word-boundary matching, never a false positive on a word that merely
+    # CONTAINS "ng" (e.g. "going").
+    unrelated = cp.parse_request('going to watch the game tonight')
+    assert 'btts' not in unrelated.allowed_markets
+
+
 def test_ambiguous_line_asks_over_or_under_unless_previous_context_resolves_it(db):
     custom = cp.CustomPicks(db, Mock(timezone=ZONE, allowed_sports=['football']))
     first = custom.reply('1.5 options', '42', NOW)

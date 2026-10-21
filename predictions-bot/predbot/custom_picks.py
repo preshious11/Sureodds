@@ -118,7 +118,11 @@ MARKET_ALIASES = {**{key: key for key, spec in CATALOG.items() if spec.modelable
                   'totals': 'total', 'total': 'total', 'over under': 'total',
                   'over/under': 'total', 'over-under': 'total', 'btts': 'btts',
                   'both teams to score': 'btts', 'handicap': 'handicap', 'handicaps': 'handicap',
-                  'spread': 'handicap', 'spreads': 'handicap', '1x2': 'result3', 'match result': 'result3'}
+                  'spread': 'handicap', 'spreads': 'handicap', '1x2': 'result3', 'match result': 'result3',
+                  # Betting-slang shorthand for BTTS: "GG" (Goal-Goal, both
+                  # teams score) / "NG" (No Goal) - both name the market,
+                  # just opposite sides of it, same as plain 'btts' does.
+                  'gg': 'btts', 'ng': 'btts'}
 
 
 class RequestError(ValueError):
