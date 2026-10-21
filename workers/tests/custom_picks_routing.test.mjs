@@ -4,6 +4,7 @@ import { beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { handleUpdate } from "../src/index.ts";
 import { __resetPoolCacheForTests } from "../src/custom_picks.ts";
+import { postProPicksToAdmin } from "../src/cron.ts";
 
 // Bug 13's per-isolate pool/candidates cache is keyed by (day, timezone,
 // generated_at) - many tests here deliberately reuse the same fixture
@@ -707,6 +708,70 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     const freeAskFetch = stubFetch();
     await withFetch(freeAskFetch, () => handleUpdate(theEnv, textMessage(4, "c2", "2", "9 picks")));
     assert.match(lastSend(freeAskFetch).body.text, /I can offer 1–8/, "the free tier's cap must be completely unaffected");
+  });
+
+  it("Pro Picks shows each pick's kickoff time (Africa/Lagos), free-tier tickets do not", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.8, start_utc: "2026-10-14T19:00:00Z" });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    assert.match(lastSend(proFetch).body.text, /🕒 20:00/, "19:00 UTC is 20:00 Africa/Lagos (UTC+1)");
+
+    const freeEnv = adminEnv(db);
+    await withFetch(stubFetch(), () => handleUpdate(freeEnv, textMessage(2, "c2", "2", "/start custom_picks")));
+    const freeFetch = stubFetch();
+    await withFetch(freeFetch, () => handleUpdate(freeEnv, textMessage(3, "c2", "2", "1 picks")));
+    assert.doesNotMatch(lastSend(freeFetch).body.text, /🕒/, "free-tier tickets never show a kickoff time");
+  });
+
+  describe("auto-send: the admin gets Pro Picks without ever triggering /propicks", () => {
+    function cacheReady(sql, { status = "COMPLETE" } = {}) {
+      sql.exec(
+        `INSERT INTO prediction_cache(cache_key, local_date, timezone, status, payload_json, generated_at, updated_at, expires_at)
+         VALUES('k','${day}','Africa/Lagos','${status}','{}','${generatedAt}','${generatedAt}','2026-10-15T00:00:00Z')`,
+      );
+    }
+
+    it("as soon as the day's cache is COMPLETE, the admin is sent a ticket with no command/tap involved", async () => {
+      const db = realDb();
+      const theEnv = adminEnv(db);
+      seeded(db);
+      cacheReady(db._sql);
+      seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.8 });
+      const fetchImpl = stubFetch();
+      const outcome = await withFetch(fetchImpl, () => postProPicksToAdmin({ ...theEnv, DB: db }, Date.now()));
+      assert.equal(outcome, "sent");
+      assert.equal(fetchImpl.calls.length, 1);
+      assert.match(fetchImpl.calls[0].body.text, /💎 PRO PICKS/);
+      assert.equal(fetchImpl.calls[0].body.chat_id, "7", "goes straight to the admin's own chat, nothing public");
+    });
+
+    it("never fires twice for the same day — second call is a safe no-op", async () => {
+      const db = realDb();
+      const theEnv = adminEnv(db);
+      seeded(db);
+      cacheReady(db._sql);
+      seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.8 });
+      await withFetch(stubFetch(), () => postProPicksToAdmin({ ...theEnv, DB: db }, Date.now()));
+      const fetchImpl = stubFetch();
+      const outcome = await withFetch(fetchImpl, () => postProPicksToAdmin({ ...theEnv, DB: db }, Date.now()));
+      assert.equal(outcome, "skipped");
+      assert.equal(fetchImpl.calls.length, 0);
+    });
+
+    it("never fabricates: without a COMPLETE cache yet, it waits and sends nothing", async () => {
+      const db = realDb();
+      const theEnv = adminEnv(db);
+      seeded(db);
+      seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.8 });
+      // No prediction_cache row at all — generation hasn't landed.
+      const fetchImpl = stubFetch();
+      const outcome = await withFetch(fetchImpl, () => postProPicksToAdmin({ ...theEnv, DB: db }, Date.now()));
+      assert.equal(outcome, "waiting");
+      assert.equal(fetchImpl.calls.length, 0);
+    });
   });
 });
 

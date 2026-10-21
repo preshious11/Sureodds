@@ -67,6 +67,14 @@ function world() {
       attempts INTEGER NOT NULL DEFAULT 0, last_run_at TEXT, last_result TEXT,
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')));
     CREATE TABLE prediction_cache(cache_key TEXT PRIMARY KEY, local_date TEXT, timezone TEXT, status TEXT, payload_json TEXT);
+    -- Empty in every test here (none seed a Pro Picks pool/candidates):
+    -- present only so postProPicksToAdmin's getCustomPickPool query finds a
+    -- real table and returns "no pool yet" instead of a missing-table error.
+    CREATE TABLE custom_pick_pools(prediction_date TEXT, timezone TEXT, generated_at TEXT, status TEXT, diagnostics_json TEXT,
+      PRIMARY KEY(timezone, prediction_date));
+    CREATE TABLE custom_pick_candidates(prediction_date TEXT, timezone TEXT, candidate_id TEXT, canonical_event_id TEXT,
+      payload_json TEXT, first_seen_at TEXT, generated_at TEXT, schema_version INTEGER,
+      PRIMARY KEY(timezone, prediction_date, candidate_id));
   `);
   let nextId = 1;
   return {

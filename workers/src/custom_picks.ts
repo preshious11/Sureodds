@@ -1290,6 +1290,16 @@ function pickReason(c: Candidate): string {
 /** ~ custom_picks.py format_ticket(). `pro`, when true (Pro Picks only —
  * see RespondOptions), labels the header distinctly from a regular Custom
  * Picks ticket and appends a one-line "why" under each pick. */
+/** "HH:MM" in Africa/Lagos (UTC+1, no DST — same fixed offset `eligible()`
+ * already uses for "tonight"). Kickoff time shown only on Pro Picks: the
+ * free-tier ticket format is unchanged. */
+function lagosTimeLabel(startMs: number): string {
+  const local = new Date(startMs + 60 * 60_000);
+  const hh = String(local.getUTCHours()).padStart(2, "0");
+  const mm = String(local.getUTCMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
 export function formatTicket(ticket: Ticket, opts: { pro?: boolean } = {}): string {
   const header = opts.pro ? "💎 PRO PICKS" : "🔥";
   const blocks = [`${header} ${combinedOdds(ticket.picks.map((p) => p.price)).toFixed(2)} ODDS`];
@@ -1298,10 +1308,11 @@ export function formatTicket(ticket: Ticket, opts: { pro?: boolean } = {}): stri
     const icon = SPORT_ICON[pick.sport] ?? SPORT_ICON.other;
     const league = pick.competitionLabel ? `${escHtml(pick.competitionLabel)}\n` : "";
     const reason = opts.pro ? `\n📊 ${escHtml(pickReason(pick))}` : "";
+    const kickoff = opts.pro ? ` · 🕒 ${lagosTimeLabel(pick.startMs)}` : "";
     blocks.push(
       `${icon} ${escHtml(pick.home)} vs ${escHtml(pick.away)}\n` +
         `${league}${escHtml(pick.outcome)}\n` +
-        `Odds: ${pick.price.toFixed(2)} · Confidence: ${Math.round(pick.probability * 100)}%${reason}`,
+        `Odds: ${pick.price.toFixed(2)} · Confidence: ${Math.round(pick.probability * 100)}%${kickoff}${reason}`,
     );
   }
   blocks.push("Bet only what you can afford to lose.");

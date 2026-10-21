@@ -20,6 +20,8 @@ import {
   claimPost,
   confirmPosted,
   deliveriesDone,
+  getCustomPickCandidates,
+  getCustomPickPool,
   getDayCache,
   getFailedUpdates,
   getJobLastRunAt,
@@ -41,6 +43,7 @@ import { lagosDateString, renderGroupCard, renderGroupRecap, renderRecapStats, r
 import { shiftDate, splitMessage } from "./format.ts";
 import { allButtonModeFor, topEmptyKeyboard, menuKeyboard, isAdmin } from "./telegram.ts";
 import { ticketPhoto, type TicketPhoto } from './ticket_image.ts';
+import { respond as customPicksRespond, parseEnabledSports, MAX_LEGS_PRO } from "./custom_picks.ts";
 
 export const BROADCAST_PER_SECOND = 25;
 
@@ -369,6 +372,63 @@ export async function postGroupPicks(
   await confirmPosted(env.DB, kind, localDate, messageId != null ? String(messageId) : null);
   await setJobResult(env.DB, "post", `${kind} ${localDate}: posted message=${messageId ?? "?"}`);
   await postToOwner(env, kind, localDate, text, replyMarkup, sender, photo);
+  return "sent";
+}
+
+/**
+ * Auto-sends the admin's Pro Picks ticket privately as soon as the day's
+ * cache is COMPLETE — never gated by DELIVERY_TIME (09:30, see
+ * postGroupPicks above), so the admin always has it at or before the
+ * moment free users get Bet of the Day, with no `/propicks` tap required.
+ * Same readiness bar as the public post (a COMPLETE cache, never a partial
+ * one) and the same claim/confirm-post receipt dedupe, under its own
+ * "pro" kind so it can never collide with "top"/"daily"/"recap" rows.
+ */
+export async function postProPicksToAdmin(
+  env: Env,
+  nowMs = Date.now(),
+  sender: typeof sendTelegram = sendTelegram,
+): Promise<GroupPostOutcome> {
+  const owner = ownerChatId(env);
+  if (!owner) return "no-chat";
+  const localDate = lagosDateString(nowMs);
+  const timezone = env.TIMEZONE ?? "Africa/Lagos";
+  const cache = await getDayCache(env.DB, localDate, timezone);
+  if (!cache || cache.status !== "COMPLETE") {
+    return "waiting"; // Generation hasn't landed yet — never fabricate a ticket.
+  }
+  if (!(await claimPost(env.DB, "pro", localDate))) return "skipped";
+  const deps = {
+    getPool: (d: string, z: string) => getCustomPickPool(env.DB, d, z),
+    getCandidates: (d: string, z: string) => getCustomPickCandidates(env.DB, d, z),
+  };
+  const { result } = await customPicksRespond(
+    deps,
+    "picks",
+    timezone,
+    localDate,
+    nowMs,
+    null,
+    owner,
+    parseEnabledSports(env.ALLOWED_SPORTS),
+    { maxLegs: MAX_LEGS_PRO, preference: "pro" },
+  );
+  if (result.reason !== "success" || !result.text) {
+    // Not enough pro-floor picks yet (e.g. generation incomplete for this
+    // sport mix) — release the claim so the next sweep fire tries again,
+    // same as a transient send failure below, instead of silently never sending.
+    await releaseClaim(env.DB, "pro", localDate);
+    await setJobResult(env.DB, "post", `pro ${localDate}: no qualifying picks yet (${result.reason})`);
+    return "waiting";
+  }
+  const { ok, messageId } = await sendSplit(env, owner, result.text, undefined, sender);
+  if (!ok) {
+    await recordDeliveryFailure(env, "pro", `pro ${localDate}`);
+    await releaseClaim(env.DB, "pro", localDate);
+    return "failed";
+  }
+  await confirmPosted(env.DB, "pro", localDate, messageId != null ? String(messageId) : null);
+  await setJobResult(env.DB, "post", `pro ${localDate}: posted message=${messageId ?? "?"}`);
   return "sent";
 }
 
@@ -1038,6 +1098,10 @@ export async function handleScheduled(env: Env, cron: string, nowMs = Date.now()
     // Group-only (production model). Never calls sweepDeliveries here —
     // individual-subscriber broadcasting stays disabled, matching
     // production's SUBSCRIBER_DELIVERY_ENABLED=false.
+    // Admin's Pro Picks go out first — no DELIVERY_TIME gate, so this is
+    // always sent at or before the public posts below (see
+    // postProPicksToAdmin's own doc comment).
+    await postProPicksToAdmin(env, nowMs);
     await postGroupPicks(env, "top", nowMs);
     await postGroupPicks(env, "daily", nowMs);
     await sweepResultGifs(env, nowMs);
