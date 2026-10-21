@@ -80,3 +80,14 @@ generic ATP/WTA tour badge via the same longest-alias-match rule that
 resolves any other unlisted tournament. If a verified free-license Wimbledon
 mark is found later, add it to `SOURCES` in `build_tennis_catalog.py` and
 rerun with `--download`.
+
+**Masters 1000 / WTA 1000 events (Indian Wells, Miami, Madrid, Rome,
+Cincinnati, Shanghai, Canada, etc.) were checked (2026-10-21) and deliberately
+NOT added.** Wikimedia Commons search turned up nothing for most of them, and
+the two near-matches found both failed the same free-and-current bar used
+above: "Miami Open logo.png" is only CC BY-SA 3.0 from a single uploader with
+no independent provenance trail (unlike the long-established PD textlogos
+above), and "Shanghai Masters 2014 Logo.png" is a stale year-locked mark that
+would misdate a 2026+ ticket. These fixtures already get a crest via the
+generic ATP/WTA tour fallback - there is no missing-logo gap, just less
+specific branding for that subset of tournaments.

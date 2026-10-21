@@ -392,6 +392,27 @@ describe("Custom Picks: remaining clarification button flows", () => {
     assert.match(lastSend(tapFetch).body.text, /Arsenal vs Chelsea/);
   });
 
+  it("2c. unrecognized-league clarification offers only competitions actually on the board today", async () => {
+    const { db, theEnv } = seededEnv();
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", league: "Premier League" });
+    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-2", league: "La Liga", home: "Barca", away: "Real" });
+    // Serie A/Ligue 1/UCL/UEL/UECL are all recognizable league names but have
+    // ZERO candidates today — must never be offered as tappable options.
+    await start(theEnv);
+    const askFetch = stubFetch();
+    await withFetch(askFetch, () => handleUpdate(theEnv, textMessage(2, "c1", "u1", "Bundesliga league picks")));
+    const ask = lastSend(askFetch);
+    assert.match(ask.body.text, /don't recognize that league/);
+    const labels = ask.body.reply_markup.inline_keyboard.flat().map((b) => b.text);
+    assert.ok(labels.includes("Premier League"));
+    assert.ok(labels.includes("La Liga"));
+    assert.ok(!labels.includes("Serie A"),"a league with zero candidates today must never be offered");
+    assert.ok(labels.includes("🏷 Change sport"));
+
+    const tapFetch = await tap(theEnv,3,"c1","u1","cq|r|premier league");
+    assert.match(lastSend(tapFetch).body.text,/Arsenal vs Chelsea/);
+  });
+
   it("2b. 'Change sport' from the market keyboard re-renders the sport keyboard without running a new search", async () => {
     const { db, theEnv } = seededEnv();
     seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", sport: "football" });

@@ -122,6 +122,22 @@ const LEAGUES: Record<string, { id: string; sport: string }> = {
   "europa league": { id: "uel", sport: "football" }, uel: { id: "uel", sport: "football" },
   "conference league": { id: "uecl", sport: "football" }, uecl: { id: "uecl", sport: "football" },
 };
+
+/** League id -> a phrase LEAGUES itself recognizes, so a competition button's
+ * reply round-trips through parseRequest into the SAME competition (never a
+ * different one) - same discipline as MARKET_REPLY. Picks the FIRST key that
+ * maps to each id, in LEAGUES's own declaration order. */
+export const LEAGUE_REPLY: Record<string, string> = (() => {
+  const out: Record<string, string> = {};
+  for (const [phrase, { id }] of Object.entries(LEAGUES)) if (!(id in out)) out[id] = phrase;
+  return out;
+})();
+
+/** Display label for a competition button. */
+export const LEAGUE_LABEL: Record<string, string> = {
+  epl: "Premier League", la_liga: "La Liga", serie_a: "Serie A", ligue_1: "Ligue 1",
+  ucl: "Champions League", uel: "Europa League", uecl: "Conference League",
+};
 // Sports recognized by NAME but not currently offered, mapped to their
 // canonical display name for the "We do not cover X yet" response (sorted
 // longest-phrase-first so e.g. "ice hockey" is identified before the bare
@@ -888,6 +904,15 @@ export function availableSports(pool: Candidate[], req: ParsedRequest, nowMs: nu
 export function availableMarkets(pool: Candidate[], req: ParsedRequest, nowMs: number): string[] {
   const relaxed: ParsedRequest = { ...req, allowedMarkets: new Set(), excludedMarkets: new Set(), totalLine: null };
   return [...new Set(eligible(pool, relaxed, nowMs).map((c) => c.market))];
+}
+
+/** Competitions (LEAGUE_REPLY-known ones only) actually on offer today -
+ * used by the "I don't recognize that league" clarification, so a button
+ * never names a competition today's pool doesn't have a single fixture in. */
+export function availableCompetitions(pool: Candidate[], req: ParsedRequest, nowMs: number): string[] {
+  const relaxed: ParsedRequest = { ...req, competitions: new Set() };
+  const present = new Set(eligible(pool, relaxed, nowMs).map((c) => c.competition).filter((id): id is string => !!id));
+  return Object.keys(LEAGUE_REPLY).filter((id) => present.has(id));
 }
 
 /** Alternative Over/Under total lines actually on offer today, for the

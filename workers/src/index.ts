@@ -27,6 +27,7 @@ import {
   type SuggestionRow,
 } from "./db.ts";
 import {
+  availableCompetitions,
   availableMarkets,
   availableSports,
   availableTotalLines,
@@ -39,6 +40,8 @@ import {
   formatTicket,
   freshRequest,
   introText,
+  LEAGUE_LABEL,
+  LEAGUE_REPLY,
   loadPool,
   MARKET_LABEL,
   MARKET_REPLY,
@@ -852,6 +855,11 @@ async function buildClarificationKeyboard(
       if (!reply) continue; // result3 has no standalone reply phrase — see MARKET_REPLY's comment
       extraRows.push([{ text: MARKET_LABEL[m] ?? m, callback_data: `cq|r|${reply}` }]);
     }
+    extraRows.push([{ text: "🏷 Change sport", callback_data: "cq|k|sport" }]);
+  } else if (reason === "unsupported_competition") {
+    const pool = await poolCandidates(env, day, zone, nowMs);
+    const competitions = availableCompetitions(pool, request ?? freshRequest(), nowMs);
+    for (const id of competitions) extraRows.push([{ text: LEAGUE_LABEL[id] ?? id, callback_data: `cq|r|${LEAGUE_REPLY[id]}` }]);
     extraRows.push([{ text: "🏷 Change sport", callback_data: "cq|k|sport" }]);
   } else if (reason === "line_unavailable" && request) {
     const pool = await poolCandidates(env, day, zone, nowMs);
