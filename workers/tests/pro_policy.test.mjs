@@ -277,53 +277,62 @@ describe("pro_policy: singles-first construction (0 / 1 / multiple qualifying)",
   });
 });
 
-describe("pro_policy: evidence_v2 formatting is honest and leaks no internals", () => {
+describe("pro_policy: evidence_v2 formatting is compact, honest, and leaks no internals", () => {
   it("a genuine no-pick day gets an explicit, non-silent explanation", () => {
     const text = formatProPicksV2([]);
     assert.equal(text, "💎 PRO PICKS\n\nNo pick cleared today's evidence bar — nothing qualifies yet today.");
   });
 
-  it("never renders a combined-odds number (singles, not a combo) and states the single-bet framing plainly", () => {
+  it("never renders a combined-odds number (singles, not a combo) and titles with the compact N-singles header", () => {
     const c = makeCandidate({});
     const d = evaluateCandidate(c, NOW, PRO_MIN_PRICE, PRO_MIN_PROBABILITY, PRO_MIN_BOOKS);
     const text = formatProPicksV2([{ candidate: c, decision: d }]);
-    assert.match(text, /accumulators not offered — single-bet mode/);
-    assert.doesNotMatch(text.split("\n")[0], /\d/, "the header line must carry no combined-odds number");
+    assert.match(text.split("\n\n")[0], /^💎 PRO PICKS — 1 single$/);
   });
 
-  it("independently_assessed renders plain language, never the literal field names", () => {
+  it("independently_assessed uses the † marker and the independent-history footnote, never the literal field names", () => {
     const c = makeCandidate({ market: "result3", independent_status: "ok", p_independent: 0.78 });
     const d = evaluateCandidate(c, NOW, PRO_MIN_PRICE, PRO_MIN_PROBABILITY, PRO_MIN_BOOKS);
     const text = formatProPicksV2([{ candidate: c, decision: d }]);
-    assert.match(text, /Independently assessed from this competition's own match history/);
-    for (const forbidden of ["independent_status", "policyVersion", "evidenceTier", "p_independent"]) {
+    assert.match(text, /Chance: 80%†/);
+    assert.match(text, /†Estimated from this competition's own historical match results\./);
+    assert.ok(!text.includes("*Estimated chances are largely bookmaker-informed"));
+    for (const forbidden of ["independent_status", "policyVersion", "evidenceTier", "p_independent", "Market-informed", "EV ", "Context (not used"]) {
       assert.ok(!text.includes(forbidden), `must not leak "${forbidden}"`);
     }
   });
 
-  it("market_only renders plain language, never implying independent-model coverage", () => {
+  it("market_only uses the * marker and the bookmaker-informed footnote, never implying independent-model coverage", () => {
     const c = makeCandidate({ market: "result2", selection: "home", independent_status: "unavailable:no_history", p_independent: null });
     const d = evaluateCandidate(c, NOW, PRO_MIN_PRICE, PRO_MIN_PROBABILITY, PRO_MIN_BOOKS);
     const text = formatProPicksV2([{ candidate: c, decision: d }]);
-    assert.match(text, /Based on bookmaker pricing only/);
-    assert.ok(!text.includes("Independently assessed"));
+    assert.match(text, /Chance: 80%\*/);
+    assert.match(text, /\*Estimated chances are largely bookmaker-informed and are not independently validated, where applicable\./);
+    assert.ok(!text.includes("†"));
     for (const forbidden of ["independent_status", "policyVersion", "evidenceTier"]) {
       assert.ok(!text.includes(forbidden));
     }
   });
 
-  it("a notable disagreement is surfaced in plain language, without numbers or field names", () => {
+  it("a notable model-vs-market disagreement is computed in diagnostics but never rendered in the compact text", () => {
     const c = makeCandidate({ market: "result3", independent_status: "ok", p_independent: 0.3, p_model: 0.8 });
     const d = evaluateCandidate(c, NOW, PRO_MIN_PRICE, PRO_MIN_PROBABILITY, PRO_MIN_BOOKS);
-    assert.equal(d.diagnostics.notableDisagreement, true);
+    assert.equal(d.diagnostics.notableDisagreement, true); // full diagnostics preserved internally
     const text = formatProPicksV2([{ candidate: c, decision: d }]);
-    assert.match(text, /land notably apart on this one — shown for transparency/);
-    assert.ok(!text.includes("0.3") && !text.includes("disagreement"));
+    assert.ok(!text.includes("0.3") && !text.includes("disagreement") && !text.includes("notably apart"));
+  });
+
+  it("does not describe a negative-EV pick as profitable or a value bet, and omits the EV line entirely from the compact text", () => {
+    const c = makeCandidate({ ev: -0.03 });
+    const d = evaluateCandidate(c, NOW, PRO_MIN_PRICE, PRO_MIN_PROBABILITY, PRO_MIN_BOOKS);
+    const text = formatProPicksV2([{ candidate: c, decision: d }]);
+    assert.ok(!text.includes("EV") && !text.includes("value bet") && !text.includes("profitable"));
+    assert.equal(c.modelEv, -0.03, "full signed EV must still be present on the candidate/diagnostics, just not rendered");
   });
 });
 
 describe("pro_policy: multi-sport honesty", () => {
-  it("every non-football sport that can reach Pro Picks is always market_only and never shows independent-model language", async () => {
+  it("every non-football sport that can reach Pro Picks is always market_only (* marker) and never shows independent-model language", async () => {
     // Exactly PRO_MAX_LEGS sports so the day's cap doesn't trim any of them
     // away - this test is about evidence-tier labeling, not the cap itself
     // (see the dedicated "never exceeds PRO_MAX_LEGS" test above for that).
@@ -338,8 +347,113 @@ describe("pro_policy: multi-sport honesty", () => {
     const result = await buildProPicks(poolDeps(payloads), DAY, ZONE, NOW, "evidence_v2");
     assert.equal(result.reason, "success");
     assert.ok(result.tickets && result.tickets.length === sports.length);
-    assert.ok(!result.text.includes("Independently assessed"));
-    assert.match(result.text, /Based on bookmaker pricing only/);
+    assert.ok(!result.text.includes("†"));
+    assert.match(result.text, /\*Estimated chances are largely bookmaker-informed/);
+  });
+});
+
+describe("pro_policy: exact compact-output snapshots", () => {
+  const footballFullMatch = payloadFor({
+    canonical_event_id: "fx-1", home: "Ferencváros TC", away: "Torreense", league: "UEFA Europa League",
+    price: 1.3, p_model: 0.75, start_utc: "2026-10-20T16:45:00Z",
+    independent_status: "unavailable:no_history", p_independent: null,
+  });
+  const footballFirstHalf = payloadFor({
+    canonical_event_id: "fx-2", home: "Omonia Nicosia", away: "Benfica", league: "UEFA Europa League",
+    market: "btts", selection: "yes", period: "1h",
+    price: 1.9, p_model: 0.73, start_utc: "2026-10-20T19:00:00Z",
+    independent_status: "unavailable:no_history", p_independent: null,
+  });
+  const basketball = payloadFor({
+    canonical_event_id: "fx-3", sport: "basketball", market: "result2", selection: "home",
+    home: "Oklahoma City Thunder", away: "Denver Nuggets", league: "NBA",
+    price: 1.31, p_model: 0.74, start_utc: "2026-10-21T02:40:00Z",
+    independent_status: "unavailable:no_independent_model", p_independent: null,
+  });
+  const footballAssessed = payloadFor({
+    canonical_event_id: "fx-4", home: "Ajax", away: "PSV", league: "Eredivisie",
+    price: 1.45, p_model: 0.76, start_utc: "2026-10-20T18:00:00Z",
+    independent_status: "ok", p_independent: 0.74,
+  });
+
+  async function v2SinglesFor(payloads) {
+    const result = await buildProPicks(poolDeps(payloads), DAY, ZONE, NOW, "evidence_v2");
+    return result.text;
+  }
+
+  it("one selection — exact rendered message", async () => {
+    const text = await v2SinglesFor([footballFullMatch]);
+    assert.equal(
+      text,
+      "💎 PRO PICKS — 1 single\n\n" +
+      "⚽ Ferencváros TC vs Torreense\n" +
+      "UEFA Europa League · 17:45\n" +
+      "🎯 Ferencváros TC to Win\n" +
+      "Odds: 1.30 · Chance: 75%*\n\n" +
+      "*Estimated chances are largely bookmaker-informed and are not independently validated, where applicable.",
+    );
+  });
+
+  it("two selections, mixed sports — exact rendered message, oldest kickoff first", async () => {
+    const text = await v2SinglesFor([basketball, footballFullMatch]);
+    assert.equal(
+      text,
+      "💎 PRO PICKS — 2 singles\n\n" +
+      "⚽ Ferencváros TC vs Torreense\n" +
+      "UEFA Europa League · 17:45\n" +
+      "🎯 Ferencváros TC to Win\n" +
+      "Odds: 1.30 · Chance: 75%*\n\n" +
+      "🏀 Oklahoma City Thunder vs Denver Nuggets\n" +
+      "NBA · 03:40\n" +
+      "🎯 Oklahoma City Thunder to Win\n" +
+      "Odds: 1.31 · Chance: 74%*\n\n" +
+      "*Estimated chances are largely bookmaker-informed and are not independently validated, where applicable.",
+    );
+  });
+
+  it("three selections including a first-half market — exact rendered message, period distinction preserved", async () => {
+    const text = await v2SinglesFor([basketball, footballFullMatch, footballFirstHalf]);
+    assert.equal(
+      text,
+      "💎 PRO PICKS — 3 singles\n\n" +
+      "⚽ Ferencváros TC vs Torreense\n" +
+      "UEFA Europa League · 17:45\n" +
+      "🎯 Ferencváros TC to Win\n" +
+      "Odds: 1.30 · Chance: 75%*\n\n" +
+      "⚽ Omonia Nicosia vs Benfica\n" +
+      "UEFA Europa League · 20:00\n" +
+      "🎯 BTTS: Yes (1st Half)\n" +
+      "Odds: 1.90 · Chance: 73%*\n\n" +
+      "🏀 Oklahoma City Thunder vs Denver Nuggets\n" +
+      "NBA · 03:40\n" +
+      "🎯 Oklahoma City Thunder to Win\n" +
+      "Odds: 1.31 · Chance: 74%*\n\n" +
+      "*Estimated chances are largely bookmaker-informed and are not independently validated, where applicable.",
+    );
+  });
+
+  it("mixed probability bases — the shared disclosure splits into two accurate footnotes, one per basis actually used", async () => {
+    const text = await v2SinglesFor([footballAssessed, footballFullMatch]);
+    assert.equal(
+      text,
+      "💎 PRO PICKS — 2 singles\n\n" +
+      "⚽ Ferencváros TC vs Torreense\n" +
+      "UEFA Europa League · 17:45\n" +
+      "🎯 Ferencváros TC to Win\n" +
+      "Odds: 1.30 · Chance: 75%*\n\n" +
+      "⚽ Ajax vs PSV\n" +
+      "Eredivisie · 19:00\n" +
+      "🎯 Ajax to Win\n" +
+      "Odds: 1.45 · Chance: 76%†\n\n" +
+      "*Estimated chances are largely bookmaker-informed and are not independently validated, where applicable.\n\n" +
+      "†Estimated from this competition's own historical match results.",
+    );
+  });
+
+  it("a no-pick day across this same fixture set renders the compact no-pick message, not an empty/silent result", async () => {
+    const belowFloor = payloadFor({ canonical_event_id: "fx-low", p_model: 0.5 });
+    const text = await v2SinglesFor([belowFloor]);
+    assert.equal(text, "💎 PRO PICKS\n\nNo pick cleared today's evidence bar — nothing qualifies yet today.");
   });
 });
 

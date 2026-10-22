@@ -295,58 +295,70 @@ export function formatProTicket(ticket: ProTicket): string {
  * probability.
  */
 
-/** Plain-language evidence-tier line — the ONLY place evidenceTier reaches
- * the user, and never as the literal word "evidenceTier"/"independent_status"
- * itself (see workers/tests/pro_policy.test.mjs's own check for that). The
- * disagreement NOTE is informational only, exactly per pro_policy.ts's own
- * rule: a model/market disagreement is surfaced, never framed as a reason
- * this pick is better or worse. */
-function evidenceTierLine(decision: PolicyDecision): string {
-  if (decision.evidenceTier === "independently_assessed") {
-    const base = "Independently assessed from this competition's own match history (not just bookmaker pricing)";
-    return decision.diagnostics.notableDisagreement
-      ? `${base}. Note: that history-based read and the market price land notably apart on this one — shown for transparency, not as a reason to favour either.`
-      : `${base}.`;
-  }
-  return "Based on bookmaker pricing only — no independent, history-based model covers this sport/market yet.";
+/**
+ * Compact footnote markers, one per probability basis actually present in
+ * the message (task requirement 7: the shared disclosure must stay
+ * accurate for every selection, so a day that mixes a genuinely
+ * independently-assessed pick with market-only picks gets TWO distinct
+ * footnotes, each correct for the rows that use it — never one blanket
+ * "bookmaker-informed" line applied to a pick it would misdescribe).
+ * "*" is the common case (today, always — see pro_policy.ts's own
+ * classifyEvidence doc comment: no football candidate has yet produced a
+ * real "ok" independent estimate in production); "†" only appears at all
+ * once a real independently-assessed pick exists.
+ */
+const MARKET_ONLY_MARK = "*";
+const INDEPENDENT_MARK = "†"; // †
+const MARKET_ONLY_DISCLOSURE =
+  `${MARKET_ONLY_MARK}Estimated chances are largely bookmaker-informed and are not independently validated, where applicable.`;
+const INDEPENDENT_DISCLOSURE = `${INDEPENDENT_MARK}Estimated from this competition's own historical match results.`;
+
+function tierMark(tier: PolicyDecision["evidenceTier"]): string {
+  return tier === "independently_assessed" ? INDEPENDENT_MARK : MARKET_ONLY_MARK;
 }
 
-/** One single-bet message block — reuses the SAME basisLine/pickReason/
- * evLine/lagosTimeLabel helpers formatProTicket() uses above, so the
- * win-prob/basis/EV/context wording (and the period-suffix-correct
- * `pick.outcome` string built once in normalizeCandidateWithReason) is
- * identical in substance between legacy and evidence_v2 — only the
- * evidence-tier line and the single-bet framing are new. */
+/** One compact single-bet line (task: fixture, competition, kickoff, exact
+ * selection/period, odds, probability — nothing else). `pick.outcome` is
+ * already period-suffix-correct (see outcomeLabel/periodSuffix in
+ * custom_picks.ts — the fix for the earlier BTTS/odd_even bug), so a
+ * first-half vs full-time distinction is preserved here for free, without
+ * re-deriving it. The long market-informed/model-coverage/ESPN-context/EV
+ * paragraphs are deliberately NOT rendered here (task requirement 4) —
+ * `decision.diagnostics` (full signed EV, independent_status, disagreement,
+ * etc.) is untouched and still returned to callers in `PolicySingle`;
+ * nothing described there was removed, only left out of the Telegram text
+ * (task requirement 5/6). */
 function formatSingle(pick: Candidate, decision: PolicyDecision): string {
   const icon = SPORT_ICON[pick.sport] ?? SPORT_ICON.other;
-  const league = pick.competitionLabel ? `${escHtml(pick.competitionLabel)}\n` : "";
+  const league = pick.competitionLabel ? `${escHtml(pick.competitionLabel)} · ` : "";
   return (
     `${icon} ${escHtml(pick.home)} vs ${escHtml(pick.away)}\n` +
-    `${league}${escHtml(pick.outcome)}\n` +
-    `Odds: ${pick.price.toFixed(2)} · Win Prob: ${Math.round(pick.probability * 100)}% (uncalibrated) · 🕒 ${lagosTimeLabel(pick.startMs)}\n` +
-    `🧭 ${escHtml(basisLine(pick))}\n` +
-    `🔎 ${escHtml(evidenceTierLine(decision))}\n` +
-    `📊 ${escHtml(pickReason(pick))}\n` +
-    `💰 ${escHtml(evLine(pick))}`
+    `${league}${lagosTimeLabel(pick.startMs)}\n` +
+    `🎯 ${escHtml(pick.outcome)}\n` +
+    `Odds: ${pick.price.toFixed(2)} · Chance: ${Math.round(pick.probability * 100)}%${tierMark(decision.evidenceTier)}`
   );
 }
 
 /**
- * evidence_v2's formatter (task step 3). 0 singles -> an honest, explicit
- * one-line "nothing qualified today" explanation (never silence, never an
- * error-shaped message). 1+ singles -> one labelled single-bet section per
- * pick, oldest-kickoff-first, each independently qualifying on its own —
- * explicitly NOT a combo (see the "singles only" note in the header), so
- * no combined-odds number is ever shown here.
+ * evidence_v2's formatter (task step 3, refined for compact presentation).
+ * 0 singles -> an honest, explicit one-line "nothing qualified today"
+ * explanation (never silence, never an error-shaped message). 1+ singles
+ * -> "💎 PRO PICKS — N singles", one compact block per pick (oldest-kickoff-
+ * first), each independently qualifying on its own — explicitly NOT a combo
+ * (no combined-odds number is ever shown here) — followed by only the
+ * footnote(s) actually used, accurate per-selection (requirement 7).
  */
 export function formatProPicksV2(singles: PolicySingle[]): string {
   if (!singles.length) {
     return "💎 PRO PICKS\n\nNo pick cleared today's evidence bar — nothing qualifies yet today.";
   }
-  const blocks = ["💎 PRO PICKS — single bets (accumulators not offered — single-bet mode)"];
   const sorted = [...singles].sort((a, b) => a.candidate.startMs - b.candidate.startMs);
+  const blocks = [`💎 PRO PICKS — ${sorted.length} single${sorted.length === 1 ? "" : "s"}`];
   for (const { candidate, decision } of sorted) blocks.push(formatSingle(candidate, decision));
-  blocks.push("Bet only what you can afford to lose.");
+  const usedMarketOnly = sorted.some((s) => s.decision.evidenceTier !== "independently_assessed");
+  const usedIndependent = sorted.some((s) => s.decision.evidenceTier === "independently_assessed");
+  if (usedMarketOnly) blocks.push(MARKET_ONLY_DISCLOSURE);
+  if (usedIndependent) blocks.push(INDEPENDENT_DISCLOSURE);
   return blocks.join("\n\n");
 }
 
