@@ -1,0 +1,286 @@
+# ============================================================================================
+# DESIGN DRAFT — NOT A LIVE WORKFLOW. NOT WIRED TO RUN. NOT ENABLED OR TRIGGERED BY ANYONE.
+#
+# This file uses the extension ".yml.draft" (not ".yml"/".yaml") SPECIFICALLY so GitHub Actions
+# never registers it, even if it is later committed and pushed as-is. It exists purely to
+# communicate a concrete design for automated historical-results maintenance (brief section 4),
+# modelled on stage9-settle-production.yml's already-reviewed pattern (lease-based D1 write
+# serialization, EXPLICIT AUTHORIZATION / LOUD FAILURE, scratch-copy + scoped plan + apply,
+# dry-run default, failure alert with dedup — see that file for the mechanisms this borrows).
+#
+# To actually register this as a real scheduled workflow, a human would need to:
+#   1. Review this design soberly (it has never run, anywhere, against anything).
+#   2. Rename it to stage10-history-backfill-production.yml (drop ".draft").
+#   3. Set the repository variable STAGE10_HISTORY_ENABLED to "true" (default/unset = paused).
+#   4. Commit, push, and watch the first few scheduled (or manually dispatched dry-run) fires
+#      before ever letting it write to production D1.
+# Nobody has done any of that. This session created this file and did not enable, trigger,
+# commit, or push it.
+# ============================================================================================
+#
+# WHAT THIS WOULD DO (if ever enabled):
+#   Incrementally backfill predbot/history (match_results/match_odds/history_fetches) with
+#   NEWLY completed fixtures since the last run, for the competitions football-data.org and the
+#   CSV importer cannot reach (UEL, UECL, Super Lig, MLS — predbot/markets/competitions.py rows
+#   with an `espn` slug but no `football_data` code), using predbot/history/espn_backfill.py
+#   (this session's new module) plus the EXISTING predbot/history/ingest.py football-data.org
+#   path for the competitions it does cover. It is read-mostly from the bot's point of view:
+#   the only production writes are INSERT OR IGNORE into tables already in d1_sync.py's
+#   PRESERVE_ONLY set (match_results, match_odds, match_odds_ext, history_fetches), so a bad run
+#   can duplicate nothing and delete nothing.
+#
+#   Independent of generation's own deadline/schedule (stage3/stage6/stage7): this is pure
+#   maintenance of the model's training data, not part of any prediction-serving path, and it
+#   NEVER touches Telegram, NEVER deletes history, and NEVER changes picks/pro_picks/custom_picks/
+#   selection in any way — it cannot, because it does not import any of that code.
+name: stage10-history-backfill-production
+
+on:
+  schedule:
+    # Once a day, well clear of generation (stage3/stage6/stage7) and settlement (stage9)
+    # windows — this is model-training maintenance, not anything on the serving path, so it
+    # has no reason to compete with those for the D1 write lease.
+    - cron: "15 3 * * *"    # 03:15 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Plan only, no D1 writes (default true)"
+        required: false
+        default: true
+        type: boolean
+      lookback_days:
+        description: "How many trailing days to re-check per competition (catches late corrections/postponements resolving)"
+        required: false
+        default: "10"
+        type: string
+
+env:
+  PRODUCTION_DB_NAME: sureodds_production
+
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    outputs:
+      mode: ${{ steps.decide.outputs.mode }}
+    steps:
+      - id: decide
+        run: |
+          set -euo pipefail
+          v="${STAGE10_HISTORY_ENABLED:-}"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            case "$v" in
+              true) mode=live ;;
+              false) mode=paused; echo "::warning::STAGE10_HISTORY_ENABLED=false - scheduled history backfill is PAUSED." ;;
+              *) echo "::error::STAGE10_HISTORY_ENABLED is '${v}' (must be exactly 'true' or 'false'). Scheduled backfill did NOT run." >&2; exit 1 ;;
+            esac
+          else
+            dry_run_input="$(printf '%s' "${{ inputs.dry_run }}" | tr '[:upper:]' '[:lower:]')"
+            if [ "$v" = "true" ] && [ "$dry_run_input" = "false" ]; then mode=live; else mode=dry; fi
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+        env:
+          STAGE10_HISTORY_ENABLED: ${{ vars.STAGE10_HISTORY_ENABLED }}
+
+  backfill:
+    needs: guard
+    if: ${{ needs.guard.outputs.mode == 'live' || needs.guard.outputs.mode == 'dry' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: sureodds-production-sync   # SAME lease group as stage8/stage9: one D1 writer at a time, system-wide
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install runtime dependency
+        run: pip install -r predictions-bot/requirements.txt
+
+      - name: Production target guard (never staging, never a placeholder id)
+        run: |
+          set -euo pipefail
+          grep -q 'database_name = "sureodds_production"' workers/wrangler.toml
+          grep -qv 'REPLACE_WITH_STAGING_D1_ID' workers/wrangler.toml || \
+            { echo "FAIL workers/wrangler.toml still has the placeholder database_id" >&2; exit 1; }
+
+      - name: Pull production base (export + load) — SAME pattern as stage9
+        run: |
+          set -euo pipefail
+          cd workers
+          npx -y wrangler@4.151.1 d1 export "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --output /tmp/history_base.sql
+          python3 - <<'EOF'
+          import sqlite3, shutil
+          con = sqlite3.connect("/tmp/history_base.db")
+          con.executescript(open("/tmp/history_base.sql", encoding="utf-8").read())
+          con.commit(); con.close()
+          shutil.copyfile("/tmp/history_base.db", "/tmp/history_scratch.db")
+          EOF
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Run the bounded incremental backfill (writes only to the scratch copy)
+        run: |
+          cd predictions-bot
+          python3 - <<'EOF'
+          import json, os, sys
+          from datetime import datetime, timedelta, timezone
+          sys.path.insert(0, os.getcwd())
+          from predbot.storage.db import Database
+          from predbot.history import ingest, espn_backfill
+          from predbot.markets.competitions import BY_ID
+          from predbot.providers.espn import ESPNProvider
+          from predbot.providers.budget import Budget
+
+          db = Database("/tmp/history_scratch.db")
+          now = datetime.now(timezone.utc)
+          lookback = int(os.environ.get("LOOKBACK_DAYS", "10"))
+          start, end = now - timedelta(days=lookback), now
+
+          # Scope: football competitions with an ESPN slug that football-data.org does NOT
+          # cover and the football-data.co.uk CSV importer does NOT cover either (that importer
+          # already handles Super Lig ("T1") and 8 other domestic leagues — verified via
+          # ingest.CSV_DIVISIONS — so it is correctly excluded here, not re-fetched from ESPN).
+          # In practice today this is uel, uecl, mls, plus a few incidental football
+          # competitions that happen to carry an espn slug (nigeria_npfl, nations leagues,
+          # friendlies) — verified by running this exact filter locally against BY_ID.
+          #
+          # football-data.org's own 13-competition coverage (the other domestic leagues + UCL)
+          # is maintained separately via the existing manual `python cli.py ingest-football-data`
+          # path (predbot/history/ingest.py's ingest_football_data, already wired to the real
+          # FootballDataProvider there) — automating that path is a separate, not-yet-built
+          # piece of work and is intentionally out of scope for this workflow.
+          espn = ESPNProvider()
+          budget = Budget(db)
+          espn_only = [c for c in BY_ID.values() if c.sport == "football" and c.espn
+                      and not c.football_data and c.id not in ingest.CSV_DIVISIONS.values()]
+          report = espn_backfill.backfill(db, espn, espn_only, start, end, budget=budget, now=now)
+          print(json.dumps(report["_summary"], indent=2))
+          with open("/tmp/history_report.json", "w", encoding="utf-8") as fh:
+              json.dump(report, fh, indent=2, default=str)
+          EOF
+        env:
+          LOOKBACK_DAYS: ${{ inputs.lookback_days || '10' }}
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
+
+      - name: Build scoped plan (history tables only — all PRESERVE_ONLY / INSERT-OR-IGNORE)
+        id: plan
+        run: |
+          set -euo pipefail
+          python3 workers/scripts/d1_sync.py plan /tmp/history_base.db /tmp/history_scratch.db \
+            --out /tmp/history_plan \
+            --tables match_results,match_odds,match_odds_ext,history_fetches,canonical_events,canonical_participants,provider_identity,participant_aliases \
+            --write-budget 5000
+          cat /tmp/history_plan/plan.json
+
+      - name: Acquire the shared D1-write lease (retries, then fails)
+        id: synclease
+        if: needs.guard.outputs.mode == 'live'
+        run: |
+          set -euo pipefail
+          cd workers
+          acquired=false
+          for i in $(seq 1 10); do
+            if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+              --config wrangler.toml --json \
+              --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until=strftime('%Y-%m-%dT%H:%M:%SZ','now','+20 minutes'), attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='sync_write' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1; then
+              acquired=true; break
+            fi
+            echo "::notice::sync_write lease held by another writer (attempt $i/10) - retrying in 30s"
+            sleep 30
+          done
+          if [ "$acquired" != "true" ]; then
+            echo "::error::could not acquire the sync_write lease after 10 attempts (5 minutes)" >&2
+            exit 1
+          fi
+          echo "acquired=true" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Apply to production D1 (skipped in dry-run) — SAME apply/retry loop as stage9
+        if: needs.guard.outputs.mode == 'live'
+        run: |
+          set -euo pipefail
+          cd workers
+          epoch=$(npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "SELECT epoch FROM sync_state WHERE id=1" | python3 scripts/d1_json.py --get 0.results.0.epoch)
+          apply_batch() {
+            local f="$1" base="$2" attempt
+            for attempt in 1 2 3; do
+              if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+                --config wrangler.toml --json --file "$f" > "/tmp/history_applied_$base.json" 2>&1; then
+                if python3 scripts/d1_json.py --assert-success "/tmp/history_applied_$base.json"; then return 0; fi
+              fi
+              [ "$attempt" -lt 3 ] && { echo "::notice::$base attempt $attempt/3 failed, retrying"; sleep "$((attempt * 5))"; }
+            done
+            return 1
+          }
+          ok=0; total=0
+          for f in /tmp/history_plan/p0_*.sql; do
+            [ -e "$f" ] || continue
+            total=$((total + 1)); base=$(basename "$f")
+            if apply_batch "$f" "$base"; then ok=$((ok + 1)); echo "OK $base"
+            else echo "FAIL $base (after 3 attempts):"; tail -20 "/tmp/history_applied_$base.json"; exit 1; fi
+          done
+          echo "applied $ok/$total batch files"
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE sync_state SET epoch=epoch+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=1 AND epoch=$epoch" | python3 scripts/d1_json.py --expect-changes 1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Release the shared D1-write lease (always, if acquired)
+        if: always() && steps.synclease.outputs.acquired == 'true'
+        run: |
+          cd workers
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE job_state SET lease_owner=NULL, lease_until=NULL WHERE name='sync_write' AND lease_owner='gha-${{ github.run_id }}'" || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Record outcome in D1 (always; never silent) — no Telegram, ever
+        if: always() && needs.guard.outputs.mode == 'live'
+        run: |
+          cd workers
+          if [ "${{ job.status }}" = "success" ]; then
+            msg="OK run ${{ github.run_id }}"
+          else
+            msg="FAILED run ${{ github.run_id }} status=${{ job.status }}"
+          fi
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "INSERT INTO job_state(name,last_result,last_run_at) VALUES ('history_backfill','$msg',strftime('%Y-%m-%dT%H:%M:%SZ','now')) ON CONFLICT(name) DO UPDATE SET last_result=excluded.last_result,last_run_at=excluded.last_run_at" || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Upload sanitized plan/report (never a full DB dump)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage10-history-backfill-plan
+          if-no-files-found: warn
+          path: |
+            /tmp/history_plan/plan.json
+            /tmp/history_report.json
+
+      # Failure alert: admin-only (same Telegram admin id stage9 alerts use), never a subscriber
+      # broadcast, deduplicated under its OWN job_state key so this workflow's incidents never
+      # shadow stage8/stage9's. Intentionally omitted from this draft's full detail — see
+      # stage9-settle-production.yml's "Check alert dedup state" / "Alert the owner on failure"
+      # steps, which a real PR would copy verbatim under the key 'stage10_alert'.

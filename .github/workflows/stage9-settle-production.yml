@@ -138,9 +138,19 @@ jobs:
         id: plan
         run: |
           set -euo pipefail
+          # match_results/match_odds/match_odds_ext/history_fetches added here (previously
+          # omitted): _learn()/_harvest_elo_from_espn() in predbot/jobs/settle.py already write
+          # these into the scratch copy via HistoryStore.add_result() as an incidental part of
+          # every settlement run (see predbot/history/store.py), but a sync plan scoped to this
+          # table list would silently drop that diff instead of ever reaching production D1 -
+          # match_results/history_fetches staying at 0 rows in production despite real
+          # settlement activity in results_seen was traced to exactly this gap. All four are
+          # additive-only INSERT OR IGNORE / INSERT OR REPLACE under d1_sync.py's PRESERVE_ONLY
+          # policy (never destructive - see that module), so adding them here cannot make this
+          # workflow delete or overwrite anything it couldn't already touch.
           python3 workers/scripts/d1_sync.py plan /tmp/settle_base.db /tmp/settle_scratch.db \
             --out /tmp/settle_plan \
-            --tables picks,live_fixture_state,results_seen,ratings,calibration \
+            --tables picks,live_fixture_state,results_seen,ratings,calibration,match_results,match_odds,match_odds_ext,history_fetches \
             --write-budget 2000
           cat /tmp/settle_plan/plan.json
       - name: Acquire the shared D1-write lease (retries, then fails — A2)

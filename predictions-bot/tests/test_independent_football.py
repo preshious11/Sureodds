@@ -144,6 +144,22 @@ def test_no_history_and_other_sports_report_their_status(db):
     assert IndependentModels.default(db, Config(), AS_OF).estimate(tennis) == (None, "unavailable:no_independent_model")
 
 
+def test_independent_model_version_addition_was_reverted(db):
+    """Section 7 of this phase's brief proposed an additive 'notes[\"independent_model_version\"]' field. It was
+    implemented and tested (see git history for this change), then REVERTED after the full suite showed it broke
+    tests/test_golden_decision_margins.py and tests/test_replay_golden.py, which assert an EXACT key set for
+    sources._notes against a frozen golden slate - any new key there is a breaking change to those tests, not a
+    safe additive one. Rather than rewrite golden fixtures for an optional, non-essential field (section 2's
+    extended evaluation_report.py does not depend on it - it already distinguishes "no estimate" rows via
+    independent_status/missing_data_rate without needing a separate version string), the addition was dropped.
+    This test documents that decision so a future session does not reintroduce the same regression."""
+    event = football_event("A", "B", AS_OF, "football:participant:a", "football:participant:b")
+    em = EventModel(event, Elo(db), Calibrator(db), independent=IndependentModels.default(db, Config(), AS_OF),
+                    independent_mode="shadow")
+    s = em.score_all()[0]
+    assert "independent_model_version" not in s.notes
+
+
 def test_a_team_with_too_few_matches_is_insufficient_history_not_a_guess(world):
     db, ids, matches, store, as_of = world
     far = as_of + timedelta(days=4000)                      # ten years later: every match has decayed to nothing
