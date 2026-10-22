@@ -29,6 +29,7 @@
  */
 import { SPORT_ICON, combinedOdds, escHtml } from "./format.ts";
 import { loadPool, type Candidate, type CustomPicksDeps } from "./custom_picks.ts";
+import { resolvePolicyMode, selectSingles, type PolicyDecision, type PolicySingle } from "./pro_policy.ts";
 
 /** Independent of Custom Picks' MIN_PROBABILITY table (0.65/0.6/0.5) — this
  * number is never read by, or derived from, anything over there. */
@@ -49,7 +50,7 @@ export const PRO_MAX_LEGS = 3;
 const PRO_MAX_COMBINED_ODDS = 3.0;
 /** Same floor-odds notion as Custom Picks' own MIN_PRICE, defined
  * independently so a change to that constant can never move this one. */
-const PRO_MIN_PRICE = 1.25;
+export const PRO_MIN_PRICE = 1.25;
 /** Minimum distinct-bookmaker coverage. Not an invented number: it reuses
  * predbot/config.py's own TOP_MIN_BOOKS (3) — Bet of the Day's strictest
  * existing book-coverage bar (predbot/selection/top.py's `need` check) —
@@ -57,7 +58,7 @@ const PRO_MIN_PRICE = 1.25;
  * stale or simply wrong, can never qualify for Pro Picks regardless of
  * how high its stated probability is. This is an evidence-quality
  * requirement, not a probability/price policy change. */
-const PRO_MIN_BOOKS = 3;
+export const PRO_MIN_BOOKS = 3;
 
 export interface ProTicket {
   picks: Candidate[];
@@ -273,27 +274,125 @@ export function formatProTicket(ticket: ProTicket): string {
   return blocks.join("\n\n");
 }
 
+/**
+ * ===========================================================================
+ * evidence_v2: singles-first, evidence-aware mode (pro_policy.ts)
+ * ===========================================================================
+ * Everything below this point is NEW and only reached when
+ * PRO_POLICY_MODE=="evidence_v2" (see resolvePolicyMode in pro_policy.ts).
+ * With the flag unset/anything else, buildProPicks() below runs the exact
+ * same eligible()/buildProTicket()/formatProTicket() call sequence that
+ * existed before this section was added — see
+ * workers/tests/pro_policy.test.mjs's legacy-byte-identical test.
+ *
+ * ACCUMULATORS WERE DELIBERATELY NOT BUILT for evidence_v2: it recommends
+ * each qualifying candidate as its own independent SINGLE bet, never
+ * combined into a parlay. This is stated plainly (see the header line
+ * formatProPicksV2 emits) rather than silently combining stated
+ * probabilities by multiplication (which would overstate confidence in a
+ * combined outcome that was never actually evaluated) or quoting a
+ * combined-odds number that would misleadingly imply a combined win
+ * probability.
+ */
+
+/** Plain-language evidence-tier line — the ONLY place evidenceTier reaches
+ * the user, and never as the literal word "evidenceTier"/"independent_status"
+ * itself (see workers/tests/pro_policy.test.mjs's own check for that). The
+ * disagreement NOTE is informational only, exactly per pro_policy.ts's own
+ * rule: a model/market disagreement is surfaced, never framed as a reason
+ * this pick is better or worse. */
+function evidenceTierLine(decision: PolicyDecision): string {
+  if (decision.evidenceTier === "independently_assessed") {
+    const base = "Independently assessed from this competition's own match history (not just bookmaker pricing)";
+    return decision.diagnostics.notableDisagreement
+      ? `${base}. Note: that history-based read and the market price land notably apart on this one — shown for transparency, not as a reason to favour either.`
+      : `${base}.`;
+  }
+  return "Based on bookmaker pricing only — no independent, history-based model covers this sport/market yet.";
+}
+
+/** One single-bet message block — reuses the SAME basisLine/pickReason/
+ * evLine/lagosTimeLabel helpers formatProTicket() uses above, so the
+ * win-prob/basis/EV/context wording (and the period-suffix-correct
+ * `pick.outcome` string built once in normalizeCandidateWithReason) is
+ * identical in substance between legacy and evidence_v2 — only the
+ * evidence-tier line and the single-bet framing are new. */
+function formatSingle(pick: Candidate, decision: PolicyDecision): string {
+  const icon = SPORT_ICON[pick.sport] ?? SPORT_ICON.other;
+  const league = pick.competitionLabel ? `${escHtml(pick.competitionLabel)}\n` : "";
+  return (
+    `${icon} ${escHtml(pick.home)} vs ${escHtml(pick.away)}\n` +
+    `${league}${escHtml(pick.outcome)}\n` +
+    `Odds: ${pick.price.toFixed(2)} · Win Prob: ${Math.round(pick.probability * 100)}% (uncalibrated) · 🕒 ${lagosTimeLabel(pick.startMs)}\n` +
+    `🧭 ${escHtml(basisLine(pick))}\n` +
+    `🔎 ${escHtml(evidenceTierLine(decision))}\n` +
+    `📊 ${escHtml(pickReason(pick))}\n` +
+    `💰 ${escHtml(evLine(pick))}`
+  );
+}
+
+/**
+ * evidence_v2's formatter (task step 3). 0 singles -> an honest, explicit
+ * one-line "nothing qualified today" explanation (never silence, never an
+ * error-shaped message). 1+ singles -> one labelled single-bet section per
+ * pick, oldest-kickoff-first, each independently qualifying on its own —
+ * explicitly NOT a combo (see the "singles only" note in the header), so
+ * no combined-odds number is ever shown here.
+ */
+export function formatProPicksV2(singles: PolicySingle[]): string {
+  if (!singles.length) {
+    return "💎 PRO PICKS\n\nNo pick cleared today's evidence bar — nothing qualifies yet today.";
+  }
+  const blocks = ["💎 PRO PICKS — single bets (accumulators not offered — single-bet mode)"];
+  const sorted = [...singles].sort((a, b) => a.candidate.startMs - b.candidate.startMs);
+  for (const { candidate, decision } of sorted) blocks.push(formatSingle(candidate, decision));
+  blocks.push("Bet only what you can afford to lose.");
+  return blocks.join("\n\n");
+}
+
 export interface ProPicksResult {
   text: string;
   reason: "success" | "no_candidates" | "archive_unavailable";
   /** The actual ticket built, only on success — callers (index.ts,
    * cron.ts) use this to record the issued ticket in the ledger (see
    * ledger.ts) after a successful send; never set on failure, since
-   * nothing was actually built or sent. */
+   * nothing was actually built or sent. Legacy mode only
+   * (PRO_POLICY_MODE!="evidence_v2") — evidence_v2 populates `tickets`
+   * instead (see below), never both. */
   ticket?: ProTicket;
+  /** evidence_v2 only: one single-candidate "ticket" per recommended single
+   * bet (picks: [candidate], odds: candidate.price — a single's own price,
+   * never a combined/parlay figure), for callers to record each single in
+   * the ledger individually. Undefined in legacy mode and on any failure
+   * path. */
+  tickets?: ProTicket[];
 }
 
 /** The one entry point: load today's stored candidates and deterministically
  * assemble a ticket, or report honestly why there isn't one yet. Never asks
- * a question, never starts a conversation, never touches a session. */
+ * a question, never starts a conversation, never touches a session.
+ *
+ * `policyModeRaw` is `env.PRO_POLICY_MODE` as-is (string | undefined) —
+ * resolvePolicyMode applies the "legacy" hard default, so an unset/typo'd
+ * binding can never accidentally activate evidence_v2. With the default in
+ * effect, everything below the `if` runs byte-for-byte as before this
+ * parameter existed. */
 export async function buildProPicks(
   deps: CustomPicksDeps,
   day: string,
   zone: string,
   nowMs: number,
+  policyModeRaw?: string,
 ): Promise<ProPicksResult> {
   const loaded = await loadPool(deps, day, zone, nowMs);
   if (loaded === null) return { text: "", reason: "archive_unavailable" };
+  if (resolvePolicyMode(policyModeRaw) === "evidence_v2") {
+    const singles = selectSingles(loaded.candidates, nowMs, PRO_MIN_PRICE, PRO_MIN_PROBABILITY, PRO_MIN_BOOKS, PRO_MAX_LEGS);
+    const text = formatProPicksV2(singles);
+    if (!singles.length) return { text, reason: "no_candidates" };
+    const tickets: ProTicket[] = singles.map((s) => ({ picks: [s.candidate], odds: s.candidate.price }));
+    return { text, reason: "success", tickets };
+  }
   const ticket = buildProTicket(loaded.candidates, nowMs);
   if (!ticket) return { text: "", reason: "no_candidates" };
   return { text: formatProTicket(ticket), reason: "success", ticket };

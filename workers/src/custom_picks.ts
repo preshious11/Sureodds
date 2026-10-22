@@ -400,6 +400,28 @@ export interface Candidate {
   homeFormDates: string[];
   awayFormDates: string[];
   h2hDates: string[];
+  /** predbot's own `independent_status` (ensemble.py Scored.independent_status,
+   * predbot/model/independent.py): "ok" when the independent (history-only,
+   * never market-derived) model actually priced THIS line; otherwise
+   * "unavailable:<reason>" — "unavailable:no_independent_model" for every
+   * sport that has no independent model at all (today: everything except
+   * football), "unavailable:unsupported_market"/"unavailable:no_history"/
+   * "unavailable:insufficient_history"/"unavailable:unknown_team"/
+   * "unavailable:unresolved_participant" for a football line the model
+   * couldn't price, "unavailable:not_configured" when the row predates this
+   * field entirely (old archive rows; same default Scored itself uses).
+   * Added for pro_policy.ts's evidence-tier classification (workers/src's
+   * NEW Pro Picks evidence_v2 feature) — Custom Picks' own eligible()/
+   * scoped()/search()/shortlist() never read this field, so adding it here
+   * changes nothing about Custom Picks' existing behavior. */
+  independentStatus: string;
+  /** predbot's own `p_independent` (Scored.p_independent): the independent
+   * model's OWN probability for this line, history-only - NEVER the
+   * published/ranked probability (that is always `probability`/p_model,
+   * everywhere, including in pro_policy.ts). null whenever
+   * independentStatus !== "ok". Same "added for pro_policy.ts, unread by
+   * Custom Picks itself" note as independentStatus above. */
+  pIndependent: number | null;
 }
 
 /** ~ predbot/markets/catalog.py STAT_NAMES / PERIOD_NAMES / SPORT_POINTS_WORD. */
@@ -631,6 +653,12 @@ export function normalizeCandidateWithReason(
     homeFormDates: dateArray(payload.home_form_dates),
     awayFormDates: dateArray(payload.away_form_dates),
     h2hDates: dateArray(payload.h2h_dates),
+    independentStatus: typeof payload.independent_status === "string" && payload.independent_status.trim()
+      ? payload.independent_status.trim() : "unavailable:not_configured",
+    // hasFiniteValue first, same discipline as referenceEvAvailable above:
+    // Number(null) coercing to 0 would otherwise turn a genuinely absent
+    // independent estimate into a fabricated-looking real probability of 0.
+    pIndependent: hasFiniteValue(payload.p_independent) ? finite(payload.p_independent) : null,
   };
   return { candidate, reason: "accepted" };
 }

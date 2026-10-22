@@ -855,11 +855,15 @@ async function enterProPicks(env: Env, userId: string, chatId: string): Promise<
   const day = lagosDateString(nowMs);
   const loadingMessageId = await sendLoadingIndicator(env, chatId);
   try {
-    const result = await buildProPicks(customPicksDeps(env), day, zone, nowMs);
+    const result = await buildProPicks(customPicksDeps(env), day, zone, nowMs, env.PRO_POLICY_MODE);
     await clearLoadingIndicator(env, chatId, loadingMessageId);
-    const text = result.reason === "success"
-      ? result.text
-      : "💎 No Pro Picks qualify yet today — nothing has cleared the floor.";
+    // Legacy mode's result.text is "" on any non-success reason, so this is
+    // byte-identical to the old `result.reason === "success" ? result.text :
+    // fallback` for legacy — evidence_v2 additionally gets to populate an
+    // honest no-pick explanation into result.text even on reason
+    // "no_candidates" (pro_policy.ts's own formatProPicksV2), which this
+    // then prefers over the generic fallback.
+    const text = result.text || "💎 No Pro Picks qualify yet today — nothing has cleared the floor.";
     const sent = await tgApi(env, "sendMessage", { chat_id: chatId, text, parse_mode: "HTML" });
     // Ledger: recorded only after a confirmed real send, never before — see
     // ledger.ts's own doc comment ("a recorded-but-never-sent ticket would
@@ -867,8 +871,15 @@ async function enterProPicks(env: Env, userId: string, chatId: string): Promise<
     // day's ticket (e.g. the admin re-triggering after the auto-send) —
     // recordIssuedTicket's content-derived id makes that a safe no-op, not
     // a duplicate ledger row.
-    if (result.reason === "success" && result.ticket && sent.ok) {
-      await recordIssuedTicket(env.DB, "pro", userId, chatId, day, zone, new Date(nowMs).toISOString(), result.ticket);
+    if (result.reason === "success" && sent.ok) {
+      if (result.tickets?.length) {
+        // evidence_v2: one ledger row per independently-qualifying single.
+        for (const t of result.tickets) {
+          await recordIssuedTicket(env.DB, "pro", userId, chatId, day, zone, new Date(nowMs).toISOString(), t);
+        }
+      } else if (result.ticket) {
+        await recordIssuedTicket(env.DB, "pro", userId, chatId, day, zone, new Date(nowMs).toISOString(), result.ticket);
+      }
     }
   } catch (err) {
     await clearLoadingIndicator(env, chatId, loadingMessageId);

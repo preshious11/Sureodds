@@ -403,7 +403,7 @@ export async function postProPicksToAdmin(
     getPool: (d: string, z: string) => getCustomPickPool(env.DB, d, z),
     getCandidates: (d: string, z: string) => getCustomPickCandidates(env.DB, d, z),
   };
-  const result = await buildProPicks(deps, localDate, timezone, nowMs);
+  const result = await buildProPicks(deps, localDate, timezone, nowMs, env.PRO_POLICY_MODE);
   if (result.reason !== "success" || !result.text) {
     // Not enough pro-floor picks yet (e.g. generation incomplete for this
     // sport mix) — release the claim so the next sweep fire tries again,
@@ -420,7 +420,12 @@ export async function postProPicksToAdmin(
   }
   await confirmPosted(env.DB, "pro", localDate, messageId != null ? String(messageId) : null);
   await setJobResult(env.DB, "post", `pro ${localDate}: posted message=${messageId ?? "?"}`);
-  if (result.ticket) {
+  if (result.tickets?.length) {
+    // evidence_v2: one ledger row per independently-qualifying single.
+    for (const t of result.tickets) {
+      await recordIssuedTicket(env.DB, "pro", owner, owner, localDate, timezone, new Date(nowMs).toISOString(), t);
+    }
+  } else if (result.ticket) {
     await recordIssuedTicket(env.DB, "pro", owner, owner, localDate, timezone, new Date(nowMs).toISOString(), result.ticket);
   }
   return "sent";

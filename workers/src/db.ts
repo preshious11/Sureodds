@@ -37,6 +37,13 @@ export interface Env {
    * falls back to custom_picks.ts's DEFAULT_ENABLED_SPORTS (production's
    * current real value) - see parseEnabledSports(). */
   ALLOWED_SPORTS?: string;
+  /** Pro Picks' evidence-aware selection policy (pro_policy.ts) rollout
+   * flag. Unset or any value other than "evidence_v2" (the hard default,
+   * "legacy") leaves Pro Picks' eligibility/ranking/ticket-construction/
+   * formatting byte-for-byte as it was before pro_policy.ts existed — see
+   * pro_policy.ts's own header comment for the rollback guarantee this is
+   * built to provide. */
+  PRO_POLICY_MODE?: string;
 }
 
 /// Two-phase update claim (Stage 2 reliability).
