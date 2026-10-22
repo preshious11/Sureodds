@@ -212,20 +212,37 @@ jobs:
           epoch=$(npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
             --config wrangler.toml --json \
             --command "SELECT epoch FROM sync_state WHERE id=1" | python3 scripts/d1_json.py --get 0.results.0.epoch)
+          # D1's own API occasionally returns a transient "internal error"
+          # (observed: run 39674561403, "internal error; reference =
+          # hnimbic4nl6koj3e92g8idkl") with no app-level cause - retrying the
+          # same already-planned, idempotent batch file a couple of times
+          # clears it. Still a loud exit 1 if all attempts fail - no change
+          # to the EXPLICIT AUTHORIZATION / LOUD FAILURE doctrine above.
+          apply_batch() {
+            local f="$1" base="$2" attempt
+            for attempt in 1 2 3; do
+              if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+                --config wrangler.toml --json --file "$f" > "/tmp/livemon_applied_$base.json" 2>&1; then
+                if python3 scripts/d1_json.py --assert-success "/tmp/livemon_applied_$base.json"; then
+                  return 0
+                fi
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                echo "::notice::$base attempt $attempt/3 failed, retrying in $((attempt * 5))s"
+                sleep "$((attempt * 5))"
+              fi
+            done
+            return 1
+          }
           ok=0; total=0
           for f in /tmp/livemon_plan/p0_*.sql /tmp/livemon_plan/p1_*.sql; do
             [ -e "$f" ] || continue
             total=$((total + 1))
             base=$(basename "$f")
-            if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
-              --config wrangler.toml --json --file "$f" > "/tmp/livemon_applied_$base.json" 2>&1; then
-              if python3 scripts/d1_json.py --assert-success "/tmp/livemon_applied_$base.json"; then
-                ok=$((ok + 1)); echo "OK $base"
-              else
-                echo "FAIL $base (D1 reported failure):"; tail -20 "/tmp/livemon_applied_$base.json"; exit 1
-              fi
+            if apply_batch "$f" "$base"; then
+              ok=$((ok + 1)); echo "OK $base"
             else
-              echo "FAIL $base (wrangler error):"; tail -20 "/tmp/livemon_applied_$base.json"; exit 1
+              echo "FAIL $base (after 3 attempts):"; tail -20 "/tmp/livemon_applied_$base.json"; exit 1
             fi
           done
           echo "applied $ok/$total batch files"
@@ -258,8 +275,41 @@ jobs:
           name: stage8-live-monitor-plan
           if-no-files-found: warn
           path: /tmp/livemon_plan/plan.json
-      - name: Alert the owner on failure (A6; skip is not a failure)
+      - name: Check alert dedup state (A6; one alert per incident, not per tick)
+        id: dedupcheck
         if: failure()
+        run: |
+          set -euo pipefail
+          cd workers
+          # job_state doubles as the dedup store: 'stage8_alert'.last_result
+          # tracks whether the PREVIOUS tick already alerted for an
+          # ongoing failure. A run that fails right after a success (or on
+          # first ever use) is always a NEW incident and always alerts; a
+          # run that fails right after another failure is the SAME incident
+          # still unresolved and is suppressed, so one outage doesn't spam
+          # a Telegram message every 5 minutes. The next SUCCESS resets the
+          # state, so the next failure after that is treated as new again.
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "::notice::no production D1 credentials available to check dedup state - alerting unconditionally"
+            echo "repeat=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "INSERT OR IGNORE INTO job_state (name, updated_at) VALUES ('stage8_alert', strftime('%Y-%m-%dT%H:%M:%SZ','now'))" > /dev/null || true
+          last=$(npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "SELECT last_result FROM job_state WHERE name='stage8_alert'" \
+            | python3 scripts/d1_json.py --get 0.results.0.last_result 2>/dev/null || echo "")
+          echo "repeat=$([ "$last" = "failed" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE job_state SET last_result='failed', updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='stage8_alert'" > /dev/null || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Alert the owner on failure (actionable only, deduplicated)
+        if: failure() && steps.dedupcheck.outputs.repeat != 'true'
         run: |
           set -euo pipefail
           admin_id=$(grep '^TELEGRAM_ADMIN_IDS' workers/wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | cut -d',' -f1 | xargs)
@@ -270,3 +320,17 @@ jobs:
             > /dev/null || true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
+      - name: Reset alert dedup state on success
+        if: success()
+        run: |
+          cd workers
+          [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || exit 0
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "INSERT OR IGNORE INTO job_state (name, updated_at) VALUES ('stage8_alert', strftime('%Y-%m-%dT%H:%M:%SZ','now'))" > /dev/null || true
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE job_state SET last_result='ok', updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='stage8_alert'" > /dev/null || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
