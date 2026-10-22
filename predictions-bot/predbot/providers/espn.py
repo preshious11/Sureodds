@@ -44,7 +44,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 
 import requests
 
-from predbot.markets.competitions import Competition, lookup
+from predbot.markets.competitions import BY_ID, Competition, lookup
 from predbot.providers.base import BaseProvider, Event, MatchResult
 from predbot.util.http import Http, ProviderError, RateLimiter
 from predbot.util.names import same_team
@@ -145,7 +145,7 @@ class ESPNProvider(BaseProvider):
 
     # ---------------------------------------------------------------- recent form / head-to-head
     def team_insight(self, sport: str, home: str, away: str, start: datetime,
-                     league_id: str = "", league: str = "") -> Optional[Dict]:
+                     league_id: str = "", league: str = "", competition_id: str = "") -> Optional[Dict]:
         """Real recent form (last 5 completed games, either side) and real
         head-to-head (last 5 completed meetings between these exact two
         teams), built ONLY from ESPN's own schedule data for teams it can
@@ -159,10 +159,20 @@ class ESPNProvider(BaseProvider):
         Reuses exactly the matching this provider's settlement path already
         trusts (`lookup`, `_scoreboard`, `_matches`/`same_team`) - no new
         provider, no new API, just a second use of the same free endpoint.
+
+        ``competition_id`` (optional): the event's own already-resolved
+        ``canonical_competition_id`` (predbot/storage/identity.py, set from
+        the SAME 3-way sport_key/league_id/league match that
+        competition_for_event() does for every other consumer). Tried FIRST,
+        via the id-indexed BY_ID table - league_id/league alone miss
+        whenever the surviving/"kept" provider for a merged fixture is Odds
+        API (predbot/providers/oddsapi.py never sets Event.league_id at all;
+        only extra["sport_key"] carries the competition, which this
+        function's own league_id/league lookup() never consults).
         """
         if sport == "tennis":
             return None
-        comp = lookup(league_id, league)
+        comp = (BY_ID.get(competition_id) if competition_id else None) or lookup(league_id, league)
         if comp is None or not comp.espn or (sport and comp.sport != sport) or comp.sport == "tennis":
             return None
         utc_day = start.astimezone(timezone.utc)

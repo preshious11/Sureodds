@@ -72,16 +72,21 @@ def representative_predictions(scored, results_gate=None, insight_fetcher=None):
             continue
         groups.setdefault(key, []).append(s)
     insight_cache = {}
+    insight_stats = Counter()
 
     def event_insight(event):
         if insight_fetcher is None:
             return None
         key = event.canonical_event_id
         if key not in insight_cache:
+            insight_stats["attempted"] += 1
             try:
-                insight_cache[key] = insight_fetcher(event)
-            except Exception:
-                insight_cache[key] = None
+                result = insight_fetcher(event)
+            except Exception as exc:
+                insight_stats[f"exception:{type(exc).__name__}"] += 1
+                result = None
+            insight_cache[key] = result
+            insight_stats["returned_data" if result else "returned_none"] += 1
         return insight_cache[key]
 
     candidates = [capture_candidate(s, event_insight(s.event)) for values in groups.values() for s in values]
@@ -107,7 +112,13 @@ def representative_predictions(scored, results_gate=None, insight_fetcher=None):
         "line_rejections_by_market": {m: dict(c) for m, c in sorted(by_market.items())},
         "event_no_valid_market": dict(no_valid),
         "markets_evaluated": len(scored),
-        "market_coverage": coverage_stages(scored, validated, chosen.predictions)},
+        "market_coverage": coverage_stages(scored, validated, chosen.predictions),
+        # Pro Picks' ESPN H2H/form enrichment (team_insight) is fetched with
+        # ALL exceptions silently swallowed to "no insight" (never allowed to
+        # break generation) - which previously made a total, fleet-wide
+        # insight outage indistinguishable from a normal day with no history.
+        # This surfaces attempt/outcome counts without changing behavior.
+        "espn_insight": dict(insight_stats)},
         candidates=candidates, ticket_predictions=validated)
 
 

@@ -2,12 +2,11 @@
 -- have this via picks/prediction_memberships + settlement — this is the
 -- equivalent for the two features that never had one).
 --
--- NOT applied to production as part of this change. Local/offline only
--- until explicitly approved — see workers/src/ledger.ts's own header
--- comment for why the recording calls are not yet wired into the live
--- send paths (enterProPicks, postProPicksToAdmin, processCustomPicksText):
--- doing so before this migration is applied to production D1 would crash
--- those paths outright (INSERT against a table that doesn't exist yet).
+-- Applied to production D1. recordIssuedTicket() is wired live into
+-- enterProPicks/postProPicksToAdmin (cron.ts) and the Custom Picks send
+-- path (index.ts) — see workers/src/ledger.ts's own header comment for
+-- current wiring status, including the one piece still outstanding
+-- (automatic settlement is not yet invoked from a scheduled job).
 --
 -- Rollback: both tables are purely additive and read by nothing else in
 -- the schema (no foreign keys point INTO them from pre-existing tables),

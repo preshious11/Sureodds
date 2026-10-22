@@ -194,3 +194,46 @@ def test_every_representative_records_which_rule_chose_it():
     notes = {s.line.market: s.notes["representative"] for s in gen.predictions}
     assert notes["result3"] == {"family": "1X2", "rule": "modal outcome"}
     assert notes["total"] == {"family": "Over/Under", "rule": "main line 2.5"}
+
+
+# ------------------------------------------------------------------------------------------------ ESPN insight diagnostics
+def test_insight_fetcher_outcomes_are_counted_not_just_silently_swallowed():
+    # Regression for the ESPN H2H forensic audit: insight_fetcher exceptions
+    # were swallowed with zero visibility, making a total fleet-wide outage
+    # indistinguishable from an ordinary day with no history. This proves the
+    # counts without changing the "never let enrichment break generation" rule.
+    a, b, c = ev(1), ev(2), ev(3)
+    for e in (a, b, c):
+        e.canonical_event_id = fixture_key(e)
+    pool = cands(a, one_x_two(0.5, 0.3, 0.2)) + cands(b, one_x_two(0.5, 0.3, 0.2)) + cands(c, one_x_two(0.5, 0.3, 0.2))
+
+    def fetcher(event):
+        if event.provider_event_id == "1":
+            return {"home_form": ["W"]}
+        if event.provider_event_id == "2":
+            return None
+        raise ValueError("boom")
+
+    gen = representative_predictions(pool, insight_fetcher=fetcher)
+    stats = gen.diagnostics["espn_insight"]
+    assert stats["attempted"] == 3
+    assert stats["returned_data"] == 1
+    assert stats["returned_none"] == 2
+    assert stats["exception:ValueError"] == 1
+
+
+def test_insight_fetcher_is_called_at_most_once_per_fixture_regardless_of_market_count():
+    e = ev(1)
+    e.canonical_event_id = fixture_key(e)
+    pool = cands(e, one_x_two(0.5, 0.3, 0.2) + totals((2.5, 0.55)))
+    calls = []
+    gen = representative_predictions(pool, insight_fetcher=lambda event: calls.append(event) or {"home_form": []})
+    assert len(calls) == 1
+    assert gen.diagnostics["espn_insight"] == {"attempted": 1, "returned_data": 1}
+
+
+def test_no_insight_fetcher_configured_reports_no_espn_insight_stats():
+    e = ev(1)
+    e.canonical_event_id = fixture_key(e)
+    gen = representative_predictions(cands(e, one_x_two(0.5, 0.3, 0.2)))
+    assert gen.diagnostics["espn_insight"] == {}

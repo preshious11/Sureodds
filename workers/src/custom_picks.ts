@@ -244,7 +244,7 @@ function outcomeLabel(
     return core;
   }
   if (market === "btts") {
-    return BTTS_LABELS[selection] ?? `${market}: ${selection}`;
+    return (BTTS_LABELS[selection] ?? `${market}: ${selection}`) + suffix;
   }
   if (market === "total") {
     if (line == null || (entity !== "all" && entity !== "home" && entity !== "away")) return "";
@@ -269,7 +269,7 @@ function outcomeLabel(
     return "Handicap: " + core + suffix;
   }
   if (market === "odd_even") {
-    return `${word} ${selection === "odd" ? "Odd" : "Even"}`;
+    return `${word} ${selection === "odd" ? "Odd" : "Even"}` + suffix;
   }
   if (market === "prop") {
     return propOutcome(selection, home, away, line, period, stat, entity);

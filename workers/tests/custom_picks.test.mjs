@@ -696,6 +696,26 @@ describe("reported-issue regressions (strict floor, labels, counts, fixtures, va
     assert.equal(handicap.outcome, "Handicap: Bulls +4.5");
   });
 
+  it("btts and odd_even never silently drop their period, same as every other market", () => {
+    // Regression for the Bayern/Arsenal incident: a 1st-half BTTS No pick
+    // displayed as bare "BTTS: No" with no indication it was a half-only
+    // sub-market, making a well-justified 1H call read as a reckless
+    // full-match one. outcomeLabel()'s btts/odd_even branches omitted
+    // periodSuffix() while every other branch (result, total, handicap,
+    // dnb, dc, prop) already appended it.
+    const bttsFull = candidate({ market: "btts", selection: "no" });
+    assert.equal(bttsFull.outcome, "BTTS: No");
+    const btts1h = candidate({ market: "btts", selection: "no", period: "1h" });
+    assert.ok(btts1h.outcome.includes("1st Half"), btts1h.outcome);
+    assert.equal(btts1h.outcome, "BTTS: No (1st Half)");
+    const btts2h = candidate({ market: "btts", selection: "yes", period: "2h" });
+    assert.ok(btts2h.outcome.includes("2nd Half"), btts2h.outcome);
+    const oddEvenFull = candidate({ market: "odd_even", selection: "odd" });
+    assert.ok(!oddEvenFull.outcome.includes("("), oddEvenFull.outcome);
+    const oddEven1q = candidate({ sport: "basketball", market: "odd_even", selection: "even", period: "1q" });
+    assert.ok(oddEven1q.outcome.includes("1st Qtr"), oddEven1q.outcome);
+  });
+
   it("a 50-odds request fails honestly with only proven, above-floor alternatives", async () => {
     const rows = pricedPool([1.8, 1.6, 1.9]).map((c, i) => ({
       payload_json: JSON.stringify({

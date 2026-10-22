@@ -148,8 +148,14 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     # when ESPN results aren't configured. Never required: engine.py already
     # treats a None/failing fetcher as "no insight for this fixture".
     espn_provider = (providers_map or {}).get('espn')
+    # canonical_competition_id (set by storage/identity.py from the SAME
+    # sport_key/league_id/league resolution competition_for_event() does)
+    # is tried first inside team_insight() - plain league_id/league alone
+    # miss for any event whose surviving provider is Odds API, which never
+    # populates Event.league_id at all (predbot/providers/oddsapi.py).
     insight_fetcher = (lambda event: espn_provider.team_insight(
-        event.sport, event.home, event.away, event.start, event.league_id, event.league)) if espn_provider else None
+        event.sport, event.home, event.away, event.start, event.league_id, event.league,
+        event.canonical_competition_id)) if espn_provider else None
     with timings.stage('analyze'):
         generation = generate(events, db, ModelSettings(cfg.model_shrink, tuple(cfg.sharp_books),
                                                        cfg.elo_min_games, cfg.edge_price), gate,

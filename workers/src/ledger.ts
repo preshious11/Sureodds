@@ -5,12 +5,14 @@
  * via picks/prediction_memberships + predbot's existing settlement grader
  * (predbot/markets/settlement.py). Custom Picks and Pro Picks never had an
  * equivalent — a ticket is formatted and sent, then forgotten. This module
- * is the missing record, built and tested, but NOT yet wired into the live
- * send paths (enterProPicks/postProPicksToAdmin/processCustomPicksText) and
- * NOT applied to production D1 — see migration 0014's own header. Wiring
- * either of those in before the migration is live would crash the send
- * path outright (INSERT against a table that doesn't exist yet), so that
- * integration is the deliberate next, approval-gated step, not done here.
+ * is that missing record. Migration 0014 is applied to production D1, and
+ * recordIssuedTicket() is wired live into enterProPicks/postProPicksToAdmin
+ * (cron.ts) and the Custom Picks send path (index.ts) — every successfully
+ * delivered ticket is recorded. Automatic settlement is the one piece still
+ * outstanding: predbot/jobs/ledger_settlement.py reshapes a ledger leg into
+ * predbot's existing grade() call and is tested against it, but it is not
+ * yet invoked from any scheduled job — settleIssuedLeg() exists and is
+ * tested, but nothing calls it against live D1 data yet.
  *
  * This module never grades anything itself — "avoid creating a second
  * contradictory grader" (the brief's own words). `settleIssuedLeg()` only

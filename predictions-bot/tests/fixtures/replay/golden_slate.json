@@ -244,6 +244,11 @@
    "target_reached": true
   },
   "daily_selected": 5,
+  "espn_insight": {
+   "attempted": 42,
+   "exception:RuntimeError": 35,
+   "returned_none": 42
+  },
   "event_no_valid_market": {},
   "event_rejections": {},
   "events_by_sport": {
