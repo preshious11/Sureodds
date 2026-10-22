@@ -206,7 +206,16 @@ class ESPNProvider(BaseProvider):
         away_form = self._recent_results(away_games, away_id, start) if away_games else []
         if not home_form and not away_form and not h2h:
             return None
-        return {"home_form": home_form, "away_form": away_form, "h2h": h2h}
+        # Dates ride alongside each result (never a separately-ordered list)
+        # so "home_form" and "home_form_dates" can never be mismatched by a
+        # consumer - see _recent_results/_recent_meetings. Additive-only:
+        # home_form/away_form/h2h keep their original List[str] shape, so
+        # nothing already reading them (e.g. pro_picks.ts wlRecord()) breaks.
+        return {
+            "home_form": [r for r, _ in home_form], "home_form_dates": [d for _, d in home_form],
+            "away_form": [r for r, _ in away_form], "away_form_dates": [d for _, d in away_form],
+            "h2h": [r for r, _ in h2h], "h2h_dates": [d for _, d in h2h],
+        }
 
     def _team_schedule(self, comp: Competition, team_id: str, start: datetime) -> List[Dict]:
         """A team's schedule, spanning the CURRENT season and - only if that
@@ -253,24 +262,27 @@ class ESPNProvider(BaseProvider):
                 return None
         return None
 
-    def _recent_results(self, games: List[Dict], team_id: str, start: datetime, limit: int = 5) -> List[str]:
+    def _recent_results(self, games: List[Dict], team_id: str, start: datetime, limit: int = 5) -> List[Tuple[str, str]]:
+        """Newest-first (result, ISO kickoff date) pairs - the date rides
+        alongside the result (never a separate, independently-ordered list)
+        so a caller can never mismatch which date goes with which "W"/"L"."""
         completed = [g for g in games if self._before(g, start)]
         completed.sort(key=lambda g: parse_iso(str(g.get("date") or "")) or start, reverse=True)
         out = []
         for g in completed:
             r = self._result_for(g, team_id)
             if r:
-                out.append(r)
+                out.append((r, str(g.get("date") or "")[:10]))
             if len(out) >= limit:
                 break
         return out
 
     def _recent_meetings(self, home_games: List[Dict], home_id: str, away_id: str,
-                         start: datetime, limit: int = 5) -> List[str]:
+                         start: datetime, limit: int = 5) -> List[Tuple[str, str]]:
         """Last `limit` completed meetings between these two teams specifically,
         from the HOME team's own schedule (any game the away team also appears
-        in), newest first - e.g. ["W", "W", "L", "W", "W"] from the home
-        team's perspective."""
+        in), newest first - e.g. [("W","2026-03-01"), ...] from the home
+        team's perspective, result paired with its own kickoff date."""
         completed = [g for g in home_games if self._before(g, start)]
         meetings = []
         for g in completed:
@@ -283,7 +295,7 @@ class ESPNProvider(BaseProvider):
         for g in meetings[:limit]:
             r = self._result_for(g, home_id)
             if r:
-                out.append(r)
+                out.append((r, str(g.get("date") or "")[:10]))
         return out
 
     # ---------------------------------------------------------------- matching

@@ -147,6 +147,18 @@ function wlRecord(results: string[]): string {
   return `${wins}W-${results.length - wins}L`;
 }
 
+/** "3W-2L last 3 (2026-09-01 → 2026-10-01)" when a same-length dates array
+ * rides alongside the results (the normal case — espn.py builds both from
+ * the same game record), else just "3W-2L last 3" — a length mismatch
+ * (corrupt/partial archive row) is never papered over by guessing which
+ * date belongs to which result; the date range is simply omitted. */
+function wlRecordWithDates(results: string[], dates: string[]): string {
+  const base = `${wlRecord(results)} last ${results.length}`;
+  if (dates.length !== results.length || !results.length) return base;
+  const oldest = dates[dates.length - 1], newest = dates[0];
+  return oldest === newest ? `${base} (${newest})` : `${base} (${oldest} → ${newest})`;
+}
+
 /** Real stats/H2H when ESPN could identify this fixture (see
  * ESPNProvider.team_insight — ".homeForm"/".awayForm"/".h2h" on Candidate),
  * falling back to books/edge when it couldn't. Never fabricates a stats/H2H
@@ -161,18 +173,73 @@ function wlRecord(results: string[]): string {
  * any sport can be further discounted ×0.7 for merely incomplete book
  * coverage. Surfacing it as "confidence" produced a real, reproducible bug:
  * a 78%-probability pick showing "38% confidence" right next to it, because
- * the two numbers measure completely different things. */
+ * the two numbers measure completely different things.
+ *
+ * CAUSAL ACCURACY: ESPN H2H/form is fetched and archived entirely AFTER
+ * scoring (daily_picks.py wires insight_fetcher into representative_
+ * predictions()/capture_candidate(), both of which run on an ALREADY-SCORED
+ * `Scored` object — see engine.py's `generate()` → `score_events()` →
+ * `representative_predictions()` ordering). It never reaches ensemble.py's
+ * probability computation at all, so it is real, verified, non-fabricated
+ * CONTEXT — but it never caused this pick's probability or its Pro
+ * eligibility, and must never be labelled as if it did. The fallback line
+ * below is different: `books` genuinely gates eligibility (PRO_MIN_BOOKS)
+ * and `modelEv` genuinely ranks (byQuality) — both ARE causally part of why
+ * this pick qualified, so that line keeps its plain wording. */
 function pickReason(c: Candidate): string {
   const parts: string[] = [];
-  if (c.h2h.length) parts.push(`H2H (${c.home}): ${wlRecord(c.h2h)} last ${c.h2h.length}`);
-  if (c.homeForm.length) parts.push(`${c.home} form: ${wlRecord(c.homeForm)}`);
-  if (c.awayForm.length) parts.push(`${c.away} form: ${wlRecord(c.awayForm)}`);
-  if (parts.length) return parts.join(" · ");
+  if (c.h2h.length) parts.push(`H2H (${c.home}): ${wlRecordWithDates(c.h2h, c.h2hDates)}`);
+  // The FULL record is always shown, wins and losses alike (e.g. a 4W-1L
+  // still prints the 1L) — this IS the contradictory-evidence disclosure:
+  // nothing here is pre-filtered down to only the favourable games.
+  if (c.homeForm.length) parts.push(`${c.home} form: ${wlRecordWithDates(c.homeForm, c.homeFormDates)}`);
+  if (c.awayForm.length) parts.push(`${c.away} form: ${wlRecordWithDates(c.awayForm, c.awayFormDates)}`);
+  // "Context" (never "Reason"/"Why"): this evidence did not feed the
+  // probability - see the CAUSAL ACCURACY note above. Stated plainly so it
+  // is never mistaken for a causal explanation of the pick.
+  if (parts.length) return `Context (not used in the probability): ${parts.join(" · ")}`;
   const fallback: string[] = [];
   if (c.books >= 3) fallback.push(`${Math.round(c.books)} books lined up`);
   if (c.modelEv > 0.01) fallback.push(`+${(c.modelEv * 100).toFixed(1)}% edge`);
   if (fallback.length) return fallback.join(" · ");
   return "No match history on file for this fixture yet";
+}
+
+/** Honest provenance for the displayed probability: predbot's own
+ * `p_model_basis` (ensemble.py:88-92) — "independent" only on the rare
+ * path where the independent football model actually drives p_model
+ * (INDEPENDENT_MODEL_MODE="independent"); the deployed default is "shadow",
+ * so "Market-informed" is the common, accurate case, never overstated as
+ * an independent edge when it isn't one. */
+function basisLine(c: Candidate): string {
+  return c.probabilityBasis === "independent"
+    ? "Independent model estimate"
+    : "Market-informed estimate (anchored to bookmaker odds)";
+}
+
+/** Always states the real, signed modelEv — never hidden, never reframed
+ * as harmless when negative. A negative modelEv IS the model's own
+ * predicted expected return at this price: that is literally what the
+ * number means, and this line must never say otherwise. It MAY explain a
+ * contributing factor (near the 0.72 probability floor, probability is
+ * largely market-anchored and the offered price already contains the
+ * bookmaker's margin — see byQuality's own doc comment) but that
+ * explanation is context for WHY the return is negative, never a claim
+ * that the predicted negative return isn't real or doesn't apply to this
+ * pick. `referenceEv` (predbot's sharp-gated edge_ev) is only ever
+ * appended when `referenceEvAvailable` is true — its absence is never
+ * substituted with the clamp's -0.1 placeholder as if it meant something. */
+function evLine(c: Candidate): string {
+  const sign = c.modelEv >= 0 ? "+" : "";
+  const qualifier = c.modelEv < 0
+    ? "the model predicts a negative expected return at this price — probability here is largely market-anchored, and the price already includes the bookmaker's margin"
+    : "vs the offered price";
+  let line = `EV ${sign}${(c.modelEv * 100).toFixed(1)}% (${qualifier})`;
+  if (c.referenceEvAvailable) {
+    const refSign = c.referenceEv >= 0 ? "+" : "";
+    line += ` · sharp-book reference: ${refSign}${(c.referenceEv * 100).toFixed(1)}%`;
+  }
+  return line;
 }
 
 /** "HH:MM" in Africa/Lagos (UTC+1, no DST). */
@@ -192,8 +259,14 @@ export function formatProTicket(ticket: ProTicket): string {
     blocks.push(
       `${icon} ${escHtml(pick.home)} vs ${escHtml(pick.away)}\n` +
         `${league}${escHtml(pick.outcome)}\n` +
-        `Odds: ${pick.price.toFixed(2)} · Confidence: ${Math.round(pick.probability * 100)}% · 🕒 ${lagosTimeLabel(pick.startMs)}\n` +
-        `📊 ${escHtml(pickReason(pick))}`,
+        // "(uncalibrated)" - no settled-history-backed calibration is active
+        // for this probability yet (predbot/model/calibration.py requires
+        // 150+ settled samples per scope; none exist in production today) -
+        // never implied to be a validated confidence figure.
+        `Odds: ${pick.price.toFixed(2)} · Win Prob: ${Math.round(pick.probability * 100)}% (uncalibrated) · 🕒 ${lagosTimeLabel(pick.startMs)}\n` +
+        `🧭 ${escHtml(basisLine(pick))}\n` +
+        `📊 ${escHtml(pickReason(pick))}\n` +
+        `💰 ${escHtml(evLine(pick))}`,
     );
   }
   blocks.push("Bet only what you can afford to lose.");

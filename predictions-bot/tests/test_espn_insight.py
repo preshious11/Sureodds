@@ -129,3 +129,20 @@ def test_tennis_is_still_excluded_even_with_a_competition_id_given():
     p = ESPNProvider()
     out = p.team_insight("tennis", "Player A", "Player B", START, competition_id="atp")
     assert out is None
+
+
+def test_dates_ride_alongside_each_result_never_a_separately_ordered_list():
+    # Workstream 1 (explanations must show evidence "sample sizes and
+    # dates"): home_form/away_form/h2h keep their original W/L shape
+    # (additive-only), with a same-length, same-order *_dates array built
+    # from the SAME completed-game record as the result - never a second,
+    # independently-sorted lookup that could drift out of alignment.
+    scoreboard, bayern_games, arsenal_games = _fixture()
+    p = _provider_with(scoreboard, bayern_games, arsenal_games)
+    out = p.team_insight("football", "FC Bayern München", "Arsenal", START, competition_id="ucl")
+    assert out["home_form"] == ["W", "W"]
+    assert out["home_form_dates"] == ["2026-10-01", "2026-10-01"]
+    assert len(out["home_form_dates"]) == len(out["home_form"])
+    assert out["away_form"] == ["L", "L"]
+    assert out["away_form_dates"] == ["2026-10-05", "2026-10-05"]
+    assert out["h2h"] == [] and out["h2h_dates"] == []

@@ -194,10 +194,28 @@ function finite(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Unlike finite(), null/undefined are NEVER "present" here — JS's
+ * `Number(null) === 0` makes `finite(null)` return 0 (a real-looking
+ * value), which is exactly wrong for an availability check: predbot
+ * serializes a genuinely absent edge_ev (Optional[float] = None) as JSON
+ * `null`, and that must read as "absent", never as "a real value of 0". */
+function hasFiniteValue(value: unknown): boolean {
+  return value !== null && value !== undefined && finite(value) !== null;
+}
+
 /** A stored "W"/"L" list (recent-form or head-to-head), never trusted blindly
  * — anything not an array of exactly those two strings becomes []. */
 function wlArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => v === "W" || v === "L") : [];
+}
+
+/** YYYY-MM-DD entries only — matches espn.py's own `str(date)[:10]` shape.
+ * Never paired up with homeForm/awayForm/h2h by POSITION here (a length
+ * mismatch from a corrupt row must never silently misattribute a date to
+ * the wrong result) — callers that display both together check lengths
+ * match first. */
+function dateArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) : [];
 }
 
 const RESULT2_LABELS = (home: string, away: string): Record<string, string> => ({
@@ -340,6 +358,26 @@ export interface Candidate {
    * actually ranks on. Never fabricated: it's predbot's own existing model
    * output, archived verbatim, just never read by the Worker before now. */
   modelEv: number;
+  /** Whether `referenceEv` is a REAL sharp-book-derived edge or just the
+   * clamp's -0.1 placeholder for "no sharp reference available" — without
+   * this flag the two are indistinguishable, which previously let an
+   * absence of data read as a fabricated-looking real edge value. Never
+   * display `referenceEv` without checking this first. */
+  referenceEvAvailable: boolean;
+  /** predbot's own `p_model_basis` (Scored, ensemble.py:88-92): "independent"
+   * only when p_model IS the independent-model estimate; "market_blend"
+   * (the deployed default — INDEPENDENT_MODEL_MODE="shadow") whenever
+   * p_model is market-anchored, which is the common case today. Lets the
+   * explanation layer honestly say whether a pick is primarily
+   * market-informed rather than imply an independent edge that isn't there. */
+  probabilityBasis: string;
+  /** predbot's `line.provider_count()` (candidates.py:31) - how many
+   * DISTINCT UPSTREAM PROVIDERS quoted this line, not how many bookmaker
+   * prices they carried (that's `books`/bookmaker_count). A single
+   * provider routinely reports several books, so provider_count==1 can
+   * still have books>=3 - a real, separate evidence-quality signal the
+   * Worker never read before. */
+  providerCount: number;
   line: number | null;
   period: string;
   stat: string;
@@ -355,6 +393,13 @@ export interface Candidate {
   homeForm: string[];
   awayForm: string[];
   h2h: string[];
+  /** Same length/order as homeForm/awayForm/h2h respectively when present
+   * (espn.py builds each date from the exact same game record as its
+   * result) - but ALWAYS check `.length` matches before pairing them up
+   * positionally; a malformed archive row must never misattribute a date. */
+  homeFormDates: string[];
+  awayFormDates: string[];
+  h2hDates: string[];
 }
 
 /** ~ predbot/markets/catalog.py STAT_NAMES / PERIOD_NAMES / SPORT_POINTS_WORD. */
@@ -567,6 +612,13 @@ export function normalizeCandidateWithReason(
     liquidity: Math.max(0, Math.min(1, finite(payload.liquidity) ?? 0)),
     books: Math.max(0, Math.min(10, finite(payload.bookmaker_count) ?? 0)),
     referenceEv: Math.max(-0.1, Math.min(0.1, finite(payload.edge_ev) ?? -0.1)),
+    // Checked BEFORE referenceEv is ever read for display: finite(...) is
+    // null exactly when edge_ev was absent/non-numeric in the archive, i.e.
+    // "no sharp reference", never a real value that happens to be clamped.
+    referenceEvAvailable: hasFiniteValue(payload.edge_ev),
+    probabilityBasis: typeof payload.p_model_basis === "string" && payload.p_model_basis.trim()
+      ? payload.p_model_basis.trim() : "market_blend",
+    providerCount: Math.max(0, Math.min(10, finite(payload.provider_count) ?? 0)),
     // Clamped wide (not ±0.1 like referenceEv): this is the unconditional
     // model-vs-price EV, not a tight sharp-edge comparison, so real values
     // routinely exceed ±0.1 (e.g. -0.19 seen on real data) - -1/+1 is just a
@@ -576,6 +628,9 @@ export function normalizeCandidateWithReason(
     homeForm: wlArray(payload.home_form),
     awayForm: wlArray(payload.away_form),
     h2h: wlArray(payload.h2h),
+    homeFormDates: dateArray(payload.home_form_dates),
+    awayFormDates: dateArray(payload.away_form_dates),
+    h2hDates: dateArray(payload.h2h_dates),
   };
   return { candidate, reason: "accepted" };
 }

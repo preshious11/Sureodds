@@ -671,6 +671,94 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     assert.doesNotMatch(text, /books lined up|% edge/);
   });
 
+  it("H2H/form evidence is labelled as context, never as the causal reason — it never reached the probability", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    seedCandidate(db._sql, day, generatedAt, {
+      canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, bookmaker_count: 6, ev: 0.04,
+      home_form: ["W", "W"], away_form: ["L"], h2h: ["W"],
+    });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const text = lastSend(proFetch).body.text;
+    assert.match(text, /📊 Context \(not used in the probability\): H2H/);
+  });
+
+  it("the books/edge fallback IS causally relevant (eligibility/ranking) — it never carries the 'context' label", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, bookmaker_count: 6, ev: 0.04 });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const text = lastSend(proFetch).body.text;
+    assert.doesNotMatch(text, /Context \(not used/);
+  });
+
+  it("H2H/form dates ride alongside the record when present, and are omitted (never guessed) when the dates array is missing or mismatched", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    seedCandidate(db._sql, day, generatedAt, {
+      canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.8, bookmaker_count: 6, ev: 0.04,
+      home_form: ["W", "W"], home_form_dates: ["2026-10-01", "2026-09-20"],
+      away_form: ["L"], away_form_dates: ["2026-10-05"],
+      h2h: ["W", "W", "W"], // no h2h_dates at all - must still render, just without a date range
+    });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const text = lastSend(proFetch).body.text;
+    assert.match(text, /Arsenal form: 2W-0L last 2 \(2026-09-20 → 2026-10-01\)/);
+    assert.match(text, /Chelsea form: 0W-1L last 1 \(2026-10-05\)/);
+    assert.match(text, /H2H \(Arsenal\): 3W-0L last 3/);
+    assert.doesNotMatch(text, /H2H \(Arsenal\): 3W-0L last 3 \(/, "no dates array -> no fabricated date range");
+  });
+
+  it("every Pro pick discloses its real EV sign and never hides a negative one; a missing sharp-book reference is distinguished from a real one", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    seedCandidate(db._sql, day, generatedAt, {
+      canonical_event_id: "fx-1", price: 1.3, p_model: 0.75, bookmaker_count: 3, ev: -0.051,
+      // no edge_ev at all -> referenceEvAvailable must be false, never shown as a fabricated value
+    });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const text = lastSend(proFetch).body.text;
+    assert.match(text, /💰 EV -5\.1% \(the model predicts a negative expected return at this price/);
+    assert.doesNotMatch(text, /not a predicted loss/, "must never deny the negative return is real");
+    assert.doesNotMatch(text, /sharp-book reference/, "no edge_ev stored -> never fabricate a reference edge value");
+    assert.match(text, /Win Prob: 75% \(uncalibrated\)/);
+    assert.match(text, /🧭 Market-informed estimate/);
+  });
+
+  it("a real sharp-book reference edge (edge_ev present) is shown distinctly, never conflated with its absence", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    seedCandidate(db._sql, day, generatedAt, {
+      canonical_event_id: "fx-1", price: 1.3, p_model: 0.75, bookmaker_count: 3, ev: -0.051, edge_ev: 0.0013,
+    });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const text = lastSend(proFetch).body.text;
+    assert.match(text, /sharp-book reference: \+0\.1%/);
+  });
+
+  it("p_model_basis flags an independent-model estimate honestly; the market-blend default never overclaims independence", async () => {
+    const db = realDb();
+    const theEnv = adminEnv(db);
+    seeded(db);
+    seedCandidate(db._sql, day, generatedAt, {
+      canonical_event_id: "fx-1", price: 1.3, p_model: 0.75, bookmaker_count: 3, ev: 0, p_model_basis: "independent",
+    });
+    const proFetch = stubFetch();
+    await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
+    const text = lastSend(proFetch).body.text;
+    assert.match(text, /🧭 Independent model estimate/);
+  });
+
   it("an unidentifiable fixture (no ESPN match) falls back to books/edge — never the agreement metric (it isn't a confidence signal, see pickReason's doc comment) and never a fabricated stat/H2H line", async () => {
     const db = realDb();
     const theEnv = adminEnv(db);
@@ -678,7 +766,7 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     // No home_form/away_form/h2h stored at all (the honest ESPN-can't-identify-this case).
     // agreement: 0.8 deliberately present but must NEVER be surfaced as a reason — it is
     // not a confidence/strength metric at all, and showing it alongside the real
-    // Confidence: NN% line produced the exact contradiction this test guards against.
+    // Win Prob: NN% line produced the exact contradiction this test guards against.
     seedCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", price: 1.8, p_model: 0.75, agreement: 0.8, bookmaker_count: 6, ev: 0.04 });
     const proFetch = stubFetch();
     await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
@@ -758,11 +846,11 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     const proText = lastSend(proFetch).body.text;
     // Top 3 probabilities: 0.99, 0.95, 0.9 -> confidences 99/95/90.
     for (const expected of [99, 95, 90]) {
-      assert.match(proText, new RegExp(`Confidence: ${expected}%`), `the ${expected}% pick must survive`);
+      assert.match(proText, new RegExp(`Win Prob: ${expected}%`), `the ${expected}% pick must survive`);
     }
     // Everything weaker must be dropped even though it clears the floor.
     for (const dropped of [80, 75, 74, 73]) {
-      assert.doesNotMatch(proText, new RegExp(`Confidence: ${dropped}%`));
+      assert.doesNotMatch(proText, new RegExp(`Win Prob: ${dropped}%`));
     }
   });
 
@@ -814,9 +902,9 @@ describe("Pro Picks (admin-only preview, no paywall)", () => {
     await withFetch(proFetch, () => handleUpdate(theEnv, textMessage(1, "c7", "7", "/propicks")));
     const proText = lastSend(proFetch).body.text;
     assert.equal((proText.match(/ vs /g) ?? []).length, 2, "a 3rd leg must be skipped once it would push combined odds past ~3.0");
-    assert.match(proText, /Confidence: 95%/);
-    assert.match(proText, /Confidence: 90%/);
-    assert.doesNotMatch(proText, /Confidence: 85%/);
+    assert.match(proText, /Win Prob: 95%/);
+    assert.match(proText, /Win Prob: 90%/);
+    assert.doesNotMatch(proText, /Win Prob: 85%/);
   });
 
   it("Pro Picks shows each pick's kickoff time (Africa/Lagos), free-tier tickets do not", async () => {

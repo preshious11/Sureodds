@@ -6,6 +6,7 @@ import random
 
 import pytest
 
+from predbot.model.candidates import capture_candidate
 from predbot.model.engine import representative_predictions
 from predbot.selection import representatives as rep
 from predbot.util.fixtures import fixture_key
@@ -237,3 +238,22 @@ def test_no_insight_fetcher_configured_reports_no_espn_insight_stats():
     e.canonical_event_id = fixture_key(e)
     gen = representative_predictions(cands(e, one_x_two(0.5, 0.3, 0.2)))
     assert gen.diagnostics["espn_insight"] == {}
+
+
+def test_capture_candidate_passes_through_dates_alongside_form_and_h2h():
+    # Workstream 1: explanations need sample sizes AND dates, not just W/L.
+    # capture_candidate must carry the *_dates arrays insight provides,
+    # exactly as additively as home_form/away_form/h2h themselves (omitted
+    # entirely, never fabricated, when insight is None/falsy).
+    e = ev(1)
+    s = sc(e, "result3", "home", 0.6, 1.8)
+    insight = {"home_form": ["W", "L"], "home_form_dates": ["2026-10-01", "2026-09-20"],
+               "away_form": ["L"], "away_form_dates": ["2026-10-05"],
+               "h2h": [], "h2h_dates": []}
+    record = capture_candidate(s, insight)
+    assert record["home_form"] == ["W", "L"] and record["home_form_dates"] == ["2026-10-01", "2026-09-20"]
+    assert record["away_form_dates"] == ["2026-10-05"]
+    assert record["h2h"] == [] and record["h2h_dates"] == []
+
+    no_insight = capture_candidate(s, None)
+    assert "home_form_dates" not in no_insight and "home_form" not in no_insight

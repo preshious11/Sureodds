@@ -696,6 +696,63 @@ describe("reported-issue regressions (strict floor, labels, counts, fixtures, va
     assert.equal(handicap.outcome, "Handicap: Bulls +4.5");
   });
 
+  it("referenceEvAvailable correctly distinguishes a missing sharp-book reference from every kind of real value", () => {
+    // JS footgun this guards against: Number(null) === 0, so a naive
+    // finite(payload.edge_ev) !== null check would read predbot's genuine
+    // "no sharp reference" (Optional[float] = None -> JSON null) as "a real
+    // value of 0" - fabricating exactly the kind of misleading edge this
+    // field exists to prevent. Custom Picks' own ranking (rankKey/stateRank
+    // in custom_picks.ts, which both read referenceEv numerically) must see
+    // UNCHANGED values throughout - only the new boolean flag is new.
+    const missingUndefined = candidate({});
+    assert.equal(missingUndefined.referenceEvAvailable, false);
+    assert.equal(missingUndefined.referenceEv, -0.1, "ranking's existing clamp-to-missing value is untouched");
+
+    const missingNull = candidate({ edge_ev: null });
+    assert.equal(missingNull.referenceEvAvailable, false, "explicit JSON null (predbot's Optional[float]=None) must read as unavailable");
+    // Pre-existing, deliberately UNTOUCHED quirk in referenceEv's own clamp
+    // (not introduced by referenceEvAvailable): finite(null) is 0, not null
+    // (Number(null)===0), so `finite(payload.edge_ev) ?? -0.1` never falls
+    // back for an explicit null - it lands on 0, not -0.1. Changing that
+    // would alter Custom Picks' existing ranking (rankKey/stateRank sort on
+    // this exact number) in production today, which this release must not
+    // do - referenceEvAvailable is the correct, additive fix for DISPLAY;
+    // the underlying numeric clamp stays exactly as it already behaves.
+    assert.equal(missingNull.referenceEv, 0);
+
+    const zero = candidate({ edge_ev: 0 });
+    assert.equal(zero.referenceEvAvailable, true, "a real value of exactly 0 IS available - distinct from absent");
+    assert.equal(zero.referenceEv, 0);
+
+    const positive = candidate({ edge_ev: 0.013 });
+    assert.equal(positive.referenceEvAvailable, true);
+    assert.equal(positive.referenceEv, 0.013);
+
+    const negative = candidate({ edge_ev: -0.027 });
+    assert.equal(negative.referenceEvAvailable, true);
+    assert.equal(negative.referenceEv, -0.027);
+
+    const aboveCeiling = candidate({ edge_ev: 5.0 });
+    assert.equal(aboveCeiling.referenceEvAvailable, true, "a real (if extreme) value is still available");
+    assert.equal(aboveCeiling.referenceEv, 0.1, "clamped to the existing ±0.1 bound, ranking behavior unchanged");
+
+    const belowFloor = candidate({ edge_ev: -5.0 });
+    assert.equal(belowFloor.referenceEvAvailable, true);
+    assert.equal(belowFloor.referenceEv, -0.1);
+
+    for (const malformed of ["not-a-number", NaN, Infinity, -Infinity, {}]) {
+      const c = candidate({ edge_ev: malformed });
+      assert.equal(c.referenceEvAvailable, false, `malformed edge_ev ${String(malformed)} must read as unavailable`);
+      assert.equal(c.referenceEv, -0.1, `malformed edge_ev ${String(malformed)} still falls back to the existing clamp default`);
+    }
+    // Not a defect: finite()'s existing, shared coercion (used everywhere
+    // else in this file too) treats anything Number()-coercible as a real
+    // value - true->1, []->0 - consistently with every other numeric field
+    // here, not specially loosened for this one. Documented, not "fixed".
+    assert.equal(candidate({ edge_ev: true }).referenceEvAvailable, true);
+    assert.equal(candidate({ edge_ev: [] }).referenceEvAvailable, true);
+  });
+
   it("btts and odd_even never silently drop their period, same as every other market", () => {
     // Regression for the Bayern/Arsenal incident: a 1st-half BTTS No pick
     // displayed as bare "BTTS: No" with no indication it was a half-only

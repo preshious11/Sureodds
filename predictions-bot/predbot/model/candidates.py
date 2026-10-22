@@ -32,5 +32,8 @@ def capture_candidate(scored, insight=None):
     if insight:
         record.update(home_form=insight.get('home_form') or [],
                       away_form=insight.get('away_form') or [],
-                      h2h=insight.get('h2h') or [])
+                      h2h=insight.get('h2h') or [],
+                      home_form_dates=insight.get('home_form_dates') or [],
+                      away_form_dates=insight.get('away_form_dates') or [],
+                      h2h_dates=insight.get('h2h_dates') or [])
     return record
