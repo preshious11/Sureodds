@@ -133,7 +133,7 @@ jobs:
         run: |
           cd predictions-bot
           python3 - <<'EOF'
-          import json, os, sys
+          import json, os, sys, time
           from datetime import datetime, timedelta, timezone
           sys.path.insert(0, os.getcwd())
           from predbot.storage.db import Database
@@ -147,24 +147,37 @@ jobs:
           lookback = int(os.environ.get("LOOKBACK_DAYS", "10"))
           start, end = now - timedelta(days=lookback), now
 
-          # Scope: football competitions with an ESPN slug that football-data.org does NOT
-          # cover and the football-data.co.uk CSV importer does NOT cover either (that importer
-          # already handles Super Lig ("T1") and 8 other domestic leagues — verified via
-          # ingest.CSV_DIVISIONS — so it is correctly excluded here, not re-fetched from ESPN).
-          # In practice today this is uel, uecl, mls, plus a few incidental football
-          # competitions that happen to carry an espn slug (nigeria_npfl, nations leagues,
-          # friendlies) — verified by running this exact filter locally against BY_ID.
-          #
-          # football-data.org's own 13-competition coverage (the other domestic leagues + UCL)
-          # is maintained separately via the existing manual `python cli.py ingest-football-data`
-          # path (predbot/history/ingest.py's ingest_football_data, already wired to the real
-          # FootballDataProvider there) — automating that path is a separate, not-yet-built
-          # piece of work and is intentionally out of scope for this workflow.
+          # Source 1: football-data.org — the 13 competitions it actually covers (its own
+          # FD_CODE_TO_COMPETITION map), current season only. needs_fetch() already caps this
+          # at one request per competition per day (and zero once a past season is marked
+          # complete in history_fetches), so this is a handful of requests/day against a
+          # 10-req/minute free tier — reusing the exact provider/importer `cli.py
+          # history-backfill` already uses, not a new path.
+          fd_report = {}
+          key = os.environ.get("FOOTBALL_DATA_KEY", "")
+          if key:
+              from predbot.history.ingest import FD_CODE_TO_COMPETITION, season_of
+              from predbot.providers.football_data import FootballDataProvider
+              provider = FootballDataProvider(key)
+              codes = sorted(FD_CODE_TO_COMPETITION.keys())
+              fd_report = ingest.ingest_football_data(
+                  db, provider.http.get, codes, [season_of(now)], now=now, sleep=time.sleep)
+          else:
+              fd_report = {"_skipped": "FOOTBALL_DATA_KEY not set"}
+          print(json.dumps(fd_report, indent=2, default=str))
+
+          # Source 2: ESPN — football competitions with an ESPN slug that football-data.org does
+          # NOT cover and the football-data.co.uk CSV importer does NOT cover either (that
+          # importer already handles Super Lig ("T1") and 8 other domestic leagues — verified via
+          # ingest.CSV_DIVISIONS — so it is correctly excluded here, not re-fetched from ESPN). In
+          # practice today this is uel, uecl, mls, plus a few incidental football competitions
+          # that happen to carry an espn slug (nigeria_npfl, nations leagues, friendlies).
           espn = ESPNProvider()
           budget = Budget(db)
           espn_only = [c for c in BY_ID.values() if c.sport == "football" and c.espn
                       and not c.football_data and c.id not in ingest.CSV_DIVISIONS.values()]
           report = espn_backfill.backfill(db, espn, espn_only, start, end, budget=budget, now=now)
+          report["_football_data"] = fd_report
           print(json.dumps(report["_summary"], indent=2))
           with open("/tmp/history_report.json", "w", encoding="utf-8") as fh:
               json.dump(report, fh, indent=2, default=str)
