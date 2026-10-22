@@ -43,6 +43,11 @@ PAGE_SIZE = "5"
 TELEGRAM_BOT_USERNAME = "BETTSUREbot"
 TELEGRAM_ADMIN_IDS = "8606823551"
 STAGE3_CRON_ENABLED = "1"
+# Pro Picks evidence-aware policy rollout flag (pro_policy.ts). Hard default
+# everywhere except "evidence_v2" is legacy (byte-identical pre-existing
+# behavior) - see pro_policy.ts's own header comment for the rollback
+# guarantee. Rollback: set back to "legacy" (or delete this line) and redeploy.
+PRO_POLICY_MODE = "evidence_v2"
 
 # Matches workers/src/cron.ts's exported CRON_POST_SWEEP / CRON_RECAP_SWEEP /
 # CRON_DELIVER_SWEEP / CRON_WATCH exactly — handleScheduled dispatches on
