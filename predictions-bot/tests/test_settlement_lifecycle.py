@@ -309,6 +309,49 @@ def test_provider_fallback_rechecks_deadline_after_slow_unknown(db, lifecycle):
     lifecycle[2].providers["sportsgameodds"].find_result.assert_not_called()
 
 
+def test_prefetch_unexpected_error_is_counted_not_silently_swallowed(db, lifecycle):
+    """Part 2 (settlement-gap investigation, 2026-10-23): a genuine bug surfacing through the PARALLEL
+    prefetch pass (not a ProviderError - something actually broken, e.g. a bad response shape) used to be
+    swallowed into a warning and look exactly like an ordinary "nothing found yet" pick: indistinguishable
+    from a pending/void outcome in every count the recap/health report surfaces. It must now show up in
+    counts["errors"], while the rest of the run - and every OTHER fixture's grading - stays unaffected."""
+    football = event(db)
+    event(db, provider_event_id="fresh-football-2", pick_date="2030-06-02", start_utc=iso(START))
+    # Started 2h before kickoff of the football legs so baseball's own (longer) expected-end has already
+    # passed by the time ``now`` below is set - due for ITS window, routed through a different first-choice
+    # provider (espn, not football_data - baseball has no football-data coverage), so this really exercises
+    # a SECOND parallel-prefetch group rather than being skipped as "not due yet".
+    broken_start = START - timedelta(hours=2)
+    broken = event(db, "baseball", home="Broken Home", away="Broken Away", provider_event_id="broken-fixture",
+                  pick_date="2030-06-02", start_utc=iso(broken_start))
+    free = Provider("final", "football_data")
+    lifecycle[2].providers["football_data"] = free
+    espn = lifecycle[1]
+    espn.find_result = Mock(side_effect=RuntimeError("boom - not a ProviderError"))
+    lifecycle[0][0] = expected_end(START, "football") + timedelta(minutes=15)
+    counts = fallback(db, lifecycle)
+    assert counts["errors"] >= 1
+    assert status(db, football) == "won"          # the healthy football_data group graded normally
+    assert status(db, broken) == "pending"         # the broken espn group is unresolved, never crashed, never mis-graded
+
+
+def test_prefetch_counts_param_is_optional_and_backward_compatible(db, lifecycle):
+    """``counts`` on ``_prefetch`` is additive: a caller that omits it (as production code did before this
+    change) must not crash even when the unexpected-error branch fires."""
+    event(db)
+    event(db, provider_event_id="fresh-football-2", pick_date="2030-06-02", start_utc=iso(START))
+    broken_start = START - timedelta(hours=2)
+    broken = event(db, "baseball", home="Broken Home", away="Broken Away", provider_event_id="broken-fixture",
+                  pick_date="2030-06-02", start_utc=iso(broken_start))
+    lifecycle[2].providers["football_data"] = Provider("final", "football_data")
+    lifecycle[1].find_result = Mock(side_effect=RuntimeError("boom"))
+    now = expected_end(START, "football") + timedelta(minutes=15)
+    cache = {}
+    rows = db.pending_picks(before_utc=iso(now), published_only=True)
+    settle._prefetch(lifecycle[2], rows, now, cache, settle._needs_by_event(rows), db=db)   # no counts kwarg
+    assert status(db, broken) == "pending"
+
+
 def test_mixed_sports_schedule_uses_latest_expected_completion_not_latest_start(db):
     event(db, "baseball", start_utc=iso(START), provider_event_id="long")
     event(db, "football", start_utc=iso(START + timedelta(hours=1)), provider_event_id="short")

@@ -43,9 +43,9 @@ def test_same_fixture_different_market_is_still_allowed(monkeypatch):
     db.transaction.side_effect = nullcontext
     storage = PredictionPool(db, '2030-06-01')
     storage.rows = lambda collection='all': [top, duplicate, alternate] if collection == 'all' else []
-    monkeypatch.setattr(picker, 'select_top', lambda rows, *args: ([top], {}))
+    monkeypatch.setattr(picker, 'select_top', lambda rows, *args, **kwargs: ([top], {}))
     seen = []
-    def daily(rows, *args):
+    def daily(rows, *args, **kwargs):
         seen.extend(rows)
         return rows, {}
     monkeypatch.setattr(picker, 'select_daily', daily)

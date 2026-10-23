@@ -278,6 +278,14 @@ def apply_provider_fallback(ps, cfg, top_count, daily_count):
                     coverage["fallback_reason"], coverage["complete_providers"])
 
 
+def _price_detail(ml):
+    """Who supplied the published price and what every book quoted, for later price/EV-gap analysis.
+    Informational only: nothing reads these keys to choose or rank a pick. ``price_source`` is the
+    MarketLine's own ``bookmaker`` ("median" when the price is a median across several books)."""
+    quotes = {str(b): round(float(p), 4) for b, p in (ml.book_quotes or {}).items() if p and float(p) > 1.0}
+    return {'price_source': ml.bookmaker or None, 'book_quotes': dict(sorted(quotes.items()))}
+
+
 def prediction_row(s, pick_date, rank=0):
     """Canonical immutable forecast row, independent of its display collection."""
     ml, e = s.line, s.event
@@ -292,7 +300,7 @@ def prediction_row(s, pick_date, rank=0):
         'rank_score': s.rank_score, 'books': ml.distinct_books(), 'quality': s.quality,
         'sources': {**s.sources, '_alt_ids': e.extra.get('alt_ids', {}), '_providers': e.sources,
                     '_sport_key': e.extra.get('sport_key', ''), '_league_id': e.league_id,
-                    '_notes': {**s.notes, 'edge': s.edge}},
+                    '_notes': {**s.notes, 'edge': s.edge, **_price_detail(ml)}},
         'provider_odd_id': ml.provider_odd_id, 'fixture_key': fixture_key(e),
         'canonical_event_id': e.canonical_event_id, 'canonical_competition_id': e.canonical_competition_id,
         'home_id': e.home_id, 'away_id': e.away_id,

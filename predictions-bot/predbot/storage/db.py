@@ -244,6 +244,41 @@ CREATE TABLE IF NOT EXISTS live_fixture_state (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (pick_date, fixture_key)
 );
+
+-- Durable rejection log for select_top()/select_daily() (Part 4, 2026-10-23). Mirrors
+-- workers/migrations/0015_selection_rejections.sql column-for-column - see that file
+-- for the full rationale (volume control, joinability via canonical_event_id ->
+-- canonical_events -> match_results). Never written to by select_top()/select_daily()
+-- themselves: they only ever call an optional ``reject_sink`` callback at a point a
+-- Counter increment already happened (predbot/selection/rejections.py persists it
+-- here), so selection's own return value is unaffected by this table existing.
+CREATE TABLE IF NOT EXISTS selection_rejections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pick_date TEXT NOT NULL,
+    product TEXT NOT NULL CHECK(product IN ('top', 'daily')),
+    candidate_id TEXT,
+    canonical_event_id TEXT,
+    market TEXT,
+    period TEXT,
+    selection TEXT,
+    line REAL,
+    price REAL,
+    prob REAL,
+    ev REAL,
+    rank_score REAL,
+    quality TEXT,
+    books INTEGER,
+    reason TEXT NOT NULL,
+    duplicate_winner_candidate_id TEXT,
+    count INTEGER NOT NULL DEFAULT 1,
+    sampled INTEGER NOT NULL DEFAULT 0,
+    run_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_selection_rejections_date ON selection_rejections(pick_date, product, reason);
+CREATE INDEX IF NOT EXISTS idx_selection_rejections_event ON selection_rejections(canonical_event_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_selection_rejections_key
+    ON selection_rejections(pick_date, product, reason, COALESCE(candidate_id, ''));
 """
 
 
@@ -299,7 +334,8 @@ class Database:
         #: evidence recorded WITH each pick, so accuracy can later be sliced by it (edge at selection time, book
         #: coverage, market quality, the ranking score) and closing line value filled in once a closing price exists
         for col, kind in (("p_fair", "REAL"), ("edge_ev", "REAL"), ("rank_score", "REAL"), ("books", "INTEGER"),
-                          ("quality", "TEXT"), ("closing_price", "REAL"), ("clv", "REAL")):
+                          ("quality", "TEXT"), ("closing_price", "REAL"), ("clv", "REAL"),
+                          ("closing_fair_prob", "REAL"), ("closing_captured_at", "TEXT")):
             if pick_cols and col not in pick_cols:
                 self.conn.execute(f"ALTER TABLE picks ADD COLUMN {col} {kind}")
                 self.conn.commit()
@@ -670,6 +706,47 @@ class Database:
                   row['entity'], row['line'], row['selection']]
         return hashlib.sha256(json.dumps(coords, sort_keys=True).encode()).hexdigest()
 
+    def record_rejection(self, pick_date, product, reason, *, row=None, winner_row=None, count=1,
+                         sampled=0, run_id=''):
+        """One durable row for a select_top()/select_daily() rejection (Part 4, 2026-10-23).
+
+        ``row`` is a candidate row (same shape ``ticket_candidate_rows``/All Predictions use) for a
+        full-detail rejection, or ``None`` for a volume-controlled summary row (``count`` = the day's
+        total for that reason; every per-candidate column stays NULL). ``winner_row`` (only meaningful
+        for reason='duplicate_event') is the FULL row of the candidate that won the fixture's slot - its
+        candidate_id is computed here the same way ``row``'s own is, rather than trusting a bare
+        ``row['id']`` (not always the same identity scheme - see predbot/selection/rejections.py).
+        Never raises: a row missing a field a full identity needs (older/partial data) still gets
+        logged, just without a candidate_id, because a broken rejection-log write must never break
+        settlement/selection itself."""
+        def identity(r):
+            if r is None:
+                return None
+            try:
+                return self._candidate_identity(r)
+            except (KeyError, TypeError):
+                return None
+        candidate_id = identity(row)
+        winner_candidate_id = identity(winner_row)
+        r = row or {}
+        # First write wins per (pick_date, product, reason, candidate_id) - see migration 0015.
+        self.execute(
+            "INSERT OR IGNORE INTO selection_rejections (pick_date, product, candidate_id, canonical_event_id, "
+            "market, period, selection, line, price, prob, ev, rank_score, quality, books, reason, "
+            "duplicate_winner_candidate_id, count, sampled, run_id, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (pick_date, product, candidate_id, r.get('canonical_event_id'), r.get('market'), r.get('period'),
+             r.get('selection'), r.get('line'), r.get('price'), r.get('prob'), r.get('ev'), r.get('rank_score'),
+             r.get('quality'), r.get('books'), reason, winner_candidate_id, count, sampled, run_id, _now()))
+
+    def rejections_for(self, pick_date, product=None):
+        """Every rejection row logged for ``pick_date`` (optionally filtered to one product) - read path
+        for reporting/dry-run grading, never used by selection itself."""
+        if product is None:
+            return self.query("SELECT * FROM selection_rejections WHERE pick_date=? ORDER BY id", (pick_date,))
+        return self.query("SELECT * FROM selection_rejections WHERE pick_date=? AND product=? ORDER BY id",
+                          (pick_date, product))
+
     def archive_ticket_candidate(self, row):
         """Refresh UNUSED evaluations before publication; issued forecasts are
         first-write-wins. This pool is not settlement history. A partial retry
@@ -792,6 +869,24 @@ class Database:
             return self.query(f"SELECT * FROM picks WHERE status='pending' AND start_utc<=?{extra} ORDER BY start_utc", (before_utc,))
         return self.query(f"SELECT * FROM picks WHERE status='pending'{extra} ORDER BY start_utc")
 
+    def due_for_closing_price(self, now_iso: str, window_minutes: int) -> List[sqlite3.Row]:
+        """Published (Top/Daily only - never 'all') pending picks within ``window_minutes`` of their own
+        kickoff, not yet captured (``closing_price IS NULL``). A pick whose ``start_utc`` has already
+        passed ``now_iso`` never appears here (Part 3's "already started before the snapshot could run"
+        case): it simply stays uncaptured forever, which is correct - a price fetched after kickoff is
+        not a closing price and must never be written as one.
+
+        The upper bound is computed in Python, not SQL ``datetime()``: that function's output
+        ("YYYY-MM-DD HH:MM:SS", space-separated) does not lexicographically compare correctly against
+        ``start_utc``'s stored "...T...Z" ISO form, so a SQL-side bound would silently match nothing."""
+        from predbot.util.timeutil import iso as _iso, parse_iso as _parse_iso
+        now_dt = _parse_iso(now_iso) or datetime.now(timezone.utc)
+        until_iso = _iso(now_dt + timedelta(minutes=int(window_minutes)))
+        return self.query(
+            f"SELECT * FROM picks WHERE status='pending' AND closing_price IS NULL AND {self._PUBLISHED} "
+            "AND start_utc > ? AND start_utc <= ? ORDER BY start_utc",
+            (now_iso, until_iso))
+
     def live_picks(self, earliest: str, latest: str, require_receipt: bool = False) -> List[Dict]:
         """All predictions on due pending fixtures that reached Top or Daily, plus durable unfinished lifecycle work.
 
@@ -862,6 +957,18 @@ class Database:
     def settle_pick(self, pick_id: int, status: str, result: Optional[Dict] = None) -> None:
         self.execute("UPDATE picks SET status=?, settled_at=?, result_json=? WHERE id=? AND status='pending'",
                      (status, _now(), json.dumps(result) if result else None, pick_id))
+
+    def record_closing_price(self, pick_id: int, closing_price: Optional[float], clv: Optional[float],
+                             closing_fair_prob: Optional[float], captured_at: str) -> bool:
+        """The only write path for the closing snapshot: ``closing_price``, ``clv``,
+        ``closing_fair_prob`` and ``closing_captured_at``, nothing else (never ``sources`` or any
+        published field), once per pick - the ``closing_price IS NULL`` guard makes a retried run a
+        no-op. Returns False when there was nothing to update (already captured, or no such pick)."""
+        cur = self.execute(
+            "UPDATE picks SET closing_price=?, clv=?, closing_fair_prob=?, closing_captured_at=? "
+            "WHERE id=? AND closing_price IS NULL",
+            (closing_price, clv, closing_fair_prob, captured_at, pick_id))
+        return cur.rowcount > 0
 
     def all_settled_for_calibration(self, limit: int = 3000) -> List[sqlite3.Row]:
         return self.query(

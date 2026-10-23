@@ -135,7 +135,10 @@ MERGE_ONLY = {"posts", "deliveries"}
 PRESERVE_ONLY = {"prediction_memberships", "match_results", "match_odds",
                  "match_odds_ext", "results_seen", "canonical_events",
                  "canonical_participants", "provider_identity", "participant_aliases",
-                 "custom_pick_candidates", "custom_pick_pools"}
+                 "custom_pick_candidates", "custom_pick_pools",
+                 # Rejection log (Part 4, 2026-10-23): append-only diagnostic history,
+                 # same insert-only discipline as match_results/custom_pick_candidates above.
+                 "selection_rejections"}
 
 
 def unsafe_history_sql(sql):
@@ -144,6 +147,11 @@ def unsafe_history_sql(sql):
     return bool(re.search(
         rf'\b(?:DELETE\s+FROM|DROP\s+TABLE|INSERT\s+OR\s+REPLACE\s+INTO)\s+["`\[]?(?:{protected})\b',
         sql, re.IGNORECASE))
+
+
+#: picks columns owned by predbot/jobs/closing_price.py: filled once while NULL, and outside the
+#: settlement guard's must-match set (a capture must never block, or be blocked by, settlement).
+CLOSING_COLUMNS = ("closing_price", "clv", "closing_fair_prob", "closing_captured_at")
 
 
 def write_policy(table, cols, con=None):
@@ -155,12 +163,20 @@ def write_policy(table, cols, con=None):
         mutable = [c for c in ("status", "settled_at", "result_json") if c in cols]
         if "id" not in cols or "status" not in cols:
             return f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ", ""
-        immutable = [c for c in cols if c not in mutable and c != "created_at"]
+        closing = [c for c in CLOSING_COLUMNS if c in cols]
+        immutable = [c for c in cols if c not in mutable and c not in closing and c != "created_at"]
         same = " AND ".join(f"picks.{c} IS excluded.{c}" for c in immutable)
-        assignments = ", ".join(f"{c}=excluded.{c}" for c in mutable)
-        suffix = (f" ON CONFLICT(id) DO UPDATE SET {assignments} WHERE "
-                  f"picks.status='pending' AND excluded.status IN "
+        settle = (f"picks.status='pending' AND excluded.status IN "
                   f"('won','lost','push','void','half_won','half_lost') AND {same}")
+        parts = [f"{c}=CASE WHEN {settle} THEN excluded.{c} ELSE picks.{c} END" for c in mutable]
+        condition = settle
+        if "closing_price" in closing:
+            # The closing snapshot is written once, as a unit, only while D1 has none - never
+            # overwritten, never mixed with a second capture, independent of settlement.
+            fill = f"picks.closing_price IS NULL AND excluded.closing_price IS NOT NULL AND {same}"
+            parts += [f"{c}=CASE WHEN {fill} THEN excluded.{c} ELSE picks.{c} END" for c in closing]
+            condition = f"({settle}) OR ({fill})"
+        suffix = f" ON CONFLICT(id) DO UPDATE SET {', '.join(parts)} WHERE {condition}"
         return f"INSERT OR IGNORE INTO picks ({columns}) VALUES ", suffix
     # Candidate archives and serving snapshots may be refreshed before issue;
     # once synced, retain them rather than replace historical evaluation data.
@@ -285,6 +301,12 @@ def table_fingerprint(con: sqlite3.Connection, table: str) -> tuple:
 #: Policy: extend ONLY with run-vs-run diff evidence, never speculatively.
 VOLATILE_COLUMNS = {
     "picks": {"created_at", "settled_at"},
+    # selection_rejections.created_at (Part 4, 2026-10-23): a wall-clock write stamp set the same way
+    # picks.created_at is, never read by selection/pricing/display logic - same category, same evidence
+    # (two identical replay runs otherwise differ only here).
+    # run_id is a random per-run write stamp (predbot/selection/rejections.py new_run_id): two identical
+    # replays differ only there, exactly like created_at.
+    "selection_rejections": {"created_at", "run_id"},
 }
 
 #: Timing-telemetry subtrees inside JSON payload columns, excluded from the

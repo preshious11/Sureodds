@@ -69,15 +69,31 @@ class PredictionPool:
         return [dict(r) for r in self.db.collection_predictions(collection, self.day)]
 
     def package(self, cfg, now_utc):
-        """Selectors see immutable stored rows only. Memberships never copy predictions."""
+        """Selectors see immutable stored rows only. Memberships never copy predictions.
+
+        Rejection logging (Part 4, 2026-10-23): a durable ``reject_sink`` is wired in for a PERSISTENT
+        pool only - a scratch pool's database is discarded the moment ``close()`` runs (see the class
+        docstring), so logging into it would just be wasted writes. Either way, ``select_top``/
+        ``select_daily``'s return values here are identical to passing no sink at all - see
+        tests/test_rejection_logging.py."""
         db, day = self.db, self.day
         has_archive = bool(db.query('SELECT 1 FROM ticket_candidates WHERE pick_date=? LIMIT 1', (day,)))
         pool = db.ticket_candidate_rows(day) if has_archive else self.rows('all')
-        top, top_diag = select_top(pool, cfg, now_utc)
+        top_sink = top_flush = daily_sink = daily_flush = None
+        if not self.scratch:
+            from predbot.selection.rejections import collector, new_run_id
+            run_id, sample = new_run_id(), cfg.rejection_sample_per_reason
+            top_sink, top_flush = collector(db, day, 'top', run_id, sample)
+            daily_sink, daily_flush = collector(db, day, 'daily', run_id, sample)
+        top, top_diag = select_top(pool, cfg, now_utc, reject_sink=top_sink)
+        if top_flush and (errors := top_flush(top)):
+            top_diag['rejection_log_errors'] = errors
         # WHY: Top owns identical predictions; another market on the same fixture remains eligible.
         top_keys = {prediction_identity(row) for row in top}
         daily_pool = [row for row in pool if prediction_identity(row) not in top_keys]
-        daily, daily_diag = select_daily(daily_pool, cfg, now_utc)
+        daily, daily_diag = select_daily(daily_pool, cfg, now_utc, reject_sink=daily_sink)
+        if daily_flush and (errors := daily_flush(daily)):
+            daily_diag['rejection_log_errors'] = errors
         # WHY: Worker top/daily receipts freeze both cards, just like legacy pick receipts.
         with db.transaction():
             if not db.deliveries_exist('picks', day) and not db.query(

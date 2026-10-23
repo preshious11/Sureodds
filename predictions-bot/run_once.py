@@ -17,6 +17,7 @@ Usage:
   python run_once.py generate --offline
   python run_once.py settle --offline
   python run_once.py recap --offline
+  PREDBOT_ALLOW_LIVE=1 python run_once.py closing_price --live   # honours CLOSING_PRICE_ENABLED
   PREDBOT_ALLOW_LIVE=1 python run_once.py generate --live [--force] [--report report.json]
 """
 from __future__ import annotations
@@ -27,7 +28,7 @@ import os
 import sys
 import time
 
-JOB_NAMES = ("generate", "settle", "recap")
+JOB_NAMES = ("generate", "settle", "recap", "closing_price")
 
 
 def parse_args(argv):
@@ -83,6 +84,8 @@ def offline_benchmark(job: str) -> dict:
                            "deadline": deadline.isoformat() if deadline else None})
         finally:
             db.close()
+    elif job == "closing_price":
+        result["note"] = "no offline path: the closing-price job only ever runs live (CLOSING_PRICE_ENABLED)"
     elif job == "recap":
         from predbot.jobs import stats as stats_mod
         db = Database(":memory:")
@@ -164,6 +167,11 @@ def live_run(job: str, force: bool) -> dict:
             wall = time.perf_counter() - t0
             return {"job": job, "mode": "live", "lagos_now": lagos_now.isoformat(),
                     "wall_s": round(wall, 3), "outcome": outcome}
+        elif job == "closing_price":
+            from predbot.jobs import closing_price
+            counts = closing_price.run(db, cfg, providers=providers)
+            return {"job": job, "mode": "live", "lagos_now": lagos_now.isoformat(),
+                    "wall_s": round(time.perf_counter() - t0, 3), "counts": counts}
         elif job == "recap":
             text = recap.run(db, cfg, tg)
             wall = time.perf_counter() - t0

@@ -391,6 +391,23 @@ class Config:
     live_poll_minutes: int = field(default_factory=lambda: _int("LIVE_POLL_MINUTES", 5))
     #: A kickoff alert is only worth sending shortly after kickoff; later than this it is dropped, never sent late.
     match_start_window_min: int = field(default_factory=lambda: _int("MATCH_START_WINDOW_MIN", 10))
+    #: Closing-price capture (Part 3, 2026-10-23): off entirely disables predbot/jobs/closing_price.py's
+    #: own provider fetch (Top/Daily picks simply keep closing_price/clv NULL, exactly as today).
+    closing_price_enabled: bool = field(default_factory=lambda: _bool("CLOSING_PRICE_ENABLED", False))
+    #: How close to start_utc a pick must be before its closing price is captured - a snapshot taken
+    #: much earlier than this is not a "closing" price, and one taken after kickoff is a live/in-play
+    #: price, not a pre-match one, so it is never captured at all (see the job's "already started" case).
+    closing_price_window_min: int = field(default_factory=lambda: _int("CLOSING_PRICE_WINDOW_MIN", 20))
+    #: Full-detail rejection rows kept per (day, product, reason) for the volume-controlled reasons
+    #: (below_probability / disabled_market / insufficient_books), chosen by deterministic hash.
+    rejection_sample_per_reason: int = field(default_factory=lambda: _int("REJECTION_SAMPLE_PER_REASON", 20))
+    #: Hard daily cap on NEW provider requests this job may issue (distinct from, and in addition to,
+    #: the Odds API's own shared monthly Budget gate - see predbot/jobs/closing_price.py). Real volume on
+    #: the last 10 production days of Top+Daily picks: ~3/day, grouped by (league, kickoff window),
+    #: never 1-per-pick - 10 is already a generous multiple of that, not a number this job is expected
+    #: to reach under normal pick volume.
+    closing_price_max_requests_per_day: int = field(
+        default_factory=lambda: _int("CLOSING_PRICE_MAX_REQUESTS_PER_DAY", 10))
     timezone: str = field(default_factory=lambda: _env("TIMEZONE", "Africa/Lagos"))
     # POST_TIME is in TIMEZONE; every subscriber receives the same scheduled instant.
     post_time: str = field(default_factory=lambda: _env("POST_TIME", "09:00"))

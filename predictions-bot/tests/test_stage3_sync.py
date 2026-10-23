@@ -175,7 +175,8 @@ def test_compat_covers_all_synced_tables(tmp_path):
     merged = str(tmp_path / "all.sql")
     with open(merged, "w", encoding="utf-8") as fh_out:
         for name in ("0001_foundation.sql", "0002_update_retry.sql",
-                     "0003_engine_state.sql", "0004_sync_state.sql", "0005_ticket_candidates.sql"):
+                     "0003_engine_state.sql", "0004_sync_state.sql", "0005_ticket_candidates.sql",
+                     "0016_closing_capture_columns.sql"):
             with open(os.path.join(MIGRATIONS, name), encoding="utf-8") as fh_in:
                 fh_out.write(fh_in.read() + "\n")
     proc = subprocess.run([sys.executable, COMPAT, "--sqlite", engine, "--migrations", merged],
@@ -234,7 +235,8 @@ def test_0005_migration_preserves_rows_and_unblocks_sync(tmp_path):
     merged = str(tmp_path / "all.sql")
     with open(merged, "w", encoding="utf-8") as fh_out:
         for name in ("0001_foundation.sql", "0002_update_retry.sql",
-                     "0003_engine_state.sql", "0004_sync_state.sql", "0005_ticket_candidates.sql"):
+                     "0003_engine_state.sql", "0004_sync_state.sql", "0005_ticket_candidates.sql",
+                     "0016_closing_capture_columns.sql"):
             with open(os.path.join(MIGRATIONS, name), encoding="utf-8") as fh_in:
                 fh_out.write(fh_in.read() + "\n")
     proc = subprocess.run([sys.executable, COMPAT, "--sqlite", engine, "--migrations", merged],

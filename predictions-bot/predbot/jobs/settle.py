@@ -354,12 +354,20 @@ def _resolve_args(r, needs: Optional[Dict[str, frozenset]] = None):
 
 
 def _prefetch(resolver: ResultsResolver, rows, now: datetime, cache: Dict[str, MatchResult],
-              needs: Optional[Dict[str, frozenset]] = None, *, db: Optional[Database] = None) -> None:
+              needs: Optional[Dict[str, frozenset]] = None, *, db: Optional[Database] = None,
+              counts: Optional[Dict[str, int]] = None) -> None:
     """Look results up for every due pick BEFORE grading, one thread per first-choice source, so football-data.org's
     6.5 s pacing overlaps ESPN's and EuroLeague's instead of adding to them. Each source is asked by one thread at a
     time and its per-run caches are keyed by (competition, day), so N picks from one competition and day still cost
     one request. Every answer - including "nothing found" - goes into ``cache``, so the serial pass below grades from
-    exactly what a serial run would have fetched and never asks twice."""
+    exactly what a serial run would have fetched and never asks twice.
+
+    ``counts`` (optional, Part 2 settlement-gap hardening, 2026-10-23): a genuinely UNEXPECTED exception here (not
+    ``ProviderError`` - a real bug, not a provider/network hiccup) used to be indistinguishable from "nothing found
+    yet": it was swallowed into a warning and the pick just looked ``pending``/``void`` like any other unresolved
+    fixture, with no signal that something actually broke. That made a real prefetch defect invisible in the same
+    counts the recap/health report already surfaces. It is now logged at ``error`` level and tallied into
+    ``counts["errors"]`` when the caller passes one, without changing what gets cached or how the pick settles."""
     if not callable(getattr(resolver, "paths_for", None)):
         return                                          # a stub resolver: nothing to schedule
     groups: Dict[str, list] = {}
@@ -388,7 +396,10 @@ def _prefetch(resolver: ResultsResolver, rows, now: datetime, cache: Dict[str, M
                 log.warning("result prefetch failed for pick %s: %s", r["id"], e)
                 res = None
             except Exception as e:  # noqa: BLE001 - one bad pick must not stop the rest (see module docstring)
-                log.warning("result prefetch failed for pick %s: %s", r["id"], e, exc_info=True)
+                log.error("result prefetch hit an unexpected (non-provider) error for pick %s: %s",
+                         r["id"], e, exc_info=True)
+                if counts is not None:
+                    counts["errors"] += 1
                 res = None
             cache.setdefault(ck, res)
 
@@ -480,7 +491,7 @@ def _run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]
             begin()
     rows = db.pending_picks(before_utc=iso(now), published_only=True)
     needs = _needs_by_event(rows)
-    _prefetch(resolver, rows, now, cache, needs, db=db)
+    _prefetch(resolver, rows, now, cache, needs, db=db, counts=counts)
 
     for r in rows:
         try:

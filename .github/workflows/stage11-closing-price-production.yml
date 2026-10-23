@@ -1,0 +1,255 @@
+# Closing-price capture for PUBLISHED Top/Daily picks (predictions-bot/predbot/jobs/closing_price.py).
+#
+# Modelled on stage9-settle-production.yml: production D1 export into a scratch copy, the job writes ONLY to
+# that scratch copy, d1_sync.py plans a picks-only diff, then the shared sync_write lease gates the apply.
+# The sync rule for these columns (workers/scripts/d1_sync.py write_policy, CLOSING_COLUMNS) fills
+# closing_price/clv/closing_fair_prob/closing_captured_at once, only where D1 is still NULL, and never touches
+# the settlement guard, so a capture can neither block nor be blocked by settlement.
+#
+# EXPLICIT AUTHORIZATION, LOUD FAILURE (same doctrine as stage9). A scheduled fire does real work only when the
+# repository variable CLOSING_PRICE_ENABLED is exactly "true". "false" = paused (skipped with a warning); unset
+# or any other value FAILS the run so a missing configuration is noticed. Set the variable to "false" before the
+# first push of this file, or every scheduled fire will fail until it is set.
+#
+# Cost control: a gate step asks D1 (one cheap SELECT) whether any published pick kicks off inside the capture
+# window, and skips the export, the OddsAPI call and the sync entirely when none does. The job itself enforces
+# CLOSING_PRICE_MAX_REQUESTS_PER_DAY (default 10) on top of the shared OddsAPI budget.
+#
+# Schedule: derived from the 71 real Top/Daily picks of 2026-10-14..23 (UTC kickoff hours 00,01,09,10,15-19,21,23).
+# Every 10 minutes during those hours; with a 20-minute capture window each kickoff is covered by at least two runs.
+name: stage11-closing-price-production
+
+on:
+  schedule:
+    - cron: "*/10 0-1,9-10,15-19,21,23 * * *"   # UTC - 66 fires/day, most exit at the gate
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Plan only, no D1 writes (default true)"
+        required: false
+        default: true
+        type: boolean
+
+env:
+  PRODUCTION_DB_NAME: sureodds_production
+
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    outputs:
+      mode: ${{ steps.decide.outputs.mode }}
+    steps:
+      - id: decide
+        run: |
+          set -euo pipefail
+          v="${CLOSING_PRICE_ENABLED:-}"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            case "$v" in
+              true) mode=live ;;
+              false) mode=paused; echo "::warning::CLOSING_PRICE_ENABLED=false - closing-price capture is PAUSED." ;;
+              *) echo "::error::CLOSING_PRICE_ENABLED is '${v}' (must be exactly 'true' or 'false'). Closing-price capture did NOT run." >&2; exit 1 ;;
+            esac
+          else
+            dry_run_input="$(printf '%s' "${{ inputs.dry_run }}" | tr '[:upper:]' '[:lower:]')"
+            if [ "$v" = "true" ] && [ "$dry_run_input" = "false" ]; then mode=live; else mode=dry; fi
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+        env:
+          CLOSING_PRICE_ENABLED: ${{ vars.CLOSING_PRICE_ENABLED }}
+
+  capture:
+    needs: guard
+    if: ${{ needs.guard.outputs.mode == 'live' || needs.guard.outputs.mode == 'dry' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: sureodds-production-sync   # SAME lease group as stage5/stage8/stage9: one D1 writer at a time
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install runtime dependency
+        run: pip install -r predictions-bot/requirements.txt
+      - name: Production target guard (never staging, never a placeholder id)
+        run: |
+          set -euo pipefail
+          grep -q 'database_name = "sureodds_production"' workers/wrangler.toml
+          grep -qv 'REPLACE_WITH_STAGING_D1_ID' workers/wrangler.toml || \
+            { echo "FAIL workers/wrangler.toml still has the placeholder database_id" >&2; exit 1; }
+      - name: Gate - is any published pick inside the capture window?
+        id: gate
+        run: |
+          set -euo pipefail
+          cd workers
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          until=$(date -u -d '+20 minutes' +%Y-%m-%dT%H:%M:%SZ)
+          due=$(npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "SELECT COUNT(*) AS n FROM picks WHERE status='pending' AND closing_price IS NULL AND start_utc > '$now' AND start_utc <= '$until' AND EXISTS (SELECT 1 FROM prediction_memberships pm WHERE pm.prediction_id=picks.id AND pm.collection IN ('top','daily'))" \
+            | python3 scripts/d1_json.py --get 0.results.0.n)
+          [ -n "$due" ] || { echo "::error::could not read the due-pick count from D1" >&2; exit 1; }
+          echo "due=$due"
+          echo "due=$due" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Live-run secrets check (skipped when nothing is due)
+        if: needs.guard.outputs.mode == 'live' && steps.gate.outputs.due != '0'
+        run: |
+          set -euo pipefail
+          for v in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID SHARPAPI_KEY ODDS_API_KEY; do
+            if [ -z "${!v:-}" ]; then echo "missing secret: $v" >&2; exit 1; fi
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+          SHARPAPI_KEY: ${{ secrets.SHARPAPI_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      - name: Pull production base (export + load)
+        if: steps.gate.outputs.due != '0'
+        run: |
+          set -euo pipefail
+          cd workers
+          npx -y wrangler@4.151.1 d1 export "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --output /tmp/closing_base.sql
+          python3 - <<'EOF'
+          import sqlite3, shutil
+          con = sqlite3.connect("/tmp/closing_base.db")
+          con.executescript(open("/tmp/closing_base.sql", encoding="utf-8").read())
+          con.commit(); con.close()
+          shutil.copyfile("/tmp/closing_base.db", "/tmp/closing_scratch.db")
+          EOF
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Capture closing prices (writes only to the scratch copy)
+        if: steps.gate.outputs.due != '0' && needs.guard.outputs.mode == 'live'
+        run: |
+          cd predictions-bot
+          export PREDBOT_ALLOW_LIVE=1
+          export DB_PATH=/tmp/closing_scratch.db
+          export CLOSING_PRICE_ENABLED=true
+          python3 run_once.py closing_price --live --report /tmp/closing_report.json
+          cat /tmp/closing_report.json 2>/dev/null || true
+        env:
+          SHARPAPI_KEY: ${{ secrets.SHARPAPI_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          # No Telegram variables: the closing job never sends messages.
+      - name: Build scoped plan (picks only; closing columns are the only permitted change)
+        id: plan
+        if: steps.gate.outputs.due != '0'
+        run: |
+          set -euo pipefail
+          python3 workers/scripts/d1_sync.py plan /tmp/closing_base.db /tmp/closing_scratch.db \
+            --out /tmp/closing_plan \
+            --tables picks \
+            --write-budget 200 \
+            --destructive-budget 100
+          cat /tmp/closing_plan/plan.json
+      - name: Acquire the shared D1-write lease (retries, then fails)
+        id: synclease
+        if: needs.guard.outputs.mode == 'live' && steps.gate.outputs.due != '0'
+        run: |
+          set -euo pipefail
+          cd workers
+          acquired=false
+          for i in $(seq 1 10); do
+            if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+              --config wrangler.toml --json \
+              --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until=strftime('%Y-%m-%dT%H:%M:%SZ','now','+20 minutes'), attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='sync_write' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1; then
+              acquired=true; break
+            fi
+            echo "::notice::sync_write lease held by another writer (attempt $i/10) - retrying in 30s"
+            sleep 30
+          done
+          if [ "$acquired" != "true" ]; then
+            echo "::error::could not acquire the sync_write lease after 10 attempts" >&2
+            exit 1
+          fi
+          echo "acquired=true" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Apply to production D1 (skipped in dry-run)
+        if: needs.guard.outputs.mode == 'live' && steps.gate.outputs.due != '0'
+        run: |
+          set -euo pipefail
+          cd workers
+          epoch=$(npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "SELECT epoch FROM sync_state WHERE id=1" | python3 scripts/d1_json.py --get 0.results.0.epoch)
+          apply_batch() {
+            local f="$1" base="$2" attempt
+            for attempt in 1 2 3; do
+              if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+                --config wrangler.toml --json --file "$f" > "/tmp/closing_applied_$base.json" 2>&1; then
+                if python3 scripts/d1_json.py --assert-success "/tmp/closing_applied_$base.json"; then
+                  return 0
+                fi
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                echo "::notice::$base attempt $attempt/3 failed, retrying in $((attempt * 5))s"
+                sleep "$((attempt * 5))"
+              fi
+            done
+            return 1
+          }
+          ok=0; total=0
+          for f in /tmp/closing_plan/p0_*.sql /tmp/closing_plan/p1_*.sql; do
+            [ -e "$f" ] || continue
+            total=$((total + 1))
+            base=$(basename "$f")
+            if apply_batch "$f" "$base"; then
+              ok=$((ok + 1)); echo "OK $base"
+            else
+              echo "FAIL $base (after 3 attempts):"; tail -20 "/tmp/closing_applied_$base.json"; exit 1
+            fi
+          done
+          echo "applied $ok/$total batch files"
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE sync_state SET epoch=epoch+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=1 AND epoch=$epoch" | python3 scripts/d1_json.py --expect-changes 1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Release the shared D1-write lease (always, if acquired)
+        if: always() && steps.synclease.outputs.acquired == 'true'
+        run: |
+          cd workers
+          npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+            --config wrangler.toml --json \
+            --command "UPDATE job_state SET lease_owner=NULL, lease_until=NULL WHERE name='sync_write' AND lease_owner='gha-${{ github.run_id }}'" || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      - name: Upload sanitized plan and report (never a DB dump)
+        if: always() && steps.gate.outputs.due != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage11-closing-price-production-plan
+          if-no-files-found: warn
+          path: |
+            /tmp/closing_plan/plan.json
+            /tmp/closing_report.json
+      - name: Alert the owner on failure (actionable only)
+        if: failure()
+        run: |
+          set -euo pipefail
+          admin_id=$(grep '^TELEGRAM_ADMIN_IDS' workers/wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | cut -d',' -f1 | xargs)
+          [ -n "$admin_id" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || { echo "no admin id/token configured for the alert" >&2; exit 0; }
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode chat_id="$admin_id" \
+            --data-urlencode text="⚠️ stage11-closing-price-production failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /dev/null || true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}

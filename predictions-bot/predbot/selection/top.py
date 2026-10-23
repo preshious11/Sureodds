@@ -64,15 +64,24 @@ def _confidence(row):
     return min(1.0, max(1e-6, float(score)))
 
 
-def select_top(rows, cfg, now_utc):
+def select_top(rows, cfg, now_utc, reject_sink=None):
+    """``reject_sink`` (Part 4 rejection logging, 2026-10-23), optional: a
+    ``callable(row, reason, winner_row=None)`` invoked at every point this already increments
+    ``rejected`` - purely additive instrumentation (predbot/selection/rejections.py persists it; it
+    computes the winner's candidate_id from ``winner_row`` itself, since a plain picks.id is not always
+    the same identity scheme as ticket_candidates - see its docstring). Never called, never constructed,
+    when omitted: existing callers and ``rejected``/``selected``/``diagnostics`` are all byte-identical
+    to before (see tests/test_rejection_logging.py)."""
     candidates, rejected = [], Counter()
     for row in rows:
         why = promotion_reason(row, cfg, now_utc, top=True)
         if why:
             rejected[why] += 1
+            if reject_sink:
+                reject_sink(row, why)
         else:
             candidates.append(row)
-    selected, odds, events = [], 1.0, set()
+    selected, odds, events = [], 1.0, {}
     for row in ranked(candidates):
         if len(selected) >= max(0, min(3, cfg.top_legs_max)):
             break
@@ -82,11 +91,15 @@ def select_top(rows, cfg, now_utc):
         eid = row.get('canonical_event_id') or row['fixture_key']
         if eid in events:
             rejected['duplicate_event'] += 1
+            if reject_sink:
+                reject_sink(row, 'duplicate_event', winner_row=events[eid])
             continue
         if odds * row['price'] > cfg.top_odds_max:
+            if reject_sink:
+                reject_sink(row, 'odds_cap_exceeded')
             continue                      # TOP_ODDS_MAX is a hard ceiling, for the first leg too
         selected.append(row)
-        events.add(eid)
+        events[eid] = row
         odds *= row['price']
     diagnostics = {'candidates': len(candidates), 'selected': len(selected), 'combined_odds': odds,
                    'target_reached': bool(selected) and odds >= cfg.top_odds_target,
