@@ -29,7 +29,15 @@
  */
 import { SPORT_ICON, combinedOdds, escHtml } from "./format.ts";
 import { loadPool, type Candidate, type CustomPicksDeps } from "./custom_picks.ts";
-import { resolvePolicyMode, selectSingles, type PolicyDecision, type PolicySingle } from "./pro_policy.ts";
+import {
+  buildOptionalCombo,
+  rejectionHistogram,
+  resolvePolicyMode,
+  selectSingles,
+  type OptionalCombo,
+  type PolicyDecision,
+  type PolicySingle,
+} from "./pro_policy.ts";
 
 /** Independent of Custom Picks' MIN_PROBABILITY table (0.65/0.6/0.5) — this
  * number is never read by, or derived from, anything over there. */
@@ -340,15 +348,35 @@ function formatSingle(pick: Candidate, decision: PolicyDecision): string {
 }
 
 /**
- * evidence_v2's formatter (task step 3, refined for compact presentation).
- * 0 singles -> an honest, explicit one-line "nothing qualified today"
- * explanation (never silence, never an error-shaped message). 1+ singles
- * -> "💎 PRO PICKS — N singles", one compact block per pick (oldest-kickoff-
- * first), each independently qualifying on its own — explicitly NOT a combo
- * (no combined-odds number is ever shown here) — followed by only the
- * footnote(s) actually used, accurate per-selection (requirement 7).
+ * The optional combo section (approved spec section 4) — rendered ONLY
+ * when `buildOptionalCombo` actually produced one (never forced). States
+ * the real combined ODDS (pure arithmetic on two already-shown real
+ * prices) but explicitly NEVER a combined win probability: each leg's own
+ * real probability is already shown in its own single-bet block above,
+ * and this section says plainly that both legs must each win on their own
+ * — no joint-probability number is computed or implied anywhere here.
  */
-export function formatProPicksV2(singles: PolicySingle[]): string {
+function formatOptionalCombo(combo: OptionalCombo): string {
+  const names = combo.legs.map((l) => `${l.candidate.home} vs ${l.candidate.away}`).join(" + ");
+  return (
+    `📎 Optional combined slip (${escHtml(names)})\n` +
+    `Combined odds: ${combo.odds.toFixed(2)} — both legs above must each win independently; this is not a combined chance of winning.`
+  );
+}
+
+/**
+ * evidence_v2's formatter (task step 3, refined for compact presentation;
+ * section 4's optional combo added in the multi-market refactor). 0 singles
+ * -> an honest, explicit one-line "nothing qualified today" explanation
+ * (never silence, never an error-shaped message). 1+ singles -> "💎 PRO
+ * PICKS — N singles", one compact block per pick (oldest-kickoff-first),
+ * each independently qualifying on its own, followed by only the
+ * footnote(s) actually used (requirement 7), and — only when the top two
+ * singles' combined price happens to land in the target band — one
+ * optional combo section at the very end, never replacing the singles
+ * above it.
+ */
+export function formatProPicksV2(singles: PolicySingle[], combo: OptionalCombo | null = null): string {
   if (!singles.length) {
     return "💎 PRO PICKS\n\nNo pick cleared today's evidence bar — nothing qualifies yet today.";
   }
@@ -359,6 +387,7 @@ export function formatProPicksV2(singles: PolicySingle[]): string {
   const usedIndependent = sorted.some((s) => s.decision.evidenceTier === "independently_assessed");
   if (usedMarketOnly) blocks.push(MARKET_ONLY_DISCLOSURE);
   if (usedIndependent) blocks.push(INDEPENDENT_DISCLOSURE);
+  if (combo) blocks.push(formatOptionalCombo(combo));
   return blocks.join("\n\n");
 }
 
@@ -378,6 +407,17 @@ export interface ProPicksResult {
    * the ledger individually. Undefined in legacy mode and on any failure
    * path. */
   tickets?: ProTicket[];
+  /** evidence_v2 only: the optional 2-leg combo, when the top two singles'
+   * combined price actually landed in the target band (buildOptionalCombo
+   * in pro_policy.ts) — present alongside `tickets`, never instead of it.
+   * `picks` are the same two Candidates already present in `tickets`. */
+  comboTicket?: ProTicket;
+  /** evidence_v2 only, diagnostics/logging — never rendered in `text`.
+   * Pool size before/after filtering and the rejection-reason breakdown
+   * (approved spec section 4: "Log the rejection histogram clearly"),
+   * over the SAME fixed floors actually used for selection — not a second,
+   * looser pass. */
+  diagnostics?: { poolSize: number; qualifying: number; rejectedByReason: Record<string, number> };
 }
 
 /** The one entry point: load today's stored candidates and deterministically
@@ -399,11 +439,16 @@ export async function buildProPicks(
   const loaded = await loadPool(deps, day, zone, nowMs);
   if (loaded === null) return { text: "", reason: "archive_unavailable" };
   if (resolvePolicyMode(policyModeRaw) === "evidence_v2") {
-    const singles = selectSingles(loaded.candidates, nowMs, PRO_MIN_PRICE, PRO_MIN_PROBABILITY, PRO_MIN_BOOKS, PRO_MAX_LEGS);
-    const text = formatProPicksV2(singles);
-    if (!singles.length) return { text, reason: "no_candidates" };
+    const singles = selectSingles(loaded.candidates, nowMs);
+    const combo = buildOptionalCombo(singles);
+    const text = formatProPicksV2(singles, combo);
+    const diagnostics = rejectionHistogram(loaded.candidates, nowMs);
+    if (!singles.length) return { text, reason: "no_candidates", diagnostics };
     const tickets: ProTicket[] = singles.map((s) => ({ picks: [s.candidate], odds: s.candidate.price }));
-    return { text, reason: "success", tickets };
+    const comboTicket: ProTicket | undefined = combo
+      ? { picks: combo.legs.map((l) => l.candidate), odds: combo.odds }
+      : undefined;
+    return { text, reason: "success", tickets, comboTicket, diagnostics };
   }
   const ticket = buildProTicket(loaded.candidates, nowMs);
   if (!ticket) return { text: "", reason: "no_candidates" };
