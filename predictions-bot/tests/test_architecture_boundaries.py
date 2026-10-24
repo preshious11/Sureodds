@@ -120,7 +120,8 @@ def test_selectors_work_from_plain_hand_written_rows_without_the_model():
     def row(i, **kw):
         base = dict(id=i, canonical_event_id=f"e{i}", fixture_key=f"f{i}", status='pending', prob=0.72, price=1.45,
                     ev=0.04, books=5, quality='main', rank_score=0.7 - i / 100, edge_ev=None, market='result3',
-                    stat='points', sport='football', league=f'L{i}', start_utc='2030-06-01T20:00:00Z',
+                    selection='home', period='full', entity='all', line=None, stat='points',
+                    sport='football', league=f'L{i}', start_utc='2030-06-01T20:00:00Z',
                     sources='{}', canonical_competition_id='')
         return {**base, **kw}
     rows = [row(i) for i in range(4)]

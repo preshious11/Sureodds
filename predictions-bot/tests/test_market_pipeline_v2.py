@@ -88,7 +88,7 @@ def test_gaussian_integer_and_quarter_settlements(line):
 def row(i, fixture, market='total', side='over', line=1.5, p=.80, odds=1.5, quality='secondary', books=5):
     return dict(id=i, canonical_event_id=fixture, fixture_key=fixture, sport='football',
                 league=fixture, start_utc=iso(dt(hh=22)), status='pending', market=market,
-                selection=side, line=line, stat='points', prob=p, price=odds,
+                selection=side, line=line, stat='points', entity='all', period='full', prob=p, price=odds,
                 quality=quality, books=books, ev=p*odds-1, edge_ev=None,
                 rank_score=p-.035, sources=json.dumps({'_notes': {'evidence': {'p_lcb': p-.035}}}))
 
@@ -121,7 +121,7 @@ def test_stronger_fixture_alternative_replaces_result_and_thresholds_hold(select
     cfg = replace(Config(), daily_odds_min=2., daily_odds_max=2.5)
     rows = [row('win', 'a', market='result3', side='home', p=.66, odds=1.5, quality='main'),
             row('over', 'a', p=.80, odds=1.5), row('other', 'b'),
-            row('thin', 'c', market='btts', p=.95, books=2), row('weak', 'd', p=.49)]
+            row('thin', 'c', market='btts', side='yes', p=.95, books=2), row('weak', 'd', p=.49)]
     chosen, diag = selector(rows, cfg, iso(dt()))
     assert {r['id'] for r in chosen} == {'over', 'other'}
     assert diag['rejections']['insufficient_books'] >= 1

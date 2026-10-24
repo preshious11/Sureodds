@@ -15,11 +15,15 @@ from tests.test_subscribers_broadcast import FakeTG, _cb
 ])
 def test_each_route_uses_its_own_picks_and_total(view, expected, absent, total):
     snapshot = DailySnapshot(date='2030-06-01', top_picks=[
-        PickRecord(tier='top', label='TOP ONLY A', price=2.05),
-        PickRecord(tier='top', label='TOP ONLY B', price=1.74),
+        PickRecord(tier='top', label='TOP ONLY A', price=2.05, sport='football', market='result3',
+                   selection='home', home='Home A', away='Away A'),
+        PickRecord(tier='top', label='TOP ONLY B', price=1.74, sport='football', market='result3',
+                   selection='home', home='Home B', away='Away B'),
     ], daily_picks=[
-        PickRecord(tier='daily', label='DAILY ONLY A', price=2.0),
-        PickRecord(tier='daily', label='DAILY ONLY B', price=7.67),
+        PickRecord(tier='daily', label='DAILY ONLY A', price=2.0, sport='football', market='result3',
+                   selection='home', home='Home C', away='Away C'),
+        PickRecord(tier='daily', label='DAILY ONLY B', price=7.67, sport='football', market='result3',
+                   selection='home', home='Home D', away='Away D'),
     ])
     # Exercise the serialized cache format as well as the command/button routes.
     restored = DailySnapshot.from_dict(snapshot.to_dict())

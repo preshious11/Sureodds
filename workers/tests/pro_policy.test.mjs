@@ -57,6 +57,9 @@ function makeCandidate(overrides = {}) {
     selection: "home",
     price: 1.5,
     p_model: 0.8,
+    period: "full",
+    stat: "points",
+    entity: "all",
     start_utc: "2026-10-20T18:00:00Z",
     generated_at: "2026-10-20T06:00:00Z",
     home: "Arsenal",
@@ -90,6 +93,9 @@ function payloadFor(overrides = {}) {
     selection: "home",
     price: 1.5,
     p_model: 0.8,
+    period: "full",
+    stat: "points",
+    entity: "all",
     start_utc: "2026-10-20T18:00:00Z",
     generated_at: "2026-10-20T06:00:00Z",
     home: "Arsenal",
@@ -106,6 +112,19 @@ function payloadFor(overrides = {}) {
 }
 
 describe("pro_policy: evidence-tier classification", () => {
+  it("filters invalid archived sport-market coordinates before Pro selection", async () => {
+    const result = await buildProPicks(
+      poolDeps([payloadFor({
+        sport: "american_football", market: "dc", selection: "home_draw",
+      })]),
+      DAY,
+      ZONE,
+      NOW,
+      "evidence_v2",
+    );
+    assert.equal(result.reason, "no_candidates");
+  });
+
   it("football, independent_status ok, a FOOTBALL_MARKETS/period-covered market -> independently_assessed", () => {
     const c = makeCandidate({ market: "result3", period: "full", independent_status: "ok", p_independent: 0.78 });
     assert.equal(classifyEvidence(c).tier, "independently_assessed");
@@ -127,7 +146,7 @@ describe("pro_policy: evidence-tier classification", () => {
   });
 
   it('independent_status "ok" but a market the independent model does not cover (result2) stays market_only (defensive duplicate check)', () => {
-    const c = makeCandidate({ market: "result2", selection: "home", independent_status: "ok", p_independent: 0.78 });
+    const c = makeCandidate({ sport: "basketball", market: "result2", selection: "home", independent_status: "ok", p_independent: 0.78 });
     assert.equal(classifyEvidence(c).tier, "market_only");
   });
 
@@ -150,7 +169,7 @@ describe("pro_policy: evidence-tier classification", () => {
 describe("pro_policy: disagreement is computed, never auto-preferred", () => {
   it("disagreement is populated only for independently_assessed candidates", () => {
     const assessed = makeCandidate({ market: "result3", independent_status: "ok", p_independent: 0.65, p_model: 0.8 });
-    const marketOnly = makeCandidate({ market: "result2", selection: "home", independent_status: "unavailable:no_history", p_independent: null });
+    const marketOnly = makeCandidate({ sport: "basketball", market: "result2", selection: "home", independent_status: "unavailable:no_history", p_independent: null });
     assert.ok(classifyEvidence(assessed).disagreement !== null);
     assert.equal(classifyEvidence(marketOnly).disagreement, null);
   });
@@ -413,7 +432,7 @@ describe("pro_policy: evidence_v2 formatting is compact, honest, and leaks no in
   });
 
   it("market_only uses the * marker and the bookmaker-informed footnote, never implying independent-model coverage", () => {
-    const c = makeCandidate({ market: "result2", selection: "home", independent_status: "unavailable:no_history", p_independent: null });
+    const c = makeCandidate({ sport: "basketball", market: "result2", selection: "home", independent_status: "unavailable:no_history", p_independent: null });
     const d = evaluateCandidateV2(c, NOW);
     const text = formatProPicksV2([{ candidate: c, decision: d }]);
     assert.match(text, /Chance: 80%\*/);

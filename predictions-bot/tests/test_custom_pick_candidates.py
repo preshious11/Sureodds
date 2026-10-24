@@ -43,7 +43,7 @@ def alternatives(i=1, start=None):
         ('dc', 'away_draw', .34, 2.9, None),
         ('btts', 'yes', .63, 1.9, None), ('btts', 'no', .37, 2.4, None),
         ('dnb', 'home', .75, 1.4, None), ('dnb', 'away', .25, 3.5, None),
-        ('result2', 'home', .75, 1.4, None), ('result2', 'away', .25, 3.5, None),
+        ('odd_even', 'even', .75, 1.4, None), ('odd_even', 'odd', .25, 3.5, None),
     ]
     for line, probability in ((1.5, .80), (2.5, .65), (3.5, .40)):
         definitions.extend([('total', 'over', probability, 1.8, line),
@@ -79,7 +79,7 @@ def prepared(scored, cfg, archive=True):
     ('result3', {'home', 'draw', 'away'}, 3),
     ('dc', {'home_draw', 'away_draw', 'home_away'}, 3),
     ('btts', {'yes', 'no'}, 2), ('dnb', {'home', 'away'}, 2),
-    ('result2', {'home', 'away'}, 2),
+    ('odd_even', {'even', 'odd'}, 2),
     ('total', {'over', 'under'}, 6), ('handicap', {'home', 'away'}, 6),
 ])
 def test_evaluated_alternatives_coexist(db, market, selections, count):
@@ -99,13 +99,13 @@ def test_evaluated_alternatives_coexist(db, market, selections, count):
     ({'p_model': float('inf')}, 'invalid_probability'),
     ({'price': 1.0}, 'missing_odds'), ({'price': float('inf')}, 'missing_odds'),
     ({'price': float('nan')}, 'missing_odds'), ({'sources': {}}, 'insufficient_model_inputs'),
-    ({'market': 'prop'}, 'invalid_market'),
+    ({'market': 'prop', 'selection': 'over', 'line': 1.5}, 'market_contract_invalid_entity'),
 ])
 def test_existing_validation_rejections_are_not_archived(db, changes, reason):
     valid = alternatives()[0]
     invalid = deepcopy(valid)
     for key, value in changes.items():
-        setattr(invalid.line if key in ('price', 'market') else invalid, key, value)
+        setattr(invalid.line if key in ('price', 'market', 'selection', 'line') else invalid, key, value)
     generation = representative_predictions([valid, invalid])
     assert generation.diagnostics['line_rejections'] == {reason: 1}
     persist(db, generation.candidates)
@@ -121,18 +121,16 @@ def test_results_coverage_rejection_is_not_archived(db):
 
 def test_only_evaluated_candidates_are_captured_including_nonrepresentatives(db):
     values = alternatives()
-    # Valid but outside representative policy; preservation must not apply that policy.
+    # Keep the result markets canonical while exercising archive capture beyond
+    # the representative selection and period.
     values[0].line.period = '1h'
-    values[1].line.stat = 'corners'
-    values[2].line.entity = 'home'
     generation = representative_predictions(values[:3])
     persist(db, generation.candidates)
     rows = db.get_custom_pick_candidates(DAY, ZONE)
     assert len(rows) == 3
     assert {r['market'] for r in rows} == {'result3'}
     assert any(r['period'] == '1h' for r in rows)
-    assert any(r['stat'] == 'corners' for r in rows)
-    assert not any(r['selection'] in ('yes', 'over') for r in rows)
+    assert {r['selection'] for r in rows} == {'home', 'draw', 'away'}
 
 
 def test_capture_preserves_evaluated_fields_and_is_detached_before_ranking(db):

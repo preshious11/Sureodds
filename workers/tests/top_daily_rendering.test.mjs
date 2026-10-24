@@ -36,6 +36,7 @@ function fixture() {
   sql.exec(`
     CREATE TABLE picks(id INTEGER PRIMARY KEY, pick_date TEXT, tier TEXT, rank INTEGER,
       sport TEXT, league TEXT, home TEXT, away TEXT, start_utc TEXT, market TEXT,
+      period TEXT, stat TEXT, entity TEXT, line REAL,
       selection TEXT, label TEXT, price REAL, prob REAL, status TEXT);
     CREATE TABLE prediction_memberships(prediction_id INTEGER REFERENCES picks(id),
       collection TEXT, rank INTEGER, PRIMARY KEY(prediction_id, collection));
@@ -44,7 +45,8 @@ function fixture() {
   `);
   const day = "2026-10-14";
   const insertPick = sql.prepare(
-    "INSERT INTO picks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO picks(id, pick_date, tier, rank, sport, league, home, away, start_utc, market, " +
+    "period, stat, entity, line, selection, label, price, prob, status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
   );
   const insertMembership = sql.prepare(
     "INSERT INTO prediction_memberships VALUES(?,?,?)",
@@ -53,7 +55,8 @@ function fixture() {
   for (let i = 1; i <= 192; i += 1) {
     insertPick.run(
       i, day, "all", i, "football", "League", `Home${i}`, `Away${i}`,
-      "2026-10-14T18:00:00Z", "total", "over", `Over 2.5 (#${i})`, 1.9, 0.6, "pending",
+      "2026-10-14T18:00:00Z", "total", "full", "points", "all", 2.5,
+      "over", `Over 2.5 (#${i})`, 1.9, 0.6, "pending",
     );
     insertMembership.run(i, "all", i);
   }

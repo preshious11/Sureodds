@@ -171,17 +171,18 @@ def test_line_validation_and_fixture_fallback():
     assert normalize([], DAY, ZONE, NOW, NOW, {'football'}) is None
 
 
-@pytest.mark.parametrize('market,selection,stat,period,expected', [
-    ('result2', 'home', 'points', '1q', '1st Qtr'),
-    ('result2', 'away', 'games', '1s', 'Games'),
-    ('result3', 'draw', 'corners', 'full', 'Corners'),
-    ('dc', 'home_draw', 'corners', '1h', 'Corners'),
-    ('dc', 'home_draw', 'points', '1h', '1st Half'),
+@pytest.mark.parametrize('sport,market,selection,stat,period,line,expected', [
+    ('basketball', 'result2', 'home', 'points', '1q', None, '1st Qtr'),
+    ('tennis', 'total', 'over', 'games', 'full', 2.5, 'Games'),
+    ('football', 'result3', 'draw', 'points', 'full', None, 'Draw'),
+    ('football', 'total', 'over', 'corners', '1h', 8.0, 'Corners'),
+    ('football', 'dc', 'home_draw', 'points', '1h', None, '1st Half'),
 ])
-def test_outcomes_preserve_market_stat_and_period_context(market, selection, stat, period, expected):
-    row = dict(rows_for(1)[0], market=market, selection=selection, stat=stat, period=period,
+def test_outcomes_preserve_market_stat_and_period_context(sport, market, selection, stat, period, line, expected):
+    row = dict(rows_for(1, sport=sport)[0], sport=sport, market=market, selection=selection,
+               stat=stat, period=period, line=line,
                prediction_date=DAY, timezone=ZONE, generated_at=iso(NOW))
-    candidate = normalize(row, DAY, ZONE, NOW, NOW, {'football'})
+    candidate = normalize(row, DAY, ZONE, NOW, NOW, {sport})
     assert candidate and expected.lower() in candidate.outcome.lower()
 
 
@@ -223,14 +224,14 @@ def test_diversity_prefers_comparable_markets_but_explicit_market_request_wins()
     rows = []
     for i in range(1, 4):
         rows += rows_for(i, probability=.75, market='result3')
-        alternate = rows_for(i, probability=.749, market='result2')[0]
+        alternate = rows_for(i, probability=.749, market='dnb')[0]
         rows.append(alternate)
     pool = candidates(rows)
     ticket = search(pool, Request(pick_count=3))
     assert len({c.market for c in ticket.picks}) == 2
-    explicit = [c for c in pool if c.market == 'result2']
-    ticket = search(explicit, Request(pick_count=3, allowed_markets=frozenset({'result2'})))
-    assert len(ticket.picks) == 3 and {c.market for c in ticket.picks} == {'result2'}
+    explicit = [c for c in pool if c.market == 'dnb']
+    ticket = search(explicit, Request(pick_count=3, allowed_markets=frozenset({'dnb'})))
+    assert len(ticket.picks) == 3 and {c.market for c in ticket.picks} == {'dnb'}
 
 
 @pytest.mark.parametrize('sport,count', [('basketball', 3), ('tennis', 2), ('baseball', 3), ('american_football', 2)])

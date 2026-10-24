@@ -8,6 +8,7 @@ from typing import Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from predbot.bot.telegram import esc
 from predbot.markets.catalog import short_selection
+from predbot.markets.contracts import market_contract_reason
 from predbot.util.display_names import display_name, display_text
 from predbot.providers.base import MarketLine
 from predbot.util.timeutil import parse_iso, to_local, utcnow
@@ -132,9 +133,12 @@ def format_outcome(pick, home: str = "", away: str = "") -> str:
         label=str(getattr(pick, "label", "") or ""),
         market_name=str(getattr(pick, "label", "") or ""),
     )
+    sport = getattr(pick, "sport", None)
+    if market_contract_reason(sport, ml.market, ml.selection, ml.period, ml.stat, ml.entity, ml.line):
+        return ""
     return outcome_label(ml.label, ml, home or getattr(pick, "home", ""),
                          away or getattr(pick, "away", ""),
-                         getattr(pick, "sport", "football"))
+                         sport)
 
 
 #: A match that has kicked off carries 🔴 after its time; 🏁 is not part of the card vocabulary, so a match whose

@@ -127,7 +127,7 @@ def test_picker_top_rejections_tracked():
                home="C", away="D", start=now + timedelta(hours=2), sources=["a"])
     pool.append(_make_scored(e2, "result3", "home", 0.58, 1.8))
     ps = select(pool, cfg, now)
-    assert ps.diagnostics["line_rejections"] == {"invalid_market": 1}
+    assert ps.diagnostics["line_rejections"] == {"market_contract_invalid_entity": 1}
     assert ps.diagnostics["top"]["rejections"]["below_probability"] == 1
     assert len(ps.predictions) == 1
 

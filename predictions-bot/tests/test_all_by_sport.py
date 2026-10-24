@@ -18,7 +18,8 @@ DAY = "2030-06-01"
 def _pick(i, sport):
     return PickRecord(pick_id=i, tier="all", rank=i, sport=sport, league="L", home=f"{sport}Home{i}",
                       away=f"{sport}Away{i}", kickoff_utc=f"2030-06-01T{10 + i % 10:02d}:00:00Z",
-                      label="Home to Win", market="result2", selection="home", price=1.6, prob=0.7,
+                      label="Home to Win", market="result3" if sport == "football" else "result2",
+                      selection="home", price=1.6, prob=0.7,
                       pick_date=DAY)
 
 
@@ -67,8 +68,9 @@ def test_a_sport_with_nothing_today_and_unknown_sports_are_handled():
     assert "pg|all|0|20300601" in [b["callback_data"] for b in _buttons(markup)]
     snap = DailySnapshot(date=DAY, all_predictions=[_pick(1, "cricket")])
     menu, markup = pagination.render_view(snap, "all", 0, 5, "UTC")
-    assert any(b["text"] == "🎯 Other (1 · 1 match)" for b in _buttons(markup))
-    assert "cricketHome1" in pagination.render_view(snap, "all_other", 0, 5, "UTC")[0]
+    assert not any(b["text"].startswith("🎯 Other") for b in _buttons(markup))
+    assert "cricket" not in menu.lower()
+    assert pagination.render_view(snap, "all_other", 0, 5, "UTC")[0] == "No Other predictions today."
 
 
 def test_known_sports_match_the_display_labels():

@@ -241,7 +241,7 @@ def test_canonical_and_cross_provider_identity_duplicates(db):
     impossible = cp.State(tuple(pool), pool[0].price * pool[1].price)
     assert not valid_ticket(impossible, cp.Request(pick_count=2), NOW)
     # One canonical ID referring to conflicting fixtures is excluded entirely.
-    store(db, [original, dict(original, home='Different team', home_id='other-team', market='result2')])
+    store(db, [original, dict(original, home='Different team', home_id='other-team', market='dnb')])
     custom = cp.CustomPicks(db, Mock(timezone=ZONE, allowed_sports=['football']))
     assert custom.respond('1 pick', '42', '42', NOW).reason != 'success'
 
@@ -379,7 +379,7 @@ def test_compact_natural_output_uses_stored_competition_and_confidence():
 
 def test_shorter_equal_quality_ticket_preferred_but_never_weaker():
     pool = candidates(rows_for(1, price=2, probability=.8) + rows_for(2, price=1.4, probability=.8) +
-                      rows_for(3, price=1.4, probability=.8, market='result2'))
+                      rows_for(3, price=1.4, probability=.8, market='result3'))
     ticket = cp.search(pool, cp.Request(target_odds=2))
     assert len(ticket.picks) == 1 and ticket.picks[0].fixture_id == 'evt-1'
     weaker = [replace(c, probability=.7) if c.fixture_id == 'evt-1' else c for c in pool]

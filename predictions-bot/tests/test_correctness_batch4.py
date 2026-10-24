@@ -380,12 +380,11 @@ def test_top_below_target_falls_back_to_the_best_first_build():
 
 
 # ============================================================================== M12 / M14 Daily
-MARKETS = ("result3", "dnb", "dc", "result2", "handicap", "btts", "total", "odd_even")
-
-
 def daily_leg(i, prob, price):
-    return promoted(f"d{i}", MARKETS[i % len(MARKETS)], prob, price, league=f"L{i}", canonical_competition_id=f"c{i}",
-                    sport=("football", "basketball")[i % 2])
+    sport = ("football", "basketball")[i % 2]
+    market = "result3" if sport == "football" else "result2"
+    return promoted(f"d{i}", market, prob, price, league=f"L{i}", canonical_competition_id=f"c{i}",
+                    sport=sport)
 
 
 def test_daily_end_game_search_reaches_the_target_where_greedy_stalls():

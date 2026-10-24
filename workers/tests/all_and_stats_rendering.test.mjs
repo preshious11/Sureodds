@@ -33,7 +33,8 @@ function baseSchema() {
   const sql = new DatabaseSync(":memory:");
   sql.exec(`
     CREATE TABLE picks(id INTEGER PRIMARY KEY, pick_date TEXT, tier TEXT, rank INTEGER,
-      sport TEXT, league TEXT, home TEXT, away TEXT, start_utc TEXT, market TEXT,
+      sport TEXT, league TEXT, home TEXT, away TEXT, start_utc TEXT, market TEXT DEFAULT 'result3',
+      period TEXT DEFAULT 'full', stat TEXT DEFAULT 'points', entity TEXT DEFAULT 'all', line REAL,
       selection TEXT, label TEXT, price REAL, prob REAL, status TEXT, result_json TEXT);
     CREATE TABLE prediction_memberships(prediction_id INTEGER REFERENCES picks(id),
       collection TEXT, rank INTEGER, PRIMARY KEY(prediction_id, collection));
@@ -72,8 +73,8 @@ describe("/all sport menu and per-sport fixture pages", () => {
     const sql = baseSchema();
     const pastDay = "2026-09-20"; // older than "today" (frozen to 2026-10-14 above); no setCache() call for it
     sql.prepare(
-      "INSERT INTO picks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-    ).run(1, pastDay, "top", 1, "football", "Premier League", "Arsenal", "Chelsea", "2026-09-20T18:00:00Z", "1x2", "home", "Arsenal to Win", 1.8, 0.6, "won", null);
+      "INSERT INTO picks(id,pick_date,tier,rank,sport,league,home,away,start_utc,market,selection,label,price,prob,status,result_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    ).run(1, pastDay, "top", 1, "football", "Premier League", "Arsenal", "Chelsea", "2026-09-20T18:00:00Z", "result3", "home", "Arsenal to Win", 1.8, 0.6, "won", null);
     sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)").run(1, "top", 1);
     const page = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "top", 0, pastDay);
     assert.match(page.text, /Arsenal/);
@@ -91,8 +92,8 @@ describe("/all sport menu and per-sport fixture pages", () => {
     const sql = baseSchema();
     const today = "2026-10-14"; // matches the frozen clock above - no setCache() call
     sql.prepare(
-      "INSERT INTO picks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-    ).run(1, today, "top", 1, "football", "Premier League", "Arsenal", "Chelsea", "2026-10-14T18:00:00Z", "1x2", "home", "Arsenal to Win", 1.8, 0.6, "pending", null);
+      "INSERT INTO picks(id,pick_date,tier,rank,sport,league,home,away,start_utc,market,selection,label,price,prob,status,result_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    ).run(1, today, "top", 1, "football", "Premier League", "Arsenal", "Chelsea", "2026-10-14T18:00:00Z", "result3", "home", "Arsenal to Win", 1.8, 0.6, "pending", null);
     sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)").run(1, "top", 1);
     const page = await renderView({ DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5" }, "top", 0, today);
     assert.match(page.text, /not been generated yet/, "today's own readiness gate is unchanged by bug 12");
@@ -102,18 +103,19 @@ describe("/all sport menu and per-sport fixture pages", () => {
     const day = "2026-10-14";
     setCache(sql, day);
     const insert = sql.prepare(
-      "INSERT INTO picks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO picks(id,pick_date,tier,rank,sport,league,home,away,start_utc,market,period,stat,entity,line,selection,label,price,prob,status,result_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     );
     const membership = sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)");
     // Two football fixtures (one with 2 markets) + one basketball fixture.
     const rows = [
-      [1, "football", "Premier League", "Arsenal", "Chelsea", "2026-10-14T18:00:00Z", "Arsenal to Win"],
-      [2, "football", "Premier League", "Arsenal", "Chelsea", "2026-10-14T18:00:00Z", "Over 2.5 Goals"],
-      [3, "football", "La Liga", "Barca", "Real", "2026-10-14T20:00:00Z", "Barca to Win"],
-      [4, "basketball", "NBA", "Lakers", "Celtics", "2026-10-14T23:00:00Z", "Lakers -5.5"],
+      [1, "football", "Premier League", "Arsenal", "Chelsea", "2026-10-14T18:00:00Z", "result3", "home", "points", null, "Arsenal to Win"],
+      [2, "football", "Premier League", "Arsenal", "Chelsea", "2026-10-14T18:00:00Z", "total", "over", "goals", 2.5, "Over 2.5 Goals"],
+      [3, "football", "La Liga", "Barca", "Real", "2026-10-14T20:00:00Z", "result3", "home", "points", null, "Barca to Win"],
+      [4, "basketball", "NBA", "Lakers", "Celtics", "2026-10-14T23:00:00Z", "handicap", "home", "points", -5.5, "Lakers -5.5"],
     ];
-    for (const [id, sport, league, home, away, start, label] of rows) {
-      insert.run(id, day, "all", id, sport, league, home, away, start, "x", "y", label, 1.8, 0.6, "pending", null);
+    for (const [id, sport, league, home, away, start, market, selection, stat, line, label] of rows) {
+      insert.run(id, day, "all", id, sport, league, home, away, start, market, "full", stat, "all", line,
+        selection, label, 1.8, 0.6, "pending", null);
       membership.run(id, "all", id);
     }
     try {
@@ -149,8 +151,8 @@ describe("/stats and /yesterday real settlement data", () => {
   // must never contribute. This is the exact bug the 2026-10-14 screenshot
   // caught ("149 picks" instead of the real ~7 Top+Daily picks).
   const insertPick = (sql, id, day, status, price) =>
-    sql.prepare("INSERT INTO picks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, day, "all", id, "football", "L", "A", "B", `${day}T18:00:00Z`, "x", "y", "lbl", price, 0.6, status, null);
+    sql.prepare("INSERT INTO picks(id,pick_date,tier,rank,sport,league,home,away,start_utc,market,selection,label,price,prob,status,result_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, day, "all", id, "football", "L", "A", "B", `${day}T18:00:00Z`, "result3", "home", "lbl", price, 0.6, status, null);
   const addMembership = (sql, id, collection) =>
     sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)").run(id, collection, id);
 
@@ -364,8 +366,8 @@ describe("/stats and /yesterday real settlement data", () => {
 
 describe("itemized /yesterday, 30-day/all-time blocks, and collection-specific stats views", () => {
   const insertPick = (sql, id, day, status, price, home = "A", away = "B") =>
-    sql.prepare("INSERT INTO picks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, day, "all", id, "football", "L", home, away, `${day}T18:00:00Z`, "x", "y", `lbl-${id}`, price, 0.6, status, null);
+    sql.prepare("INSERT INTO picks(id,pick_date,tier,rank,sport,league,home,away,start_utc,market,selection,label,price,prob,status,result_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, day, "all", id, "football", "L", home, away, `${day}T18:00:00Z`, "result3", "home", `lbl-${id}`, price, 0.6, status, null);
   const addMembership = (sql, id, collection) =>
     sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)").run(id, collection, id);
 

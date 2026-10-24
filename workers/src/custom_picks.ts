@@ -14,6 +14,7 @@
 
 import { SPORT_ICON, combinedOdds, escHtml } from "./format.ts";
 import { coordinates, type MarketScope } from "./market_request.ts";
+import { marketContractReason } from "./market_contract.ts";
 
 // INTRO is assembled further down (introText(), after enabledSports() is
 // defined) from the SAME enabled-sports rule parseRequest uses - the
@@ -1706,17 +1707,25 @@ export async function loadPool(
       prediction_date: row.prediction_date ?? payload.prediction_date,
       timezone: row.timezone ?? payload.timezone,
     };
+    if (![payload.period, payload.stat, payload.entity].every((value) =>
+      typeof value === "string" && value.trim().length > 0)) {
+      diagnostics.rejectedByReason["missing_market_metadata"] =
+        (diagnostics.rejectedByReason["missing_market_metadata"] ?? 0) + 1;
+      continue;
+    }
     const { candidate, reason } = normalizeCandidateWithReason(merged, day, zone, nowMs, poolTimeMs, true, row.generated_at);
     // Keep archived evaluations for audit, but never recommend the product's
     // existing disabled/unvalidated families or disabled sports. Both Custom
     // and Pro consume this same inventory; Pro ranking itself is unchanged.
+    const contractReason = candidate ? marketContractReason(candidate) : null;
     const blockedMarket = candidate && ['prop','odd_even','winning_margin','ht_ft'].includes(candidate.market);
     const blockedSport = candidate && !DEFAULT_ENABLED_SPORTS.has(candidate.sport);
-    if (candidate && !blockedMarket && !blockedSport) {
+    if (candidate && !contractReason && !blockedMarket && !blockedSport) {
       candidates.push(candidate);
       diagnostics.accepted += 1;
     } else {
-      const rejectionReason = blockedMarket ? 'unvalidated_market' : blockedSport ? 'disabled_sport' : reason;
+      const rejectionReason = contractReason ? `market_contract_${contractReason}` :
+        blockedMarket ? 'unvalidated_market' : blockedSport ? 'disabled_sport' : reason;
       diagnostics.rejectedByReason[rejectionReason] = (diagnostics.rejectedByReason[rejectionReason] ?? 0) + 1;
     }
   }

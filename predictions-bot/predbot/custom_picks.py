@@ -11,7 +11,7 @@ import re
 from predbot.bot.format import SPORT_ICON, SPORT_LABEL, combined_odds, outcome_label
 from predbot.bot.telegram import esc
 from predbot.markets.catalog import CATALOG, PERIOD_NAMES, readable_stat, selection_label
-from predbot.markets.contracts import ambiguous_contract
+from predbot.markets.contracts import ambiguous_contract, market_contract_reason
 from predbot.providers.base import MarketLine
 from predbot.util.timeutil import parse_iso, to_local, utcnow
 
@@ -294,6 +294,11 @@ def normalize(row, day, zone, now, pool_time, supported_sports, *, include_start
         return None
     period, stat, entity = row.get('period'), row.get('stat'), row.get('entity')
     if not all(isinstance(v, str) and v.strip() for v in (period, stat, entity)):
+        return None
+    contract_reason = market_contract_reason(sport, market, selection, period, stat, entity, line)
+    if contract_reason:
+        log.warning("custom candidate rejected | reason=market_contract_%s | sport=%s | market=%s | provider_market_id=%s",
+                 contract_reason, sport, market, row.get('provider_market_id') or '')
         return None
     ml = MarketLine(market, selection, price, period=period, stat=stat, entity=entity, line=line)
     outcome = selection_label(ml, home, away, sport)

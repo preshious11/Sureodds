@@ -75,11 +75,14 @@ def test_event_level_and_line_level_rejections_are_reported_separately():
     lines = [sc(e, "prop", "over", 0.6, 2.0, line=1.5) for _ in range(5)]      # five unpriceable lines, one event
     gen = representative_predictions(lines)
     assert gen.predictions == []
-    assert gen.diagnostics["line_rejection_count"] == 5 and gen.diagnostics["event_no_valid_market"] == {"invalid_market": 1}
-    assert gen.diagnostics["line_rejections_by_market"] == {"prop": {"invalid_market": 5}}
-    text = "\n".join(pipeline_lines({"line_rejection_count": 5, "line_rejections": {"invalid_market": 5},
-                                     "event_rejections": {"invalid_market": 1}, "markets_evaluated": 5}))
-    assert "events not analysed: invalid_market=1" in text and "rejected: 5 (invalid_market=5)" in text
+    assert gen.diagnostics["line_rejection_count"] == 5
+    assert gen.diagnostics["event_no_valid_market"] == {"market_contract_invalid_entity": 1}
+    assert gen.diagnostics["line_rejections_by_market"] == {"prop": {"market_contract_invalid_entity": 5}}
+    text = "\n".join(pipeline_lines({"line_rejection_count": 5,
+                                     "line_rejections": {"market_contract_invalid_entity": 5},
+                                     "event_rejections": {"market_contract_invalid_entity": 1}, "markets_evaluated": 5}))
+    assert "events not analysed: market_contract_invalid_entity=1" in text
+    assert "rejected: 5 (market_contract_invalid_entity=5)" in text
 
 
 def test_a_disabled_market_stays_in_all_and_is_blocked_only_downstream():

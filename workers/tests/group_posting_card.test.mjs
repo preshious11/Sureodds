@@ -40,6 +40,7 @@ function fixture() {
   sql.exec(`
     CREATE TABLE picks(id INTEGER PRIMARY KEY, pick_date TEXT, tier TEXT, rank INTEGER,
       sport TEXT, league TEXT, home TEXT, away TEXT, start_utc TEXT, market TEXT,
+      period TEXT DEFAULT 'full', stat TEXT DEFAULT 'points', entity TEXT DEFAULT 'all', line REAL DEFAULT 2.5,
       selection TEXT, label TEXT, price REAL, prob REAL, status TEXT);
     CREATE TABLE prediction_memberships(prediction_id INTEGER REFERENCES picks(id),
       collection TEXT, rank INTEGER, PRIMARY KEY(prediction_id, collection));
@@ -55,7 +56,9 @@ function fixture() {
 }
 
 function seedDay(sql, day, { dailyCount = 8 } = {}) {
-  const insertPick = sql.prepare("INSERT INTO picks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  const insertPick = sql.prepare(
+    "INSERT INTO picks(id,pick_date,tier,rank,sport,league,home,away,start_utc,market,selection,label,price,prob,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+  );
   const insertMembership = sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)");
   for (let i = 1; i <= dailyCount; i += 1) {
     insertPick.run(

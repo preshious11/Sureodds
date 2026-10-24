@@ -13,6 +13,7 @@ import {
   eligible,
   failureReason,
   formatTicket,
+  loadPool,
   labelFor,
   normalizeCandidate,
   normalizeCandidateWithReason,
@@ -43,8 +44,11 @@ function candidatePayload(overrides = {}) {
     timezone: ZONE,
     canonical_event_id: "fx-1",
     sport: "football",
-    market: "result2",
+    market: "result3",
     selection: "home",
+    period: "full",
+    stat: "points",
+    entity: "all",
     price: 1.8,
     p_model: 0.7,
     start_utc: "2026-10-14T18:00:00Z",
@@ -66,6 +70,53 @@ describe("normalizeCandidate (~ custom_picks.py normalize)", () => {
     assert.ok(c);
     assert.equal(c.outcome, "Arsenal to Win");
     assert.equal(c.competition, "epl"); // Premier League resolved via the curated league map
+  });
+
+  describe("shared candidate market contract", () => {
+    it("rejects cross-sport double chance and retains valid soccer and moneyline candidates", async () => {
+      const pool = { status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" };
+      const rows = [
+        { payload_json: JSON.stringify(candidatePayload({
+          market: "dc", selection: "home_draw", sport: "baseball",
+        })) },
+        { payload_json: JSON.stringify(candidatePayload({
+          canonical_event_id: "fx-af", market: "dc", selection: "home_draw", sport: "american_football",
+        })) },
+        { payload_json: JSON.stringify(candidatePayload({
+          canonical_event_id: "fx-2", market: "dc", selection: "home_draw",
+        })) },
+        { payload_json: JSON.stringify(candidatePayload({
+          canonical_event_id: "fx-basketball", market: "result2", selection: "home", sport: "basketball",
+        })) },
+        { payload_json: JSON.stringify(candidatePayload({
+          canonical_event_id: "fx-baseball", market: "result2", selection: "away", sport: "baseball",
+        })) },
+      ];
+      const loaded = await loadPool(
+        { getPool: async () => pool, getCandidates: async () => rows }, DAY, ZONE, NOW,
+      );
+      assert.ok(loaded);
+      assert.deepEqual(
+        loaded.candidates.map((item) => [item.sport, item.market]).sort(),
+        [["baseball", "result2"], ["basketball", "result2"], ["football", "dc"]],
+      );
+      assert.equal(loaded.diagnostics.rejectedByReason.market_contract_unsupported_market_for_sport, 2);
+    });
+
+    it("rejects archived candidates missing explicit market coordinates", async () => {
+      const payload = candidatePayload();
+      delete payload.period;
+      const loaded = await loadPool(
+        {
+          getPool: async () => ({ status: "COMPLETE", generated_at: "2026-10-14T06:30:00Z" }),
+          getCandidates: async () => [{ payload_json: JSON.stringify(payload) }],
+        },
+        DAY, ZONE, NOW,
+      );
+      assert.ok(loaded);
+      assert.equal(loaded.candidates.length, 0);
+      assert.equal(loaded.diagnostics.rejectedByReason.missing_market_metadata, 1);
+    });
   });
   it("rejects a different day/timezone (archive is date+zone scoped)", () => {
     assert.equal(candidate({ prediction_date: "2026-10-13" }), null);
@@ -445,7 +496,7 @@ describe("respond() end-to-end contract", () => {
       canonical_competition_id: "epl",
       home_id: "ars",
       away_id: "che",
-      market: "result2",
+      market: "result3",
       selection: "home",
       price: 1.8,
       period: "full",
@@ -777,7 +828,8 @@ describe("reported-issue regressions (strict floor, labels, counts, fixtures, va
     const rows = pricedPool([1.8, 1.6, 1.9]).map((c, i) => ({
       payload_json: JSON.stringify({
         prediction_date: DAY, timezone: ZONE, canonical_event_id: c.fixtureId,
-        sport: "football", market: "result2", selection: "home", price: c.price, p_model: 0.7,
+        sport: "football", market: "dnb", selection: "home", price: c.price, p_model: 0.7,
+        period: "full", stat: "points", entity: "all",
         start_utc: "2026-10-14T18:00:00Z", generated_at: "2026-10-14T06:00:00Z",
         home: c.home, away: c.away, home_id: `h${i}`, away_id: `a${i}`, league: "Premier League",
       }),

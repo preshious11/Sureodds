@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from predbot.markets.catalog import spec
-from predbot.markets.contracts import ambiguous_contract
+from predbot.markets.contracts import ambiguous_contract, market_contract_reason
 from predbot.markets.settlement import unsettleable_reason
 from predbot.model.calibration import Calibrator
 from predbot.model.elo import Elo
@@ -49,7 +49,11 @@ def representative_predictions(scored, results_gate=None, insight_fetcher=None):
     for s in scored:
         m = s.line
         reason = None
-        if ambiguous_contract(m.market_name):
+        contract_reason = market_contract_reason(
+            s.event.sport, m.market, m.selection, m.period, m.stat, m.entity, m.line)
+        if contract_reason:
+            reason = f"market_contract_{contract_reason}"
+        elif ambiguous_contract(m.market_name):
             reason = 'ambiguous_contract'
         elif not math.isfinite(s.p_model) or not 0 < s.p_model < 1:
             reason = "invalid_probability"
@@ -124,11 +128,24 @@ def representative_predictions(scored, results_gate=None, insight_fetcher=None):
 
 def generate(events, db, settings: ModelSettings, results_gate=None, scorer=None, insight_fetcher=None):
     elo, calibrator = Elo(db), Calibrator(db, scope="settlement_v2")
-    scored, failures, sufficient = [], Counter(), 0
+    scored, failures, sufficient, contract_rejections = [], Counter(), 0, Counter()
     for event in events:
         if not event.markets:
             failures["missing_odds"] += 1
             continue
+        compatible = []
+        for market in event.markets:
+            reason = market_contract_reason(
+                event.sport, market.market, market.selection, market.period, market.stat, market.entity, market.line)
+            if reason:
+                contract_rejections[reason] += 1
+            else:
+                compatible.append(market)
+        if not compatible:
+            failures["no_compatible_market"] += 1
+            continue
+        if len(compatible) != len(event.markets):
+            event = replace(event, markets=compatible)
         try:
             values = scorer([event]) if scorer else EventModel(event, elo, calibrator, shrink=settings.shrink,
                                 sharp_books=settings.sharp_books or None,
@@ -147,5 +164,6 @@ def generate(events, db, settings: ModelSettings, results_gate=None, scorer=None
         failures[reason] += n
     result.diagnostics.update(sufficient_analytical_data=sufficient, analyzed=sufficient,
                               events_without_prediction=len(events) - result.diagnostics["fixtures_with_predictions"],
-                              event_rejections=dict(failures))
+                              event_rejections=dict(failures),
+                              market_contract_rejections=dict(contract_rejections))
     return result
