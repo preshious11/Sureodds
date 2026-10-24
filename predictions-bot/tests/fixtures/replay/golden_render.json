@@ -29,7 +29,7 @@
  },
  "callback:stats:0": [
   [
-   "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 7 picks\n✅ 1  ❌ 1  ➖ 1\n3 of 7 settled · final card after the last result\n🏆 Best so far: Iva Jovic to Win · Iva Jovic vs Peyton Stearns · @1.29\n\n🏅 By sport\n⚽ Football 0/2  ·  ⚾ Baseball —  ·  🎾 Tennis 1/1\n\n📈 Last 4 days\n✅ 12  ❌ 8  ➖ 4  ·  🎯 60%  ·  L1\nFri ❌✅➖  Thu ❌✅✅➖✅❌❌  Wed ✅➖✅❌❌✅✅  Tue ➖❌❌✅✅✅✅\n\n🎟 Top ticket hit 1 of 3 settled days",
+   "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 7 picks\n✅ 1  ❌ 1  ➖ 0\n2 of 7 settled · final card after the last result\n🏆 Best so far: Nashville SC Over 1.5 Goals · Nashville SC vs Chicago Fire · @1.61\n\n🏅 By sport\n⚽ Football 1/2  ·  ⚾ Baseball —\n\n📈 Last 4 days\n✅ 12  ❌ 8  ➖ 3  ·  🎯 60%  ·  🔥 W1\nFri ❌✅  Thu ❌✅❌➖✅✅❌  Wed ✅➖✅❌❌✅✅  Tue ➖❌✅✅✅❌✅\n\n🎟 Top ticket hit 1 of 3 settled days",
    "{\"inline_keyboard\": [[{\"callback_data\": \"pg|stats_top|0\", \"text\": \"\\ud83d\\udd25 Top stats\"}, {\"callback_data\": \"pg|stats_daily|0\", \"text\": \"\\ud83d\\udccb Daily stats\"}, {\"callback_data\": \"pg|stats_all|0\", \"text\": \"\\ud83d\\udcda All stats\"}], [{\"callback_data\": \"pg|all|0\", \"text\": \"\\ud83d\\udcda All Predictions\"}], [{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Bet of the Day\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
   ],
   [
@@ -39,7 +39,7 @@
  ],
  "callback:yesterday:0": [
   [
-   "🗓 YESTERDAY · Fri 18 Sep\n7 picks · ✅ 1 ❌ 1 ➖ 1\n\n🔥 Top\n   🎯 BTTS Yes · New England Revolution vs Orlando City SC · @1.40\n❌ 🎯 BTTS Yes · San Jose Earthquakes vs Los Angeles FC · @1.44\n\n📋 Daily\n   🎯 Baltimore Orioles +1.5 · Baltimore Orioles vs Milwaukee Brewers · @1.56\n✅ 🎯 Iva Jovic to Win · Iva Jovic vs Peyton Stearns · @1.29\n   🎯 Cincinnati Reds +1.5 · Cincinnati Reds vs Chicago Cubs · @1.74\n\nPage 1 of 2",
+   "🗓 YESTERDAY · Fri 18 Sep\n7 picks · ✅ 1 ❌ 1 ➖ 0\n\n🔥 Top\n   🎯 BTTS Yes · New England Revolution vs Orlando City SC · @1.40\n❌ 🎯 BTTS Yes · San Jose Earthquakes vs Los Angeles FC · @1.44\n\n📋 Daily\n   🎯 Detroit Tigers +1.5 · Chicago White Sox vs Detroit Tigers · @1.51\n   🎯 Philadelphia Phillies +1.5 · New York Mets vs Philadelphia Phillies · @1.49\n   🎯 Houston Astros to Win · Houston Astros vs Atlanta Braves · @1.73\n\nPage 1 of 2",
    "{\"inline_keyboard\": [[{\"callback_data\": \"noop\", \"text\": \"1/2\"}, {\"callback_data\": \"pg|yesterday|1|20260918\", \"text\": \"\\u25b6\\ufe0f\"}], [{\"callback_data\": \"pg|all|0\", \"text\": \"\\ud83d\\udcda All Predictions\"}], [{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Bet of the Day\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
   ],
   [
@@ -49,7 +49,7 @@
  ],
  "callback:yesterday:1": [
   [
-   "🗓 YESTERDAY · Fri 18 Sep\n7 picks · ✅ 1 ❌ 1 ➖ 1\n\n📋 Daily\n➖ 🎯 St.Louis City to Win · St.Louis City vs Toronto FC · @1.60\n   🎯 Over 3.5 Total Runs (1st Half) · Los Angeles Angels vs Minnesota Twins · @1.83\n\nPage 2 of 2",
+   "🗓 YESTERDAY · Fri 18 Sep\n7 picks · ✅ 1 ❌ 1 ➖ 0\n\n📋 Daily\n   🎯 St.Louis City to Win · St.Louis City vs Toronto FC · @1.60\n✅ 🎯 Nashville SC Over 1.5 Goals · Nashville SC vs Chicago Fire · @1.61\n\nPage 2 of 2",
    "{\"inline_keyboard\": [[{\"callback_data\": \"pg|yesterday|0|20260918\", \"text\": \"\\u25c0\\ufe0f\"}, {\"callback_data\": \"noop\", \"text\": \"2/2\"}], [{\"callback_data\": \"pg|all|0\", \"text\": \"\\ud83d\\udcda All Predictions\"}], [{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Bet of the Day\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
   ],
   [
@@ -57,24 +57,24 @@
    ""
   ]
  ],
- "card": "🔥 BET OF THE DAY · Sat 19 Sep\n🎟 Combined odds 2.02 · 2 picks · 🕘 times in WAT\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 BTTS Yes\n💰 1.40  ·  📊 69%  ·  🕘 12:30 AM\n\n⚽ MLS · San Jose Earthquakes vs Los Angeles FC\n🎯 BTTS Yes\n💰 1.44  ·  📊 66%  ·  🕘 12:30 AM\n\nBet only what you can afford to lose.\n\n📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.23 · 5 picks · 🕘 times in WAT\n\n⚾ MLB · Baltimore Orioles vs Milwaukee Brewers\n🎯 Baltimore Orioles +1.5\n💰 1.56  ·  📊 62%  ·  🕘 9:05 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 11:00 PM\n\n⚾ MLB · Cincinnati Reds vs Chicago Cubs\n🎯 Cincinnati Reds +1.5\n💰 1.74  ·  📊 56%  ·  🕘 11:40 PM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Angels vs Minnesota Twins\n🎯 Over 3.5 Total Runs (1st Half)\n💰 1.83  ·  📊 55%  ·  🕘 2:38 AM\n\nBet only what you can afford to lose.",
+ "card": "🔥 BET OF THE DAY · Sat 19 Sep\n🎟 Combined odds 2.02 · 2 picks · 🕘 times in WAT\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 BTTS Yes\n💰 1.40  ·  📊 69%  ·  🕘 12:30 AM\n\n⚽ MLS · San Jose Earthquakes vs Los Angeles FC\n🎯 BTTS Yes\n💰 1.44  ·  📊 66%  ·  🕘 12:30 AM\n\nBet only what you can afford to lose.\n\n📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.05 · 5 picks · 🕘 times in WAT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 9:10 PM\n\n⚾ MLB · Houston Astros vs Atlanta Braves\n🎯 Houston Astros to Win\n💰 1.73  ·  📊 55%  ·  🕘 12:10 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 1:30 AM\n\n⚽ MLS · Nashville SC vs Chicago Fire\n🎯 Nashville SC Over 1.5 Goals\n💰 1.61  ·  📊 60%  ·  🕘 2:30 AM\n\nBet only what you can afford to lose.",
  "delivery": {
   "cards_by_tz": {
    "Africa/Lagos": [
     "🔥 BET OF THE DAY · Sat 19 Sep\n🎟 Combined odds 2.02 · 2 picks · 🕘 times in WAT\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 BTTS Yes\n💰 1.40  ·  📊 69%  ·  🕘 12:30 AM\n\n⚽ MLS · San Jose Earthquakes vs Los Angeles FC\n🎯 BTTS Yes\n💰 1.44  ·  📊 66%  ·  🕘 12:30 AM\n\nBet only what you can afford to lose.",
-    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.23 · 5 picks · 🕘 times in WAT\n\n⚾ MLB · Baltimore Orioles vs Milwaukee Brewers\n🎯 Baltimore Orioles +1.5\n💰 1.56  ·  📊 62%  ·  🕘 9:05 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 11:00 PM\n\n⚾ MLB · Cincinnati Reds vs Chicago Cubs\n🎯 Cincinnati Reds +1.5\n💰 1.74  ·  📊 56%  ·  🕘 11:40 PM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Angels vs Minnesota Twins\n🎯 Over 3.5 Total Runs (1st Half)\n💰 1.83  ·  📊 55%  ·  🕘 2:38 AM\n\nBet only what you can afford to lose."
+    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.05 · 5 picks · 🕘 times in WAT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 9:10 PM\n\n⚾ MLB · Houston Astros vs Atlanta Braves\n🎯 Houston Astros to Win\n💰 1.73  ·  📊 55%  ·  🕘 12:10 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 1:30 AM\n\n⚽ MLS · Nashville SC vs Chicago Fire\n🎯 Nashville SC Over 1.5 Goals\n💰 1.61  ·  📊 60%  ·  🕘 2:30 AM\n\nBet only what you can afford to lose."
    ],
    "America/New_York": [
     "🔥 BET OF THE DAY · Sat 19 Sep\n🎟 Combined odds 2.02 · 2 picks · 🕘 times in EDT\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 BTTS Yes\n💰 1.40  ·  📊 69%  ·  🕘 7:30 PM\n\n⚽ MLS · San Jose Earthquakes vs Los Angeles FC\n🎯 BTTS Yes\n💰 1.44  ·  📊 66%  ·  🕘 7:30 PM\n\nBet only what you can afford to lose.",
-    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.23 · 5 picks · 🕘 times in EDT\n\n⚾ MLB · Baltimore Orioles vs Milwaukee Brewers\n🎯 Baltimore Orioles +1.5\n💰 1.56  ·  📊 62%  ·  🕘 4:05 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 6:00 PM\n\n⚾ MLB · Cincinnati Reds vs Chicago Cubs\n🎯 Cincinnati Reds +1.5\n💰 1.74  ·  📊 56%  ·  🕘 6:40 PM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 8:30 PM\n\n⚾ MLB · Los Angeles Angels vs Minnesota Twins\n🎯 Over 3.5 Total Runs (1st Half)\n💰 1.83  ·  📊 55%  ·  🕘 9:38 PM\n\nBet only what you can afford to lose."
+    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.05 · 5 picks · 🕘 times in EDT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 2:10 PM\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 4:10 PM\n\n⚾ MLB · Houston Astros vs Atlanta Braves\n🎯 Houston Astros to Win\n💰 1.73  ·  📊 55%  ·  🕘 7:10 PM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 8:30 PM\n\n⚽ MLS · Nashville SC vs Chicago Fire\n🎯 Nashville SC Over 1.5 Goals\n💰 1.61  ·  📊 60%  ·  🕘 9:30 PM\n\nBet only what you can afford to lose."
    ],
    "Asia/Tokyo": [
     "🔥 BET OF THE DAY · Sat 19 Sep\n🎟 Combined odds 2.02 · 2 picks · 🕘 times in JST\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 BTTS Yes\n💰 1.40  ·  📊 69%  ·  🕘 8:30 AM\n\n⚽ MLS · San Jose Earthquakes vs Los Angeles FC\n🎯 BTTS Yes\n💰 1.44  ·  📊 66%  ·  🕘 8:30 AM\n\nBet only what you can afford to lose.",
-    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.23 · 5 picks · 🕘 times in JST\n\n⚾ MLB · Baltimore Orioles vs Milwaukee Brewers\n🎯 Baltimore Orioles +1.5\n💰 1.56  ·  📊 62%  ·  🕘 5:05 AM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 7:00 AM\n\n⚾ MLB · Cincinnati Reds vs Chicago Cubs\n🎯 Cincinnati Reds +1.5\n💰 1.74  ·  📊 56%  ·  🕘 7:40 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 9:30 AM\n\n⚾ MLB · Los Angeles Angels vs Minnesota Twins\n🎯 Over 3.5 Total Runs (1st Half)\n💰 1.83  ·  📊 55%  ·  🕘 10:38 AM\n\nBet only what you can afford to lose."
+    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.05 · 5 picks · 🕘 times in JST\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 3:10 AM\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 5:10 AM\n\n⚾ MLB · Houston Astros vs Atlanta Braves\n🎯 Houston Astros to Win\n💰 1.73  ·  📊 55%  ·  🕘 8:10 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 9:30 AM\n\n⚽ MLS · Nashville SC vs Chicago Fire\n🎯 Nashville SC Over 1.5 Goals\n💰 1.61  ·  📊 60%  ·  🕘 10:30 AM\n\nBet only what you can afford to lose."
    ],
    "Europe/London": [
     "🔥 BET OF THE DAY · Sat 19 Sep\n🎟 Combined odds 2.02 · 2 picks · 🕘 times in BST\n\n⚽ MLS · New England Revolution vs Orlando City SC\n🎯 BTTS Yes\n💰 1.40  ·  📊 69%  ·  🕘 12:30 AM\n\n⚽ MLS · San Jose Earthquakes vs Los Angeles FC\n🎯 BTTS Yes\n💰 1.44  ·  📊 66%  ·  🕘 12:30 AM\n\nBet only what you can afford to lose.",
-    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.23 · 5 picks · 🕘 times in BST\n\n⚾ MLB · Baltimore Orioles vs Milwaukee Brewers\n🎯 Baltimore Orioles +1.5\n💰 1.56  ·  📊 62%  ·  🕘 9:05 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 11:00 PM\n\n⚾ MLB · Cincinnati Reds vs Chicago Cubs\n🎯 Cincinnati Reds +1.5\n💰 1.74  ·  📊 56%  ·  🕘 11:40 PM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Angels vs Minnesota Twins\n🎯 Over 3.5 Total Runs (1st Half)\n💰 1.83  ·  📊 55%  ·  🕘 2:38 AM\n\nBet only what you can afford to lose."
+    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.05 · 5 picks · 🕘 times in BST\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 9:10 PM\n\n⚾ MLB · Houston Astros vs Atlanta Braves\n🎯 Houston Astros to Win\n💰 1.73  ·  📊 55%  ·  🕘 12:10 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 1:30 AM\n\n⚽ MLS · Nashville SC vs Chicago Fire\n🎯 Nashville SC Over 1.5 Goals\n💰 1.61  ·  📊 60%  ·  🕘 2:30 AM\n\nBet only what you can afford to lose."
    ]
   },
   "message_lengths": {
@@ -83,7 +83,7 @@
      301
     ],
     [
-     604
+     608
     ]
    ],
    "America/New_York": [
@@ -91,7 +91,7 @@
      299
     ],
     [
-     602
+     607
     ]
    ],
    "Asia/Tokyo": [
@@ -99,7 +99,7 @@
      299
     ],
     [
-     603
+     608
     ]
    ],
    "Europe/London": [
@@ -107,7 +107,7 @@
      301
     ],
     [
-     604
+     608
     ]
    ]
   }
@@ -122,7 +122,7 @@
  "pages": {
   "daily:0": [
    [
-    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.23 · 5 picks · 🕘 times in WAT\n\n⚾ MLB · Baltimore Orioles vs Milwaukee Brewers\n🎯 Baltimore Orioles +1.5\n💰 1.56  ·  📊 62%  ·  🕘 9:05 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 11:00 PM\n\n⚾ MLB · Cincinnati Reds vs Chicago Cubs\n🎯 Cincinnati Reds +1.5\n💰 1.74  ·  📊 56%  ·  🕘 11:40 PM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Angels vs Minnesota Twins\n🎯 Over 3.5 Total Runs (1st Half)\n💰 1.83  ·  📊 55%  ·  🕘 2:38 AM\n\nBet only what you can afford to lose.",
+    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.05 · 5 picks · 🕘 times in WAT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 9:10 PM\n\n⚾ MLB · Houston Astros vs Atlanta Braves\n🎯 Houston Astros to Win\n💰 1.73  ·  📊 55%  ·  🕘 12:10 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 1:30 AM\n\n⚽ MLS · Nashville SC vs Chicago Fire\n🎯 Nashville SC Over 1.5 Goals\n💰 1.61  ·  📊 60%  ·  🕘 2:30 AM\n\nBet only what you can afford to lose.",
     "{\"inline_keyboard\": [[{\"callback_data\": \"pg|all|0\", \"text\": \"\\ud83d\\udcda All Predictions\"}], [{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Bet of the Day\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
    ],
    [
@@ -132,7 +132,7 @@
   ],
   "daily:1": [
    [
-    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.23 · 5 picks · 🕘 times in WAT\n\n⚾ MLB · Baltimore Orioles vs Milwaukee Brewers\n🎯 Baltimore Orioles +1.5\n💰 1.56  ·  📊 62%  ·  🕘 9:05 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 11:00 PM\n\n⚾ MLB · Cincinnati Reds vs Chicago Cubs\n🎯 Cincinnati Reds +1.5\n💰 1.74  ·  📊 56%  ·  🕘 11:40 PM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Angels vs Minnesota Twins\n🎯 Over 3.5 Total Runs (1st Half)\n💰 1.83  ·  📊 55%  ·  🕘 2:38 AM\n\nBet only what you can afford to lose.",
+    "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.05 · 5 picks · 🕘 times in WAT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 9:10 PM\n\n⚾ MLB · Houston Astros vs Atlanta Braves\n🎯 Houston Astros to Win\n💰 1.73  ·  📊 55%  ·  🕘 12:10 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 1:30 AM\n\n⚽ MLS · Nashville SC vs Chicago Fire\n🎯 Nashville SC Over 1.5 Goals\n💰 1.61  ·  📊 60%  ·  🕘 2:30 AM\n\nBet only what you can afford to lose.",
     "{\"inline_keyboard\": [[{\"callback_data\": \"pg|all|0\", \"text\": \"\\ud83d\\udcda All Predictions\"}], [{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Bet of the Day\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
    ],
    [
@@ -161,17 +161,17 @@
    ]
   ]
  },
- "recap_final": "📊 RESULTS · Fri 18 Sep\n\n🗓 Yesterday · Fri 18 Sep · 7 picks\n✅ 4  ❌ 2  ➖ 1\n🎯 67%  ·  💹 ROI +4%\n🏆 Best: Over 3.5 Total Runs (1st Half) · Los Angeles Angels vs Minnesota Twins · @1.83\n\n🏅 By sport\n⚾ Baseball 2/3  ·  ⚽ Football 1/3  ·  🎾 Tennis 1/1\n\n📈 Last 4 days\n✅ 15  ❌ 9  ➖ 4  ·  🎯 62%  ·  🔥 W1\nFri ✅❌❌✅✅➖✅  Thu ❌✅✅➖✅❌❌  Wed ✅➖✅❌❌✅✅  Tue ➖❌❌✅✅✅✅\n\n🎟 Top ticket hit 1 of 4 settled days",
- "recap_partial": "📊 RESULTS · Fri 18 Sep\n\n🗓 Yesterday · Fri 18 Sep · 7 picks\n✅ 1  ❌ 1  ➖ 1\n3 of 7 settled · final card after the last result\n🏆 Best so far: Iva Jovic to Win · Iva Jovic vs Peyton Stearns · @1.29\n\n🏅 By sport\n⚽ Football 0/2  ·  ⚾ Baseball —  ·  🎾 Tennis 1/1\n\n📈 Last 4 days\n✅ 12  ❌ 8  ➖ 4  ·  🎯 60%  ·  L1\nFri ❌✅➖  Thu ❌✅✅➖✅❌❌  Wed ✅➖✅❌❌✅✅  Tue ➖❌❌✅✅✅✅\n\n🎟 Top ticket hit 1 of 3 settled days",
- "stats_fewer_than_7_days": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 7 picks\n✅ 4  ❌ 2  ➖ 1\n🎯 67%  ·  💹 ROI +4%\n🏆 Best: Over 3.5 Total Runs (1st Half) · Los Angeles Angels vs Minnesota Twins · @1.83\n\n🏅 By sport\n⚾ Baseball 2/3  ·  ⚽ Football 1/3  ·  🎾 Tennis 1/1\n\n📈 Last 2 days\n✅ 7  ❌ 5  ➖ 2  ·  🎯 58%  ·  🔥 W1\nFri ✅❌❌✅✅➖✅  Thu ❌✅✅➖✅❌❌\n\n🎟 Top ticket hit 0 of 2 settled days",
- "stats_final": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 7 picks\n✅ 4  ❌ 2  ➖ 1\n🎯 67%  ·  💹 ROI +4%\n🏆 Best: Over 3.5 Total Runs (1st Half) · Los Angeles Angels vs Minnesota Twins · @1.83\n\n🏅 By sport\n⚾ Baseball 2/3  ·  ⚽ Football 1/3  ·  🎾 Tennis 1/1\n\n📈 Last 4 days\n✅ 15  ❌ 9  ➖ 4  ·  🎯 62%  ·  🔥 W1\nFri ✅❌❌✅✅➖✅  Thu ❌✅✅➖✅❌❌  Wed ✅➖✅❌❌✅✅  Tue ➖❌❌✅✅✅✅\n\n🎟 Top ticket hit 1 of 4 settled days",
- "stats_no_picks_yesterday": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep — no picks were issued.\n\n📈 Last 3 days\n✅ 7  ❌ 5  ➖ 2  ·  🎯 58%  ·  L2\nThu ❌✅✅➖✅❌❌  Wed ✅➖✅❌❌✅✅\n\n🎟 Top ticket hit 1 of 2 settled days",
+ "recap_final": "📊 RESULTS · Fri 18 Sep\n\n🗓 Yesterday · Fri 18 Sep · 7 picks\n✅ 4  ❌ 2  ➖ 1\n🎯 67%  ·  💹 ROI +4%\n🏆 Best: Houston Astros to Win · Houston Astros vs Atlanta Braves · @1.73\n\n🏅 By sport\n⚽ Football 2/4  ·  ⚾ Baseball 2/3\n\n📈 Last 4 days\n✅ 15  ❌ 9  ➖ 4  ·  🎯 62%  ·  🔥 W1\nFri ✅❌➖✅✅❌✅  Thu ❌✅❌➖✅✅❌  Wed ✅➖✅❌❌✅✅  Tue ➖❌✅✅✅❌✅\n\n🎟 Top ticket hit 1 of 4 settled days",
+ "recap_partial": "📊 RESULTS · Fri 18 Sep\n\n🗓 Yesterday · Fri 18 Sep · 7 picks\n✅ 1  ❌ 1  ➖ 0\n2 of 7 settled · final card after the last result\n🏆 Best so far: Nashville SC Over 1.5 Goals · Nashville SC vs Chicago Fire · @1.61\n\n🏅 By sport\n⚽ Football 1/2  ·  ⚾ Baseball —\n\n📈 Last 4 days\n✅ 12  ❌ 8  ➖ 3  ·  🎯 60%  ·  🔥 W1\nFri ❌✅  Thu ❌✅❌➖✅✅❌  Wed ✅➖✅❌❌✅✅  Tue ➖❌✅✅✅❌✅\n\n🎟 Top ticket hit 1 of 3 settled days",
+ "stats_fewer_than_7_days": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 7 picks\n✅ 4  ❌ 2  ➖ 1\n🎯 67%  ·  💹 ROI +4%\n🏆 Best: Houston Astros to Win · Houston Astros vs Atlanta Braves · @1.73\n\n🏅 By sport\n⚽ Football 2/4  ·  ⚾ Baseball 2/3\n\n📈 Last 2 days\n✅ 7  ❌ 5  ➖ 2  ·  🎯 58%  ·  🔥 W1\nFri ✅❌➖✅✅❌✅  Thu ❌✅❌➖✅✅❌\n\n🎟 Top ticket hit 0 of 2 settled days",
+ "stats_final": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 7 picks\n✅ 4  ❌ 2  ➖ 1\n🎯 67%  ·  💹 ROI +4%\n🏆 Best: Houston Astros to Win · Houston Astros vs Atlanta Braves · @1.73\n\n🏅 By sport\n⚽ Football 2/4  ·  ⚾ Baseball 2/3\n\n📈 Last 4 days\n✅ 15  ❌ 9  ➖ 4  ·  🎯 62%  ·  🔥 W1\nFri ✅❌➖✅✅❌✅  Thu ❌✅❌➖✅✅❌  Wed ✅➖✅❌❌✅✅  Tue ➖❌✅✅✅❌✅\n\n🎟 Top ticket hit 1 of 4 settled days",
+ "stats_no_picks_yesterday": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep — no picks were issued.\n\n📈 Last 3 days\n✅ 7  ❌ 5  ➖ 2  ·  🎯 58%  ·  L1\nThu ❌✅❌➖✅✅❌  Wed ✅➖✅❌❌✅✅\n\n🎟 Top ticket hit 1 of 2 settled days",
  "stats_no_results_yet": "📊 No results yet — the first recap arrives the morning after the first slate.",
  "stats_nothing_settled_yesterday": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 7 picks — results come in after the last match ends.\n\n📈 Last 3 days\n✅ 4  ❌ 2  ➖ 1  ·  🎯 67%  ·  🔥 W3\nWed ✅➖✅❌❌✅✅\n\n🎟 Top ticket hit 1 of 1 settled day",
- "stats_partial": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 7 picks\n✅ 1  ❌ 1  ➖ 1\n3 of 7 settled · final card after the last result\n🏆 Best so far: Iva Jovic to Win · Iva Jovic vs Peyton Stearns · @1.29\n\n🏅 By sport\n⚽ Football 0/2  ·  ⚾ Baseball —  ·  🎾 Tennis 1/1\n\n📈 Last 4 days\n✅ 12  ❌ 8  ➖ 4  ·  🎯 60%  ·  L1\nFri ❌✅➖  Thu ❌✅✅➖✅❌❌  Wed ✅➖✅❌❌✅✅  Tue ➖❌❌✅✅✅✅\n\n🎟 Top ticket hit 1 of 3 settled days",
+ "stats_partial": "📊 STATS · Sat 19 Sep\n\n🗓 Yesterday · Fri 18 Sep · 7 picks\n✅ 1  ❌ 1  ➖ 0\n2 of 7 settled · final card after the last result\n🏆 Best so far: Nashville SC Over 1.5 Goals · Nashville SC vs Chicago Fire · @1.61\n\n🏅 By sport\n⚽ Football 1/2  ·  ⚾ Baseball —\n\n📈 Last 4 days\n✅ 12  ❌ 8  ➖ 3  ·  🎯 60%  ·  🔥 W1\nFri ❌✅  Thu ❌✅❌➖✅✅❌  Wed ✅➖✅❌❌✅✅  Tue ➖❌✅✅✅❌✅\n\n🎟 Top ticket hit 1 of 3 settled days",
  "views": {
   "/daily": [
-   "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.23 · 5 picks · 🕘 times in WAT\n\n⚾ MLB · Baltimore Orioles vs Milwaukee Brewers\n🎯 Baltimore Orioles +1.5\n💰 1.56  ·  📊 62%  ·  🕘 9:05 PM\n\n🎾 WTA · Iva Jovic vs Peyton Stearns\n🎯 Iva Jovic to Win\n💰 1.29  ·  📊 75%  ·  🕘 11:00 PM\n\n⚾ MLB · Cincinnati Reds vs Chicago Cubs\n🎯 Cincinnati Reds +1.5\n💰 1.74  ·  📊 56%  ·  🕘 11:40 PM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 1:30 AM\n\n⚾ MLB · Los Angeles Angels vs Minnesota Twins\n🎯 Over 3.5 Total Runs (1st Half)\n💰 1.83  ·  📊 55%  ·  🕘 2:38 AM\n\nBet only what you can afford to lose.",
+   "📋 DAILY PICKS · Sat 19 Sep\n🎟 Combined odds 10.05 · 5 picks · 🕘 times in WAT\n\n⚾ MLB · Chicago White Sox vs Detroit Tigers\n🎯 Detroit Tigers +1.5\n💰 1.51  ·  📊 64%  ·  🕘 7:10 PM\n\n⚾ MLB · New York Mets vs Philadelphia Phillies\n🎯 Philadelphia Phillies +1.5\n💰 1.49  ·  📊 65%  ·  🕘 9:10 PM\n\n⚾ MLB · Houston Astros vs Atlanta Braves\n🎯 Houston Astros to Win\n💰 1.73  ·  📊 55%  ·  🕘 12:10 AM\n\n⚽ MLS · St.Louis City vs Toronto FC\n🎯 St.Louis City to Win\n💰 1.60  ·  📊 59%  ·  🕘 1:30 AM\n\n⚽ MLS · Nashville SC vs Chicago Fire\n🎯 Nashville SC Over 1.5 Goals\n💰 1.61  ·  📊 60%  ·  🕘 2:30 AM\n\nBet only what you can afford to lose.",
    "{\"inline_keyboard\": [[{\"callback_data\": \"pg|all|0\", \"text\": \"\\ud83d\\udcda All Predictions\"}], [{\"callback_data\": \"pg|top|0\", \"text\": \"\\ud83d\\udd25 Bet of the Day\"}, {\"callback_data\": \"pg|daily|0\", \"text\": \"\\ud83d\\udccb Daily Picks\"}], [{\"callback_data\": \"pg|stats|0\", \"text\": \"\\ud83d\\udcca Stats\"}, {\"callback_data\": \"pg|yesterday|0\", \"text\": \"\\ud83d\\uddd3 Yesterday\"}]]}"
   ],
   "/top": [
@@ -180,12 +180,12 @@
   ]
  },
  "yesterday_final": [
-  "🗓 YESTERDAY · Fri 18 Sep\n7 picks · ✅ 4 ❌ 2 ➖ 1\n\n🔥 Top\n✅ 🎯 BTTS Yes · New England Revolution vs Orlando City SC · @1.40\n❌ 🎯 BTTS Yes · San Jose Earthquakes vs Los Angeles FC · @1.44\n\n📋 Daily\n❌ 🎯 Baltimore Orioles +1.5 · Baltimore Orioles vs Milwaukee Brewers · @1.56\n✅ 🎯 Iva Jovic to Win · Iva Jovic vs Peyton Stearns · @1.29\n✅ 🎯 Cincinnati Reds +1.5 · Cincinnati Reds vs Chicago Cubs · @1.74\n\nPage 1 of 2",
-  "🗓 YESTERDAY · Fri 18 Sep\n7 picks · ✅ 4 ❌ 2 ➖ 1\n\n📋 Daily\n➖ 🎯 St.Louis City to Win · St.Louis City vs Toronto FC · @1.60\n✅ 🎯 Over 3.5 Total Runs (1st Half) · Los Angeles Angels vs Minnesota Twins · @1.83\n\nPage 2 of 2"
+  "🗓 YESTERDAY · Fri 18 Sep\n7 picks · ✅ 4 ❌ 2 ➖ 1\n\n🔥 Top\n✅ 🎯 BTTS Yes · New England Revolution vs Orlando City SC · @1.40\n❌ 🎯 BTTS Yes · San Jose Earthquakes vs Los Angeles FC · @1.44\n\n📋 Daily\n➖ 🎯 Detroit Tigers +1.5 · Chicago White Sox vs Detroit Tigers · @1.51\n✅ 🎯 Philadelphia Phillies +1.5 · New York Mets vs Philadelphia Phillies · @1.49\n✅ 🎯 Houston Astros to Win · Houston Astros vs Atlanta Braves · @1.73\n\nPage 1 of 2",
+  "🗓 YESTERDAY · Fri 18 Sep\n7 picks · ✅ 4 ❌ 2 ➖ 1\n\n📋 Daily\n❌ 🎯 St.Louis City to Win · St.Louis City vs Toronto FC · @1.60\n✅ 🎯 Nashville SC Over 1.5 Goals · Nashville SC vs Chicago Fire · @1.61\n\nPage 2 of 2"
  ],
  "yesterday_no_picks": "🗓 YESTERDAY · Fri 18 Sep\nNo picks were issued.",
  "yesterday_partial": [
-  "🗓 YESTERDAY · Fri 18 Sep\n7 picks · ✅ 1 ❌ 1 ➖ 1\n\n🔥 Top\n   🎯 BTTS Yes · New England Revolution vs Orlando City SC · @1.40\n❌ 🎯 BTTS Yes · San Jose Earthquakes vs Los Angeles FC · @1.44\n\n📋 Daily\n   🎯 Baltimore Orioles +1.5 · Baltimore Orioles vs Milwaukee Brewers · @1.56\n✅ 🎯 Iva Jovic to Win · Iva Jovic vs Peyton Stearns · @1.29\n   🎯 Cincinnati Reds +1.5 · Cincinnati Reds vs Chicago Cubs · @1.74\n\nPage 1 of 2",
-  "🗓 YESTERDAY · Fri 18 Sep\n7 picks · ✅ 1 ❌ 1 ➖ 1\n\n📋 Daily\n➖ 🎯 St.Louis City to Win · St.Louis City vs Toronto FC · @1.60\n   🎯 Over 3.5 Total Runs (1st Half) · Los Angeles Angels vs Minnesota Twins · @1.83\n\nPage 2 of 2"
+  "🗓 YESTERDAY · Fri 18 Sep\n7 picks · ✅ 1 ❌ 1 ➖ 0\n\n🔥 Top\n   🎯 BTTS Yes · New England Revolution vs Orlando City SC · @1.40\n❌ 🎯 BTTS Yes · San Jose Earthquakes vs Los Angeles FC · @1.44\n\n📋 Daily\n   🎯 Detroit Tigers +1.5 · Chicago White Sox vs Detroit Tigers · @1.51\n   🎯 Philadelphia Phillies +1.5 · New York Mets vs Philadelphia Phillies · @1.49\n   🎯 Houston Astros to Win · Houston Astros vs Atlanta Braves · @1.73\n\nPage 1 of 2",
+  "🗓 YESTERDAY · Fri 18 Sep\n7 picks · ✅ 1 ❌ 1 ➖ 0\n\n📋 Daily\n   🎯 St.Louis City to Win · St.Louis City vs Toronto FC · @1.60\n✅ 🎯 Nashville SC Over 1.5 Goals · Nashville SC vs Chicago Fire · @1.61\n\nPage 2 of 2"
  ]
 }

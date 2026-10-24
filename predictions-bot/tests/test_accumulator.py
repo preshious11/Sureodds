@@ -86,7 +86,7 @@ def test_equivalent_outcomes_collapse_to_one_prediction_so_sections_cannot_hold_
     for i in range(25):
         e = ev(i)
         pool.append(sc(e, "result3", "home", 0.70, 1.80))       # top-quality pick
-        pool.append(sc(e, "result2", "home", 0.65, 1.70))       # near-equivalent outcome
+        pool.append(sc(e, "dnb", "home", 0.65, 1.70))          # near-equivalent outcome
     ps = select(pool, cfg(), now)
     assert len(ps.all()) == 50
     for section in (ps.top, ps.daily):

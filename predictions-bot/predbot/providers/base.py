@@ -66,6 +66,7 @@ class MarketLine:
     #: Empty for lines parsed before this field existed (cached rows): consumers then fall back to ``n_books``.
     book_quotes: Dict[str, float] = field(default_factory=dict)
     providers: List[str] = field(default_factory=list)      # providers whose feed carried this line
+    provider_market_id: str = ""       # raw/composite provider market identifier used to normalize this line
 
     def __post_init__(self):
         # One canonical representation for side markets however a provider tags them (also for cached rows

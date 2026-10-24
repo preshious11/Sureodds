@@ -26,7 +26,7 @@ def rec(i, tier, hour, price=1.25, prob=0.70, league="MLS", country="", home=Non
     kickoff = (datetime(2030, 6, 1, tzinfo=timezone.utc) + timedelta(hours=hour)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return PickRecord(pick_id=i, tier=tier, rank=i, sport="football", league=league, country=country,
                       home=home or f"Home {i}", away=away or f"Away {i}", label=label or f"Home {i} to Win",
-                      market="result2", selection="home", kickoff_utc=kickoff, price=price, prob=prob)
+                      market="result3", selection="home", kickoff_utc=kickoff, price=price, prob=prob)
 
 
 def snapshot(daily=12):

@@ -53,7 +53,8 @@ function world() {
   sql.exec(`
     CREATE TABLE picks(id INTEGER PRIMARY KEY, pick_date TEXT, tier TEXT DEFAULT 'all', rank INTEGER DEFAULT 0,
       sport TEXT DEFAULT 'football', league TEXT, home TEXT DEFAULT 'H', away TEXT DEFAULT 'A', start_utc TEXT,
-      market TEXT DEFAULT '1x2', selection TEXT DEFAULT 'home', label TEXT DEFAULT 'H to Win', price REAL DEFAULT 2,
+      market TEXT DEFAULT 'result3', period TEXT DEFAULT 'full', stat TEXT DEFAULT 'points',
+      entity TEXT DEFAULT 'all', line REAL, selection TEXT DEFAULT 'home', label TEXT DEFAULT 'H to Win', price REAL DEFAULT 2,
       prob REAL DEFAULT 0.6, status TEXT, fixture_key TEXT, result_json TEXT);
     CREATE TABLE prediction_memberships(prediction_id INTEGER, collection TEXT, rank INTEGER,
       PRIMARY KEY(prediction_id, collection));

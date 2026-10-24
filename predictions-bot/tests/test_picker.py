@@ -68,7 +68,7 @@ def test_one_prediction_per_event_and_family_even_when_it_sits_in_top_and_daily(
     for i in range(25):
         e = ev(i)
         pool.append(sc(e, "result3", "home", 0.70, 1.75))
-        pool.append(sc(e, "result2", "home", 0.70, 1.70))
+        pool.append(sc(e, "dnb", "home", 0.70, 1.70))
         pool.append(sc(e, "total", "over", 0.66, 1.8, line=2.5))
     ps = _select(pool, cfg(), now, raw=False)
     per_event = Counter(s.event.canonical_event_id for s in ps.predictions)
@@ -201,6 +201,14 @@ _MIXED = [("result3", "home", "points", None), ("total", "over", "corners", 8.0)
 
 def _mixed(i, sport="football", league=None):
     market, sel, stat, line = _MIXED[i % len(_MIXED)]
+    if sport == "basketball":
+        market, sel, stat, line = [
+            ("result2", "home", "points", None),
+            ("total", "over", "points", 210.5),
+            ("odd_even", "even", "points", None),
+            ("handicap", "home", "points", -3.5),
+            ("total", "under", "points", 220.5),
+        ][i % 5]
     # p_model 0.60 is below top_min_prob (0.62) but above daily_min_prob (0.55) and, even for a restricted
     # market (uncertainty ~0.054), keeps the lower confidence bound above DAILY_MIN_LCB: these candidates
     # compete for Daily only, so the daily diversity quotas are exercised in isolation.
@@ -272,6 +280,8 @@ def test_points_stat_is_not_capped_by_the_stat_share():
     pool = []
     for i in range(16):
         market, sel, line = markets[i % len(markets)]
+        if market == "result3":
+            market = "result2"
         s = sc(ev(i, sport="basketball"), market, sel, 0.55, 1.30, line=line,
                agreement=0.5, ev_val=-0.06)
         s.line.stat = "points"
@@ -341,7 +351,7 @@ def test_market_derived_score_model_does_not_trigger_the_disagreement_floor():
     just the bookmaker margin and it must skip the EV gate (this is what kept
     every basketball candidate out of the slate)."""
     now = dt()
-    s = sc(ev(1, sport="basketball"), "result3", "home", 0.60, 1.60, sources=1,
+    s = sc(ev(1, sport="basketball"), "result2", "home", 0.60, 1.60, sources=1,
            ev_val=-0.065, agreement=0.5)
     s.sources = {"market": 0.60, "score_model": 0.60}
     ps = select([s], cfg(), now)

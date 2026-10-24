@@ -16,6 +16,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
+from predbot.markets.contracts import market_contract_reason
 from predbot.providers.base import SIDE_MARKETS, BaseProvider, Event, MarketLine, MatchResult, norm_book
 from predbot.providers.budget import Budget
 from predbot.providers.sgo_meter import SgoMeter
@@ -672,7 +673,12 @@ class SportsGameOddsProvider(BaseProvider):
                         entity=entity, line=line, fair_price=fair,
                         bookmaker="consensus", n_books=n_books, provider_odd_id=odd_id,
                         label=market_name, market_name=market_name, is_player_prop=is_player,
-                        book_prices=book_prices, book_quotes=book_quotes)
+                        book_prices=book_prices, book_quotes=book_quotes,
+                        provider_market_id=":".join(str(o.get(k) or "") for k in ("betTypeID", "statID", "periodID")))
+        reason = market_contract_reason(sport, ml.market, ml.selection, ml.period, ml.stat, ml.entity, ml.line)
+        if reason:
+            self.parse_counts[f"MARKET_CONTRACT_{reason.upper()}"] += 1
+            return None
         if market == "prop" and not o.get("scoringSupported", False):
             self.parse_counts["PROP_UNSETTLEABLE"] += 1
             return None   # cannot be settled -> never a candidate

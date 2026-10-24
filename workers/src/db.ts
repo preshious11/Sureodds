@@ -2,6 +2,7 @@
 // upsert, day-cache reads, idempotent post/delivery receipts, job state.
 // All queries are indexed point-lookups or date-scoped range reads so the
 // free tier (5M rows read / 100K written per day) is never stressed.
+import { marketContractReason } from "./market_contract.ts";
 
 export interface Env {
   DB: D1Database;
@@ -276,6 +277,10 @@ export interface CachedPick {
   away: string;
   start_utc: string;
   market: string;
+  period: string;
+  stat: string;
+  entity: string;
+  line: number | null;
   selection: string;
   label: string;
   price: number;
@@ -284,12 +289,12 @@ export interface CachedPick {
 }
 
 const PICKS_PAGE_SQL = `SELECT p.id, m.collection AS tier, m.rank AS rank, p.sport, p.league, p.home, p.away,
-              p.start_utc, p.market, p.selection, p.label, p.price, p.prob, p.status
+              p.start_utc, p.market, p.period, p.stat, p.entity, p.line, p.selection, p.label, p.price, p.prob, p.status
        FROM picks p JOIN prediction_memberships m ON m.prediction_id = p.id
        WHERE p.pick_date = ?1 AND m.collection = ?2
        UNION ALL
        SELECT p.id, ?2 AS tier, p.rank AS rank, p.sport, p.league, p.home, p.away,
-              p.start_utc, p.market, p.selection, p.label, p.price, p.prob, p.status
+              p.start_utc, p.market, p.period, p.stat, p.entity, p.line, p.selection, p.label, p.price, p.prob, p.status
        FROM picks p
        WHERE p.pick_date = ?1 AND (?2 = 'all' OR p.tier = ?2)
          AND NOT EXISTS (SELECT 1 FROM prediction_memberships m WHERE m.prediction_id = p.id)
@@ -308,7 +313,7 @@ export async function getPicksPage(
     .prepare(`${PICKS_PAGE_SQL} LIMIT ?3 OFFSET ?4`)
     .bind(pickDate, collection, safeLimit, safeOffset)
     .all<CachedPick>();
-  return results ?? [];
+  return (results ?? []).filter((row) => !marketContractReason(row));
 }
 
 /**
@@ -323,7 +328,7 @@ export async function getAllPicksForCollection(
   collection: "top" | "daily" | "all",
 ): Promise<CachedPick[]> {
   const { results } = await db.prepare(PICKS_PAGE_SQL).bind(pickDate, collection).all<CachedPick>();
-  return results ?? [];
+  return (results ?? []).filter((row) => !marketContractReason(row));
 }
 
 export interface StatsRow {

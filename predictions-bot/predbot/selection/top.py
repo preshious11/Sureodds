@@ -10,10 +10,14 @@ from predbot.selection.search import search
 
 from predbot.selection.evidence import min_books
 from predbot.model.payoff import nfl_contract_valid, nfl_tie_sensitive
+from predbot.markets.contracts import market_contract_reason
+from predbot.util.timeutil import parse_iso
 
 
 def notes(row):
-    return (json.loads(row.get('sources') or '{}').get('_notes') or {})
+    raw = row.get('sources') or '{}'
+    parsed = json.loads(raw) if isinstance(raw, str) else raw
+    return parsed.get('_notes') or {} if isinstance(parsed, dict) else {}
 
 
 def ranked(rows):
@@ -22,11 +26,39 @@ def ranked(rows):
 
 
 def promotion_reason(row, cfg, now_utc, top=False):
-    if row['status'] != 'pending' or row['start_utc'] <= now_utc:
+    if not isinstance(row, dict):
+        return 'invalid_candidate_fields'
+    required = ('id', 'fixture_key', 'status', 'start_utc', 'sport', 'market', 'selection',
+                'period', 'stat', 'entity', 'prob', 'price', 'ev')
+    if (any(key not in row for key in required)
+            or any(not isinstance(row[key], str) or not row[key].strip()
+                   for key in ('fixture_key', 'status', 'start_utc', 'sport', 'market',
+                               'selection', 'period', 'stat', 'entity'))
+            or row['id'] is None):
+        return 'invalid_candidate_fields'
+    try:
+        if not all(isinstance(row[key], (int, float)) and not isinstance(row[key], bool)
+                   and math.isfinite(row[key]) for key in ('prob', 'price', 'ev')):
+            return 'invalid_candidate_fields'
+    except (TypeError, ValueError):
+        return 'invalid_candidate_fields'
+    start, now = parse_iso(row['start_utc']), parse_iso(now_utc)
+    if start is None or now is None:
+        return 'invalid_candidate_fields'
+    if row['status'] != 'pending' or start <= now:
         return 'started_or_settled'
     if row['market'] in cfg.disabled_markets:
         return 'disabled_market'      # a product choice about what to PROMOTE; the prediction itself stays in All
-    if not nfl_contract_valid(row, notes(row)):
+    contract_reason = market_contract_reason(
+        row.get('sport'), row.get('market'), row.get('selection'), row.get('period'),
+        row.get('stat'), row.get('entity'), row.get('line'))
+    if contract_reason:
+        return f'market_contract_{contract_reason}'
+    try:
+        meta = notes(row)
+    except (TypeError, ValueError):
+        return 'invalid_candidate_metadata'
+    if not nfl_contract_valid(row, meta):
         return 'unknown_nfl_tie_probability'
     if row['prob'] < (cfg.top_min_prob if top else cfg.daily_min_prob):
         return 'below_probability'
@@ -34,12 +66,17 @@ def promotion_reason(row, cfg, now_utc, top=False):
     need = max(cfg.top_min_books, quality_books) if top else quality_books
     if (row.get('books') or 1) < need:
         return 'insufficient_books'
-    meta = notes(row)
     if row.get('sport') == 'american_football' and nfl_tie_sensitive(
             row['market'], row.get('period', 'full'), row.get('line')):
-        if len(set(meta['nfl_tie_evidence']['books'])) < need:
+        tie_evidence = meta.get('nfl_tie_evidence')
+        books = tie_evidence.get('books') if isinstance(tie_evidence, dict) else None
+        if not isinstance(books, list) or not all(isinstance(book, str) for book in books):
+            return 'invalid_candidate_metadata'
+        if len(set(books)) < need:
             return 'insufficient_tie_books'
     evidence = meta.get('evidence') or {}
+    if not isinstance(evidence, dict):
+        return 'invalid_candidate_metadata'
     if evidence.get('dispersion') is not None and evidence['dispersion'] > cfg.max_book_dispersion:
         return 'book_disagreement'
     if row.get('edge_ev') is not None and row['edge_ev'] < cfg.min_edge_vs_sharp:

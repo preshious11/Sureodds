@@ -100,8 +100,11 @@ function seedPool(sql, { day = "2026-10-14", generatedAt = "2026-10-14T06:00:00Z
     timezone: "Africa/Lagos",
     canonical_event_id: "fx-1",
     sport: "football",
-    market: "result2",
+    market: "result3",
     selection: "home",
+    period: "full",
+    stat: "points",
+    entity: "all",
     price: 1.8,
     p_model: 0.7,
     start_utc: `${day}T20:00:00Z`,
@@ -118,7 +121,8 @@ function seedPool(sql, { day = "2026-10-14", generatedAt = "2026-10-14T06:00:00Z
 function seedCandidate(sql, day, generatedAt, overrides = {}) {
   const base = {
     prediction_date: day, timezone: "Africa/Lagos", canonical_event_id: "fx-1",
-    sport: "football", market: "result2", selection: "home", price: 1.8, p_model: 0.7,
+    sport: "football", market: "result3", selection: "home", price: 1.8, p_model: 0.7,
+    period: "full", stat: "points", entity: "all",
     start_utc: `${day}T20:00:00Z`, generated_at: generatedAt, home: "Arsenal", away: "Chelsea",
     league: "Premier League",
     // Clears Pro Picks' own PRO_MIN_BOOKS (3, see pro_picks.ts) by default so
@@ -301,7 +305,7 @@ describe("Custom Picks: remaining clarification button flows", () => {
   function seedMarketCandidate(sql, day, generatedAt, overrides = {}) {
     const base = {
       prediction_date: day, timezone: "Africa/Lagos", canonical_event_id: overrides.canonical_event_id ?? "fx-1",
-      sport: "football", market: "result2", selection: "home", price: 1.8, p_model: 0.7,
+      sport: "football", market: "result3", selection: "home", price: 1.8, p_model: 0.7,
       start_utc: `${day}T20:00:00Z`, generated_at: generatedAt, home: "Arsenal", away: "Chelsea",
       league: "Premier League", period: "full", stat: "points", entity: "all", line: null,
       ...overrides,
@@ -347,7 +351,9 @@ describe("Custom Picks: remaining clarification button flows", () => {
   it("1. sport selection: a bare 'hello' only offers sports the pool actually has today, and tapping one delivers real picks", async () => {
     const { db, theEnv } = seededEnv();
     seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-1", sport: "football" });
-    seedMarketCandidate(db._sql, day, generatedAt, { canonical_event_id: "fx-2", sport: "basketball", home: "Lakers", away: "Celtics" });
+    seedMarketCandidate(db._sql, day, generatedAt, {
+      canonical_event_id: "fx-2", sport: "basketball", market: "result2", home: "Lakers", away: "Celtics",
+    });
     // baseball/tennis/american_football are enabled but have NO candidates today — must never be offered.
     await start(theEnv);
     const askFetch = stubFetch();
@@ -1279,7 +1285,7 @@ describe("Custom Picks production archive shape end-to-end (2026-10-14 regressio
       canonical_competition_id: "epl",
       home_id: "ars",
       away_id: "che",
-      market: "result2",
+      market: "result3",
       selection: "home",
       price: 1.8,
       period: "full",
@@ -1359,7 +1365,7 @@ describe("All Predictions: group-to-private flow", () => {
       `INSERT INTO picks (pick_date,tier,rank,provider,provider_event_id,sport,league,home,away,start_utc,
         market,period,stat,entity,selection,label,price,prob,ev,status,created_at)
        VALUES ('${day}','all',1,'sgo','ev-1','football','Premier League','Arsenal','Chelsea','${day}T18:00:00Z',
-        'result2','full','points','all','home','Arsenal to Win',1.8,0.6,0.05,'pending','${day}T06:00:00Z')`,
+        'result3','full','points','all','home','Arsenal to Win',1.8,0.6,0.05,'pending','${day}T06:00:00Z')`,
     );
     sql.exec(
       `INSERT INTO prediction_cache (cache_key,local_date,timezone,status,payload_json,generated_at,updated_at,expires_at)

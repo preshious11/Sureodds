@@ -71,7 +71,7 @@ def test_the_pick_block_shows_the_city_names():
 
 def test_a_football_block_is_unchanged():
     block = pick_lines(pick_line_from_record(_pick(sport="football", league="MLS", home="LA Galaxy", away="DC United",
-                                                   label="LA Galaxy to Win", selection="home"), "UTC"))
+                                                   label="LA Galaxy to Win", market="result3", selection="home"), "UTC"))
     assert block[0] == "⚽ MLS · LA Galaxy vs DC United" and block[1] == "🎯 LA Galaxy to Win"
 
 

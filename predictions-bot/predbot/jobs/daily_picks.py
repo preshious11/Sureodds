@@ -300,6 +300,7 @@ def prediction_row(s, pick_date, rank=0):
         'rank_score': s.rank_score, 'books': ml.distinct_books(), 'quality': s.quality,
         'sources': {**s.sources, '_alt_ids': e.extra.get('alt_ids', {}), '_providers': e.sources,
                     '_sport_key': e.extra.get('sport_key', ''), '_league_id': e.league_id,
+                    '_provider_market_id': ml.provider_market_id,
                     '_notes': {**s.notes, 'edge': s.edge, **_price_detail(ml)}},
         'provider_odd_id': ml.provider_odd_id, 'fixture_key': fixture_key(e),
         'canonical_event_id': e.canonical_event_id, 'canonical_competition_id': e.canonical_competition_id,

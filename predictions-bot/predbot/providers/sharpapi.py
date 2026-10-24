@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from predbot.markets.catalog import pretty_league
+from predbot.markets.contracts import market_contract_reason
 from predbot.providers.base import BaseProvider, Event, MarketLine, apply_price_mode, norm_book
 from predbot.providers.budget import Budget
 from predbot.util.http import Http, ProviderError, RateLimiter
@@ -433,6 +434,10 @@ class SharpApiProvider(BaseProvider):
             # consolidate the same selection across books -> best price + n_books
             merged: Dict[Tuple, MarketLine] = {}
             for r in ers:
+                row_sport = SPORT_MAP.get(str(r.get("sport", "")).lower(), "other")
+                if row_sport != sport:
+                    self.parse_counts["CONFLICTING_EVENT_SPORT"] += 1
+                    continue
                 ml = self._row_to_line(r, sport)
                 if not ml:
                     continue
@@ -619,8 +624,14 @@ class SharpApiProvider(BaseProvider):
         except (TypeError, ValueError):
             prob = None
 
-        return MarketLine(market=market, selection=selection, price=price, period=period, stat=stat,
-                          entity=entity, line=line, bookmaker=str(r.get("sportsbook", "")), n_books=1,
-                          provider_odd_id=str(r.get("id", "")), market_name=mtype.replace("_", " ").title(),
-                          book_prices=[price], provider_prob=prob,
-                          book_quotes={norm_book(r.get("sportsbook", "")): price} if r.get("sportsbook") else {})
+        ml = MarketLine(market=market, selection=selection, price=price, period=period, stat=stat,
+                        entity=entity, line=line, bookmaker=str(r.get("sportsbook", "")), n_books=1,
+                        provider_odd_id=str(r.get("id", "")), market_name=mtype.replace("_", " ").title(),
+                        book_prices=[price], provider_prob=prob,
+                        book_quotes={norm_book(r.get("sportsbook", "")): price} if r.get("sportsbook") else {},
+                        provider_market_id=str(r.get("market_id", "")))
+        reason = market_contract_reason(sport, ml.market, ml.selection, ml.period, ml.stat, ml.entity, ml.line)
+        if reason:
+            self.parse_counts[f"MARKET_CONTRACT_{reason.upper()}"] += 1
+            return None
+        return ml

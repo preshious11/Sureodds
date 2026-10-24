@@ -92,7 +92,12 @@ def test_unknown_period_and_stat_never_fall_back_to_full_points(sport):
         assert p._row_to_line(dict(base, market_type='1st_inning_total_runs'), sport) is None
         assert p._row_to_line(dict(base,is_stale_pregame_price=True),sport) is None
         good = p._row_to_line(dict(base, market_segment='full_game'), sport)
-        assert (good.period, good.stat, good.line) == ('full', 'points', 2.5)
+        if sport == 'tennis':
+            assert good is None  # tennis total_points has no unambiguous game/set unit
+            good = p._row_to_line(dict(base, market_type='total_games', market_segment='full_game'), sport)
+            assert (good.period, good.stat, good.line) == ('full', 'games', 2.5)
+        else:
+            assert (good.period, good.stat, good.line) == ('full', 'points', 2.5)
     finally:
         db.close()
 

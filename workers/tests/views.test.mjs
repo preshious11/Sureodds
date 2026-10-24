@@ -61,8 +61,10 @@ describe("views never touch providers", () => {
     };
     try {
       const picks = [
-        { id: 1, home: "Arsenal", away: "Chelsea", label: "Home Win", price: 2.1 },
-        { id: 2, home: "Barca", away: "Real", label: "Over 2.5", price: 1.9 },
+        { id: 1, sport: "football", market: "result3", selection: "home", period: "full",
+          stat: "points", entity: "all", line: null, home: "Arsenal", away: "Chelsea", label: "Home Win", price: 2.1 },
+        { id: 2, sport: "football", market: "total", selection: "over", period: "full",
+          stat: "goals", entity: "all", line: 2.5, home: "Barca", away: "Real", label: "Over 2.5", price: 1.9 },
       ];
       const env = {
         DB: stubDb({ cache: { status: "COMPLETE", payload_json: "{}" }, picks }),
@@ -94,8 +96,10 @@ describe("views never touch providers", () => {
   it("renders cached picks with pagination, empty page stays honest", async () => {
     const picks = [
       { id: 1, sport: "football", league: "Premier League", home: "Arsenal", away: "Chelsea",
+        market: "result3", selection: "home", period: "full", stat: "points", entity: "all", line: null,
         label: "Home Win", price: 2.1, prob: 0.5, start_utc: "2026-10-11T18:00:00Z" },
       { id: 2, sport: "football", league: "La Liga", home: "Barca", away: "Real",
+        market: "total", selection: "over", period: "full", stat: "goals", entity: "all", line: 2.5,
         label: "Over 2.5", price: 1.9, prob: 0.6, start_utc: "2026-10-11T20:00:00Z" },
     ];
     const env = {
@@ -150,6 +154,7 @@ describe("PAGE_SIZE configuration (picksPerPage)", () => {
   it("PAGE_SIZE=2 paginates the ticket two legs at a time", async () => {
     const picks = [1, 2, 3].map((id) => ({
       id, sport: "football", league: "Premier League", home: `Home${id}`, away: `Away${id}`,
+      market: "result3", selection: "home", period: "full", stat: "points", entity: "all", line: null,
       label: "Home Win", price: 2.0, prob: 0.5, start_utc: `2026-10-11T${17 + id}:00:00Z`,
     }));
     const env = {

@@ -33,7 +33,7 @@ def collection_signature(name, cfg):
     }.get(name, ())
     inputs = {k: getattr(cfg, k, None) for k in
               (*fields, 'allowed_sports', 'day_window_end_offset_hours', 'price_mode')}
-    inputs['normalization_revision'] = 1
+    inputs['normalization_revision'] = 2
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 
 

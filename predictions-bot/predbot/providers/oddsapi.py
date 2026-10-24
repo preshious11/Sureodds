@@ -19,6 +19,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
+from predbot.markets.contracts import market_contract_reason
 from predbot.providers.base import BaseProvider, Event, MarketLine, MatchResult, apply_price_mode, norm_book
 from predbot.providers.budget import Budget
 from predbot.util.http import Http, ProviderError, RateLimiter
@@ -448,6 +449,11 @@ class OddsApiProvider(BaseProvider):
                     for line in ml:
                         if sport == 'tennis' and line.market in ('total', 'handicap'):
                             line.stat = 'games'
+                        reason = market_contract_reason(
+                            sport, line.market, line.selection, line.period, line.stat, line.entity, line.line)
+                        if reason:
+                            self.parse_counts[f"MARKET_CONTRACT_{reason.upper()}"] += 1
+                            continue
                         k = line.key()
                         if k in merged:
                             m = merged[k]
@@ -493,6 +499,9 @@ class OddsApiProvider(BaseProvider):
         elif market_key == "totals":
             lines.extend(self._totals_outcomes(outcomes, bookmaker))
 
+        for line in lines:
+            line.provider_market_id = market_key
+            line.market_name = market_key
         return lines
 
     def _side_for_team(self, name: str, home: str, away: str) -> Optional[str]:
