@@ -432,6 +432,9 @@ class Config:
     pro_value_db_path: str = field(default_factory=lambda: _env("PRO_VALUE_DB_PATH", "data/pro_value_shadow.db"))
     #: Where the shared OddsAPI generation fetch writes raw responses (empty = off).
     pro_value_raw_dir: str = field(default_factory=lambda: _env("PRO_VALUE_RAW_DIR", ""))
+    #: The single switch from shadow to publish for Pro value picks. "shadow" (default) = nothing published, live
+    #: Bet of the Day ignores Pro; "publish" = Pro picks are published and live Bet of the Day excludes Pro events.
+    pro_value_mode: str = field(default_factory=lambda: _env("PRO_VALUE_MODE", "shadow").strip().lower())
     timezone: str = field(default_factory=lambda: _env("TIMEZONE", "Africa/Lagos"))
     # POST_TIME is in TIMEZONE; every subscriber receives the same scheduled instant.
     post_time: str = field(default_factory=lambda: _env("POST_TIME", "09:00"))
@@ -459,6 +462,8 @@ class Config:
         pipeline with nothing pointing back at the config."""
         if self.live_poll_minutes < 1:
             raise ValueError("LIVE_POLL_MINUTES must be >= 1")
+        if self.pro_value_mode not in ("shadow", "publish"):
+            raise ValueError("PRO_VALUE_MODE must be 'shadow' or 'publish'")
         if not 1 <= self.top_legs_max <= 3:
             log.warning("Config: TOP_LEGS_MAX=%s outside the supported 1-3 range; using 3", self.top_legs_max)
             self.top_legs_max = 3

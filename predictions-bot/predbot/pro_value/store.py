@@ -8,6 +8,13 @@ from typing import Dict, Iterable, List, Optional
 FORBIDDEN_NAMES = {"predbot.db", "bot.db", "sureodds_production.db"}
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS pro_value_mismatches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  logged_at INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  match_key TEXT,
+  detail TEXT
+);
 CREATE TABLE IF NOT EXISTS closing_spend (
   day TEXT PRIMARY KEY,
   calls INTEGER NOT NULL
@@ -91,6 +98,12 @@ class ShadowStore:
     def insert_botd_compare(self, run_id: str, botd_key: str, lost: bool, substitute: Optional[str]) -> None:
         self.conn.execute("INSERT INTO pro_value_botd_compare (run_id, botd_match_key, lost_to_pro, substitute_match_key) "
                           "VALUES (?,?,?,?)", (run_id, botd_key, 1 if lost else 0, substitute))
+        self.conn.commit()
+
+    def log_mismatch(self, kind: str, match_key: str, detail: str, logged_at: int) -> None:
+        """A closing capture that could not be matched or priced. Every one is kept; the report counts them."""
+        self.conn.execute("INSERT INTO pro_value_mismatches (logged_at, kind, match_key, detail) VALUES (?,?,?,?)",
+                          (int(logged_at), kind, match_key, detail))
         self.conn.commit()
 
     def spent_on(self, day: str) -> int:
