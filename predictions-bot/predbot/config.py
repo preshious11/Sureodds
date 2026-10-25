@@ -408,6 +408,30 @@ class Config:
     #: to reach under normal pick volume.
     closing_price_max_requests_per_day: int = field(
         default_factory=lambda: _int("CLOSING_PRICE_MAX_REQUESTS_PER_DAY", 10))
+    # ---- Pro value picks, SHADOW ONLY (default off; nothing is published) -----------------------------------
+    #: Master switch. Off = the shadow runner does nothing and makes no calls.
+    pro_value_shadow_enabled: bool = field(default_factory=lambda: _bool("PRO_VALUE_SHADOW_ENABLED", False))
+    #: Hard daily cap on the closing-price OddsAPI calls this feature may make (league-level, 1 credit each).
+    pro_value_credit_cap: int = field(default_factory=lambda: _int("PRO_VALUE_CREDIT_CAP", 5))
+    #: Minimum edge (SportyBet price x sharp fair probability - 1) for a selected pick.
+    pro_value_edge_min: float = field(default_factory=lambda: _float("PRO_VALUE_EDGE_MIN", 0.02))
+    #: SportyBet price band a pick must fall inside.
+    pro_value_odds_min: float = field(default_factory=lambda: _float("PRO_VALUE_ODDS_MIN", 1.5))
+    pro_value_odds_max: float = field(default_factory=lambda: _float("PRO_VALUE_ODDS_MAX", 4.0))
+    #: Edges above this need a second sharp book confirming the same outcome, else needs_review.
+    pro_value_review_edge: float = field(default_factory=lambda: _float("PRO_VALUE_REVIEW_EDGE", 0.06))
+    pro_value_second_book_edge: float = field(default_factory=lambda: _float("PRO_VALUE_SECOND_BOOK_EDGE", 0.02))
+    #: SportyBet and sharp prices must come from the same run and be at most this far apart.
+    pro_value_max_price_age_min: int = field(default_factory=lambda: _int("PRO_VALUE_MAX_PRICE_AGE_MIN", 30))
+    #: Kickoff tolerance when matching SportyBet events to OddsAPI events.
+    pro_value_match_window_min: int = field(default_factory=lambda: _int("PRO_VALUE_MATCH_WINDOW_MIN", 60))
+    pro_value_top_n: int = field(default_factory=lambda: _int("PRO_VALUE_TOP_N", 3))
+    #: Near misses are edges from this value up to pro_value_edge_min (stored, never published).
+    pro_value_near_miss_min: float = field(default_factory=lambda: _float("PRO_VALUE_NEAR_MISS_MIN", 0.0))
+    #: Shadow results go here - a separate file, never the production or bot database.
+    pro_value_db_path: str = field(default_factory=lambda: _env("PRO_VALUE_DB_PATH", "data/pro_value_shadow.db"))
+    #: Where the shared OddsAPI generation fetch writes raw responses (empty = off).
+    pro_value_raw_dir: str = field(default_factory=lambda: _env("PRO_VALUE_RAW_DIR", ""))
     timezone: str = field(default_factory=lambda: _env("TIMEZONE", "Africa/Lagos"))
     # POST_TIME is in TIMEZONE; every subscriber receives the same scheduled instant.
     post_time: str = field(default_factory=lambda: _env("POST_TIME", "09:00"))

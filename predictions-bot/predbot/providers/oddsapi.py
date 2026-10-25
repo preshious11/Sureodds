@@ -97,6 +97,10 @@ class OddsApiProvider(BaseProvider):
         # persisted so the gate survives restarts. The bot never spends below
         # reserve_credits of the remaining balance.
         self.reserve_credits = max(0, reserve_credits)
+        # Pro value shadow: raw league responses are written here (empty = off, the default). Read-only copy:
+        # it never changes what is parsed or priced.
+        import os as _os
+        self.raw_dir = _os.environ.get('PRO_VALUE_RAW_DIR', '')
         # Credits above the reserve that only settlement (/scores) may spend: generation stops this much earlier, so
         # a tight month can still grade what it published. 0 = one shared floor (the previous behaviour).
         self.settlement_reserve_credits = max(0, settlement_reserve_credits)
@@ -365,6 +369,14 @@ class OddsApiProvider(BaseProvider):
             except ProviderError as e:
                 log.warning("OddsAPI: fetch failed for %s (%s)", league_key, e)
                 continue
+            if self.raw_dir:
+                # Shared shadow copy: written before the batch is used for anything else.
+                from predbot.pro_value.oddsapi_raw import save_raw
+                try:
+                    save_raw(self.raw_dir, league_key, json.dumps(data).encode("utf-8"),
+                             int(datetime.now(timezone.utc).timestamp()))
+                except OSError as e:  # the shadow copy must never break live generation
+                    log.warning("OddsAPI shadow raw copy failed for %s (%s)", league_key, e)
             batch = data if isinstance(data, list) else []
             rows.extend((canonical, e) for e in batch)
             rows_by_sport[canonical] += len(batch)

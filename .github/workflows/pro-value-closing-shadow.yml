@@ -1,0 +1,77 @@
+# WHY: Pro value shadow closing capture. Every 30 minutes this captures closing 1X2 prices only for shadow
+# picks whose kickoff is 30-60 minutes away, one OddsAPI call per league, capped at PRO_VALUE_CREDIT_CAP calls a day
+# and never below the 80-credit reserve. Shadow only: nothing here touches D1, Telegram or live Pro / Bet of the Day.
+# It skips while stage5-acceptance-production runs, so the two never write the shadow DB at the same time.
+name: pro-value-closing-shadow
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  closing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: pro-value-closing-shadow
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Skip while generation runs (shared shadow DB)
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          busy=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow stage5-acceptance-production.yml --status in_progress --json databaseId --jq 'length')
+          queued=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow stage5-acceptance-production.yml --status queued --json databaseId --jq 'length')
+          if [ $((busy + queued)) -gt 0 ]; then
+            echo "generation is running or queued: skipping this closing pass"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Restore shadow DB
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/pro_value_shadow.db
+          key: pro-value-shadow-${{ github.run_id }}
+          restore-keys: |
+            pro-value-shadow-
+      - name: Install predictions-bot dependencies
+        if: steps.gate.outputs.run == 'true'
+        run: pip install -r predictions-bot/requirements.txt
+      - name: Closing capture (shadow only)
+        if: steps.gate.outputs.run == 'true'
+        working-directory: predictions-bot
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          PRO_VALUE_SHADOW_ENABLED: "true"
+          PRO_VALUE_DB_PATH: /tmp/pro_value_shadow.db
+          PRO_VALUE_RAW_DIR: /tmp/pro_value_raw
+          PRO_VALUE_CREDIT_CAP: "5"
+        run: |
+          set -o pipefail
+          python3 tools/pro_value_shadow.py closing --live | tee /tmp/pro_value_closing.json
+      - name: Save shadow DB
+        if: steps.gate.outputs.run == 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/pro_value_shadow.db
+          key: pro-value-shadow-${{ github.run_id }}
+      - name: Upload closing result (not published)
+        if: steps.gate.outputs.run == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pro-value-closing-result
+          if-no-files-found: ignore
+          path: /tmp/pro_value_closing.json

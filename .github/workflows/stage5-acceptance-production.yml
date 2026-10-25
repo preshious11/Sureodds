@@ -220,6 +220,47 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.PRODUCTION_TELEGRAM_CHAT_ID }}
           TELEGRAM_GROUP_INVITE_URL: ${{ secrets.TELEGRAM_GROUP_INVITE_URL || vars.TELEGRAM_GROUP_INVITE_URL }}
+          # Pro value shadow input: the OddsAPI responses this run already fetches are saved here (no extra calls).
+          PRO_VALUE_RAW_DIR: /tmp/prodacc_pro_raw
+      - name: Restore Pro value shadow DB (shared with the closing job)
+        if: steps.mode.outputs.mode == 'live'
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/pro_value_shadow.db
+          key: pro-value-shadow-${{ github.run_id }}
+          restore-keys: |
+            pro-value-shadow-
+      - name: Pro value shadow (live only; shadow results only, publishes nothing)
+        if: steps.mode.outputs.mode == 'live'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cd predictions-bot
+          mkdir -p /tmp/prodacc_pro_raw/sportybet
+          # Read-only: the generation's candidate archive; shadow rows go to a separate SQLite file.
+          python3 tools/pro_value_shadow.py run --raw-dir /tmp/prodacc_pro_raw \
+            --archive-db /tmp/prodacc_live.db > /tmp/prodacc_pro_shadow.json
+          cat /tmp/prodacc_pro_shadow.json
+        env:
+          PRO_VALUE_SHADOW_ENABLED: "true"
+          PRO_VALUE_RAW_DIR: /tmp/prodacc_pro_raw
+          PRO_VALUE_DB_PATH: /tmp/pro_value_shadow.db
+          PRO_VALUE_CREDIT_CAP: "5"
+      - name: Upload Pro value shadow results (not published)
+        if: always() && steps.mode.outputs.mode == 'live'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pro-value-shadow-results
+          if-no-files-found: warn
+          path: |
+            /tmp/prodacc_pro_shadow.json
+            /tmp/pro_value_shadow.db
+      - name: Save Pro value shadow DB
+        if: steps.mode.outputs.mode == 'live' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/pro_value_shadow.db
+          key: pro-value-shadow-${{ github.run_id }}
       - name: Prepare scratch (fixture rebase only; live uses native ids)
         run: |
           set -euo pipefail
