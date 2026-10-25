@@ -84,3 +84,32 @@ def install(known_secrets: Iterable[str] = ()) -> RedactingFilter:
         else:
             handler.addFilter(RedactingFilter(known_secrets))
     return next((f for h in root.handlers for f in h.filters if isinstance(f, RedactingFilter)), RedactingFilter())
+
+
+def safe_error(exc: BaseException, known_secrets: Iterable[str] = ()) -> str:
+    """A one-line description of an exception that is safe to print or log: the exception class name plus the
+    message with credentials masked. Use this instead of ``str(exc)`` or ``%s`` for requests/HTTP errors, whose
+    text embeds the full request URL (for Telegram that URL carries the bot token in its path)."""
+    return f"{type(exc).__name__}: {redact(str(exc), known_secrets)}"
+
+
+def install_excepthook(known_secrets: Iterable[str] = ()) -> None:
+    """Redact uncaught-exception output too. Without this, a script that never configures logging prints the raw
+    traceback, and a requests error in it carries the request URL. Idempotent: re-installing only adds secrets."""
+    import sys
+    import traceback as _tb
+
+    secrets = [s for s in known_secrets if s]
+    current = sys.excepthook
+    if getattr(current, "_predbot_redacting", False):
+        current._predbot_known.extend(s for s in secrets if s not in current._predbot_known)   # noqa: SLF001
+        return
+
+    def hook(exc_type, exc, tb):
+        text = "".join(_tb.format_exception(exc_type, exc, tb))
+        sys.stderr.write(redact(text, hook._predbot_known))                                 # noqa: SLF001
+        sys.stderr.flush()
+
+    hook._predbot_redacting = True          # noqa: SLF001
+    hook._predbot_known = list(secrets)      # noqa: SLF001
+    sys.excepthook = hook

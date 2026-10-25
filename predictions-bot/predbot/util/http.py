@@ -210,7 +210,7 @@ class Http:
                 # (a requests exception embeds the full URL - query-string credentials included; the logging filter
                 #  and this explicit redaction both keep them out of the log)
                 last_err = ProviderError(redact(e), kind="timeout" if isinstance(e, requests.Timeout) else "transport")
-                log.warning("HTTP error %s (attempt %d): %s", url, attempt + 1, redact(e))
+                log.warning("HTTP error %s (attempt %d): %s", redact(url), attempt + 1, redact(e))
                 self._backoff(attempt, 1.5 * (attempt + 1))
                 continue
             if r.status_code == 429:
@@ -221,7 +221,7 @@ class Http:
                     raise last_err
                 wait = wait if wait is not None else 6.0 * (attempt + 1)
                 if attempt < self.retries:
-                    log.warning("429 from %s, sleeping %.0fs", url, min(wait, MAX_RETRY_WAIT))
+                    log.warning("429 from %s, sleeping %.0fs", redact(url), min(wait, MAX_RETRY_WAIT))
                 self._backoff(attempt, wait)
                 continue
             if r.status_code >= 500:

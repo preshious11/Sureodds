@@ -23,5 +23,6 @@ def setup_logging(level: str = "INFO", log_file: Optional[str] = None, secrets=(
     )
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     # every record passes through the redactor: keys in URLs, tokens, e-mails and account ids never reach a log
-    from predbot.util.redact import install
+    from predbot.util.redact import install, install_excepthook
     install(secrets)
+    install_excepthook(secrets)          # uncaught tracebacks are redacted as well
