@@ -70,6 +70,7 @@ import {
   splitCommand,
 } from "./telegram.ts";
 import { lagosDateString, lagosDayBounds, renderView } from "./views.ts";
+import { book, bookingEnabled } from './sporty_booking.ts';
 import { splitMessage } from "./format.ts";
 import { postGroupPicks } from "./cron.ts";
 
@@ -435,6 +436,15 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
     const data = String((cb.data as string) ?? "");
     const msg = cb.message as Record<string, unknown> | undefined;
     const chatId = String((msg?.chat as Record<string, unknown> | undefined)?.id ?? (cb.from as Record<string, unknown> | undefined)?.id ?? "");
+    if (data.startsWith('sb|')) {
+      await answerCallback(env,cbId);
+      if (!bookingEnabled(env)) return;
+      const userId=String((cb.from as Record<string,unknown> | undefined)?.id ?? '');
+      if ((msg?.chat as Record<string,unknown> | undefined)?.type!=='private' || !userId || userId!==chatId) return;
+      const reply=await book(env,data,chatId);
+      await tgApi(env,'sendMessage',{chat_id:chatId,parse_mode:'HTML',...reply});
+      return;
+    }
     if (data.startsWith("cp|")) {
       await handleCustomPicksSelect(env, cb, cbId, chatId, msg);
       return;
@@ -489,7 +499,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
     }
 
     // Private chats get the real page edit.
-    const { text, replyMarkup } = await renderView(env, parsed.view, parsed.page, parsed.day, chatType, admin);
+    const { text, replyMarkup } = await renderView(env, parsed.view, parsed.page, parsed.day, chatType, admin, chatId);
     await answerCallback(env, cbId);
     if (!chatId) return;
     const messageId = (msg as Record<string, unknown> | undefined)?.message_id;
@@ -578,7 +588,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       username: (from.username as string) ?? null,
       firstName: (from.first_name as string) ?? null,
     });
-    const { text: body, replyMarkup } = await renderView(env, view, 0, null, chatType, admin);
+    const { text: body, replyMarkup } = await renderView(env, view, 0, null, chatType, admin, chatId);
     await tgApi(env, "sendMessage", { chat_id: chatId, text: body, parse_mode: "HTML", reply_markup: replyMarkup });
     return;
   }
@@ -752,7 +762,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
         firstName: (from.first_name as string) ?? null,
       });
     }
-    const { text: body, replyMarkup } = await renderView(env, view, 0, null, chatType, admin);
+    const { text: body, replyMarkup } = await renderView(env, view, 0, null, chatType, admin, chatId);
     await tgApi(env, "sendMessage", {
       chat_id: chatId,
       text: body,

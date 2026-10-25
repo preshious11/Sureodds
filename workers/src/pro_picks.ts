@@ -439,7 +439,10 @@ export async function buildProPicks(
   const loaded = await loadPool(deps, day, zone, nowMs);
   if (loaded === null) return { text: "", reason: "archive_unavailable" };
   if (resolvePolicyMode(policyModeRaw) === "evidence_v2") {
-    const singles = selectSingles(loaded.candidates, nowMs);
+    // Primary tier: OddsAPI-sourced candidates (Pro's preferred price source). Fallback: the full pool, but only
+    // when no OddsAPI-sourced candidate qualifies - the same fixed gates either way, never relaxed.
+    const primary = selectSingles(loaded.candidates.filter((c) => c.provider === "oddsapi"), nowMs);
+    const singles = primary.length ? primary : selectSingles(loaded.candidates, nowMs);
     const combo = buildOptionalCombo(singles);
     const text = formatProPicksV2(singles, combo);
     const diagnostics = rejectionHistogram(loaded.candidates, nowMs);

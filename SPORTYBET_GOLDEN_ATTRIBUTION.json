@@ -1,0 +1,11 @@
+{
+  "working_tree": {
+    "status": "failed",
+    "error_type": "GoldenMismatch",
+    "detail": "slate+1ulp.daily[1].away: 'Toronto FC' != 'Detroit Tigers'"
+  },
+  "committed_mean_price": {
+    "status": "passed"
+  },
+  "method": "Only the committed _mean_price method was substituted in memory; no repository file or golden was changed."
+}

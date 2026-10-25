@@ -2,3 +2,7 @@
 TELEGRAM_BOT_TOKEN = "123456:STAGING_TOKEN_HERE"
 TELEGRAM_WEBHOOK_SECRET = "local-dev-secret-change-me"
 TELEGRAM_CHAT_ID = ""
+# Optional private SportyBet relay. Disabled until genuine staging roundtrip.
+SPORTYBET_BOOKING_ENABLED=false
+# SPORTYBET_BOOKING_API_URL=https://your-private-relay.example/v1/bookings
+# SPORTYBET_BOOKING_SERVICE_TOKEN=  # 32+ characters; use a real secret store

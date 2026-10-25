@@ -1,0 +1,19 @@
+{
+  "provenance": "Metadata recorded from the actual bounded public research request on 2026-10-25; response body and session headers were not retained. This is not a successful booking fixture.",
+  "method": "GET",
+  "url": "https://www.sportybet.com/api/ng/factsCenter/pcUpcomingEvents",
+  "params": {
+    "sportId": "sr:sport:1",
+    "marketId": "1,18",
+    "pageSize": 10,
+    "pageNum": 1,
+    "todayGames": "false",
+    "timeline": 24
+  },
+  "status_code": 403,
+  "body_kind": "HTML",
+  "body_bytes": 919,
+  "booking_post_attempted": false,
+  "booking_codes": [],
+  "owner_verified_codes": []
+}

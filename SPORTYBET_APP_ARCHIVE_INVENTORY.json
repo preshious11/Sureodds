@@ -1,0 +1,115 @@
+{
+  "source": "C:\\Projects\\Sureodds\\predictions-bot\\data\\predbot.db",
+  "read_only": true,
+  "checked_at": "2026-10-25T02:54:45.839890+00:00",
+  "summary": {
+    "basketball": {
+      "rows": 154,
+      "valid_contract": 154,
+      "future": 0
+    },
+    "baseball": {
+      "rows": 6,
+      "valid_contract": 6,
+      "future": 0
+    },
+    "american_football": {
+      "rows": 49,
+      "valid_contract": 43,
+      "future": 0
+    },
+    "tennis": {
+      "rows": 4,
+      "valid_contract": 2,
+      "future": 0
+    }
+  },
+  "samples": [
+    {
+      "candidate_id": "0435b817bbab6a591bc18a090794343d7eb46ef2765c68edabf3f16aed1f3357",
+      "selection": {
+        "canonical_event_id": "event:61b8b00af7e6cc01318bf79c",
+        "competition": "euroleague",
+        "sport": "basketball",
+        "home": "Maccabi Tel Aviv",
+        "away": "Valencia Basket Club",
+        "start_utc": "2026-10-08T16:00:00Z",
+        "market": "result2",
+        "period": "full",
+        "stat": "points",
+        "entity": "all",
+        "selection": "home",
+        "line": null,
+        "price": 1.8585,
+        "sporty_event_id": null
+      },
+      "availability": "expired_fixture_not_generator_failure",
+      "sporty_identifiers_verified": false
+    },
+    {
+      "candidate_id": "051c4b25c5e07a456667c1eccdd1230e9b2a135a8a6e294a78fd5efb6a9677d4",
+      "selection": {
+        "canonical_event_id": "event:c51571de303796ccc71db608",
+        "competition": "mlb",
+        "sport": "baseball",
+        "home": "Chicago White Sox",
+        "away": "Cleveland Guardians",
+        "start_utc": "2026-10-09T00:00:00Z",
+        "market": "handicap",
+        "period": "full",
+        "stat": "points",
+        "entity": "all",
+        "selection": "home",
+        "line": 1.5,
+        "price": 1.538,
+        "sporty_event_id": null
+      },
+      "availability": "expired_fixture_not_generator_failure",
+      "sporty_identifiers_verified": false
+    },
+    {
+      "candidate_id": "0b7212f588cec1ec12827c5410fa03c2d473008b69d5447423b345277f1db908",
+      "selection": {
+        "canonical_event_id": "event:ec98dbfd66f9a45c07f896a4",
+        "competition": "nfl",
+        "sport": "american_football",
+        "home": "Dallas Cowboys",
+        "away": "Tampa Bay Buccaneers",
+        "start_utc": "2026-10-09T00:15:00Z",
+        "market": "result2",
+        "period": "full",
+        "stat": "points",
+        "entity": "all",
+        "selection": "home",
+        "line": null,
+        "price": 1.215,
+        "sporty_event_id": null
+      },
+      "availability": "expired_fixture_not_generator_failure",
+      "sporty_identifiers_verified": false
+    },
+    {
+      "candidate_id": "4d637a9648d659c5757bebb4c07aa3ac94955cb2af45ca9ed38f8dee7468fb22",
+      "selection": {
+        "canonical_event_id": "event:5ef5ce24d87d77c7c6d3ea39",
+        "competition": "wta",
+        "sport": "tennis",
+        "home": "Anna Blinkova",
+        "away": "Caroline Werner",
+        "start_utc": "2026-10-08T13:00:00Z",
+        "market": "result2",
+        "period": "full",
+        "stat": "points",
+        "entity": "all",
+        "selection": "away",
+        "line": null,
+        "price": 5.26,
+        "sporty_event_id": null
+      },
+      "availability": "expired_fixture_not_generator_failure",
+      "sporty_identifiers_verified": false
+    }
+  ],
+  "booking_codes": [],
+  "note": "Contract validity is not live availability, eligibility or verified bookmaker mapping."
+}

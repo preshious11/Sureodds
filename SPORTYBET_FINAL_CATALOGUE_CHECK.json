@@ -1,0 +1,11 @@
+{
+  "checked_at": "2026-10-25T04:05:37.605465+00:00",
+  "method": "GET",
+  "url": "https://www.sportybet.com/api/ng/factsCenter/pcUpcomingEvents",
+  "http_status": 200,
+  "booking_post_attempted": false,
+  "content_type": "application/json",
+  "status": "catalogue_accessible",
+  "tournaments": 23,
+  "events": 100
+}

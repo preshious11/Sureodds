@@ -1,4 +1,5 @@
 import { restrictedView, welcomeMessage } from "./telegram.ts";
+import { bookingButton } from './sporty_booking.ts';
 // View rendering, ported to match predbot/bot/pagination.py + format.py
 // (production) rather than the earlier ad-hoc Stage 1 format. Reads
 // D1-cached picks only — never calls a sports provider. See
@@ -154,6 +155,7 @@ async function renderTicket(
   page: number,
   localDate: string,
   allMode: AllButtonMode,
+  bookingChatId?: string,
 ): Promise<{ text: string; replyMarkup: Record<string, unknown> }> {
   const all = await getAllPicksForCollection(env.DB, localDate, view);
   const title = view === "top" ? TOP_TITLE : DAILY_TITLE;
@@ -190,7 +192,8 @@ async function renderTicket(
     page: safePage + 1,
     pages,
   });
-  return { text: wrapTitleHtml(body, title), replyMarkup: buildKeyboard(view, safePage, pages, localDate, [], allMode) };
+  const extra = allMode === 'callback' ? await bookingButton(env,localDate,view,bookingChatId,all) : [];
+  return { text: wrapTitleHtml(body, title), replyMarkup: buildKeyboard(view, safePage, pages, localDate, extra, allMode) };
 }
 
 // picksCard() returns plain text with the title as its first line's leading
@@ -435,6 +438,7 @@ export async function renderView(
   day: string | null,
   chatType = "private",
   admin = false,
+  bookingChatId?: string,
 ): Promise<{ text: string; replyMarkup: Record<string, unknown> }> {
   // WHY: every stats entry path, including old callbacks, fails closed here.
   if (restrictedView(view) && !admin) return { text: welcomeMessage('there'), replyMarkup: menuKeyboard() };
@@ -472,7 +476,7 @@ export async function renderView(
     return { text, replyMarkup: keyboard };
   }
 
-  if (view === "top" || view === "daily") return renderTicket(env, view, page, localDate, allMode);
+  if (view === "top" || view === "daily") return renderTicket(env, view, page, localDate, allMode, bookingChatId);
 
   if (view === "all") return renderAllSportMenu(env, localDate, allMode);
   if (view.startsWith("all_")) return renderAllSportPages(env, view.slice(4), page, localDate, allMode);

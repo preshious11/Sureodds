@@ -1,0 +1,56 @@
+[
+  {
+    "source": "C:\\Projects\\Sureodds\\data\\predbot.db",
+    "checked_at": "2026-10-25T03:02:06.111800+00:00",
+    "read_only": true,
+    "summary": {
+      "basketball": {
+        "rows": 118,
+        "valid_contract": 118,
+        "future": 0
+      },
+      "tennis": {
+        "rows": 32,
+        "valid_contract": 22,
+        "future": 0
+      },
+      "american_football": {
+        "rows": 54,
+        "valid_contract": 50,
+        "future": 0
+      },
+      "baseball": {
+        "rows": 6,
+        "valid_contract": 6,
+        "future": 0
+      }
+    }
+  },
+  {
+    "source": "C:\\Projects\\Sureodds\\predictions-bot\\data\\predbot.db",
+    "checked_at": "2026-10-25T03:02:06.138068+00:00",
+    "read_only": true,
+    "summary": {
+      "basketball": {
+        "rows": 154,
+        "valid_contract": 154,
+        "future": 0
+      },
+      "baseball": {
+        "rows": 6,
+        "valid_contract": 6,
+        "future": 0
+      },
+      "american_football": {
+        "rows": 49,
+        "valid_contract": 43,
+        "future": 0
+      },
+      "tennis": {
+        "rows": 4,
+        "valid_contract": 2,
+        "future": 0
+      }
+    }
+  }
+]

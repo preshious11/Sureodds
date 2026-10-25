@@ -423,6 +423,10 @@ export interface Candidate {
    * independentStatus !== "ok". Same "added for pro_policy.ts, unread by
    * Custom Picks itself" note as independentStatus above. */
   pIndependent: number | null;
+  /** The provider that supplied this candidate's event (`oddsapi`, `sharpapi`, `sportsgameodds`), as archived
+   * on the row. Pro Picks tries OddsAPI-sourced candidates first and falls back to the full pool only when
+   * none of them qualifies. Null for rows archived before this field existed. */
+  provider: string | null;
 }
 
 /** ~ predbot/markets/catalog.py STAT_NAMES / PERIOD_NAMES / SPORT_POINTS_WORD. */
@@ -660,6 +664,7 @@ export function normalizeCandidateWithReason(
     // Number(null) coercing to 0 would otherwise turn a genuinely absent
     // independent estimate into a fabricated-looking real probability of 0.
     pIndependent: hasFiniteValue(payload.p_independent) ? finite(payload.p_independent) : null,
+    provider: typeof payload.provider === "string" && payload.provider.trim() ? payload.provider.trim() : null,
   };
   return { candidate, reason: "accepted" };
 }

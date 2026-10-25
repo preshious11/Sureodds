@@ -45,6 +45,11 @@ export interface Env {
    * pro_policy.ts's own header comment for the rollback guarantee this is
    * built to provide. */
   PRO_POLICY_MODE?: string;
+  SPORTYBET_BOOKING_ENABLED?: string;
+  SPORTYBET_BOOKING_API_URL?: string;
+  SPORTYBET_BOOKING_SERVICE_TOKEN?: string;
+  /** Private relay to the shared Python adapter; absent until staging is proven. */
+  SPORTYBET_BOOKING_SERVICE?: { fetch(input: string, init?: RequestInit): Promise<Response> };
 }
 
 /// Two-phase update claim (Stage 2 reliability).

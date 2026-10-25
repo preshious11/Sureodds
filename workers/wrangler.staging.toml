@@ -14,6 +14,7 @@ database_name = "sureodds_staging"
 database_id = "d1266e71-9a31-4316-9426-e82fedcbf12b"
 
 [vars]
+SPORTYBET_BOOKING_ENABLED = "false"
 TIMEZONE = "Africa/Lagos"
 POST_TIME = "09:00"
 DELIVERY_TIME = "09:30"

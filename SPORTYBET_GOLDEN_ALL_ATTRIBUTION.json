@@ -1,0 +1,32 @@
+{
+  "working_tree": {
+    "slate": {
+      "status": "failed",
+      "error_type": "GoldenMismatch",
+      "detail": "slate.daily[1].away: 'Toronto FC' != 'Detroit Tigers'"
+    },
+    "render": {
+      "status": "failed",
+      "error_type": "GoldenMismatch",
+      "detail": "render.all.sports.baseball[1]: '\ud83d\udcda ALL PREDICTIONS \u00b7 Sat 19 Sep\\n\u26be Baseball \u00b7 45 predictions \u00b7 15 matches \u00b7 \ud83d\udd58 times in WAT\\n\\n\u26be MLB \u00b7 Cincinnati Reds vs Chicago Cubs\\n\ud83c\udfaf Chicago Cubs to Win\\n\ud83d\udcb0 1.70  \u00b7  \ud83d\udcca 56%  \u00b7  \ud83d\udd58 11:40 PM\\n\ud83c\udfaf Cincinnati Reds +1.5\\n\ud83d\udcb0 1.74  \u00b7  \ud83d\udcca 56%  \u00b7  \ud83d\udd58 11:40 PM\\n\ud83c\udfaf Under 9.5 Total Run"
+    },
+    "one_ulp_slate": {
+      "status": "failed",
+      "error_type": "GoldenMismatch",
+      "detail": "one_ulp_slate.daily[1].away: 'Toronto FC' != 'Detroit Tigers'"
+    }
+  },
+  "committed_mean_price": {
+    "slate": {
+      "status": "passed"
+    },
+    "render": {
+      "status": "passed"
+    },
+    "one_ulp_slate": {
+      "status": "passed"
+    }
+  },
+  "head": "a186a00c5dd0d256184c70f03b074bf78502e5b4",
+  "method": "Only _mean_price replaced in memory; booking changes retained; no source/golden edits or provider/Telegram calls."
+}

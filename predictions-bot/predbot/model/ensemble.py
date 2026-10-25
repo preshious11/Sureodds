@@ -37,6 +37,10 @@ from predbot.providers.base import Event, MarketLine
 
 log = logging.getLogger(__name__)
 
+#: A book's price more than this fraction away from the line's median (with >= 3 quotes) is treated as an
+#: outlier and left out of the market average. 25% is far outside normal book-to-book spread on the same line,
+#: and a 1.23 quote on a 1.65 line (-26%) is the failure this guards against.
+OUTLIER_BOOK_TOLERANCE = 0.25
 GRID_SPORTS = {"football", "baseball"}
 MARGIN_SPORTS = {"basketball", "american_football"}
 SCORE_MODEL_WEIGHT = {"football": 0.60, "baseball": 0.35,
@@ -182,9 +186,21 @@ class EventModel:
 
     @staticmethod
     def _mean_price(ml: MarketLine) -> float:
-        if ml.book_prices:
-            return sum(ml.book_prices) / len(ml.book_prices)
-        return ml.price
+        """Cross-book average used to de-vig a market.
+
+        With three or more quotes, a price more than OUTLIER_BOOK_TOLERANCE away from the line's median is
+        dropped first. One bad quote (for example a mislabelled feed price) otherwise pulls the average, and so
+        the market probability and the model's EV, by several points. Fewer than three quotes are kept as-is:
+        there is no reliable median to judge a single price against."""
+        prices = [p for p in (ml.book_prices or []) if p and p > 1.0]
+        if not prices:
+            return ml.price
+        if len(prices) >= 3:
+            median = statistics.median(prices)
+            kept = [p for p in prices if abs(p - median) <= OUTLIER_BOOK_TOLERANCE * median]
+            if kept:
+                prices = kept
+        return sum(prices) / len(prices)
 
     def _market_probs(self) -> None:
         groups: Dict[Tuple, List[MarketLine]] = {}

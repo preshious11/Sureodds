@@ -1,0 +1,124 @@
+{
+  "checked_at": "2026-10-25T04:05:40.759061+00:00",
+  "read_only": true,
+  "sources": [
+    {
+      "source": "C:\\Projects\\Sureodds\\data\\predbot.db",
+      "tables": {
+        "custom_pick_candidates": {
+          "present": true,
+          "rows": 210,
+          "future_valid": 0,
+          "rejections": {
+            "expired_or_invalid_kickoff": 196,
+            "invalid_contract": 10,
+            "invalid_candidate": 4
+          }
+        },
+        "ticket_candidates": {
+          "present": false
+        },
+        "picks": {
+          "present": true,
+          "rows": 80,
+          "future_valid": 0,
+          "rejections": {
+            "missing_fixture_identity": 22,
+            "expired_or_invalid_kickoff": 58
+          }
+        }
+      },
+      "caches": {
+        "provider_cache": [
+          {
+            "local_date": "2026-10-07",
+            "expires_at": "2026-10-07T23:00:00Z"
+          },
+          {
+            "local_date": "2026-10-07",
+            "expires_at": "2026-10-07T23:00:00Z"
+          },
+          {
+            "local_date": "2026-10-07",
+            "expires_at": "2026-10-07T23:00:00Z"
+          },
+          {
+            "local_date": "2026-10-08",
+            "expires_at": "2026-10-08T23:00:00Z"
+          },
+          {
+            "local_date": "2026-10-08",
+            "expires_at": "2026-10-08T23:00:00Z"
+          },
+          {
+            "local_date": "2026-10-08",
+            "expires_at": "2026-10-08T23:00:00Z"
+          }
+        ],
+        "prediction_cache": [
+          {
+            "local_date": "2026-10-07",
+            "expires_at": "2026-10-07T23:00:00Z"
+          },
+          {
+            "local_date": "2026-10-08",
+            "expires_at": "2026-10-08T23:00:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "source": "C:\\Projects\\Sureodds\\predictions-bot\\data\\predbot.db",
+      "tables": {
+        "custom_pick_candidates": {
+          "present": true,
+          "rows": 213,
+          "future_valid": 0,
+          "rejections": {
+            "expired_or_invalid_kickoff": 205,
+            "invalid_contract": 2,
+            "invalid_candidate": 6
+          }
+        },
+        "ticket_candidates": {
+          "present": false
+        },
+        "picks": {
+          "present": true,
+          "rows": 20,
+          "future_valid": 0,
+          "rejections": {
+            "expired_or_invalid_kickoff": 20
+          }
+        }
+      },
+      "caches": {
+        "provider_cache": [
+          {
+            "local_date": "2026-10-08",
+            "expires_at": "2026-10-08T23:00:00Z"
+          },
+          {
+            "local_date": "2026-10-08",
+            "expires_at": "2026-10-08T23:00:00Z"
+          },
+          {
+            "local_date": "2026-10-08",
+            "expires_at": "2026-10-08T23:00:00Z"
+          }
+        ],
+        "prediction_cache": [
+          {
+            "local_date": "2026-10-08",
+            "expires_at": "2026-10-08T23:00:00Z"
+          }
+        ]
+      }
+    }
+  ],
+  "future_valid_unique_by_sport_market": [],
+  "status": "blocked_no_upcoming_bookable_candidates",
+  "selections": [],
+  "competition_bindings": {},
+  "note": "Unchanged archived contracts and odds. Observed competition bindings and exact live resolution are still required. No generation or booking performed."
+}

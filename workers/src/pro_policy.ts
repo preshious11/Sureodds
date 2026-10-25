@@ -78,31 +78,42 @@ const FOOTBALL_INDEPENDENT_PERIODS = new Set(["full", "reg"]);
  * must keep behaving exactly as it did before evidence_v2 existed, so none
  * of these numbers are allowed to touch pro_picks.ts's own constants.
  */
-export const V2_MIN_PROBABILITY = 0.55;
+/** Bet of the Day parity (predbot TOP_MIN_PROB = 0.62). Pro used to accept
+ * 0.55, which let through legs the model itself rated close to a coin flip
+ * (2026-10-24: Over 20.5 1st-half at 0.563). Pro must clear the bar BotD
+ * clears, and V2_MIN_MODEL_EV below adds the value check on top of it. */
+export const V2_MIN_PROBABILITY = 0.62;
 export const V2_MIN_PRICE = 1.35;
 /** New ceiling (the original floor-only design had none): filters out
  * high-variance longshots that would otherwise still clear the probability
  * floor on a mispriced line. */
 export const V2_MAX_PRICE = 1.90;
-/** Straight-win markets (1X2/moneyline/double-chance/draw-no-bet) keep the
- * stricter book-coverage bar; goal-line/BTTS/handicap markets, which are
- * frequently quoted by fewer books even when genuinely liquid, get a lower
- * one so thin coverage alone doesn't reject an otherwise-viable secondary-
- * market play. */
-export const V2_MIN_BOOKS_PRIMARY = 3;
-export const V2_MIN_BOOKS_SECONDARY = 2;
+/** Every market needs 3 books, the same as Bet of the Day's TOP_MIN_BOOKS.
+ * The 2-book allowance for goal-line/BTTS/handicap markets was removed: the
+ * 2026-10-24 handicap leg rested on 2 books and was not better supported
+ * than a straight win. */
+export const V2_MIN_BOOKS = 3;
+/** Model EV floor (p*price - 1, predbot's settlement-aware `ev`). Pro only
+ * recommends prices the model says are worth taking. A day with no +EV
+ * candidate is a no-pick day. Stricter than Bet of the Day, which allows
+ * -5% (TOP_MAX_NEG_EV), on purpose. */
+export const V2_MIN_MODEL_EV = 0;
+/** Sharp-reference edge floor, checked only when a sharp book priced this
+ * exact market (referenceEvAvailable). Matches Bet of the Day's
+ * MIN_EDGE_VS_SHARP. */
+export const V2_MIN_REFERENCE_EV = -0.04;
+/** Full-time (and regulation-time) lines only. Half, quarter, and set-period
+ * lines are priced from thinner data and produced the weakest legs. */
+export const V2_ALLOWED_PERIODS = new Set(["full", "reg"]);
+/** Main stat families only. Corners, cards, hits and shots are excluded. */
+export const V2_ALLOWED_STATS = new Set(["points", "goals", "games", "sets"]);
+/** Same blocked market families as Bet of the Day (predbot DISABLED_MARKETS
+ * default). */
+export const V2_DISABLED_MARKETS = new Set(["odd_even", "prop", "winning_margin", "ht_ft"]);
 /** "1 to 2 high-confidence single value plays" (approved spec, output
  * structure). Distinct from pro_picks.ts's PRO_MAX_LEGS (legacy's combo-leg
  * cap, still 3, untouched). */
 export const V2_MAX_SINGLES = 2;
-/** Goal-line/BTTS/handicap-family markets — the ones V2_MIN_BOOKS_SECONDARY
- * applies to, and the ones multi-market evaluation (selectBestPerFixture
- * below) actively competes against straight-win markets for the same
- * fixture. Spread across predbot's own market vocabulary (markets/
- * catalog.py): "total" is Over/Under goals, "btts" is Both Teams To Score,
- * "handicap" is Asian handicap/spread. Everything else (result3/result2/
- * dc/dnb/odd_even/etc.) is "primary" for this classification. */
-export const SECONDARY_MARKETS = new Set(["total", "btts", "handicap"]);
 /** Combined-odds band an OPTIONAL 2-leg combo (built only from singles that
  * already independently qualify on their own) must land in to be offered
  * at all — centred on the approved spec's "~2.00" target, wide enough that
@@ -206,11 +217,9 @@ export function classifyEvidence(c: Candidate): { tier: EvidenceTier; disagreeme
  *
  * `maxPrice` is a ceiling (new in the multi-market refactor): filters out
  * high-variance longshots that would otherwise still clear the
- * probability floor. `minBooks` is the market-appropriate floor the
- * caller has already chosen (V2_MIN_BOOKS_PRIMARY for straight-win
- * markets, V2_MIN_BOOKS_SECONDARY for goal-line/BTTS/handicap - see
- * SECONDARY_MARKETS and selectBestPerFixture below for where that choice
- * is made).
+ * probability floor. `minBooks` is the book-coverage floor the caller
+ * passes in (V2_MIN_BOOKS for V2, which applies the same bar to every
+ * market).
  */
 export function evaluateCandidate(
   c: Candidate,
@@ -252,18 +261,31 @@ export function evaluateCandidate(
   return { qualifies: rejectReason === null, evidenceTier: diagnostics.evidenceTier, rejectReason, diagnostics };
 }
 
-/** The market-appropriate books floor for one candidate (approved spec
- * section 1: "Adjust PRO_MIN_BOOKS from 3 to 2 specifically for secondary
- * goal/handicap markets"). */
-export function booksFloorFor(c: Candidate): number {
-  return SECONDARY_MARKETS.has(c.market) ? V2_MIN_BOOKS_SECONDARY : V2_MIN_BOOKS_PRIMARY;
+/** V2-only gates layered on top of evaluateCandidate's shared checks. Each
+ * returns a reason string, or null when the candidate passes. */
+function v2ExtraRejection(c: Candidate): string | null {
+  if (V2_DISABLED_MARKETS.has(c.market)) return "disabled_market";
+  if (!V2_ALLOWED_PERIODS.has(c.period) || !V2_ALLOWED_STATS.has(c.stat)) return "restricted_market";
+  if (!(c.modelEv >= V2_MIN_MODEL_EV)) return "negative_model_ev";
+  if (c.referenceEvAvailable && c.referenceEv < V2_MIN_REFERENCE_EV) return "poor_reference_value";
+  return null;
 }
 
 /** V2's own eligibility call, with the fixed floors baked in (no caller can
  * accidentally pass legacy's numbers here, and no incremental-relaxation
- * loop exists to pass a second, looser set on retry). */
+ * loop exists to pass a second, looser set on retry). Shared checks run
+ * first, then the V2-only gates, so a rejection always carries one reason. */
 export function evaluateCandidateV2(c: Candidate, nowMs: number): PolicyDecision {
-  return evaluateCandidate(c, nowMs, V2_MIN_PRICE, V2_MIN_PROBABILITY, booksFloorFor(c), V2_MAX_PRICE);
+  const base = evaluateCandidate(c, nowMs, V2_MIN_PRICE, V2_MIN_PROBABILITY, V2_MIN_BOOKS, V2_MAX_PRICE);
+  if (!base.qualifies) return base;
+  const extra = v2ExtraRejection(c);
+  if (extra === null) return base;
+  return {
+    qualifies: false,
+    evidenceTier: "insufficient_evidence",
+    rejectReason: extra,
+    diagnostics: { ...base.diagnostics, evidenceTier: "insufficient_evidence", rejectReason: extra },
+  };
 }
 
 const TIER_RANK: Record<EvidenceTier, number> = { independently_assessed: 0, market_only: 1, insufficient_evidence: 2 };

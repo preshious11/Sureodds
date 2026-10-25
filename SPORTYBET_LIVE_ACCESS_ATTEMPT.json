@@ -1,0 +1,25 @@
+{
+  "checked_at": "2026-10-25T03:01:52.593390+00:00",
+  "method": "GET",
+  "url": "https://www.sportybet.com/api/ng/factsCenter/pcUpcomingEvents",
+  "params": {
+    "sportId": "sr:sport:1",
+    "marketId": "1,18",
+    "pageSize": 100,
+    "pageNum": 1,
+    "todayGames": "false",
+    "timeline": 72
+  },
+  "http_status": 200,
+  "request_invocations": 1,
+  "booking_post_attempted": false,
+  "booking_codes": [],
+  "owner_verified": false,
+  "environment_proxy_settings_preserved": true,
+  "content_type": "application/json",
+  "declared_content_length": null,
+  "status": "catalogue_accessible",
+  "tournament_count": 24,
+  "event_count": 100,
+  "transport_calls_used": 1
+}

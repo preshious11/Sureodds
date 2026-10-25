@@ -61,6 +61,8 @@ workers/staging_check.db
 workers/build_stage1_copy.db
 
 .task-deps/
+/.tool-cache/
+/artifacts/
 
 .ticket-test-tmp/
 .ticket-*-tmp*/

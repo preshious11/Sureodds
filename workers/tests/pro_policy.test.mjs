@@ -13,12 +13,15 @@ import {
 import {
   POLICY_VERSION,
   V2_MAX_SINGLES,
-  V2_MIN_BOOKS_PRIMARY,
-  V2_MIN_BOOKS_SECONDARY,
+  V2_ALLOWED_PERIODS,
+  V2_ALLOWED_STATS,
+  V2_DISABLED_MARKETS,
+  V2_MIN_BOOKS,
+  V2_MIN_MODEL_EV,
   V2_MIN_PRICE,
   V2_MAX_PRICE,
   V2_MIN_PROBABILITY,
-  booksFloorFor,
+  V2_MIN_REFERENCE_EV,
   buildOptionalCombo,
   classifyEvidence,
   evRank,
@@ -215,29 +218,26 @@ describe("pro_policy: V2 rejects invalid probability/odds/coverage, with a reaso
     assert.equal(d.qualifies, true);
   });
 
-  it("accepts a probability as low as 0.55 that legacy's 0.72 floor would have rejected", () => {
-    const c = makeCandidate({ p_model: 0.56 });
+  it("accepts a probability at the 0.62 floor that legacy's 0.72 floor would have rejected", () => {
+    const c = makeCandidate({ p_model: 0.63 });
     assert.equal(evaluateCandidate(c, NOW, PRO_MIN_PRICE, PRO_MIN_PROBABILITY, PRO_MIN_BOOKS).qualifies, false, "legacy floor (0.72) must still reject this");
-    assert.equal(evaluateCandidateV2(c, NOW).qualifies, true, "V2's 0.55 floor must accept it");
+    assert.equal(evaluateCandidateV2(c, NOW).qualifies, true, "V2's 0.62 floor must accept it");
   });
 
-  it("rejects a probability below V2_MIN_PROBABILITY (0.55)", () => {
-    const c = makeCandidate({ p_model: 0.5 });
+  it("rejects a probability below V2_MIN_PROBABILITY (0.62), including the 0.56 leg that was published on 2026-10-24", () => {
+    const c = makeCandidate({ p_model: 0.56 });
     const d = evaluateCandidateV2(c, NOW);
+    assert.equal(V2_MIN_PROBABILITY, 0.62);
     assert.equal(d.qualifies, false);
     assert.equal(d.rejectReason, "probability_below_floor");
   });
 
-  it("a straight-win (primary) market needs V2_MIN_BOOKS_PRIMARY=3 books", () => {
-    const c = makeCandidate({ market: "result3", bookmaker_count: 2 });
-    assert.equal(booksFloorFor(c), V2_MIN_BOOKS_PRIMARY);
-    assert.equal(evaluateCandidateV2(c, NOW).rejectReason, "insufficient_book_coverage");
-  });
-
-  it("a secondary market (btts/total/handicap) only needs V2_MIN_BOOKS_SECONDARY=2 books", () => {
-    const c = makeCandidate({ market: "btts", selection: "yes", bookmaker_count: 2 });
-    assert.equal(booksFloorFor(c), V2_MIN_BOOKS_SECONDARY);
-    assert.equal(evaluateCandidateV2(c, NOW).qualifies, true, "2 books must be enough for a secondary market");
+  it("every market needs V2_MIN_BOOKS=3 books, straight win or secondary", () => {
+    assert.equal(V2_MIN_BOOKS, 3);
+    const primary = makeCandidate({ market: "result3", bookmaker_count: 2 });
+    assert.equal(evaluateCandidateV2(primary, NOW).rejectReason, "insufficient_book_coverage");
+    const secondary = makeCandidate({ market: "btts", selection: "yes", bookmaker_count: 2 });
+    assert.equal(evaluateCandidateV2(secondary, NOW).rejectReason, "insufficient_book_coverage", "2 books is no longer enough for a secondary market");
   });
 
   it("rejects a fixture that has already started", () => {
@@ -259,8 +259,8 @@ describe("pro_policy: V2 rejects invalid probability/odds/coverage, with a reaso
 
 describe("pro_policy: multi-market evaluation per fixture (approved spec section 2)", () => {
   it("a BTTS line with better modelEv than the SAME fixture's straight win wins outright - no favouritism toward 1X2", () => {
-    const straightWin = makeCandidate({ market: "result3", selection: "home", p_model: 0.6, ev: 0.02 });
-    const btts = makeCandidate({ market: "btts", selection: "yes", p_model: 0.58, ev: 0.08 });
+    const straightWin = makeCandidate({ market: "result3", selection: "home", p_model: 0.66, ev: 0.02 });
+    const btts = makeCandidate({ market: "btts", selection: "yes", p_model: 0.63, ev: 0.08 });
     assert.equal(straightWin.fixtureIdentity, btts.fixtureIdentity, "must be the same real fixture for this to be a real test");
     const decided = [straightWin, btts].map((c) => ({ candidate: c, decision: evaluateCandidateV2(c, NOW) }));
     const best = selectBestPerFixture(decided);
@@ -270,7 +270,7 @@ describe("pro_policy: multi-market evaluation per fixture (approved spec section
 
   it("when a straight win DOES have the better modelEv, it still wins (no bias against it either)", () => {
     const straightWin = makeCandidate({ market: "result3", selection: "home", p_model: 0.7, ev: 0.09 });
-    const total = makeCandidate({ market: "total", selection: "over", entity: "all", line: 2.5, p_model: 0.6, ev: 0.03 });
+    const total = makeCandidate({ market: "total", selection: "over", entity: "all", line: 2.5, p_model: 0.66, ev: 0.03 });
     const decided = [straightWin, total].map((c) => ({ candidate: c, decision: evaluateCandidateV2(c, NOW) }));
     const best = selectBestPerFixture(decided);
     assert.equal(best.length, 1);
@@ -279,7 +279,7 @@ describe("pro_policy: multi-market evaluation per fixture (approved spec section
 
   it("a non-qualifying market on a fixture never blocks a qualifying market on the SAME fixture from being picked", () => {
     const tooExpensive = makeCandidate({ market: "result3", selection: "home", price: 2.5 }); // rejected: price_above_ceiling
-    const qualifies = makeCandidate({ market: "btts", selection: "yes", p_model: 0.6, ev: 0.04 });
+    const qualifies = makeCandidate({ market: "btts", selection: "yes", p_model: 0.66, ev: 0.04 });
     const decided = [tooExpensive, qualifies].map((c) => ({ candidate: c, decision: evaluateCandidateV2(c, NOW) }));
     const best = selectBestPerFixture(decided);
     assert.equal(best.length, 1);
@@ -290,7 +290,7 @@ describe("pro_policy: multi-market evaluation per fixture (approved spec section
 describe("pro_policy: EV-correct ranking (modelEv, not raw p*price)", () => {
   it("ranks the higher-modelEv candidate first even when its raw probability is lower", () => {
     const higherEv = makeCandidate({
-      canonical_event_id: "fx-a", home: "Ajax", away: "PSV", p_model: 0.58, ev: 0.09,
+      canonical_event_id: "fx-a", home: "Ajax", away: "PSV", p_model: 0.64, ev: 0.09,
     });
     const higherProbabilityLowerEv = makeCandidate({
       canonical_event_id: "fx-b", home: "Barca", away: "Sevilla", p_model: 0.85, ev: 0.02,
@@ -324,9 +324,9 @@ describe("pro_policy: V2 singles-first construction, capped at V2_MAX_SINGLES", 
 
   it("multiple qualifying candidates on DIFFERENT fixtures -> ranked by modelEv first, never combined, capped at V2_MAX_SINGLES", () => {
     assert.equal(V2_MAX_SINGLES, 2);
-    const strongEv = makeCandidate({ canonical_event_id: "fx-a", home: "Ajax", away: "PSV", p_model: 0.6, ev: 0.09 });
-    const midEv = makeCandidate({ canonical_event_id: "fx-b", home: "Barca", away: "Sevilla", p_model: 0.6, ev: 0.05 });
-    const weakestEv = makeCandidate({ canonical_event_id: "fx-c", home: "Roma", away: "Lazio", p_model: 0.6, ev: 0.01 });
+    const strongEv = makeCandidate({ canonical_event_id: "fx-a", home: "Ajax", away: "PSV", p_model: 0.66, ev: 0.09 });
+    const midEv = makeCandidate({ canonical_event_id: "fx-b", home: "Barca", away: "Sevilla", p_model: 0.66, ev: 0.05 });
+    const weakestEv = makeCandidate({ canonical_event_id: "fx-c", home: "Roma", away: "Lazio", p_model: 0.66, ev: 0.01 });
     const singles = selectSingles([weakestEv, midEv, strongEv], NOW);
     assert.equal(singles.length, 2, "capped at V2_MAX_SINGLES even with 3 qualifying fixtures");
     assert.equal(singles[0].candidate.home, "Ajax");
@@ -337,7 +337,7 @@ describe("pro_policy: V2 singles-first construction, capped at V2_MAX_SINGLES", 
 describe("pro_policy: duplicate/same-fixture candidates are never double-counted", () => {
   it("two rows for the SAME real fixture (different markets) yield exactly one single - the better-modelEv market", () => {
     const sameFixtureA = makeCandidate({ market: "result3", selection: "home", p_model: 0.7, ev: 0.05 });
-    const sameFixtureB = makeCandidate({ market: "btts", selection: "yes", p_model: 0.6, ev: 0.02 });
+    const sameFixtureB = makeCandidate({ market: "btts", selection: "yes", p_model: 0.66, ev: 0.02 });
     assert.equal(sameFixtureA.fixtureIdentity, sameFixtureB.fixtureIdentity, "fixture identity must match for this to be a real test of dedup");
     const singles = selectSingles([sameFixtureA, sameFixtureB], NOW);
     assert.equal(singles.length, 1);
@@ -365,8 +365,8 @@ describe("pro_policy: optional combo (approved spec section 4) - never forced, o
   });
 
   it("two qualifying singles whose combined price lands in the target band -> a combo is offered", () => {
-    const a = makeCandidate({ canonical_event_id: "fx-a", home: "Ajax", away: "PSV", price: 1.4, p_model: 0.6, ev: 0.06 });
-    const b = makeCandidate({ canonical_event_id: "fx-b", home: "Barca", away: "Sevilla", price: 1.5, p_model: 0.6, ev: 0.05 });
+    const a = makeCandidate({ canonical_event_id: "fx-a", home: "Ajax", away: "PSV", price: 1.4, p_model: 0.66, ev: 0.06 });
+    const b = makeCandidate({ canonical_event_id: "fx-b", home: "Barca", away: "Sevilla", price: 1.5, p_model: 0.66, ev: 0.05 });
     const singles = selectSingles([a, b], NOW);
     const combo = buildOptionalCombo(singles);
     assert.ok(combo, "1.4 * 1.5 = 2.10, inside [1.8, 2.6]");
@@ -375,8 +375,8 @@ describe("pro_policy: optional combo (approved spec section 4) - never forced, o
   });
 
   it("two qualifying singles whose combined price falls OUTSIDE the target band -> no combo is offered (never forced to fit)", () => {
-    const a = makeCandidate({ canonical_event_id: "fx-a", home: "Ajax", away: "PSV", price: 1.35, p_model: 0.6, ev: 0.06 });
-    const b = makeCandidate({ canonical_event_id: "fx-b", home: "Barca", away: "Sevilla", price: 1.35, p_model: 0.6, ev: 0.05 });
+    const a = makeCandidate({ canonical_event_id: "fx-a", home: "Ajax", away: "PSV", price: 1.35, p_model: 0.66, ev: 0.06 });
+    const b = makeCandidate({ canonical_event_id: "fx-b", home: "Barca", away: "Sevilla", price: 1.35, p_model: 0.66, ev: 0.05 });
     const singles = selectSingles([a, b], NOW);
     // 1.35 * 1.35 = 1.8225, just inside - use an even lower pair to go below the band deliberately.
     assert.ok(buildOptionalCombo(singles) === null || buildOptionalCombo(singles).odds >= 1.8);
@@ -457,8 +457,8 @@ describe("pro_policy: evidence_v2 formatting is compact, honest, and leaks no in
   });
 
   it("an optional combo section never states a combined win probability, only the arithmetic combined odds", () => {
-    const a = makeCandidate({ canonical_event_id: "fx-a", home: "Ajax", away: "PSV", price: 1.4, p_model: 0.6, ev: 0.06 });
-    const b = makeCandidate({ canonical_event_id: "fx-b", home: "Barca", away: "Sevilla", price: 1.5, p_model: 0.6, ev: 0.05 });
+    const a = makeCandidate({ canonical_event_id: "fx-a", home: "Ajax", away: "PSV", price: 1.4, p_model: 0.66, ev: 0.06 });
+    const b = makeCandidate({ canonical_event_id: "fx-b", home: "Barca", away: "Sevilla", price: 1.5, p_model: 0.66, ev: 0.05 });
     const singles = selectSingles([a, b], NOW);
     const combo = buildOptionalCombo(singles);
     assert.ok(combo);
@@ -478,7 +478,7 @@ describe("pro_policy: multi-sport honesty", () => {
       payloadFor({
         canonical_event_id: `fx-${sport}`, sport, market: "result2", selection: "home",
         home: `${sport}HomeTeam`, away: `${sport}AwayTeam`,
-        start_utc: "2026-10-20T20:00:00Z", p_model: 0.6 + i * 0.02, ev: 0.05 - i * 0.01,
+        start_utc: "2026-10-20T20:00:00Z", p_model: 0.66 + i * 0.02, ev: 0.05 - i * 0.01,
       }));
     const result = await buildProPicks(poolDeps(payloads), DAY, ZONE, NOW, "evidence_v2");
     assert.equal(result.reason, "success");
@@ -497,13 +497,13 @@ describe("pro_policy: exact compact-output snapshots", () => {
   const footballFirstHalf = payloadFor({
     canonical_event_id: "fx-2", home: "Omonia Nicosia", away: "Benfica", league: "UEFA Europa League",
     market: "btts", selection: "yes", period: "1h",
-    price: 1.80, p_model: 0.58, ev: 0.03, start_utc: "2026-10-20T19:00:00Z",
+    price: 1.80, p_model: 0.64, ev: 0.03, start_utc: "2026-10-20T19:00:00Z",
     independent_status: "unavailable:no_history", p_independent: null,
   });
   const basketball = payloadFor({
     canonical_event_id: "fx-3", sport: "basketball", market: "result2", selection: "home",
     home: "Oklahoma City Thunder", away: "Denver Nuggets", league: "NBA",
-    price: 1.40, p_model: 0.6, ev: 0.005, start_utc: "2026-10-21T02:40:00Z",
+    price: 1.40, p_model: 0.66, ev: 0.005, start_utc: "2026-10-21T02:40:00Z",
     independent_status: "unavailable:no_independent_model", p_independent: null,
   });
   const footballAssessed = payloadFor({
@@ -529,10 +529,11 @@ describe("pro_policy: exact compact-output snapshots", () => {
     );
   });
 
-  it("two selections, mixed sports (the V2_MAX_SINGLES cap) — exact rendered message, oldest kickoff first, with the optional combo (1.40*1.80=2.52, inside the band)", async () => {
-    // footballFullMatch (ev 0.06) and footballFirstHalf (ev 0.03) clearly
-    // outrank basketball (ev 0.005) on modelEv - exactly the 2 shown under
-    // the V2_MAX_SINGLES cap, with basketball capped out entirely.
+  it("two selections, mixed sports (the V2_MAX_SINGLES cap) — exact rendered message, oldest kickoff first, with the optional combo (1.40*1.40=1.96, inside the band)", async () => {
+    // footballFullMatch (ev 0.06) ranks first on modelEv. footballFirstHalf
+    // (1st-half BTTS, 58%) is now rejected by the period and probability
+    // gates, so basketball (ev 0.005, 66%) takes the second slot under the
+    // V2_MAX_SINGLES cap. Before this change the 1st-half pick was shown.
     const result = await v2ResultFor([basketball, footballFullMatch, footballFirstHalf]);
     assert.equal(
       result.text,
@@ -541,25 +542,25 @@ describe("pro_policy: exact compact-output snapshots", () => {
       "UEFA Europa League · 17:45\n" +
       "🎯 Ferencváros TC to Win\n" +
       "Odds: 1.40 · Chance: 70%*\n\n" +
-      "⚽ Omonia Nicosia vs Benfica\n" +
-      "UEFA Europa League · 20:00\n" +
-      "🎯 BTTS: Yes (1st Half)\n" +
-      "Odds: 1.80 · Chance: 58%*\n\n" +
+      "🏀 Oklahoma City Thunder vs Denver Nuggets\n" +
+      "NBA · 03:40\n" +
+      "🎯 Oklahoma City Thunder to Win\n" +
+      "Odds: 1.40 · Chance: 66%*\n\n" +
       "*Estimated chances are largely bookmaker-informed and are not independently validated, where applicable.\n\n" +
-      "📎 Optional combined slip (Ferencváros TC vs Torreense + Omonia Nicosia vs Benfica)\n" +
-      "Combined odds: 2.52 — both legs above must each win independently; this is not a combined chance of winning.",
+      "📎 Optional combined slip (Ferencváros TC vs Torreense + Oklahoma City Thunder vs Denver Nuggets)\n" +
+      "Combined odds: 1.96 — both legs above must each win independently; this is not a combined chance of winning.",
     );
   });
 
   it("two selections whose combined price lands in the target band — the optional combo section is appended", async () => {
     const legA = payloadFor({
       canonical_event_id: "fx-combo-a", home: "Team A", away: "Team B", league: "Test League",
-      price: 1.40, p_model: 0.6, ev: 0.06, start_utc: "2026-10-20T17:00:00Z",
+      price: 1.40, p_model: 0.66, ev: 0.06, start_utc: "2026-10-20T17:00:00Z",
       independent_status: "unavailable:no_history", p_independent: null,
     });
     const legB = payloadFor({
       canonical_event_id: "fx-combo-b", home: "Team C", away: "Team D", league: "Test League",
-      price: 1.50, p_model: 0.6, ev: 0.05, start_utc: "2026-10-20T18:00:00Z",
+      price: 1.50, p_model: 0.66, ev: 0.05, start_utc: "2026-10-20T18:00:00Z",
       independent_status: "unavailable:no_history", p_independent: null,
     });
     const result = await v2ResultFor([legA, legB]);
@@ -655,5 +656,88 @@ describe("pro_policy rollback: legacy mode stays byte-identical with the flag un
     assert.equal(PRO_MIN_PROBABILITY, 0.72);
     assert.equal(PRO_MIN_PRICE, 1.25);
     assert.equal(PRO_MIN_BOOKS, 3);
+  });
+});
+
+describe("pro_policy: V2-only gates (Bet of the Day parity and value checks, added 2026-10-25)", () => {
+  it("rejects a negative model EV even when probability and books clear every floor", () => {
+    const c = makeCandidate({ p_model: 0.7, ev: -0.01 });
+    const d = evaluateCandidateV2(c, NOW);
+    assert.equal(d.qualifies, false);
+    assert.equal(d.rejectReason, "negative_model_ev");
+    assert.equal(d.evidenceTier, "insufficient_evidence");
+  });
+
+  it("accepts a model EV of exactly 0 (V2_MIN_MODEL_EV is inclusive)", () => {
+    assert.equal(V2_MIN_MODEL_EV, 0);
+    assert.equal(evaluateCandidateV2(makeCandidate({ p_model: 0.7, ev: 0 }), NOW).qualifies, true);
+  });
+
+  it("rejects a sharp-reference edge below V2_MIN_REFERENCE_EV (-0.04) when a sharp book priced the market", () => {
+    assert.equal(V2_MIN_REFERENCE_EV, -0.04);
+    const c = makeCandidate({ p_model: 0.7, ev: 0.02, edge_ev: -0.06 });
+    assert.equal(c.referenceEvAvailable, true);
+    assert.equal(evaluateCandidateV2(c, NOW).rejectReason, "poor_reference_value");
+  });
+
+  it("does not reject on the sharp-reference gate when no sharp book priced the market (edge_ev absent)", () => {
+    const c = makeCandidate({ p_model: 0.7, ev: 0.02 });
+    assert.equal(c.referenceEvAvailable, false);
+    assert.equal(evaluateCandidateV2(c, NOW).qualifies, true);
+  });
+
+  it("rejects half/quarter/set-period lines (only full and reg time are allowed)", () => {
+    assert.deepEqual([...V2_ALLOWED_PERIODS].sort(), ["full", "reg"]);
+    const c = makeCandidate({ market: "total", selection: "over", entity: "all", line: 20.5, period: "1h", p_model: 0.7, ev: 0.02 });
+    assert.equal(evaluateCandidateV2(c, NOW).rejectReason, "restricted_market");
+  });
+
+  it("rejects non-main stat families such as corners", () => {
+    assert.ok(!V2_ALLOWED_STATS.has("corners"));
+    const c = makeCandidate({ market: "total", selection: "over", entity: "all", line: 9.5, stat: "corners", p_model: 0.7, ev: 0.02 });
+    assert.equal(evaluateCandidateV2(c, NOW).rejectReason, "restricted_market");
+  });
+
+  it("rejects a market family Bet of the Day also blocks (odd_even)", () => {
+    assert.ok(V2_DISABLED_MARKETS.has("odd_even"));
+    const c = makeCandidate({ market: "odd_even", selection: "odd", p_model: 0.7, ev: 0.02 });
+    assert.equal(evaluateCandidateV2(c, NOW).rejectReason, "disabled_market");
+  });
+
+  it("a day where nothing clears every V2 gate is a no-pick day: selectSingles returns []", () => {
+    const pool = [
+      makeCandidate({ p_model: 0.7, ev: -0.02, canonical_event_id: "fx-a" }),
+      makeCandidate({ p_model: 0.6, ev: 0.05, canonical_event_id: "fx-b" }),
+    ];
+    assert.deepEqual(selectSingles(pool, NOW), []);
+  });
+});
+
+describe("pro_picks: OddsAPI-first tier with fallback to the full pool (2026-10-25)", () => {
+  const base = { p_model: 0.7, ev: 0.03, bookmaker_count: 4, price: 1.5, start_utc: "2026-10-20T20:00:00Z" };
+
+  it("uses the OddsAPI-sourced pick even when another provider has a higher EV on a different fixture", async () => {
+    const oddsapi = payloadFor({ ...base, provider: "oddsapi", canonical_event_id: "fx-odds", home: "Odds FC", away: "Away A", ev: 0.02 });
+    const sharp = payloadFor({ ...base, provider: "sharpapi", canonical_event_id: "fx-sharp", home: "Sharp FC", away: "Away B", ev: 0.09 });
+    const result = await buildProPicks(poolDeps([oddsapi, sharp]), DAY, ZONE, NOW, "evidence_v2");
+    assert.equal(result.reason, "success");
+    assert.equal(result.tickets.length, 1);
+    assert.equal(result.tickets[0].picks[0].home, "Odds FC", "the OddsAPI tier must be used first");
+  });
+
+  it("falls back to the full pool only when no OddsAPI-sourced candidate qualifies", async () => {
+    const weakOdds = payloadFor({ ...base, provider: "oddsapi", canonical_event_id: "fx-odds", home: "Weak FC", p_model: 0.4 });
+    const sharp = payloadFor({ ...base, provider: "sharpapi", canonical_event_id: "fx-sharp", home: "Sharp FC", away: "Away B" });
+    const result = await buildProPicks(poolDeps([weakOdds, sharp]), DAY, ZONE, NOW, "evidence_v2");
+    assert.equal(result.reason, "success");
+    assert.equal(result.tickets.length, 1);
+    assert.equal(result.tickets[0].picks[0].home, "Sharp FC", "with no OddsAPI qualifier the fallback must supply the pick");
+  });
+
+  it("still returns no pick when nothing qualifies in either tier - the fallback never relaxes the gates", async () => {
+    const weak = payloadFor({ ...base, provider: "sharpapi", canonical_event_id: "fx-weak", home: "Weak FC", p_model: 0.4 });
+    const result = await buildProPicks(poolDeps([weak]), DAY, ZONE, NOW, "evidence_v2");
+    assert.equal(result.reason, "no_candidates");
+    assert.equal((result.tickets ?? []).length, 0);
   });
 });

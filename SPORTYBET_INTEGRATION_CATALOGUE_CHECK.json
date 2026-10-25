@@ -1,0 +1,19 @@
+{
+  "checked_at": "2026-10-25T03:37:21.289959+00:00",
+  "url": "https://www.sportybet.com/api/ng/factsCenter/pcUpcomingEvents",
+  "params": {
+    "sportId": "sr:sport:1",
+    "marketId": "1,18",
+    "pageSize": 100,
+    "pageNum": 1,
+    "todayGames": "false",
+    "timeline": 72
+  },
+  "booking_post_attempted": false,
+  "status": "catalogue_accessible",
+  "http_status": 200,
+  "sanitized_fixture": "tests\\fixtures\\sportybet_catalogue_observed_20261025.json",
+  "fixture_sha256": "38b42ca92551f43ced3a29e14c7eaf578dbe72d19cb70c98c23c13fbff85831d",
+  "sanitization": "Allowlisted sport/event/market fields; at most two tournaments and two events per tournament. No credentials, cookies or user data retained.",
+  "events_captured": 4
+}

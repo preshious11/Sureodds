@@ -1,0 +1,24 @@
+{
+  "checked_at": "2026-10-25T03:01:24.249289+00:00",
+  "method": "GET",
+  "url": "https://www.sportybet.com/api/ng/factsCenter/pcUpcomingEvents",
+  "params": {
+    "sportId": "sr:sport:1",
+    "marketId": "1,18",
+    "pageSize": 100,
+    "pageNum": 1,
+    "todayGames": "false",
+    "timeline": 72
+  },
+  "http_status": null,
+  "requests_attempted": 1,
+  "booking_post_attempted": false,
+  "booking_codes": [],
+  "owner_verified": false,
+  "environment_proxy_settings_preserved": true,
+  "transport_calls_used": 1,
+  "status": "request_preparation_failed",
+  "error_type": "NotImplementedError",
+  "http_request_sent": false,
+  "reason": "Abstract AuthBase hook raised before network IO; corrected in isolated adapter."
+}

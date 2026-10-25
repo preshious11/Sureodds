@@ -154,6 +154,8 @@ class Config:
     #: all delivery history; flipping it back to ``true`` and restarting
     #: restores automatic subscriber delivery.
     subscriber_delivery_enabled: bool = field(default_factory=lambda: _bool("SUBSCRIBER_DELIVERY_ENABLED", True))
+    sportybet_booking_enabled: bool = field(default_factory=lambda: _bool("SPORTYBET_BOOKING_ENABLED", False))
+    sportybet_booking_service_token: str = field(default_factory=lambda: _env("SPORTYBET_BOOKING_SERVICE_TOKEN"))
 
     # Providers
     sgo_key: str = field(default_factory=lambda: _env("SPORTSGAMEODDS_KEY"))
