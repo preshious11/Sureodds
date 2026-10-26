@@ -105,3 +105,35 @@ def test_non_json_and_oversized_bodies_are_refused(monkeypatch):
     with pytest.raises(sc.CatalogueError) as err:
         sc.CatalogueTransport(limit=2, total_timeout=30).request("GET", sc.CATALOGUE_PATH)
     assert err.value.status == "response_too_large"
+
+
+def test_refusal_names_the_http_status_and_server_headers(monkeypatch):
+    response = _FakeResponse(503)
+    response.headers = {"Content-Type": "text/html", "server": "cloudflare", "cf-ray": "abc123-LHR"}
+    _FakeSession.response = response
+    monkeypatch.setattr(sc.requests, "Session", _FakeSession)
+    transport = sc.CatalogueTransport(limit=2, total_timeout=30)
+    with pytest.raises(sc.CatalogueError) as err:
+        transport.request("GET", sc.CATALOGUE_PATH)
+    assert err.value.status == "http_error" and err.value.http_status == 503
+    text = str(err.value)
+    assert "http_error" in text and "HTTP 503" in text and "server=cloudflare" in text and "cf-ray=abc123-LHR" in text
+    assert transport.last_meta["http_status"] == 503
+
+
+def test_success_records_the_last_response_metadata(monkeypatch):
+    response = _FakeResponse(200, b'{"bizCode": 10000, "data": {}}')
+    response.headers = {"Content-Type": "application/json", "server": "cloudflare", "cf-ray": "zzz-AMS"}
+    _FakeSession.response = response
+    monkeypatch.setattr(sc.requests, "Session", _FakeSession)
+    transport = sc.CatalogueTransport(limit=2, total_timeout=30)
+    transport.request("GET", sc.CATALOGUE_PATH)
+    assert transport.last_meta == {"http_status": 200, "server": "cloudflare", "cf_ray": "zzz-AMS",
+                                   "content_type": "application/json"}
+
+
+def test_header_values_are_single_line_and_bounded():
+    response = _FakeResponse(500)
+    response.headers = {"server": "x" * 500 + "\nINJECT"}
+    meta = sc._meta(response)
+    assert "\n" not in meta["server"] and len(meta["server"]) <= 80

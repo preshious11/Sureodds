@@ -15,12 +15,39 @@ CATALOGUE_PATH = "/factsCenter/pcUpcomingEvents"
 MAX_BYTES = 2_000_000
 
 
-class CatalogueError(Exception):
-    """Fixed status only: never upstream text, headers or cookies."""
+def _header(response, name):
+    """A short, single-line header value for diagnostics (never the body, never cookies)."""
+    headers = getattr(response, "headers", None) or {}
+    value = next((v for k, v in headers.items() if str(k).lower() == name.lower()), None)
+    return None if value is None else str(value).replace("\r", " ").replace("\n", " ")[:80]
 
-    def __init__(self, status):
+
+def _meta(response):
+    return {"http_status": getattr(response, "status_code", None), "server": _header(response, "server"),
+            "cf_ray": _header(response, "cf-ray"), "content_type": _header(response, "content-type")}
+
+
+class CatalogueError(Exception):
+    """A fixed status, plus the HTTP status and the server / cf-ray headers when there was a response.
+    Never upstream text, body, cookies or session values."""
+
+    def __init__(self, status, meta=None):
         self.status = status
-        super().__init__(status)
+        meta = meta or {}
+        self.http_status = meta.get("http_status")
+        self.server = meta.get("server")
+        self.cf_ray = meta.get("cf_ray")
+        super().__init__(self.describe())
+
+    def describe(self):
+        parts = [self.status]
+        if self.http_status is not None:
+            parts.append(f"HTTP {self.http_status}")
+        if self.server:
+            parts.append(f"server={self.server}")
+        if self.cf_ray:
+            parts.append(f"cf-ray={self.cf_ray}")
+        return " ".join(parts)
 
 
 class AnonymousAuth(requests.auth.AuthBase):
@@ -38,6 +65,7 @@ class CatalogueTransport:
                 or not math.isfinite(total_timeout) or not 0 < total_timeout <= 120):
             raise CatalogueError("invalid_timeout")
         self.limit, self.used, self.last_call = limit, 0, 0.0
+        self.last_meta = {}  # status and headers of the most recent response, for diagnostics
         self.deadline = time.monotonic() + total_timeout
 
     def request(self, method, path, *, params=None):
@@ -61,21 +89,23 @@ class CatalogueTransport:
                                  headers={"Accept": "application/json", "Current-Country": "NG",
                                           "User-Agent": "Pro-Value-Shadow/1.0"},
                                  stream=True, allow_redirects=False) as response:
+                    self.last_meta = _meta(response)
+                    meta = self.last_meta
                     if response.status_code in (401, 403):
-                        raise CatalogueError("access_blocked")
+                        raise CatalogueError("access_blocked", meta)
                     if response.status_code == 429:
-                        raise CatalogueError("rate_limited")
+                        raise CatalogueError("rate_limited", meta)
                     if response.status_code != 200:
-                        raise CatalogueError("http_error")
+                        raise CatalogueError("http_error", meta)
                     if "json" not in response.headers.get("Content-Type", "").lower():
-                        raise CatalogueError("non_json_response")
+                        raise CatalogueError("non_json_response", meta)
                     body = bytearray()
                     for part in response.iter_content(8192):
                         body.extend(part)
                         if len(body) > MAX_BYTES:
-                            raise CatalogueError("response_too_large")
+                            raise CatalogueError("response_too_large", meta)
                         if time.monotonic() - started > 15:
-                            raise CatalogueError("timeout")
+                            raise CatalogueError("timeout", meta)
                     return json.loads(body)
         except CatalogueError:
             raise

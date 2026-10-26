@@ -1,0 +1,26 @@
+# WHY: one manual SportyBet catalogue request from a GitHub runner, to see whether the runner's IP is refused.
+# Manual only. Reads one public catalogue page and prints the status and headers. No OddsAPI calls, nothing stored,
+# nothing published, no D1 or Worker change.
+name: sporty-catalogue-probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: One catalogue request (status and headers only)
+        run: |
+          set -euo pipefail
+          pip install requests
+          cd predictions-bot
+          python3 tools/sporty_catalogue_probe.py
