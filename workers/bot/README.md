@@ -4,19 +4,18 @@ Long-polling Telegram bot client running on Node.js, connected to Cloudflare D1 
 
 ## Architecture
 
-- **Entry point:** `bot.ts` — polling loop, offset persistence
-- **D1 adapter:** `d1-rest-adapter.ts` — REST client for Cloudflare D1
-- **Business logic:** `src/` — copied from workers/src/, adapted for Node
-- **Tests:** `tests/` — unit tests (adapter) + integration tests (bot)
+- **Entry point:** `bot.ts` — long-polling loop (`getUpdates`), offset persistence after every update
+- **D1 adapter:** `d1-rest-adapter.ts` — REST client implementing the same `prepare().bind().first()/.all()/.run()` surface as the Cloudflare D1 binding
+- **Business logic:** imported directly from `../src/` (`workers/src/index.ts`, `db.ts`, etc.) — the same modules the Worker and its own tests use, unmodified. Nothing is copied.
+- **Tests:** `tests/` — unit tests (adapter against the Worker's existing test suite) + integration tests (bot against a staging D1 database)
+
+No build step: Node 24 runs `.ts` files directly (native type stripping), the same way `workers/tests/*.test.mjs` already imports `workers/src/*.ts` with no compile stage.
 
 ## Setup
 
 ```bash
-# Install dependencies
+# Install dependencies (dotenv only)
 npm install
-
-# Build TypeScript
-npm run build
 
 # Copy .env.example to .env and fill in secrets
 cp .env.example .env
@@ -31,17 +30,18 @@ See `.env.example`. Required:
 - `TELEGRAM_BOT_TOKEN` — from @BotFather
 - `CF_ACCOUNT_ID` — Cloudflare account ID
 - `CF_DB_ID` — Cloudflare D1 database ID
-- `CF_API_TOKEN` — Scoped to D1 edit on this database
+- `CF_API_TOKEN` — Scoped to D1 edit on this database only
 
 ## Deployment
 
-On Oracle VM (as `sureodds` user):
+`/opt/sureodds-bot` is a git working tree, sparse-checked-out to the `workers/` directory only, at a tagged commit — not a copy, the real repo path:
 
 ```bash
-cd /opt/sureodds-bot
-git checkout refs/tags/v1.0-bot-polling
-npm install
-npm run build
+# One-time, as root:
+sudo bash /opt/sureodds-bot/workers/bot/build.sh
+
+# Every deploy, as the sureodds user (no sudo):
+sudo -u sureodds bash /opt/sureodds-bot/workers/bot/build.sh
 systemctl restart sureodds-telegram-bot
 ```
 
@@ -56,7 +56,7 @@ npm test
 ```bash
 export TELEGRAM_BOT_TOKEN=<test-bot-token>
 npm start
-# Send /start to test bot; expect reply within 3–5 sec
+# Send /start to test bot; expect reply within a few seconds
 ```
 
 ## Monitoring
@@ -83,7 +83,7 @@ curl -X POST https://api.telegram.org/bot{TOKEN}/setWebhook \
   -d secret_token={WEBHOOK_SECRET}
 ```
 
-Worker webhook will resume handling updates.
+The Worker's webhook code and secret are kept intact (not removed) until Stage 1 has run cleanly for two weeks, so this rollback is always available.
 
 ## Stage Progression
 

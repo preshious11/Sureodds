@@ -5,8 +5,11 @@ After=network.target
 [Service]
 Type=simple
 User=sureodds
-WorkingDirectory=/opt/sureodds-bot
-ExecStart=/usr/bin/node dist/bot.js
+# /opt/sureodds-bot is a git working tree, sparse-checked-out to workers/
+# only: bot.ts lives at its real repo path and imports ../src/index.ts
+# exactly as committed - no copying, no separate build artifact.
+WorkingDirectory=/opt/sureodds-bot/workers/bot
+ExecStart=/usr/bin/node bot.ts
 Restart=always
 RestartSec=5
 StartLimitInterval=60
@@ -14,9 +17,10 @@ StartLimitBurst=3
 StandardOutput=journal
 StandardError=journal
 Environment="NODE_ENV=production"
-EnvironmentFile=/opt/sureodds-bot/.env
+EnvironmentFile=/opt/sureodds-bot/workers/bot/.env
 MemoryMax=512M
 MemoryAccounting=yes
+NoNewPrivileges=yes
 
 [Install]
 WantedBy=multi-user.target
