@@ -47,8 +47,13 @@ def capture_group(client, league: str, picks: List, store, now_ts: int) -> Dict[
         hit = by_key.get(p["match_key"])
         if hit is None:
             counts["not_found"] += 1
+            store.log_mismatch("closing_not_found", p["match_key"], league, now_ts)
             continue
         book, probs = hit
+        if p["outcome"] not in probs:
+            counts["not_found"] += 1
+            store.log_mismatch("closing_outcome_missing", p["match_key"], f"{league}:{p['outcome']}", now_ts)
+            continue
         fair_prob = probs[p["outcome"]]
         fair_price = 1.0 / fair_prob
         clv = p["sporty_odds"] / fair_price - 1.0
