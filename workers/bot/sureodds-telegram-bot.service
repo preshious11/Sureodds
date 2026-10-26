@@ -1,0 +1,22 @@
+[Unit]
+Description=Sureodds Telegram Bot (Long Polling)
+After=network.target
+
+[Service]
+Type=simple
+User=sureodds
+WorkingDirectory=/opt/sureodds-bot
+ExecStart=/usr/bin/node dist/bot.js
+Restart=always
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+StandardOutput=journal
+StandardError=journal
+Environment="NODE_ENV=production"
+EnvironmentFile=/opt/sureodds-bot/.env
+MemoryMax=512M
+MemoryAccounting=yes
+
+[Install]
+WantedBy=multi-user.target

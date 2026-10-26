@@ -1,0 +1,22 @@
+{
+  "name": "sureodds-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot polling client for Sureodds predictions",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/bot.js",
+    "test": "node --test dist/tests/**/*.test.js",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.4.5"
+  }
+}
