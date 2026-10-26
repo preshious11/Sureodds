@@ -46,19 +46,28 @@ data for addresses.
    `https://api.telegram.org/bot<test-token>/getUpdates` - the group's
    `chat.id` is a negative number, shown in the JSON response.
 
-2. **Test admin identity**: this needs to be a Telegram account that is
-   **not** the same account configured as the production admin today -
-   otherwise the rehearsal guard (step 7) can't tell the difference, and
-   more importantly, you wouldn't actually be testing isolation. If you
-   have a second Telegram account (many people do, for exactly this kind
-   of testing), use its user id. If not, either:
-   - create a second Telegram account on a different phone number (a
-     Google Voice number or similar works fine for this), or
-   - use a throwaway/test account you don't mind associating with this
-     repo's testing.
+2. **Test admin identity**: a *second Telegram account is preferred but
+   not required*. Two options:
 
-   Get that account's user id the same way: message the test bot from it,
-   check `getUpdates`, read `message.from.id`.
+   - **With a second account** (recommended - actually proves isolation):
+     use any account that is **not** the one configured as the
+     production admin today. Get its user id by messaging the test bot
+     from it, checking
+     `https://api.telegram.org/bot<test-token>/getUpdates`, and reading
+     `message.from.id`.
+   - **Without a second account**: use your own personal user id (the
+     same one that's already the production admin) and set
+     `REHEARSAL_ALLOWED_ADMIN_ID` to it in `.env` (step 7). The guard
+     then allows exactly this one id through as `TELEGRAM_ADMIN_IDS`
+     even though it also appears in `PRODUCTION_CHAT_IDS` - every other
+     production id (the real group, the real channel, any other admin)
+     stays blocked with no exception, and the allowance can never apply
+     to `TELEGRAM_CHAT_ID` (the group), so a rehearsal run still can't
+     post to the real group even with this set. You are trading some
+     isolation-testing value (messages to the admin are real, not test
+     chat traffic) for not needing a second account - the group/channel
+     isolation, which is what actually matters for not touching the
+     community, is unaffected either way.
 
 3. Keep both ids (test group, test admin) somewhere you can paste into
    `.env` in step 7 - they are not secret like the bot token, but there is
@@ -213,6 +222,7 @@ OCI_BACKUP_NAMESPACE=<your-object-storage-namespace-from-step-9>
 REHEARSAL_MODE=true
 PRODUCTION_BOT_TOKEN_HASH=<see below>
 PRODUCTION_CHAT_IDS=<see below>
+REHEARSAL_ALLOWED_ADMIN_ID=<only if using the no-second-account option from step 1b, otherwise leave blank>
 ```
 
 **`PRODUCTION_BOT_TOKEN_HASH`**: on your own machine (never on the
@@ -233,11 +243,20 @@ are not secret the same way a token is, but still don't need to be pasted
 into chat - read them yourself from `wrangler.toml` and the group's own
 settings.
 
-With these three set, `bot.ts` and every `cron/*.ts` entry point refuse
-to start (loudly, before any Telegram call) if `TELEGRAM_BOT_TOKEN`
-hashes to `PRODUCTION_BOT_TOKEN_HASH`, or if `TELEGRAM_CHAT_ID`/any entry
-of `TELEGRAM_ADMIN_IDS` appears in `PRODUCTION_CHAT_IDS` - see
+With these set, `bot.ts` and every `cron/*.ts` entry point refuse to
+start (loudly, before any Telegram call) if `TELEGRAM_BOT_TOKEN` hashes
+to `PRODUCTION_BOT_TOKEN_HASH`, or if `TELEGRAM_CHAT_ID`/any entry of
+`TELEGRAM_ADMIN_IDS` appears in `PRODUCTION_CHAT_IDS` - see
 `workers/bot/rehearsal-guard.ts` and its tests.
+
+**If you set `REHEARSAL_ALLOWED_ADMIN_ID`** (the no-second-account
+option from step 1b): this one id is allowed through as a
+`TELEGRAM_ADMIN_IDS` entry even though it's also listed in
+`PRODUCTION_CHAT_IDS`. It has no effect on `TELEGRAM_CHAT_ID` - the
+guard still blocks the real group/channel id there unconditionally, and
+a negative id (the shape of every group/channel id) can never use this
+allowance even if entered here by mistake. Every other production id
+stays blocked exactly as before.
 
 Save: `Ctrl+O`, Enter, `Ctrl+X`. Then:
 
@@ -424,13 +443,13 @@ and the key restriction are all working.
 
 - [ ] Test bot created, token saved to password manager
 - [ ] Test group created, test bot added as admin, chat id captured
-- [ ] Test admin identity (a DIFFERENT account from production's admin) ready, user id captured
+- [ ] Test admin identity ready, user id captured - EITHER a different account from production's admin, OR your own personal id with `REHEARSAL_ALLOWED_ADMIN_ID` set to it in step 7
 - [ ] `sureodds` user exists, confirmed no sudo
 - [ ] Your own SSH key added, tested
 - [ ] Node 24 installed via nvm
 - [ ] Repo sparse-checked-out to `/opt/sureodds`
 - [ ] systemd units installed (not started)
-- [ ] `.env` created via `nano`, mode 600, nothing in shell history, including `REHEARSAL_MODE=true`, `PRODUCTION_BOT_TOKEN_HASH`, `PRODUCTION_CHAT_IDS`
+- [ ] `.env` created via `nano`, mode 600, nothing in shell history, including `REHEARSAL_MODE=true`, `PRODUCTION_BOT_TOKEN_HASH`, `PRODUCTION_CHAT_IDS`, and `REHEARSAL_ALLOWED_ADMIN_ID` if using the single-account option
 - [ ] Rehearsal guard tested directly (deliberately wrong chat id → refuses to start), then corrected
 - [ ] Production D1 exported (read-only) and loaded into the server's SQLite file
 - [ ] Object Storage bucket created

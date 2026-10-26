@@ -27,6 +27,7 @@ export function requireEnvVars(keys: readonly string[]): void {
     telegramAdminIds: process.env.TELEGRAM_ADMIN_IDS,
     productionBotTokenHash: process.env.PRODUCTION_BOT_TOKEN_HASH,
     productionChatIds: process.env.PRODUCTION_CHAT_IDS,
+    rehearsalAllowedAdminId: process.env.REHEARSAL_ALLOWED_ADMIN_ID,
   });
 }
 

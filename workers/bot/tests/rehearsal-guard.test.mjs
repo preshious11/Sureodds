@@ -124,6 +124,68 @@ describe("checkRehearsalSafety: realistic full-safe rehearsal config", () => {
   });
 });
 
+describe("checkRehearsalSafety: REHEARSAL_ALLOWED_ADMIN_ID (single-account fallback)", () => {
+  it("passes when the allowed admin id is the only admin id and it matches production", () => {
+    const result = checkRehearsalSafety({
+      rehearsalMode: true,
+      botToken: TEST_TOKEN,
+      telegramAdminIds: PRODUCTION_ADMIN_ID,
+      productionChatIds: PRODUCTION_CHAT_IDS,
+      rehearsalAllowedAdminId: PRODUCTION_ADMIN_ID,
+    });
+    assert.equal(result.safe, true);
+    assert.deepEqual(result.violations, []);
+  });
+
+  it("still blocks a different production id even when an allowance is configured", () => {
+    const OTHER_PRODUCTION_ADMIN_ID = "7778889999";
+    const result = checkRehearsalSafety({
+      rehearsalMode: true,
+      botToken: TEST_TOKEN,
+      telegramAdminIds: OTHER_PRODUCTION_ADMIN_ID,
+      productionChatIds: `${PRODUCTION_CHAT_IDS},${OTHER_PRODUCTION_ADMIN_ID}`,
+      rehearsalAllowedAdminId: PRODUCTION_ADMIN_ID,
+    });
+    assert.equal(result.safe, false);
+    assert.ok(result.violations.some((v) => v.includes(OTHER_PRODUCTION_ADMIN_ID)));
+  });
+
+  it("never allows the allowance to cover TELEGRAM_CHAT_ID, even if set to the same value", () => {
+    const result = checkRehearsalSafety({
+      rehearsalMode: true,
+      botToken: TEST_TOKEN,
+      telegramChatId: PRODUCTION_ADMIN_ID,
+      productionChatIds: PRODUCTION_CHAT_IDS,
+      rehearsalAllowedAdminId: PRODUCTION_ADMIN_ID,
+    });
+    assert.equal(result.safe, false);
+    assert.ok(result.violations.some((v) => v.includes(PRODUCTION_ADMIN_ID)));
+  });
+
+  it("never allows a negative (group/channel-shaped) id through the allowance", () => {
+    const result = checkRehearsalSafety({
+      rehearsalMode: true,
+      botToken: TEST_TOKEN,
+      telegramAdminIds: PRODUCTION_GROUP_ID,
+      productionChatIds: PRODUCTION_CHAT_IDS,
+      rehearsalAllowedAdminId: PRODUCTION_GROUP_ID,
+    });
+    assert.equal(result.safe, false);
+    assert.ok(result.violations.some((v) => v.includes(PRODUCTION_GROUP_ID)));
+  });
+
+  it("has no effect at all when unset - existing two-account behaviour is unchanged", () => {
+    const result = checkRehearsalSafety({
+      rehearsalMode: true,
+      botToken: TEST_TOKEN,
+      telegramAdminIds: PRODUCTION_ADMIN_ID,
+      productionChatIds: PRODUCTION_CHAT_IDS,
+    });
+    assert.equal(result.safe, false);
+    assert.ok(result.violations.some((v) => v.includes(PRODUCTION_ADMIN_ID)));
+  });
+});
+
 describe("enforceRehearsalSafety: actually exits the process on a violation", () => {
   it("a child process invoking enforceRehearsalSafety with a matching token exits non-zero and logs the violation", () => {
     const scriptUrl = new URL("../rehearsal-guard.ts", import.meta.url).href;

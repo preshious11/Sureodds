@@ -28,6 +28,16 @@ export interface RehearsalGuardInput {
   telegramAdminIds?: string;
   productionBotTokenHash?: string;
   productionChatIds?: string;
+  /**
+   * One personal Telegram user id allowed to double as the rehearsal admin
+   * even though it also appears in PRODUCTION_CHAT_IDS - for when a second
+   * Telegram account isn't available. Only ever checked against
+   * TELEGRAM_ADMIN_IDS entries, never against TELEGRAM_CHAT_ID (the
+   * group/channel), and only when the id is positive - Telegram group and
+   * channel ids are negative, so a negative value here can never match and
+   * can't be used to smuggle a group/channel past the guard.
+   */
+  rehearsalAllowedAdminId?: string;
 }
 
 export interface RehearsalGuardResult {
@@ -64,14 +74,20 @@ export function checkRehearsalSafety(input: RehearsalGuardInput): RehearsalGuard
 
   const productionChatIds = new Set(splitIds(input.productionChatIds));
   if (productionChatIds.size > 0) {
-    const configuredIds = [
-      ...(input.telegramChatId ? [input.telegramChatId.trim()] : []),
-      ...splitIds(input.telegramAdminIds),
-    ];
-    for (const id of configuredIds) {
+    const allowedAdminId = input.rehearsalAllowedAdminId?.trim();
+    // TELEGRAM_CHAT_ID is always the group/channel - the allowance never
+    // applies here, regardless of what it's set to.
+    if (input.telegramChatId) {
+      const id = input.telegramChatId.trim();
       if (productionChatIds.has(id)) {
         violations.push(`configured chat id '${id}' matches a production chat id - refusing to start in rehearsal mode`);
       }
+    }
+    for (const id of splitIds(input.telegramAdminIds)) {
+      if (!productionChatIds.has(id)) continue;
+      const isAllowedPersonalAdmin = allowedAdminId !== undefined && allowedAdminId !== "" && id === allowedAdminId && !id.startsWith("-");
+      if (isAllowedPersonalAdmin) continue;
+      violations.push(`configured chat id '${id}' matches a production chat id - refusing to start in rehearsal mode`);
     }
   }
 

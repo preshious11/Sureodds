@@ -168,7 +168,7 @@ SQLite package — `node:sqlite` is built into Node 24.
 | File | What it does with D1 | How it reaches SQLite |
 |---|---|---|
 | `db.ts` | ~50 `.prepare()` calls: update dedupe, subscribers, day cache, custom sessions, suggestions, pinned menu, job state, match events, result GIFs | Unmodified — calls `env.DB.prepare()...`, where `env.DB` is now `LocalSqliteAdapter` instead of the D1 binding or the old REST adapter |
-| `cron.ts` | ~21 `.prepare()` calls: delivery sweeps, post/recap receipts, match-event alert state, Pro-picks ledger checks | Unmodified, same substitution. `handleScheduled()` is called by 5 new small entry scripts (one per cron kind + the closing job), each a systemd timer target |
+| `cron.ts` | ~21 `.prepare()` calls: post/recap/match-event receipts, match-event alert state, Pro-picks ledger checks, failed-update reporting | Unmodified, same substitution. `handleScheduled()` is called by 5 new small entry scripts (one per cron kind + the closing job), each a systemd timer target |
 | `index.ts` | ~8 `.prepare()`-adjacent calls inside `handleUpdate`/`routeUpdate` (routes through `db.ts` mostly; a few direct) | Unmodified — this is the bot's own entry point, already proven against a mocked adapter on the old branch |
 | `ledger.ts` | 5 `.prepare()` calls: issued-ticket ledger inserts, settlement status updates | Unmodified |
 | `ticket_image.ts` | 1 `.prepare()` call: reads fixtures for the Bet-of-the-Day image | Unmodified |
@@ -190,7 +190,41 @@ binding to `LocalSqliteAdapter`.
 | `pro-value-closing-shadow.yml` | Python (`tools/pro_value_shadow.py closing`), writes to its own `/tmp/pro_value_shadow.db`, reads the archive read-only from a local scratch copy | Moves to a systemd timer on the server; the archive read becomes a direct read-only open of the live server SQLite file (`?mode=ro`, same code in `botd_archive.py`) — simpler than today, no scratch-copy step needed |
 | `diag-readonly.yml`, `diag-telegram-webhook.yml`, `sporty-catalogue-probe.yml` | Read-only diagnostics against D1/the webhook | Out of scope for this migration (diagnostic tools, not part of the write path); revisited after cutover if still useful |
 
-### 3c. Not D1 at all (confirmed, not touched)
+### 3c. Correction: subscriber broadcasting does not run today
+
+An earlier version of this inventory listed `CRON_DELIVER_SWEEP` (the
+5-minute cron) as broadcasting daily picks and recaps to individual
+subscriber chat IDs. That was wrong. Reading `handleScheduled()` in
+`workers/src/cron.ts` directly:
+
+- `CRON_DELIVER_SWEEP` calls `reportFailedUpdates`, `sweepMatchEvents`
+  (match-start/match-end events, delivered only to the group + owner —
+  independent receipts, never a subscriber row), and the three
+  `maybeDispatch*` functions (these only trigger GitHub Actions
+  workflows, no Telegram send at all).
+- `CRON_POST_SWEEP` posts Top/Daily Picks to the single configured
+  group (`TELEGRAM_CHAT_ID`) plus the owner/admin — explicitly, by its
+  own doc comment, never calling `sweepDeliveries()`.
+- `CRON_RECAP_SWEEP` posts the group recap only.
+- `sweepDeliveries()` — the one function in `workers/src/cron.ts` that
+  broadcasts to individual subscriber chat IDs — is defined but is
+  **never called from `handleScheduled()`, for any of the 4 scheduled
+  crons.** This matches production's own documented model
+  (`SUBSCRIBER_DELIVERY_ENABLED=false`, mirroring
+  `predbot/jobs/daily_picks.py`'s group-only send).
+
+So: **subscribers are not receiving any proactive broadcasts in
+production today.** Nothing in this migration changes that — the
+server-side crons call the exact same unmodified `handleScheduled()`.
+A regression test (`workers/bot/tests/rehearsal-guard.test.mjs`,
+"subscriber delivery is structurally disabled") asserts
+`sweepDeliveries(` never appears in `handleScheduled`'s body, so this
+stays caught if it's ever reintroduced. Because the function is
+unreachable, the rehearsal guard's chat-ID allow-list has nothing to
+gate here — it exists for the proactive sends that
+*do* run (group/owner/admin posts), not for subscriber broadcasting.
+
+### 3d. Not D1 at all (confirmed, not touched)
 
 - `predictions-bot/` Python engine's own working data (fixtures, odds,
   predictions) lives in its own scratch SQLite files during a run, never
@@ -402,16 +436,26 @@ Worst case overlap (bot + one cron + the closing job, all resident at
 once, which locking makes rare but not impossible for a few seconds):
 roughly 250–450 MB (steady) + 100 MB (one cron) + 150 MB (closing) ≈
 **500–700 MB**, comfortably under 1 GB with the 2 GB swap as a margin for
-any spike beyond this estimate (e.g. a larger-than-usual delivery sweep
-touching many subscribers). This fits, but with less headroom than the
+any spike beyond this estimate. This fits, but with less headroom than the
 Stage 1 bot-only design had — the estimate alone is not trusted.
+
+Correction: an earlier version of this doc described the busiest overlap
+as including a "subscriber delivery sweep." That was wrong — read
+`handleScheduled` in `workers/src/cron.ts`: `CRON_DELIVER_SWEEP` calls
+`reportFailedUpdates`, `sweepMatchEvents` (group + owner only),
+and the three `maybeDispatch*` GitHub Actions triggers. It never calls
+`sweepDeliveries()` — the one function that broadcasts to individual
+subscriber chat IDs — for any of the 4 scheduled crons. Production
+has no subscriber-broadcast path today; see §3c above for the fuller
+explanation.
 
 ### Peak memory: a pass/fail rehearsal item, not just an estimate
 
 During the rehearsal (stop point 4), the busiest realistic overlap —
-subscriber delivery sweep + a settlement `apply` running + normal bot
-traffic, all at the same time — must be deliberately produced (not just
-waited for), and peak RSS measured across every resident process with:
+the deliver-sweep cron (match-event delivery + Actions dispatch checks)
++ a settlement `apply` running + normal bot traffic, all at the same
+time — must be deliberately produced (not just waited for), and peak RSS
+measured across every resident process with:
 ```bash
 systemd-cgtop -m -1 -b -n 1 | grep sureodds   # per-unit memory, one sample
 # or, for a precise peak over the whole window:
