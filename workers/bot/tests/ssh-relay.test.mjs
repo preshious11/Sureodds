@@ -23,28 +23,38 @@ function sha(content) {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function writeBatch(dir, planId, fileContents) {
+function writeBatch(dir, planId, fileContents, expectEpoch) {
   const checksums = {};
   for (const [name, content] of Object.entries(fileContents)) {
     writeFileSync(join(dir, name), content, "utf8");
     checksums[name] = sha(content);
   }
-  writeFileSync(
-    join(dir, "plan.json"),
-    JSON.stringify({ plan_id: planId, files: Object.keys(fileContents), checksums }),
-    "utf8",
-  );
+  const manifest = { plan_id: planId, files: Object.keys(fileContents), checksums };
+  if (expectEpoch !== undefined) manifest.expect_epoch = expectEpoch;
+  writeFileSync(join(dir, "plan.json"), JSON.stringify(manifest), "utf8");
 }
 
 function makeDatabase(path) {
   const adapter = new LocalSqliteAdapter(path);
   adapter.execRaw(readFileSync(new URL("../../migrations/0001_foundation.sql", import.meta.url), "utf8"));
+  adapter.execRaw(readFileSync(new URL("../../migrations/0004_sync_state.sql", import.meta.url), "utf8"));
   adapter.close();
 }
 
 function runApplyPlan(args) {
   const scriptPath = fileURLToPath(new URL("../ssh-relay/apply-plan.ts", import.meta.url));
   return execFileSync(process.execPath, [scriptPath, ...args], { encoding: "utf8" });
+}
+
+/** Like runApplyPlan, but returns {status, stdout} instead of throwing on a non-zero exit (needed for stale_epoch's exit code 2). */
+function runApplyPlanAllowingFailure(args) {
+  const scriptPath = fileURLToPath(new URL("../ssh-relay/apply-plan.ts", import.meta.url));
+  try {
+    const stdout = execFileSync(process.execPath, [scriptPath, ...args], { encoding: "utf8" });
+    return { status: 0, stdout };
+  } catch (err) {
+    return { status: err.status, stdout: err.stdout, stderr: err.stderr };
+  }
 }
 
 beforeEach(() => {
@@ -132,5 +142,100 @@ describe("apply-plan.ts as a child process: duplicate and interrupted delivery",
     const after = adapter2.queryRaw("SELECT chat_id FROM subscribers WHERE chat_id = 'relay2'");
     adapter2.close();
     assert.equal(after.length, 1);
+  });
+});
+
+describe("get-epoch.ts: read-only epoch query, read immediately before building a plan manifest", () => {
+  it("prints the current epoch as JSON", () => {
+    const scriptPath = fileURLToPath(new URL("../ssh-relay/get-epoch.ts", import.meta.url));
+    const output = execFileSync(process.execPath, [scriptPath, dbPath], { encoding: "utf8" });
+    const parsed = JSON.parse(output);
+    const adapter = new LocalSqliteAdapter(dbPath);
+    const expected = adapter.currentEpoch();
+    adapter.close();
+    assert.equal(parsed.epoch, expected);
+  });
+
+  it("reflects a bump made by a prior applyPlan call - not a stale read", () => {
+    const scriptPath = fileURLToPath(new URL("../ssh-relay/get-epoch.ts", import.meta.url));
+    const before = JSON.parse(execFileSync(process.execPath, [scriptPath, dbPath], { encoding: "utf8" })).epoch;
+
+    const adapter = new LocalSqliteAdapter(dbPath);
+    adapter.applyPlan("plan-for-epoch-bump-check", ["INSERT INTO subscribers (chat_id, subscribed_at, active) VALUES ('x', '2026-10-26T00:00:00Z', 1)"], before);
+    adapter.close();
+
+    const after = JSON.parse(execFileSync(process.execPath, [scriptPath, dbPath], { encoding: "utf8" })).epoch;
+    assert.equal(after, before + 1);
+  });
+});
+
+describe("apply-plan.ts: manifest statements[] (the rest/*.jsonl equivalent)", () => {
+  it("applies a manifest whose statements[] carries all the data (no files at all)", () => {
+    writeFileSync(
+      join(batchDir, "plan.json"),
+      JSON.stringify({
+        plan_id: "plan-stmt-only",
+        files: [],
+        checksums: {},
+        statements: [
+          {
+            sql: "INSERT INTO subscribers (chat_id, subscribed_at, active) VALUES (?, ?, ?)",
+            params: ["relay5", "2026-10-26T00:00:00Z", 1],
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const result = JSON.parse(runApplyPlan([dbPath, batchDir]));
+    assert.equal(result.outcome, "applied");
+    assert.equal(result.statements, 1);
+
+    const adapter = new LocalSqliteAdapter(dbPath);
+    const rows = adapter.queryRaw("SELECT chat_id FROM subscribers WHERE chat_id = 'relay5'");
+    adapter.close();
+    assert.equal(rows.length, 1);
+  });
+});
+
+describe("apply-plan.ts: epoch passthrough from the manifest", () => {
+  it("a manifest with a correct expect_epoch applies and bumps epoch", () => {
+    const adapter = new LocalSqliteAdapter(dbPath);
+    const before = adapter.currentEpoch();
+    adapter.close();
+
+    writeBatch(
+      batchDir,
+      "plan-epoch-ok",
+      { "0001.sql": "INSERT INTO subscribers (chat_id, subscribed_at, active) VALUES ('relay3', '2026-10-26T00:00:00Z', 1);" },
+      before,
+    );
+    const result = JSON.parse(runApplyPlan([dbPath, batchDir]));
+    assert.equal(result.outcome, "applied");
+
+    const after = new LocalSqliteAdapter(dbPath);
+    assert.equal(after.currentEpoch(), before + 1);
+    after.close();
+  });
+
+  it("a manifest with a stale expect_epoch exits 2 and applies nothing - the workflow's signal to re-pull and retry", () => {
+    const adapter = new LocalSqliteAdapter(dbPath);
+    const before = adapter.currentEpoch();
+    adapter.close();
+
+    writeBatch(
+      batchDir,
+      "plan-epoch-stale",
+      { "0001.sql": "INSERT INTO subscribers (chat_id, subscribed_at, active) VALUES ('relay4', '2026-10-26T00:00:00Z', 1);" },
+      before + 999,
+    );
+    const { status, stdout } = runApplyPlanAllowingFailure([dbPath, batchDir]);
+    assert.equal(status, 2);
+    assert.equal(JSON.parse(stdout).outcome, "stale_epoch");
+
+    const after = new LocalSqliteAdapter(dbPath);
+    assert.equal(after.currentEpoch(), before, "a stale-epoch rejection must not bump epoch");
+    const rows = after.queryRaw("SELECT chat_id FROM subscribers WHERE chat_id = 'relay4'");
+    after.close();
+    assert.deepEqual(rows, [], "a stale-epoch rejection must not apply the data either");
   });
 });

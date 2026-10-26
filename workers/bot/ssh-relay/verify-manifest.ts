@@ -9,10 +9,19 @@ import { readFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
+export interface ParamStatement {
+  sql: string;
+  params: unknown[];
+}
+
 export interface PlanManifest {
   plan_id: string;
   files: string[];
   checksums: Record<string, string>;
+  /** The sync_state.epoch the source snapshot was built against, for applyPlan()'s staleness check - see local-sqlite-adapter.ts. Absent means no epoch check (used by tests and callers that don't need the guard). */
+  expect_epoch?: number;
+  /** The SQLite-side equivalent of d1_sync.py's rest/*.jsonl entries - see LocalSqliteAdapter.applyPlan()'s own doc comment. Absent/empty means no such entries in this plan (the common case: most plans fit entirely in files[]). */
+  statements?: ParamStatement[];
 }
 
 export function sha256OfFile(path: string): string {
@@ -30,11 +39,15 @@ export function verifyManifest(batchDir: string): PlanManifest {
   } catch (err) {
     throw new Error(`manifest is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
   }
-  if (!manifest.plan_id || !Array.isArray(manifest.files) || manifest.files.length === 0) {
-    throw new Error("manifest must have a non-empty plan_id and a non-empty files array");
+  if (!manifest.plan_id || !Array.isArray(manifest.files)) {
+    throw new Error("manifest must have a plan_id and a files array (may be empty if statements[] carries everything)");
   }
   if (!manifest.checksums || typeof manifest.checksums !== "object") {
     throw new Error("manifest must have a checksums map");
+  }
+  const hasStatements = Array.isArray(manifest.statements) && manifest.statements.length > 0;
+  if (manifest.files.length === 0 && !hasStatements) {
+    throw new Error("manifest has neither files nor statements - nothing to apply");
   }
 
   for (const file of manifest.files) {

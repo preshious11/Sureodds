@@ -18,7 +18,7 @@ SUREODDS_ROOT="/opt/sureodds"
 DB_PATH="/var/lib/sureodds/sureodds.db"
 INCOMING_ROOT="/var/lib/sureodds/incoming"
 
-ALLOWED_JOBS=("generation" "settlement" "history-backfill" "closing-price")
+ALLOWED_JOBS=("generation" "settlement" "history-backfill" "closing-price" "epoch-get")
 job="${SSH_ORIGINAL_COMMAND:-}"
 allowed=false
 for candidate in "${ALLOWED_JOBS[@]}"; do
@@ -30,6 +30,15 @@ done
 if [[ "$allowed" != "true" ]]; then
   echo "rejected: unknown job '$job'" >&2
   exit 1
+fi
+
+# epoch-get is read-only and carries no batch on stdin - a workflow runs it
+# immediately before building its plan manifest, to pass as --expect-epoch
+# (mirrors the existing D1 apply step's own "read epoch right before
+# applying" pattern). Handled here, before the tar extraction every other
+# job expects, so this connection never opens or reads from stdin at all.
+if [[ "$job" == "epoch-get" ]]; then
+  exec node "$SUREODDS_ROOT/workers/bot/ssh-relay/get-epoch.ts" "$DB_PATH"
 fi
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"

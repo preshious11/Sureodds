@@ -39,9 +39,21 @@ const sqlStatements = manifest.files.map((file) => readFileSync(join(batchDir, f
 
 const adapter = new LocalSqliteAdapter(dbPath);
 try {
-  const outcome = adapter.applyPlan(manifest.plan_id, sqlStatements);
-  console.log(JSON.stringify({ event: "apply_plan", plan_id: manifest.plan_id, outcome, files: manifest.files.length }));
-  process.exit(0);
+  const outcome = adapter.applyPlan(manifest.plan_id, sqlStatements, manifest.expect_epoch, manifest.statements ?? []);
+  console.log(
+    JSON.stringify({
+      event: "apply_plan",
+      plan_id: manifest.plan_id,
+      outcome,
+      files: manifest.files.length,
+      statements: manifest.statements?.length ?? 0,
+    }),
+  );
+  // stale_epoch is a normal, expected outcome (another writer landed first) -
+  // not swallowed as success, but not a crash either: exit 2 lets the
+  // workflow tell "concurrent writer, retry with a fresh base" apart from
+  // exit 1's "something is actually broken".
+  process.exit(outcome === "stale_epoch" ? 2 : 0);
 } catch (err) {
   fail(`apply failed: ${err instanceof Error ? err.message : String(err)}`);
 } finally {

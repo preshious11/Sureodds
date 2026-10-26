@@ -156,6 +156,106 @@ describe("LocalSqliteAdapter.applyPlan(): idempotent delivery", () => {
   });
 });
 
+describe("LocalSqliteAdapter.applyPlan(): epoch bundled into the same transaction as the data", () => {
+  it("bumps epoch and applies the data together when expectEpoch matches", () => {
+    const before = adapter.currentEpoch();
+    const outcome = adapter.applyPlan(
+      "plan-epoch-1",
+      ["INSERT INTO subscribers (chat_id, subscribed_at, active) VALUES ('ep1', '2026-10-26T00:00:00Z', 1)"],
+      before,
+    );
+    assert.equal(outcome, "applied");
+    assert.equal(adapter.currentEpoch(), before + 1);
+    const rows = adapter.queryRaw("SELECT chat_id FROM subscribers WHERE chat_id = 'ep1'");
+    assert.equal(rows.length, 1);
+  });
+
+  it("rejects with 'stale_epoch' and applies NOTHING when expectEpoch does not match - not the data, not the epoch, not the plan id", () => {
+    const before = adapter.currentEpoch();
+    const outcome = adapter.applyPlan(
+      "plan-epoch-2",
+      ["INSERT INTO subscribers (chat_id, subscribed_at, active) VALUES ('ep2', '2026-10-26T00:00:00Z', 1)"],
+      before + 999, // deliberately wrong
+    );
+    assert.equal(outcome, "stale_epoch");
+    assert.equal(adapter.currentEpoch(), before, "epoch must not move on a rejected apply");
+    const rows = adapter.queryRaw("SELECT chat_id FROM subscribers WHERE chat_id = 'ep2'");
+    assert.deepEqual(rows, [], "data must not land on a rejected apply");
+
+    // Because nothing was recorded (not even the plan id), a retry with the
+    // NOW-correct epoch succeeds normally - this is the real-world shape of
+    // "another writer landed first, re-pull and retry".
+    const retry = adapter.applyPlan(
+      "plan-epoch-2",
+      ["INSERT INTO subscribers (chat_id, subscribed_at, active) VALUES ('ep2', '2026-10-26T00:00:00Z', 1)"],
+      adapter.currentEpoch(),
+    );
+    assert.equal(retry, "applied");
+  });
+
+  it("a failure partway through the data statements leaves epoch untouched (bundled rollback, not a partial commit)", () => {
+    const before = adapter.currentEpoch();
+    assert.throws(() =>
+      adapter.applyPlan(
+        "plan-epoch-3",
+        [
+          "INSERT INTO subscribers (chat_id, subscribed_at, active) VALUES ('ep3', '2026-10-26T00:00:00Z', 1)",
+          "INSERT INTO no_such_table (x) VALUES (1)",
+        ],
+        before,
+      ),
+    );
+    assert.equal(adapter.currentEpoch(), before, "a failed apply must never leave epoch bumped with no data to match it");
+    const rows = adapter.queryRaw("SELECT chat_id FROM subscribers WHERE chat_id = 'ep3'");
+    assert.deepEqual(rows, []);
+  });
+
+  it("omitting expectEpoch entirely skips the guard (back-compat: existing applyPlan tests with no epoch argument keep working)", () => {
+    const before = adapter.currentEpoch();
+    const outcome = adapter.applyPlan("plan-epoch-4", [
+      "INSERT INTO subscribers (chat_id, subscribed_at, active) VALUES ('ep4', '2026-10-26T00:00:00Z', 1)",
+    ]);
+    assert.equal(outcome, "applied");
+    assert.equal(adapter.currentEpoch(), before, "no epoch argument means no epoch bump either");
+  });
+});
+
+describe("LocalSqliteAdapter.applyPlan(): paramStatements (the rest/*.jsonl equivalent)", () => {
+  it("applies paramStatements via parameterized execution, in the same transaction as sqlStatements", () => {
+    const outcome = adapter.applyPlan(
+      "plan-params-1",
+      ["INSERT INTO subscribers (chat_id, subscribed_at, active) VALUES ('fromfile', '2026-10-26T00:00:00Z', 1)"],
+      undefined,
+      [{ sql: "INSERT INTO subscribers (chat_id, subscribed_at, active) VALUES (?, ?, ?)", params: ["fromparam", "2026-10-26T00:00:00Z", 1] }],
+    );
+    assert.equal(outcome, "applied");
+    const rows = adapter.queryRaw("SELECT chat_id FROM subscribers ORDER BY chat_id");
+    assert.deepEqual(rows.map((r) => r.chat_id), ["fromfile", "fromparam"]);
+  });
+
+  it("a paramStatements-only plan (no sqlStatements at all) still applies", () => {
+    const outcome = adapter.applyPlan("plan-params-2", [], undefined, [
+      { sql: "INSERT INTO subscribers (chat_id, subscribed_at, active) VALUES (?, ?, ?)", params: ["onlyparam", "2026-10-26T00:00:00Z", 1] },
+    ]);
+    assert.equal(outcome, "applied");
+    const rows = adapter.queryRaw("SELECT chat_id FROM subscribers WHERE chat_id = 'onlyparam'");
+    assert.equal(rows.length, 1);
+  });
+
+  it("a failure in paramStatements rolls back sqlStatements too - still one bundled transaction", () => {
+    assert.throws(() =>
+      adapter.applyPlan(
+        "plan-params-3",
+        ["INSERT INTO subscribers (chat_id, subscribed_at, active) VALUES ('shouldnotpersist', '2026-10-26T00:00:00Z', 1)"],
+        undefined,
+        [{ sql: "INSERT INTO no_such_table (x) VALUES (?)", params: [1] }],
+      ),
+    );
+    const rows = adapter.queryRaw("SELECT chat_id FROM subscribers WHERE chat_id = 'shouldnotpersist'");
+    assert.deepEqual(rows, []);
+  });
+});
+
 describe("workers/src/db.ts functions against LocalSqliteAdapter", () => {
   it("tryClaimUpdate: new -> duplicate (pending) -> duplicate (done)", async () => {
     assert.equal(await tryClaimUpdate(adapter, 5001), "new");

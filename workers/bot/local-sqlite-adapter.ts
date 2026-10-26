@@ -118,16 +118,67 @@ export class LocalSqliteAdapter implements D1Database {
    * NOT re-run the statements, so a retried delivery after a network
    * interruption (the statements already committed, but the caller never
    * saw the success response) can never apply the same plan twice.
+   *
+   * `expectEpoch`, when given, is the same staleness guard
+   * workers/scripts/d1_sync.py's `apply`/`push` commands already use
+   * against D1 (see docs/STAGE1_SERVER_MIGRATION_PLAN.md's epoch
+   * explanation) - but bundled into the SAME transaction as the data
+   * statements and the epoch bump, which D1's REST API cannot do (its own
+   * header comment calls this an "atomic-fencing limitation"). Checked
+   * TWICE: once before BEGIN IMMEDIATE (fails fast on an already-obviously-
+   * stale base without ever taking the write lock), and again inside the
+   * transaction after BEGIN IMMEDIATE has acquired it (closes the race
+   * where another writer's commit landed between the two checks - mirrors
+   * d1_sync.py cmd_apply's own "before AND during" check). A mismatch
+   * either time returns "stale_epoch" with NOTHING written - not even the
+   * plan id - so a legitimate retry with a fresh base can still apply
+   * cleanly. No caller (workers/src/*.ts, the bot, the 4 crons, any
+   * cache-gating logic) ever reads sync_state.epoch - confirmed by audit -
+   * so bundling the bump here cannot change what any reader already does.
    */
-  applyPlan(planId: string, sqlStatements: string[]): "applied" | "already_applied" {
+  /**
+   * `paramStatements`, when given, are the SQLite-side equivalent of
+   * d1_sync.py's `rest/*.jsonl` entries (oversized rows that don't fit D1's
+   * 100KB SQL-text cap, applied individually via REST params instead).
+   * SQLite has no such cap, but the plan is still generated with that
+   * split baked in (cmd_plan decides it before the target is known), so
+   * the relay accepts both shapes and applies them in the SAME
+   * transaction as everything else - plain SQL text via exec(), and these
+   * via the parameterized prepareRun() path (never string-interpolated
+   * into SQL text, exactly like every other parameterized call in this
+   * file).
+   */
+  applyPlan(
+    planId: string,
+    sqlStatements: string[],
+    expectEpoch?: number,
+    paramStatements: BatchStatement[] = [],
+  ): "applied" | "already_applied" | "stale_epoch" {
     const conn = this.conn;
     const existing = conn.prepareGet("SELECT plan_id FROM sync_applied_plans WHERE plan_id = ?", [planId]);
     if (existing) return "already_applied";
 
+    if (expectEpoch !== undefined && this.currentEpoch() !== expectEpoch) {
+      return "stale_epoch";
+    }
+
     conn.exec("BEGIN IMMEDIATE;");
     try {
+      if (expectEpoch !== undefined && this.currentEpoch() !== expectEpoch) {
+        conn.exec("ROLLBACK;");
+        return "stale_epoch";
+      }
       for (const sql of sqlStatements) {
         conn.exec(sql);
+      }
+      for (const { sql, params = [] } of paramStatements) {
+        conn.prepareRun(sql, params);
+      }
+      if (expectEpoch !== undefined) {
+        conn.prepareRun(
+          "UPDATE sync_state SET epoch = epoch + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = 1",
+          [],
+        );
       }
       conn.prepareRun("INSERT INTO sync_applied_plans (plan_id) VALUES (?)", [planId]);
       conn.exec("COMMIT;");
@@ -136,6 +187,12 @@ export class LocalSqliteAdapter implements D1Database {
       conn.exec("ROLLBACK;");
       throw err;
     }
+  }
+
+  /** Current sync_state.epoch, or 0 if the row doesn't exist yet (fresh database, no migrations applied). */
+  currentEpoch(): number {
+    const row = this.conn.prepareGet("SELECT epoch FROM sync_state WHERE id = 1", []) as { epoch: number } | null;
+    return row?.epoch ?? 0;
   }
 
   /** Raw passthrough for migrations and tests only - not part of the D1-compatible surface workers/src/ uses. */

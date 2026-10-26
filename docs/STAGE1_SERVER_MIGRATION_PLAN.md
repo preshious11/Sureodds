@@ -37,16 +37,28 @@ Built and tested (41 new tests, all passing; the existing Worker suite's
   API-key fallback) + `verify-restore.ts` (the tested-restore check) +
   systemd unit
 
-**Not done - a real complexity finding, not an oversight:** wiring
-`deliver-batch.sh`/host-key pinning into the actual stage5/9/10/11
-workflows. Reading stage9's real apply step (section 6 originally assumed
-one `rest-apply` call) showed it actually combines THREE things: `wrangler
-d1 execute` for SQL batch files, `d1_sync.py rest-apply` for REST batches,
-and a separate epoch-bump command. Rewiring that correctly - in particular
-how the epoch bump and `d1_sync.py apply`'s own epoch CAS should relate -
-needs a decision, not a guess, especially against workflow files that
-feed production. Flagged rather than pushed through untested. See
-`deliver-batch.sh`'s own header comment for the exact gap.
+**Closed (was the stop-point-2 gap):** stage5/9/10/11 are now wired to the
+SSH relay behind a `write_target` input (`d1` default, `server`
+rehearsal-only), added to every production-writing workflow's
+`workflow_dispatch` inputs. The epoch question that blocked this is
+answered in full above the build-status section: no reader
+(bot/crons/caches) ever reads `sync_state.epoch`; it is a writer-vs-writer
+staleness fence only, and D1's own apply/rest-apply/epoch-bump sequence is
+three separate, non-transactional steps precisely because D1's REST API
+can't do better. The server's `applyPlan()` closes that gap - data apply
+and epoch bump now commit together, in one SQLite transaction, which D1
+structurally cannot do.
+
+Each workflow's existing "Apply to production D1" step gained exactly one
+line (its `if:` condition now also requires `write_target == 'd1'`,
+defaulting true) - a new, separately-guarded "Apply to server" step runs
+instead when `write_target == 'server'`, reachable only via an explicit
+`workflow_dispatch`; scheduled/`workflow_call` runs can never set it, so
+the default path is unaffected. `rest/*.jsonl` entries (D1's oversized-row
+path) are handled too, via `build_plan_manifest.py --rest-dir` and
+`applyPlan()`'s new `paramStatements` argument - the server target is
+feature-complete against what production's plan step actually produces,
+not just the common case.
 
 **Also confirmed, not yet decided:**
 - `node:sqlite` is Stability 1.2 (Release Candidate) as of Node 24.15 -
