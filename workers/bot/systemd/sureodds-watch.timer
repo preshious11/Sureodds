@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Sureodds watch job once daily, 11:00 Lagos (10:00 UTC)
+
+[Timer]
+OnCalendar=*-*-* 10:00:00
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

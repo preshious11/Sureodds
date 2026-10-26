@@ -1,0 +1,12 @@
+[Unit]
+Description=Sureodds recap sweep (yesterday's results to the group)
+
+[Service]
+Type=oneshot
+User=sureodds
+WorkingDirectory=/opt/sureodds/workers/bot
+ExecStart=/usr/bin/flock -n /var/lock/sureodds-recap-sweep.lock /usr/bin/node cron/recap-sweep.ts
+EnvironmentFile=/opt/sureodds/workers/bot/.env
+MemoryMax=200M
+MemoryAccounting=yes
+NoNewPrivileges=yes

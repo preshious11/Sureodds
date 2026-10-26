@@ -1,0 +1,16 @@
+[Unit]
+Description=Sureodds post sweep (Top/Daily picks to the group)
+
+[Service]
+Type=oneshot
+User=sureodds
+WorkingDirectory=/opt/sureodds/workers/bot
+# flock -n: if a previous run of THIS job is somehow still holding the lock
+# (systemd itself already refuses to start a second instance of a running
+# oneshot unit - this is defense in depth, not the primary guard), fail
+# immediately and loudly rather than queueing or hanging.
+ExecStart=/usr/bin/flock -n /var/lock/sureodds-post-sweep.lock /usr/bin/node cron/post-sweep.ts
+EnvironmentFile=/opt/sureodds/workers/bot/.env
+MemoryMax=200M
+MemoryAccounting=yes
+NoNewPrivileges=yes

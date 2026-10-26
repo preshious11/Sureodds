@@ -1,0 +1,12 @@
+[Unit]
+Description=Sureodds Pro value closing-price capture (shadow)
+
+[Service]
+Type=oneshot
+User=sureodds
+WorkingDirectory=/opt/sureodds/predictions-bot
+ExecStart=/usr/bin/flock -n /var/lock/sureodds-pro-closing.lock /usr/bin/python3 tools/pro_value_shadow.py closing --live
+EnvironmentFile=/opt/sureodds/workers/bot/.env
+MemoryMax=200M
+MemoryAccounting=yes
+NoNewPrivileges=yes

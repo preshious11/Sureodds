@@ -1,0 +1,26 @@
+[Unit]
+Description=Sureodds Telegram Bot (Long Polling)
+After=network.target
+
+[Service]
+Type=simple
+User=sureodds
+# /opt/sureodds is a git working tree, sparse-checked-out to workers/ (and
+# predictions-bot/ for the closing job) only: bot.ts lives at its real repo
+# path and imports ../src/index.ts exactly as committed - no copying.
+WorkingDirectory=/opt/sureodds/workers/bot
+ExecStart=/usr/bin/node bot.ts
+Restart=always
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+StandardOutput=journal
+StandardError=journal
+Environment="NODE_ENV=production"
+EnvironmentFile=/opt/sureodds/workers/bot/.env
+MemoryMax=300M
+MemoryAccounting=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

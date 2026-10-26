@@ -11,6 +11,64 @@ build step, importing `workers/src/*.ts` unmodified.
 Branch: `feature/stage1-server-migration`. Nothing here is executed yet —
 this is stop point 1, the written plan.
 
+## Build status (stop point 2 addendum)
+
+Built and tested (41 new tests, all passing; the existing Worker suite's
+572 tests unaffected):
+
+- `sqlite-driver.ts` + `local-sqlite-adapter.ts`: the D1-compatible
+  adapter, `batch()` as a real transaction, `applyPlan()` for idempotent
+  delivery
+- `bot.ts`: ported from the superseded D1-REST-adapter branch, adapter
+  swapped, quota-backoff/admin-alert logic retained (now dormant in
+  practice - no free-tier quota on a local file - but kept rather than
+  removed, since `db.ts` is unmodified and could still throw it)
+- The 4 cron entry scripts (`cron/post-sweep.ts` etc.) + systemd
+  `.service`/`.timer` pairs, each with `flock` locking
+- The Pro closing job's systemd unit (Python script unchanged)
+- The SSH relay: `verify-manifest.ts` (checksum verification),
+  `apply-plan.ts` (idempotent single-transaction apply), `receive-batch.sh`
+  (the forced-command target), `deliver-batch.sh` (the Actions-side
+  sender, with host key pinning)
+- `build_plan_manifest.py`: converts `d1_sync.py`'s existing SQL batch
+  output into the manifest the relay expects (a thin adapter, `d1_sync.py`
+  itself is untouched)
+- Backup: `backup.sh` (VACUUM INTO, instance-principal-first with an
+  API-key fallback) + `verify-restore.ts` (the tested-restore check) +
+  systemd unit
+
+**Not done - a real complexity finding, not an oversight:** wiring
+`deliver-batch.sh`/host-key pinning into the actual stage5/9/10/11
+workflows. Reading stage9's real apply step (section 6 originally assumed
+one `rest-apply` call) showed it actually combines THREE things: `wrangler
+d1 execute` for SQL batch files, `d1_sync.py rest-apply` for REST batches,
+and a separate epoch-bump command. Rewiring that correctly - in particular
+how the epoch bump and `d1_sync.py apply`'s own epoch CAS should relate -
+needs a decision, not a guess, especially against workflow files that
+feed production. Flagged rather than pushed through untested. See
+`deliver-batch.sh`'s own header comment for the exact gap.
+
+**Also confirmed, not yet decided:**
+- `node:sqlite` is Stability 1.2 (Release Candidate) as of Node 24.15 -
+  no longer behind a flag, not yet "2 - Stable". Preferred over
+  better-sqlite3 because it has no native binary (nothing to rebuild
+  against this Node ABI on a 1 GB box with no build toolchain by default)
+  and is already what the Worker's 572 existing tests run against on this
+  exact Node version. `sqlite-driver.ts` is the one file naming a concrete
+  library - swapping to better-sqlite3 if RC status ever regresses in
+  practice is a one-file change there.
+- Oracle Object Storage Always Free limit is in the 10-20 GB range across
+  sources that disagree slightly - confirm the exact figure on your own
+  tenancy dashboard; a SQLite backup here is small enough that either
+  figure leaves ample room.
+- Instance principals (dynamic group + policy) are a standard OCI IAM
+  feature, not something gated by the Always Free tier - `backup.sh` tries
+  instance-principal auth first and only falls back to an API key if that
+  isn't set up yet. The dynamic group/policy themselves are a one-time OCI
+  console step on your side, not something this repo can configure.
+- Peak memory is now an explicit pass/fail rehearsal item (not just an
+  estimate) - see the updated §9 below.
+
 ---
 
 ## 1. What moves, what stays
@@ -334,10 +392,31 @@ roughly 250–450 MB (steady) + 100 MB (one cron) + 150 MB (closing) ≈
 **500–700 MB**, comfortably under 1 GB with the 2 GB swap as a margin for
 any spike beyond this estimate (e.g. a larger-than-usual delivery sweep
 touching many subscribers). This fits, but with less headroom than the
-Stage 1 bot-only design had — worth confirming empirically in the
-rehearsal (§... see stop point 3/4) rather than trusting the estimate
-alone, since `node:sqlite` and WAL mode's actual memory behavior under
-this specific access pattern hasn't been measured on this box yet.
+Stage 1 bot-only design had — the estimate alone is not trusted.
+
+### Peak memory: a pass/fail rehearsal item, not just an estimate
+
+During the rehearsal (stop point 4), the busiest realistic overlap —
+subscriber delivery sweep + a settlement `apply` running + normal bot
+traffic, all at the same time — must be deliberately produced (not just
+waited for), and peak RSS measured across every resident process with:
+```bash
+systemd-cgtop -m -1 -b -n 1 | grep sureodds   # per-unit memory, one sample
+# or, for a precise peak over the whole window:
+while true; do date -u +%s; ps -eo pid,comm,rss | grep -E "node|python3|sureodds"; sleep 5; done >> /tmp/mem-watch.log
+```
+
+**Pass:** peak total resident memory (bot + whichever cron/closing/apply
+processes are briefly overlapping) stays at or under **800 MB**, leaving
+at least 200 MB of the 1 GB for the OS/systemd baseline without touching
+swap under normal load.
+**Fail:** peak exceeds 800 MB, or the OOM killer fires, or swap is used
+non-trivially (more than a brief, small spike) during the window.
+
+On fail: the stated fallback (stop and report, not silently worked
+around) is either a different Always-Free-eligible shape with more RAM,
+a small paid upgrade, or trimming `PRAGMA cache_size` and staggering the
+cron schedule further apart - decided with you, not unilaterally.
 
 **If the rehearsal shows this doesn't fit**, the stated fallback (per your
 rule: stop and tell you) is to either raise the Oracle VM's shape (a

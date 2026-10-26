@@ -1,0 +1,12 @@
+[Unit]
+Description=Sureodds SQLite backup to Oracle Object Storage
+
+[Service]
+Type=oneshot
+User=sureodds
+WorkingDirectory=/opt/sureodds/workers/bot
+ExecStart=/usr/bin/flock -n /var/lock/sureodds-backup.lock /opt/sureodds/workers/bot/backup/backup.sh
+EnvironmentFile=/opt/sureodds/workers/bot/.env
+MemoryMax=200M
+MemoryAccounting=yes
+NoNewPrivileges=yes
