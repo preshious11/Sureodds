@@ -261,10 +261,10 @@ class D1RestAdapter {
 ```
 TELEGRAM_BOT_TOKEN=123:abc...       # Test or live bot token
 CF_ACCOUNT_ID=...                    # Cloudflare account ID
-CF_DB_ID=db428f31-...                # D1 database ID
+CF_DB_ID=<your-d1-database-id>       # D1 database ID
 CF_API_TOKEN=...                     # Scoped to D1 edit on this database ONLY
-TELEGRAM_ADMIN_IDS=8606823551
-TELEGRAM_BOT_USERNAME=BETTSUREbot
+TELEGRAM_ADMIN_IDS=<your-telegram-admin-user-id>
+TELEGRAM_BOT_USERNAME=<your-bot-username>
 TELEGRAM_CHAT_ID=...                 # (optional)
 ```
 

@@ -49,10 +49,10 @@
   ```
   TELEGRAM_BOT_TOKEN=123:abc...
   CF_ACCOUNT_ID=...
-  CF_DB_ID=db428f31-...
+  CF_DB_ID=<your-d1-database-id>
   CF_API_TOKEN=...
-  TELEGRAM_ADMIN_IDS=8606823551
-  TELEGRAM_BOT_USERNAME=BETTSUREbot
+  TELEGRAM_ADMIN_IDS=<your-telegram-admin-user-id>
+  TELEGRAM_BOT_USERNAME=<your-bot-username>
   TELEGRAM_CHAT_ID=
   TIMEZONE=Africa/Lagos
   NODE_ENV=production
