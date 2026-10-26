@@ -276,7 +276,10 @@ jobs:
             /tmp/closing_plan/plan.json
             /tmp/closing_report.json
       - name: Alert the owner on failure (actionable only)
-        if: failure()
+        # write_target=='d1' guard: a rehearsal failure is visible directly
+        # in the Actions UI - it does not also need to ping the real admin
+        # via the real bot token.
+        if: failure() && (inputs.write_target || 'd1') == 'd1'
         run: |
           set -euo pipefail
           admin_id=$(grep '^TELEGRAM_ADMIN_IDS' workers/wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | cut -d',' -f1 | xargs)

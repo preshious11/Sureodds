@@ -14,11 +14,10 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
-import { config } from "dotenv";
 
 import { handleUpdate, tgApi } from "../src/index.ts";
 import { QuotaExhausted, type Env } from "../src/db.ts";
-import { LocalSqliteAdapter } from "./local-sqlite-adapter.ts";
+import { requireEnvVars, buildServerEnv } from "./server-env.ts";
 
 export const POLL_TIMEOUT_SEC = 30; // long-poll window; Telegram holds the connection open until an update arrives or this elapses
 export const POLL_ERROR_BACKOFF_MS = 5_000;
@@ -200,34 +199,13 @@ export async function pollLoop(env: Env, botToken: string, offsetFile: string): 
   }
 }
 
-function buildEnvFromProcessEnv(): Env {
-  const db = new LocalSqliteAdapter(process.env.SQLITE_DB_PATH!);
-  return {
-    DB: db,
-    TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN!,
-    // Polling has no inbound webhook, so there is no secret to validate -
-    // this field exists only to satisfy Env's shape (unused by handleUpdate).
-    TELEGRAM_WEBHOOK_SECRET: "",
-    TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID,
-    TELEGRAM_BOT_USERNAME: process.env.TELEGRAM_BOT_USERNAME,
-    TELEGRAM_ADMIN_IDS: process.env.TELEGRAM_ADMIN_IDS,
-    TIMEZONE: process.env.TIMEZONE ?? "Africa/Lagos",
-    ALLOWED_SPORTS: process.env.ALLOWED_SPORTS,
-    PRO_POLICY_MODE: process.env.PRO_POLICY_MODE,
-  };
-}
-
 async function main(): Promise<void> {
-  config();
-  const required = ["TELEGRAM_BOT_TOKEN", "SQLITE_DB_PATH"] as const;
-  for (const key of required) {
-    if (!process.env[key]) {
-      console.error(`Missing required environment variable: ${key}`);
-      process.exit(1);
-    }
-  }
+  // requireEnvVars also runs the rehearsal safety guard (server-env.ts) -
+  // refuses to start if REHEARSAL_MODE=true and the configured token/chat
+  // ids match production, before anything else happens.
+  requireEnvVars(["TELEGRAM_BOT_TOKEN", "SQLITE_DB_PATH"]);
   const offsetFile = process.env.POLLING_OFFSET_FILE ?? "/var/lib/sureodds/polling.offset";
-  const env = buildEnvFromProcessEnv();
+  const env = buildServerEnv();
   await pollLoop(env, process.env.TELEGRAM_BOT_TOKEN!, offsetFile);
 }
 

@@ -5,6 +5,7 @@
 import { config } from "dotenv";
 import type { Env } from "../src/db.ts";
 import { LocalSqliteAdapter } from "./local-sqlite-adapter.ts";
+import { enforceRehearsalSafety } from "./rehearsal-guard.ts";
 
 export function requireEnvVars(keys: readonly string[]): void {
   config();
@@ -14,6 +15,19 @@ export function requireEnvVars(keys: readonly string[]): void {
       process.exit(1);
     }
   }
+  // Runs for every process that calls requireEnvVars - bot.ts and all 4
+  // cron entry scripts - so no server-side entry point can proactively
+  // message anyone before this check has passed. A no-op (returns
+  // immediately) unless REHEARSAL_MODE is exactly "true" - a normal
+  // production run is unaffected by this call existing.
+  enforceRehearsalSafety({
+    rehearsalMode: process.env.REHEARSAL_MODE === "true",
+    botToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
+    telegramChatId: process.env.TELEGRAM_CHAT_ID,
+    telegramAdminIds: process.env.TELEGRAM_ADMIN_IDS,
+    productionBotTokenHash: process.env.PRODUCTION_BOT_TOKEN_HASH,
+    productionChatIds: process.env.PRODUCTION_CHAT_IDS,
+  });
 }
 
 export function buildServerEnv(): Env {

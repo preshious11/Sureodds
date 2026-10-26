@@ -27,6 +27,45 @@ Same as the earlier bot-only runbook, repeated here for completeness:
 
 ---
 
+## 1b. Create test chats (every chat the system can post to, during rehearsal)
+
+The production data copy (step 8) contains the real community group id and
+real subscriber ids. **None of those are ever read for where to post** -
+the bot only ever posts to whatever `TELEGRAM_CHAT_ID` and
+`TELEGRAM_ADMIN_IDS` say in `.env` (step 7), and subscriber broadcasting
+is disabled in the code itself (confirmed by a regression test - see
+`workers/bot/tests/rehearsal-guard.test.mjs`). This section is about
+creating chats to put in `.env`, not about anything reading the copied
+data for addresses.
+
+1. **Test group**: create a new Telegram group (any name, e.g. "Sureodds
+   Rehearsal"), add the test bot (step 1) to it, and make it an admin of
+   the group (same permissions the live bot has in the real community
+   group - needed to post and pin). Get its chat id: send any message in
+   the group, then check
+   `https://api.telegram.org/bot<test-token>/getUpdates` - the group's
+   `chat.id` is a negative number, shown in the JSON response.
+
+2. **Test admin identity**: this needs to be a Telegram account that is
+   **not** the same account configured as the production admin today -
+   otherwise the rehearsal guard (step 7) can't tell the difference, and
+   more importantly, you wouldn't actually be testing isolation. If you
+   have a second Telegram account (many people do, for exactly this kind
+   of testing), use its user id. If not, either:
+   - create a second Telegram account on a different phone number (a
+     Google Voice number or similar works fine for this), or
+   - use a throwaway/test account you don't mind associating with this
+     repo's testing.
+
+   Get that account's user id the same way: message the test bot from it,
+   check `getUpdates`, read `message.from.id`.
+
+3. Keep both ids (test group, test admin) somewhere you can paste into
+   `.env` in step 7 - they are not secret like the bot token, but there is
+   no reason to paste them into chat either.
+
+---
+
 ## 2. Server: create the `sureodds` user and directories (root, one-time)
 
 SSH in as whatever admin account you already have on the Oracle VM, then:
@@ -147,12 +186,17 @@ cp .env.example .env
 nano .env
 ```
 
-Fill in (leave anything not listed here as the `.env.example` default):
+Fill in (leave anything not listed here as the `.env.example` default).
+**`TELEGRAM_ADMIN_IDS` and `TELEGRAM_CHAT_ID` are the TEST identities from
+step 1b, never your production admin id or the real community group id**
+- the rehearsal guard below exists specifically to catch the mistake of
+pasting the wrong one in:
 
 ```
 TELEGRAM_BOT_TOKEN=<test-bot-token-from-step-1>
-TELEGRAM_ADMIN_IDS=<your-own-telegram-user-id>
+TELEGRAM_ADMIN_IDS=<test-admin-user-id-from-step-1b>
 TELEGRAM_BOT_USERNAME=<test-bot-username-from-step-1>
+TELEGRAM_CHAT_ID=<test-group-id-from-step-1b>
 
 SQLITE_DB_PATH=/var/lib/sureodds/sureodds.db
 POLLING_OFFSET_FILE=/var/lib/sureodds/polling.offset
@@ -165,15 +209,57 @@ GITHUB_DISPATCH_TOKEN=<a-fine-grained-PAT-scoped-to-this-repo-Actions-read-write
 
 OCI_BACKUP_BUCKET=<your-bucket-name-from-step-9>
 OCI_BACKUP_NAMESPACE=<your-object-storage-namespace-from-step-9>
+
+REHEARSAL_MODE=true
+PRODUCTION_BOT_TOKEN_HASH=<see below>
+PRODUCTION_CHAT_IDS=<see below>
 ```
+
+**`PRODUCTION_BOT_TOKEN_HASH`**: on your own machine (never on the
+server, never in this file in chat), hash the real production bot token -
+the hash is all that's needed for the guard to detect a mistake, the real
+token itself never has to exist in the rehearsal `.env` at all:
+
+```bash
+echo -n "<the real production bot token>" | sha256sum
+```
+
+Paste the resulting hex string (not the token) as `PRODUCTION_BOT_TOKEN_HASH`.
+
+**`PRODUCTION_CHAT_IDS`**: a comma-separated list of every real chat id
+the live bot ever posts to - the real community group id and the real
+admin id(s) from `workers/wrangler.toml`'s `TELEGRAM_ADMIN_IDS`. These
+are not secret the same way a token is, but still don't need to be pasted
+into chat - read them yourself from `wrangler.toml` and the group's own
+settings.
+
+With these three set, `bot.ts` and every `cron/*.ts` entry point refuse
+to start (loudly, before any Telegram call) if `TELEGRAM_BOT_TOKEN`
+hashes to `PRODUCTION_BOT_TOKEN_HASH`, or if `TELEGRAM_CHAT_ID`/any entry
+of `TELEGRAM_ADMIN_IDS` appears in `PRODUCTION_CHAT_IDS` - see
+`workers/bot/rehearsal-guard.ts` and its tests.
 
 Save: `Ctrl+O`, Enter, `Ctrl+X`. Then:
 
 ```bash
 chmod 600 .env
-history | grep -i "TELEGRAM_BOT_TOKEN\|GITHUB_DISPATCH_TOKEN"
+history | grep -i "TELEGRAM_BOT_TOKEN\|GITHUB_DISPATCH_TOKEN\|PRODUCTION_BOT_TOKEN_HASH"
 # should show nothing - these were only ever typed inside nano
 ```
+
+Confirm the guard actually works before relying on it - deliberately set
+`TELEGRAM_CHAT_ID` to one of the `PRODUCTION_CHAT_IDS` values temporarily
+and start the bot (`node bot.ts` directly, not via systemd, so you see
+the output):
+
+```bash
+node bot.ts
+# expect: "REHEARSAL GUARD: configured chat id '...' matches a production
+# chat id..." printed to stderr, then the process exits - NOT a normal
+# "polling_started" line
+```
+
+Then put the real test group id back before continuing.
 
 ---
 
@@ -337,17 +423,21 @@ and the key restriction are all working.
 ## 12. Summary checklist
 
 - [ ] Test bot created, token saved to password manager
+- [ ] Test group created, test bot added as admin, chat id captured
+- [ ] Test admin identity (a DIFFERENT account from production's admin) ready, user id captured
 - [ ] `sureodds` user exists, confirmed no sudo
 - [ ] Your own SSH key added, tested
 - [ ] Node 24 installed via nvm
 - [ ] Repo sparse-checked-out to `/opt/sureodds`
 - [ ] systemd units installed (not started)
-- [ ] `.env` created via `nano`, mode 600, nothing in shell history
+- [ ] `.env` created via `nano`, mode 600, nothing in shell history, including `REHEARSAL_MODE=true`, `PRODUCTION_BOT_TOKEN_HASH`, `PRODUCTION_CHAT_IDS`
+- [ ] Rehearsal guard tested directly (deliberately wrong chat id → refuses to start), then corrected
 - [ ] Production D1 exported (read-only) and loaded into the server's SQLite file
 - [ ] Object Storage bucket created
 - [ ] Dynamic group + policy created; `oci os ns get --auth instance_principal` succeeds
 - [ ] `SUREODDS_SSH_HOST`, `SUREODDS_SSH_KEY`, `SUREODDS_SSH_KNOWN_HOSTS` set as GitHub secrets
 - [ ] Manual `epoch-get` check succeeds
+- [ ] Read `docs/STAGE1_REHEARSAL_SIDE_EFFECTS.md` - when dispatching stage5 for the rehearsal, use `operation=fixture-replay` and `allow_telegram_posts=false` (the workflow now refuses `write_target=server` with either set wrong, but worth knowing why)
 
 Once all of this is checked off, tell me and I'll run the rehearsal itself
 against this setup and report results at stop point 4.
