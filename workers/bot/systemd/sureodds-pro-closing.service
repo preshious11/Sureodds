@@ -5,7 +5,13 @@ Description=Sureodds Pro value closing-price capture (shadow)
 Type=oneshot
 User=sureodds
 WorkingDirectory=/opt/sureodds/predictions-bot
-ExecStart=/usr/bin/flock -n /var/lock/sureodds-pro-closing.lock /usr/bin/python3 tools/pro_value_shadow.py closing --live
+# /var/lib/sureodds/runtime/bin/python3 is a stable symlink maintained
+# outside the git working tree, currently pointing at
+# /opt/sureodds/predictions-bot/.venv/bin/python3 (packages installed
+# there, not system-wide - see docs/STAGE1_REHEARSAL_PREREQUISITES.md
+# "Runtime binaries"). Re-point it, don't edit this file, if the venv
+# ever moves.
+ExecStart=/usr/bin/flock -n /var/lock/sureodds-pro-closing.lock /var/lib/sureodds/runtime/bin/python3 tools/pro_value_shadow.py closing --live
 EnvironmentFile=/opt/sureodds/workers/bot/.env
 MemoryMax=200M
 MemoryAccounting=yes

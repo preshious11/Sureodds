@@ -9,7 +9,8 @@ WorkingDirectory=/opt/sureodds/workers/bot
 # (systemd itself already refuses to start a second instance of a running
 # oneshot unit - this is defense in depth, not the primary guard), fail
 # immediately and loudly rather than queueing or hanging.
-ExecStart=/usr/bin/flock -n /var/lock/sureodds-post-sweep.lock /usr/bin/node cron/post-sweep.ts
+# /var/lib/sureodds/runtime/bin/node is a stable symlink, see sureodds-bot.service.
+ExecStart=/usr/bin/flock -n /var/lock/sureodds-post-sweep.lock /var/lib/sureodds/runtime/bin/node cron/post-sweep.ts
 EnvironmentFile=/opt/sureodds/workers/bot/.env
 MemoryMax=200M
 MemoryAccounting=yes

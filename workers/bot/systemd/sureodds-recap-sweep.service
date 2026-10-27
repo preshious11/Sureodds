@@ -5,7 +5,8 @@ Description=Sureodds recap sweep (yesterday's results to the group)
 Type=oneshot
 User=sureodds
 WorkingDirectory=/opt/sureodds/workers/bot
-ExecStart=/usr/bin/flock -n /var/lock/sureodds-recap-sweep.lock /usr/bin/node cron/recap-sweep.ts
+# /var/lib/sureodds/runtime/bin/node is a stable symlink, see sureodds-bot.service.
+ExecStart=/usr/bin/flock -n /var/lock/sureodds-recap-sweep.lock /var/lib/sureodds/runtime/bin/node cron/recap-sweep.ts
 EnvironmentFile=/opt/sureodds/workers/bot/.env
 MemoryMax=200M
 MemoryAccounting=yes

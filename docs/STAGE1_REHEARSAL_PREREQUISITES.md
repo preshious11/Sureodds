@@ -75,13 +75,33 @@ data for addresses.
 
 ---
 
-## 2. Server: create the `sureodds` user and directories (root, one-time)
+## 2. Server: packages, the `sureodds` user, and directories (root/admin, one-time)
 
-SSH in as whatever admin account you already have on the Oracle VM, then:
+SSH in as whatever admin account you already have on the Oracle VM
+(referred to below as `<admin-account>`, e.g. `ubuntu`).
+
+**Ubuntu Minimal images (confirmed on 26.04) ship without several tools
+this setup needs.** Install them as `<admin-account>`, not as
+`sureodds`:
+
+```bash
+sudo apt update
+sudo apt install -y git curl sqlite3 python3-venv python3-pip nano
+```
+
+- `git`, `curl`, `nano` - needed for steps 5 and 7 below.
+- `sqlite3` - the CLI `backup.sh` calls for `VACUUM INTO` and the
+  integrity check.
+- `python3-venv`, `python3-pip` - Ubuntu 26.04 blocks `pip install`
+  outside a virtualenv system-wide (externally-managed-environment); the
+  predictions-bot dependencies go into a venv (step 5), not installed
+  globally.
+
+Then create the `sureodds` user and directories:
 
 ```bash
 sudo useradd -m -s /bin/bash sureodds
-sudo mkdir -p /opt/sureodds /var/lib/sureodds /var/lib/sureodds/incoming /var/lib/sureodds/backups /var/lock
+sudo mkdir -p /opt/sureodds /var/lib/sureodds /var/lib/sureodds/incoming /var/lib/sureodds/backups /var/lib/sureodds/runtime/bin /var/lock
 sudo chown -R sureodds:sureodds /opt/sureodds /var/lib/sureodds
 ```
 
@@ -97,13 +117,24 @@ sudo -u sureodds sudo -n true 2>&1
 
 ## 3. Your own SSH key (unrestricted, for your own admin access)
 
+**On macOS/Linux:**
 ```bash
-# On your own machine:
 ssh-keygen -t ed25519 -f ~/.ssh/sureodds_oracle -C "sureodds-admin-$(date +%Y%m%d)" -N ""
 ```
 
-Send me the contents of `~/.ssh/sureodds_oracle.pub` (the public key only)
-- I'll give you the exact line to add. As root on the server:
+**On Windows (PowerShell)** - `$()` command substitution doesn't exist,
+so build the comment separately; OpenSSH's `ssh-keygen` ships with
+Windows 10/11 and needs no install:
+```powershell
+$date = Get-Date -Format "yyyyMMdd"
+ssh-keygen -t ed25519 -f "$HOME\.ssh\sureodds_oracle" -C "sureodds-admin-$date" -N '""'
+```
+(The empty-passphrase argument needs the doubled quoting shown above in
+PowerShell - `-N ""` alone can be swallowed by the shell instead of
+passed to `ssh-keygen`.)
+
+Send me the contents of `sureodds_oracle.pub` (the public key only) - I'll
+give you the exact line to add. As root/admin on the server:
 
 ```bash
 sudo mkdir -p /home/sureodds/.ssh
@@ -117,8 +148,20 @@ sudo chown -R sureodds:sureodds /home/sureodds/.ssh
 
 Test:
 ```bash
+# macOS/Linux:
 ssh -i ~/.ssh/sureodds_oracle sureodds@<server-ip>
+# Windows PowerShell:
+ssh -i "$HOME\.ssh\sureodds_oracle" sureodds@<server-ip>
 # should land in /home/sureodds with no password prompt
+```
+
+**Windows file permissions note:** OpenSSH on Windows refuses a private
+key that other accounts can read, the same way `chmod 600` enforces this
+on Linux. If `ssh` reports "UNPROTECTED PRIVATE KEY FILE" or similar,
+restrict it (PowerShell, as the owning account):
+```powershell
+icacls "$HOME\.ssh\sureodds_oracle" /inheritance:r
+icacls "$HOME\.ssh\sureodds_oracle" /grant:r "$env:USERNAME:(R)"
 ```
 
 ---
@@ -134,18 +177,9 @@ nvm use 24
 node --version   # expect v24.x.x
 ```
 
-Also confirm `sqlite3` (the CLI, used by `backup.sh`'s `VACUUM INTO`) and
-`python3` (used by the closing job and `build_plan_manifest.py` on the
-Actions side, not the server - but check anyway in case a future piece
-needs it server-side) are available:
-
-```bash
-sqlite3 --version
-python3 --version
-```
-
-If either is missing, that needs a `sudo apt install` by an admin account
-(not `sureodds`) - tell me and I'll give you the exact package names.
+`sqlite3` was installed system-wide by the admin account in step 2
+(confirm with `sqlite3 --version`). `python3` ships with Ubuntu already;
+its venv for predictions-bot is set up in step 5, not here.
 
 ---
 
@@ -169,9 +203,62 @@ describes.)
 ```bash
 cd /opt/sureodds/workers/bot
 npm install
-cd /opt/sureodds/predictions-bot
-pip install -r requirements.txt
 ```
+
+**Python dependencies: a venv, not a system-wide `pip install`.** Ubuntu
+26.04 marks the system Python as "externally managed" and refuses a bare
+`pip install` outside a virtualenv - confirmed on the server. `python3-venv`
+was installed by the admin account in step 2.
+
+```bash
+cd /opt/sureodds/predictions-bot
+python3 -m venv .venv
+.venv/bin/pip install --upgrade pip
+.venv/bin/pip install -r requirements.txt
+```
+
+This is the venv that `/var/lib/sureodds/runtime/bin/python3` (step 5b,
+next) points at - `sureodds-pro-closing.service` runs through that
+symlink, so it picks up these packages without any `activate` step
+(systemd units don't have an interactive shell to activate a venv in).
+
+---
+
+## 5b. Runtime binaries: a stable path for systemd units and the SSH relay
+
+**Why this exists:** nvm installs node under a version-specific path
+(`~/.nvm/versions/node/v24.22.1/bin/node`), predictions-bot's Python
+packages live in the venv just created
+(`/opt/sureodds/predictions-bot/.venv/bin/python3`), and the OCI CLI
+(step 9d) installs to a non-standard location. None of these are on the
+restricted `PATH` that systemd services or the SSH forced command get -
+they only see a normal interactive login shell's `PATH` if you
+explicitly give it to them. Rather than hardcode each of those exact
+paths into every `.service` file and into
+`receive-batch.sh`/`backup.sh` - which would mean re-editing all of them
+on every node/venv/CLI upgrade - each of those files points at one fixed
+symlink directory, `/var/lib/sureodds/runtime/bin/`. Upgrading anything
+is then one command, not a multi-file edit.
+
+As `sureodds`:
+
+```bash
+ln -sfn "$(command -v node)" /var/lib/sureodds/runtime/bin/node
+ln -sfn /opt/sureodds/predictions-bot/.venv/bin/python3 /var/lib/sureodds/runtime/bin/python3
+```
+
+(The `oci` symlink is created in step 9d, after the OCI CLI itself is
+installed there - skip it for now.)
+
+Verify:
+```bash
+/var/lib/sureodds/runtime/bin/node --version
+/var/lib/sureodds/runtime/bin/python3 --version
+```
+
+**On a future Node/venv/OCI CLI upgrade:** re-run the matching `ln -sfn`
+line above with the new path. No `.service` file, `receive-batch.sh`, or
+`backup.sh` needs to change.
 
 ---
 
@@ -228,10 +315,26 @@ REHEARSAL_ALLOWED_ADMIN_ID=<only if using the no-second-account option from step
 **`PRODUCTION_BOT_TOKEN_HASH`**: on your own machine (never on the
 server, never in this file in chat), hash the real production bot token -
 the hash is all that's needed for the guard to detect a mistake, the real
-token itself never has to exist in the rehearsal `.env` at all:
+token itself never has to exist in the rehearsal `.env` at all.
 
+**macOS/Linux:**
 ```bash
 echo -n "<the real production bot token>" | sha256sum
+```
+
+**Windows (PowerShell)** - typing the token directly on a command line
+puts it in PowerShell's history even though `echo -n`'s bash equivalent
+has the same issue; `Read-Host -AsSecureString` avoids this by masking
+the input and never placing the token itself in the command line that
+gets recorded:
+```powershell
+$secure = Read-Host "Paste the real production bot token" -AsSecureString
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+$plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+$bytes = [Text.Encoding]::UTF8.GetBytes($plain)
+$hashBytes = [Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
+($hashBytes | ForEach-Object { $_.ToString("x2") }) -join ""
+[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
 ```
 
 Paste the resulting hex string (not the token) as `PRODUCTION_BOT_TOKEN_HASH`.
@@ -334,17 +437,42 @@ OCI Console → **Identity & Security** → **Domains** → your domain →
 **Identity & Security** → **Policies** → **Create Policy**, in the same
 compartment as the bucket.
 - Name: `sureodds-backup-policy`
-- Statements (replace the compartment name):
+- Statements - if the bucket lives in a **named compartment**, replace
+  the compartment name:
   ```
   Allow dynamic-group sureodds-backup-instance to manage objects in compartment <your-compartment-name> where target.bucket.name='sureodds-backups'
   ```
+  If the bucket lives in the **root compartment** (the tenancy itself,
+  which is where a bucket created without explicitly picking a
+  sub-compartment usually ends up on an Always Free account), use `in
+  tenancy` instead - there is no compartment name to substitute:
+  ```
+  Allow dynamic-group sureodds-backup-instance to manage objects in tenancy where target.bucket.name='sureodds-backups'
+  ```
 
-### 9d. Install the OCI CLI on the server (as `sureodds`, no sudo needed - it installs to the user's home directory)
+### 9d. Install the OCI CLI on the server (as `sureodds`, no sudo needed)
+
+**The official installer fails on this server.** It ships its own
+bundled virtualenv, which on Python 3.14 (Ubuntu 26.04's default)
+fails importing the `pipes` module - removed from the standard library
+in 3.13. Installing with `pip` into a venv instead avoids the bundled
+installer entirely:
 
 ```bash
-bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)" -- --install-dir ~/lib/oracle-cli --exec-dir ~/bin --accept-all-defaults
-export PATH=$PATH:~/bin   # also add this line to ~/.bashrc
-oci --version
+python3 -m venv ~/lib/oracle-cli
+~/lib/oracle-cli/bin/pip install --upgrade pip
+~/lib/oracle-cli/bin/pip install oci-cli
+mkdir -p ~/bin
+ln -sfn ~/lib/oracle-cli/bin/oci ~/bin/oci
+~/bin/oci --version
+```
+
+Then point the runtime-bin symlink (step 5b) at it, so systemd units and
+`backup.sh` can find it without needing `~/bin` on their `PATH`:
+
+```bash
+ln -sfn /home/sureodds/bin/oci /var/lib/sureodds/runtime/bin/oci
+/var/lib/sureodds/runtime/bin/oci --version
 ```
 
 ### 9e. Confirm instance principal auth actually works
@@ -375,8 +503,14 @@ Generate a **separate** key pair just for GitHub Actions deliveries (on
 your own machine, or anywhere - this key's private half goes into GitHub
 and nowhere else, not even your own `~/.ssh/`):
 
+**macOS/Linux:**
 ```bash
 ssh-keygen -t ed25519 -f ./sureodds-relay-key -C "github-actions-delivery" -N ""
+```
+
+**Windows (PowerShell):**
+```powershell
+ssh-keygen -t ed25519 -f .\sureodds-relay-key -C "github-actions-delivery" -N '""'
 ```
 
 Paste the **private** key's full contents (`cat ./sureodds-relay-key`,
@@ -404,19 +538,44 @@ your own key (step 3) deliberately does NOT have.
 
 ### 10c. `SUREODDS_SSH_KNOWN_HOSTS` - the pinned host key
 
-From any machine (does not need to be yours specifically, just needs
-network access to the server once, right now, to capture its real key):
-
+**macOS/Linux:**
 ```bash
 ssh-keyscan -t ed25519 <server-ip>
 ```
-
 Paste the **entire output line** (starts with the server's IP/hostname,
-then `ssh-ed25519`, then the key) as this secret's value. This is
-captured **once** - if the server's host key ever legitimately changes
-(a reinstall, a new host key generated), delivery will start failing
-closed (by design) until this secret is updated to match, rather than
-silently trusting whatever key shows up.
+then `ssh-ed25519`, then the key) as this secret's value.
+
+**Windows:** Windows' bundled OpenSSH `ssh-keyscan` can fail against
+this server with something like "no matching key exchange method
+found" / `sntrup761x25519` - an algorithm its older key-exchange
+negotiation doesn't offer, even though an interactive `ssh` connection
+(which negotiates differently) works fine. Capture the host key through
+a real connection instead:
+
+```powershell
+ssh -o StrictHostKeyChecking=accept-new -i "$HOME\.ssh\sureodds_oracle" sureodds@<server-ip> exit
+```
+
+This appends one line for the server to
+`$HOME\.ssh\known_hosts`. Find it and copy it out:
+
+```powershell
+Select-String -Path "$HOME\.ssh\known_hosts" -Pattern "<server-ip>"
+```
+
+**Before pasting that line as the secret, verify the fingerprint
+out-of-band** - this step is exactly what host-key pinning is supposed
+to protect against, so trusting whatever the first connection handed you
+without checking defeats the point. Compare what the connection above
+printed (or `ssh-keygen -lf known_hosts -F <server-ip>`) against the
+fingerprint shown on the OCI Console's instance detail page, or one you
+captured during initial server setup over the Console's browser-based
+VNC/serial console (not over SSH, which is the channel being verified).
+
+Either way, this is captured **once** - if the server's host key ever
+legitimately changes (a reinstall, a new host key generated), delivery
+will start failing closed (by design) until this secret is updated to
+match, rather than silently trusting whatever key shows up.
 
 ---
 
@@ -425,17 +584,34 @@ silently trusting whatever key shows up.
 A quick manual check that the pieces above actually connect, run from
 your own machine with the relay's private key available locally just for
 this one test (delete it again afterward - the real copy lives only in
-the GitHub secret):
+the GitHub secret). Build a standalone `known_hosts`-format file from
+the same verified line used for the `SUREODDS_SSH_KNOWN_HOSTS` secret
+(step 10c) rather than re-running `ssh-keyscan` inline - on Windows that
+inline form fails for the same key-exchange reason step 10c describes:
 
+```
+# known_hosts_relay - one line, exactly the line verified in step 10c
+<server-ip> ssh-ed25519 <the-same-key-from-step-10c>
+```
+
+**macOS/Linux:**
 ```bash
 ssh -i ./sureodds-relay-key -o StrictHostKeyChecking=yes \
-    -o UserKnownHostsFile=<(ssh-keyscan -t ed25519 <server-ip>) \
+    -o UserKnownHostsFile=./known_hosts_relay \
     sureodds@<server-ip> "epoch-get"
 # expect: {"epoch":0} (or whatever the loaded export's epoch is)
 ```
 
+**Windows (PowerShell):**
+```powershell
+ssh -i .\sureodds-relay-key -o StrictHostKeyChecking=yes -o UserKnownHostsFile=.\known_hosts_relay sureodds@<server-ip> "epoch-get"
+# expect: {"epoch":0} (or whatever the loaded export's epoch is)
+```
+
 If this returns the epoch cleanly, the forced command, the allow-list,
-and the key restriction are all working.
+the key restriction, and the `/var/lib/sureodds/runtime/bin/node`
+symlink (step 5b - `receive-batch.sh`'s `epoch-get` branch runs through
+it) are all working.
 
 ---
 
@@ -444,10 +620,13 @@ and the key restriction are all working.
 - [ ] Test bot created, token saved to password manager
 - [ ] Test group created, test bot added as admin, chat id captured
 - [ ] Test admin identity ready, user id captured - EITHER a different account from production's admin, OR your own personal id with `REHEARSAL_ALLOWED_ADMIN_ID` set to it in step 7
+- [ ] apt packages installed by the admin account (`git curl sqlite3 python3-venv python3-pip nano`)
 - [ ] `sureodds` user exists, confirmed no sudo
 - [ ] Your own SSH key added, tested
 - [ ] Node 24 installed via nvm
-- [ ] Repo sparse-checked-out to `/opt/sureodds`
+- [ ] Repo sparse-checked-out to `/opt/sureodds`, `npm install` run
+- [ ] predictions-bot venv created at `/opt/sureodds/predictions-bot/.venv`, dependencies installed
+- [ ] Runtime-bin symlinks created at `/var/lib/sureodds/runtime/bin/` for `node` and `python3` (and `oci`, once step 9d is done)
 - [ ] systemd units installed (not started)
 - [ ] `.env` created via `nano`, mode 600, nothing in shell history, including `REHEARSAL_MODE=true`, `PRODUCTION_BOT_TOKEN_HASH`, `PRODUCTION_CHAT_IDS`, and `REHEARSAL_ALLOWED_ADMIN_ID` if using the single-account option
 - [ ] Rehearsal guard tested directly (deliberately wrong chat id → refuses to start), then corrected

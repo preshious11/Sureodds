@@ -17,6 +17,12 @@ set -euo pipefail
 SUREODDS_ROOT="/opt/sureodds"
 DB_PATH="/var/lib/sureodds/sureodds.db"
 INCOMING_ROOT="/var/lib/sureodds/incoming"
+# Stable symlink maintained outside the git working tree - see
+# docs/STAGE1_REHEARSAL_PREREQUISITES.md "Runtime binaries". sshd runs
+# this forced command with its own restricted PATH (not the sureodds
+# user's login shell PATH), so node is never assumed to be reachable by
+# bare name.
+NODE="/var/lib/sureodds/runtime/bin/node"
 
 ALLOWED_JOBS=("generation" "settlement" "history-backfill" "closing-price" "epoch-get")
 job="${SSH_ORIGINAL_COMMAND:-}"
@@ -38,7 +44,7 @@ fi
 # applying" pattern). Handled here, before the tar extraction every other
 # job expects, so this connection never opens or reads from stdin at all.
 if [[ "$job" == "epoch-get" ]]; then
-  exec node "$SUREODDS_ROOT/workers/bot/ssh-relay/get-epoch.ts" "$DB_PATH"
+  exec "$NODE" "$SUREODDS_ROOT/workers/bot/ssh-relay/get-epoch.ts" "$DB_PATH"
 fi
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -50,5 +56,5 @@ mkdir -p "$batch_dir"
 # sureodds user's own ownership on extraction, not whatever uid tarred it.
 tar -xzf - --no-same-owner -C "$batch_dir"
 
-node "$SUREODDS_ROOT/workers/bot/ssh-relay/verify-manifest.ts" "$batch_dir"
-node "$SUREODDS_ROOT/workers/bot/ssh-relay/apply-plan.ts" "$DB_PATH" "$batch_dir"
+"$NODE" "$SUREODDS_ROOT/workers/bot/ssh-relay/verify-manifest.ts" "$batch_dir"
+"$NODE" "$SUREODDS_ROOT/workers/bot/ssh-relay/apply-plan.ts" "$DB_PATH" "$batch_dir"
