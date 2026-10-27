@@ -23,8 +23,17 @@ INCOMING_ROOT="/var/lib/sureodds/incoming"
 # user's login shell PATH), so node is never assumed to be reachable by
 # bare name.
 NODE="/var/lib/sureodds/runtime/bin/node"
+PYTHON3="/var/lib/sureodds/runtime/bin/python3"
+# predictions-bot's own shadow DB (separate file, separate schema from
+# DB_PATH above - see predictions-bot/tools/apply_shadow_rows.py's own
+# doc comment for why this is NOT routed through verify-manifest.ts/
+# apply-plan.ts). Matches PRO_VALUE_DB_PATH's default resolution under
+# sureodds-pro-closing.service's WorkingDirectory - kept as an explicit
+# absolute path here since this forced command has no such working
+# directory of its own.
+PRO_VALUE_DB_PATH="/opt/sureodds/predictions-bot/data/pro_value_shadow.db"
 
-ALLOWED_JOBS=("generation" "settlement" "history-backfill" "closing-price" "epoch-get")
+ALLOWED_JOBS=("generation" "settlement" "history-backfill" "closing-price" "epoch-get" "pro-value-rows")
 job="${SSH_ORIGINAL_COMMAND:-}"
 allowed=false
 for candidate in "${ALLOWED_JOBS[@]}"; do
@@ -55,6 +64,16 @@ mkdir -p "$batch_dir"
 # built on a GitHub Actions runner under a different uid - take the
 # sureodds user's own ownership on extraction, not whatever uid tarred it.
 tar -xzf - --no-same-owner -C "$batch_dir"
+
+# pro-value-rows: a small, separate payload (one JSON file, no checksums/
+# plan.json manifest - that format is specific to the main D1-schema
+# relay). Dispatched straight to apply_shadow_rows.py, which does its own
+# validation and idempotency check (by run_id, not a plan-id ledger).
+if [[ "$job" == "pro-value-rows" ]]; then
+  mkdir -p "$(dirname "$PRO_VALUE_DB_PATH")"
+  exec "$PYTHON3" "$SUREODDS_ROOT/predictions-bot/tools/apply_shadow_rows.py" \
+    "$batch_dir/shadow_rows.json" "$PRO_VALUE_DB_PATH"
+fi
 
 "$NODE" "$SUREODDS_ROOT/workers/bot/ssh-relay/verify-manifest.ts" "$batch_dir"
 "$NODE" "$SUREODDS_ROOT/workers/bot/ssh-relay/apply-plan.ts" "$DB_PATH" "$batch_dir"

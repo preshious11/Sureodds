@@ -63,6 +63,11 @@ on:
         default: "d1"
         type: choice
         options: [d1, server]
+      sync_shadow_rows:
+        description: "Deliver this run's new Pro value shadow rows to the server (default false: today's unchanged behaviour - selection stays Actions-cache-only). Independent of write_target; see docs/STAGE1_SERVER_MIGRATION_PLAN.md"
+        required: false
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       operation:
@@ -309,6 +314,36 @@ jobs:
         with:
           path: /tmp/pro_value_shadow.db
           key: pro-value-shadow-${{ github.run_id }}
+      # The selection/closing sync link (docs/STAGE1_SERVER_MIGRATION_PLAN.md):
+      # closing capture runs on the server against its OWN local shadow DB,
+      # which otherwise never hears about rows selected here on Actions.
+      # Independent of write_target - this is a side channel to the shadow
+      # DB only, never the production tables write_target routes between
+      # D1 and the server. default false: today's behaviour (Actions-cache-
+      # only) is completely unaffected unless explicitly turned on.
+      - name: Export this run's new Pro value shadow rows
+        if: steps.mode.outputs.mode == 'live' && inputs.sync_shadow_rows == true
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          run_id=$(python3 -c "import json; print(json.load(open('/tmp/prodacc_pro_shadow.json')).get('run_id') or '')" 2>/dev/null || echo "")
+          if [ -z "$run_id" ]; then
+            echo "no run_id in shadow output (the selection step may have failed) - nothing to export"
+            exit 0
+          fi
+          mkdir -p /tmp/pro_value_sync
+          python3 predictions-bot/tools/export_shadow_rows.py /tmp/pro_value_shadow.db "$run_id" /tmp/pro_value_sync/shadow_rows.json
+      - name: Deliver Pro value shadow rows to the server
+        if: steps.mode.outputs.mode == 'live' && inputs.sync_shadow_rows == true
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          test -f /tmp/pro_value_sync/shadow_rows.json || { echo "no export produced - nothing to deliver"; exit 0; }
+          workers/bot/ssh-relay/deliver-batch.sh pro-value-rows /tmp/pro_value_sync
+        env:
+          SUREODDS_SSH_HOST: ${{ secrets.SUREODDS_SSH_HOST }}
+          SUREODDS_SSH_KEY: ${{ secrets.SUREODDS_SSH_KEY }}
+          SUREODDS_SSH_KNOWN_HOSTS: ${{ secrets.SUREODDS_SSH_KNOWN_HOSTS }}
       - name: Prepare scratch (fixture rebase only; live uses native ids)
         run: |
           set -euo pipefail
