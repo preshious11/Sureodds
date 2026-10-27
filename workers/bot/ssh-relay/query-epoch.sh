@@ -29,6 +29,16 @@ printf '%s\n' "$SUREODDS_SSH_KEY" | tr -d '\r' > "$key_file"
 printf '%s\n' "$SUREODDS_SSH_KNOWN_HOSTS" | tr -d '\r' > "$known_hosts_file"
 chmod 600 "$key_file"
 
+# Diagnostic only - the private key's own line content is never printed.
+# The first/last lines of an OpenSSH key file are fixed, public boilerplate
+# ("-----BEGIN/END OPENSSH PRIVATE KEY-----"), not secret material, so
+# printing them (with cat -A to surface any stray BOM/whitespace/control
+# characters) is safe and is exactly what distinguishes "CRLF" from "some
+# other corruption introduced between the PC and the GitHub secret value."
+echo "key_file diagnostic: $(wc -c < "$key_file") bytes, $(wc -l < "$key_file") lines, sha256=$(sha256sum "$key_file" | cut -d' ' -f1)" >&2
+echo "key_file first line: $(head -n1 "$key_file" | cat -A)" >&2
+echo "key_file last non-empty line: $(grep -v '^$' "$key_file" | tail -n1 | cat -A)" >&2
+
 response="$(ssh -i "$key_file" \
     -o UserKnownHostsFile="$known_hosts_file" \
     -o StrictHostKeyChecking=yes \
