@@ -536,7 +536,13 @@ mechanism, and backups — the full system, as asked.
    `getUpdates` semantics, same guarantee relied on in the earlier
    staging runbook).
 8. Start the bot service and the 4 cron timers and the closing timer on
-   the server.
+   the server. **Before starting the closing timer**, confirm `.env` has
+   `PRO_VALUE_SHADOW_ENABLED=true` - `pro-value-closing-shadow.yml` sets
+   this directly in its job env today (not a repo secret/variable), and
+   `tools/pro_value_shadow.py` is a no-op without it ("pro value shadow is
+   disabled; nothing done") - a gap this rehearsal caught: the timer ran
+   and finished cleanly every 30 minutes but never actually captured a
+   closing price, because `.env` didn't have this set.
 9. Point the 4 production-writing GitHub Actions workflows at the
    server's SSH relay (the workflow YAML change from §6 — deployed ahead
    of time, but only *exercised* for real from this point on; nothing
