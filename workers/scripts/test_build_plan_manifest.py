@@ -1,0 +1,174 @@
+"""Tests build_plan_manifest.py's determinism guarantee: re-running it against
+the SAME batch content must produce the SAME plan_id, since that identity is
+what makes the SSH relay's apply-plan.ts idempotency (one transaction per plan
+id, no-op on a repeat) actually work across a retried delivery.
+
+Run with: python -m unittest workers/scripts/test_build_plan_manifest.py
+(from the repo root) or `python workers/scripts/test_build_plan_manifest.py`.
+"""
+import json
+import os
+import shutil
+import tempfile
+import unittest
+
+import build_plan_manifest as bpm
+
+
+class BuildPlanManifestTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="sureodds-bpm-test-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, name: str, content: str) -> None:
+        with open(os.path.join(self.tmp, name), "w", encoding="utf-8") as fh:
+            fh.write(content)
+
+    def test_same_content_same_plan_id(self):
+        self._write("0001.sql", "INSERT INTO t VALUES (1);")
+        self._write("0002.sql", "INSERT INTO t VALUES (2);")
+        self.assertEqual(bpm.main([bpm.__name__, self.tmp]), 0)
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            first = json.load(fh)
+
+        # Re-run against the identical files (simulates a retried workflow
+        # step re-building the manifest for the same already-produced batch).
+        self.assertEqual(bpm.main([bpm.__name__, self.tmp]), 0)
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            second = json.load(fh)
+
+        self.assertEqual(first["plan_id"], second["plan_id"])
+
+    def test_different_content_different_plan_id(self):
+        self._write("0001.sql", "INSERT INTO t VALUES (1);")
+        bpm.main([bpm.__name__, self.tmp])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            first_id = json.load(fh)["plan_id"]
+
+        self._write("0001.sql", "INSERT INTO t VALUES (999);")
+        bpm.main([bpm.__name__, self.tmp])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            second_id = json.load(fh)["plan_id"]
+
+        self.assertNotEqual(first_id, second_id)
+
+    def test_checksums_match_actual_file_contents(self):
+        self._write("0001.sql", "SELECT 1;")
+        bpm.main([bpm.__name__, self.tmp])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        self.assertEqual(manifest["checksums"]["0001.sql"], bpm.sha256_of_file(os.path.join(self.tmp, "0001.sql")))
+
+    def test_expect_epoch_passthrough(self):
+        self._write("0001.sql", "INSERT INTO t VALUES (1);")
+        self.assertEqual(bpm.main([bpm.__name__, self.tmp, "--expect-epoch", "42"]), 0)
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        self.assertEqual(manifest["expect_epoch"], 42)
+
+    def test_expect_epoch_omitted_when_not_given(self):
+        self._write("0001.sql", "INSERT INTO t VALUES (1);")
+        bpm.main([bpm.__name__, self.tmp])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        self.assertNotIn("expect_epoch", manifest)
+
+    def test_fails_loudly_on_empty_batch_directory(self):
+        self.assertEqual(bpm.main([bpm.__name__, self.tmp]), 1)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "plan.json")))
+
+    def test_empty_batch_with_expect_epoch_is_an_epoch_only_plan_not_an_error(self):
+        # Mirrors production's D1 apply step, which bumps sync_state.epoch
+        # unconditionally every run even when there's nothing to write
+        # (settlement found nothing new to grade) - an empty diff must
+        # still produce a deliverable, epoch-bumping plan, not a hard
+        # failure, or the SQLite path would diverge from that behaviour.
+        self.assertEqual(bpm.main([bpm.__name__, self.tmp, "--expect-epoch", "7"]), 0)
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        self.assertEqual(manifest["files"], [])
+        self.assertNotIn("statements", manifest)
+        self.assertEqual(manifest["expect_epoch"], 7)
+
+    def test_two_empty_plans_at_different_epochs_get_different_plan_ids(self):
+        # The critical correctness property: without folding expect_epoch
+        # into the id, two UNRELATED empty-diff runs (different days,
+        # different epochs) would collide on the same plan_id and the
+        # second would be wrongly treated as "already applied" - silently
+        # skipping ITS epoch bump.
+        bpm.main([bpm.__name__, self.tmp, "--expect-epoch", "7"])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            first_id = json.load(fh)["plan_id"]
+
+        bpm.main([bpm.__name__, self.tmp, "--expect-epoch", "8"])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            second_id = json.load(fh)["plan_id"]
+
+        self.assertNotEqual(first_id, second_id)
+
+    def test_two_empty_plans_at_the_same_epoch_get_the_same_plan_id(self):
+        # The flip side: a genuine RETRY of the same attempt (same
+        # expect_epoch) must still dedupe deterministically, same as every
+        # other plan_id case.
+        bpm.main([bpm.__name__, self.tmp, "--expect-epoch", "7"])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            first_id = json.load(fh)["plan_id"]
+
+        bpm.main([bpm.__name__, self.tmp, "--expect-epoch", "7"])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            second_id = json.load(fh)["plan_id"]
+
+        self.assertEqual(first_id, second_id)
+
+    def test_rest_jsonl_entries_become_manifest_statements(self):
+        rest_dir = os.path.join(self.tmp, "rest")
+        os.makedirs(rest_dir)
+        with open(os.path.join(rest_dir, "0.jsonl"), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"sql": "INSERT OR IGNORE INTO t VALUES (?1)", "params": [1]}) + "\n")
+            fh.write(json.dumps({"sql": "INSERT OR REPLACE INTO t VALUES (?1)", "params": [2]}) + "\n")
+        self.assertEqual(bpm.main([bpm.__name__, self.tmp, "--rest-dir", rest_dir]), 0)
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        self.assertEqual(len(manifest["statements"]), 2)
+        self.assertEqual(manifest["statements"][0]["params"], [1])
+
+    def test_rest_jsonl_rejects_non_insert_statements(self):
+        rest_dir = os.path.join(self.tmp, "rest")
+        os.makedirs(rest_dir)
+        with open(os.path.join(rest_dir, "0.jsonl"), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"sql": "DELETE FROM t WHERE 1=1", "params": []}) + "\n")
+        self.assertEqual(bpm.main([bpm.__name__, self.tmp, "--rest-dir", rest_dir]), 1)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "plan.json")))
+
+    def test_batch_with_only_rest_entries_and_no_sql_files_still_works(self):
+        rest_dir = os.path.join(self.tmp, "rest")
+        os.makedirs(rest_dir)
+        with open(os.path.join(rest_dir, "0.jsonl"), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"sql": "INSERT OR IGNORE INTO t VALUES (?1)", "params": [1]}) + "\n")
+        self.assertEqual(bpm.main([bpm.__name__, self.tmp, "--rest-dir", rest_dir]), 0)
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        self.assertEqual(manifest["files"], [])
+        self.assertEqual(len(manifest["statements"]), 1)
+
+    def test_rest_entries_change_the_plan_id_deterministically(self):
+        rest_dir = os.path.join(self.tmp, "rest")
+        os.makedirs(rest_dir)
+        with open(os.path.join(rest_dir, "0.jsonl"), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"sql": "INSERT OR IGNORE INTO t VALUES (?1)", "params": [1]}) + "\n")
+        bpm.main([bpm.__name__, self.tmp, "--rest-dir", rest_dir])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            first_id = json.load(fh)["plan_id"]
+
+        # Re-run against the SAME rest content - same plan id (determinism
+        # across a retry), not a fresh random id each time.
+        bpm.main([bpm.__name__, self.tmp, "--rest-dir", rest_dir])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            second_id = json.load(fh)["plan_id"]
+        self.assertEqual(first_id, second_id)
+
+
+if __name__ == "__main__":
+    unittest.main()

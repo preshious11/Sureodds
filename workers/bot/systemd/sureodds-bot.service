@@ -1,0 +1,32 @@
+[Unit]
+Description=Sureodds Telegram Bot (Long Polling)
+After=network.target
+
+[Service]
+Type=simple
+User=sureodds
+# /opt/sureodds is a git working tree, sparse-checked-out to workers/ (and
+# predictions-bot/ for the closing job) only: bot.ts lives at its real repo
+# path and imports ../src/index.ts exactly as committed - no copying.
+WorkingDirectory=/opt/sureodds/workers/bot
+# /var/lib/sureodds/runtime/bin/node is a stable symlink maintained
+# outside the git working tree (see docs/STAGE1_REHEARSAL_PREREQUISITES.md
+# "Runtime binaries") - it points at whatever node/python3/oci binary is
+# actually installed (nvm, a venv, a pip install, a future system
+# package), so upgrading any of them is one `ln -sfn`, never an edit to
+# this or any other unit file.
+ExecStart=/var/lib/sureodds/runtime/bin/node bot.ts
+Restart=always
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+StandardOutput=journal
+StandardError=journal
+Environment="NODE_ENV=production"
+EnvironmentFile=/opt/sureodds/workers/bot/.env
+MemoryMax=300M
+MemoryAccounting=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

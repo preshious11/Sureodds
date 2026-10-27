@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Sureodds deliver sweep every 5 minutes, any time
+
+[Timer]
+OnCalendar=*:0/5
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

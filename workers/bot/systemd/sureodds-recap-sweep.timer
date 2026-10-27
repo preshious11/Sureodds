@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Sureodds recap sweep every 5 minutes, 07:00-08:55 Lagos (06:00-07:55 UTC)
+
+[Timer]
+OnCalendar=*-*-* 06..07:00/5:00
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

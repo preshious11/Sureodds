@@ -57,6 +57,17 @@ on:
         description: "Max updates plus deletes; insert growth uses the total budget"
         required: false
         default: "2000"
+      write_target:
+        description: "Where writes land (default d1: today's unchanged behaviour). 'server' is rehearsal-only - see docs/STAGE1_SERVER_MIGRATION_PLAN.md"
+        required: false
+        default: "d1"
+        type: choice
+        options: [d1, server]
+      sync_shadow_rows:
+        description: "Deliver this run's new Pro value shadow rows to the server (default false: today's unchanged behaviour - selection stays Actions-cache-only). Independent of write_target; see docs/STAGE1_SERVER_MIGRATION_PLAN.md"
+        required: false
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       operation:
@@ -135,6 +146,26 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
           SHARPAPI_KEY: ${{ secrets.SHARPAPI_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
+      # Rehearsal safety rail - see docs/STAGE1_SERVER_MIGRATION_PLAN.md
+      # section 6 and docs/STAGE1_REHEARSAL_SIDE_EFFECTS.md. write_target
+      # only changes WHERE data is written; it does nothing to stop live
+      # provider calls or a real group post, which are controlled by
+      # OTHER inputs entirely. A rehearsal has no reason to combine
+      # write_target=server with either, and an accidental combination
+      # would spend real API credits or post to the real community group
+      # for a test run - blocked here rather than merely discouraged.
+      - name: Rehearsal guard (write_target=server forbids live-generate and group posts)
+        if: inputs.write_target == 'server'
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.operation }}" = "live-generate" ]; then
+            echo "::error::write_target=server with operation=live-generate would spend real provider credits for a rehearsal run. Use operation=fixture-replay to rehearse delivery, or run live-generate separately with write_target=d1." >&2
+            exit 1
+          fi
+          if [ "${{ inputs.allow_telegram_posts }}" = "true" ]; then
+            echo "::error::write_target=server with allow_telegram_posts=true would post to the real community group from a rehearsal run." >&2
+            exit 1
+          fi
       - name: Pull production base (export + load, timed)
         id: pull
         run: |
@@ -223,7 +254,12 @@ jobs:
           # Pro value shadow input: the OddsAPI responses this run already fetches are saved here (no extra calls).
           PRO_VALUE_RAW_DIR: /tmp/prodacc_pro_raw
       - name: Restore Pro value shadow DB (shared with the closing job)
-        if: steps.mode.outputs.mode == 'live'
+        # write_target=='d1' guard: the restore-keys prefix is shared with
+        # the real scheduled pro-value-closing-shadow.yml job - a rehearsal
+        # save under this same prefix could become what a LATER production
+        # run restores from. Skipped entirely for a rehearsal rather than
+        # risk sharing state with the real closing job.
+        if: steps.mode.outputs.mode == 'live' && (inputs.write_target || 'd1') == 'd1'
         uses: actions/cache/restore@v4
         with:
           path: /tmp/pro_value_shadow.db
@@ -231,7 +267,10 @@ jobs:
           restore-keys: |
             pro-value-shadow-
       - name: Pro value shadow (live only; shadow results only, publishes nothing)
-        if: steps.mode.outputs.mode == 'live'
+        # write_target=='d1' guard: this step itself spends OddsAPI credits
+        # (PRO_VALUE_CREDIT_CAP) - a rehearsal testing the server delivery
+        # path has no reason to also spend these.
+        if: steps.mode.outputs.mode == 'live' && (inputs.write_target || 'd1') == 'd1'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -247,7 +286,10 @@ jobs:
           PRO_VALUE_DB_PATH: /tmp/pro_value_shadow.db
           PRO_VALUE_CREDIT_CAP: "5"
       - name: Send shadow Pro picks to the admin chat (private; continue-on-error)
-        if: steps.mode.outputs.mode == 'live'
+        # write_target=='d1' guard: this sends a real Telegram message to
+        # the real admin via the real production bot token - never during
+        # a rehearsal.
+        if: steps.mode.outputs.mode == 'live' && (inputs.write_target || 'd1') == 'd1'
         continue-on-error: true
         run: |
           set -uo pipefail
@@ -256,7 +298,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
       - name: Upload Pro value shadow results (not published)
-        if: always() && steps.mode.outputs.mode == 'live'
+        if: always() && steps.mode.outputs.mode == 'live' && (inputs.write_target || 'd1') == 'd1'
         uses: actions/upload-artifact@v4
         with:
           name: pro-value-shadow-results
@@ -265,11 +307,43 @@ jobs:
             /tmp/prodacc_pro_shadow.json
             /tmp/pro_value_shadow.db
       - name: Save Pro value shadow DB
-        if: steps.mode.outputs.mode == 'live' && always()
+        # write_target=='d1' guard: same shared-cache-namespace reasoning
+        # as the restore step above.
+        if: steps.mode.outputs.mode == 'live' && always() && (inputs.write_target || 'd1') == 'd1'
         uses: actions/cache/save@v4
         with:
           path: /tmp/pro_value_shadow.db
           key: pro-value-shadow-${{ github.run_id }}
+      # The selection/closing sync link (docs/STAGE1_SERVER_MIGRATION_PLAN.md):
+      # closing capture runs on the server against its OWN local shadow DB,
+      # which otherwise never hears about rows selected here on Actions.
+      # Independent of write_target - this is a side channel to the shadow
+      # DB only, never the production tables write_target routes between
+      # D1 and the server. default false: today's behaviour (Actions-cache-
+      # only) is completely unaffected unless explicitly turned on.
+      - name: Export this run's new Pro value shadow rows
+        if: steps.mode.outputs.mode == 'live' && inputs.sync_shadow_rows == true
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          run_id=$(python3 -c "import json; print(json.load(open('/tmp/prodacc_pro_shadow.json')).get('run_id') or '')" 2>/dev/null || echo "")
+          if [ -z "$run_id" ]; then
+            echo "no run_id in shadow output (the selection step may have failed) - nothing to export"
+            exit 0
+          fi
+          mkdir -p /tmp/pro_value_sync
+          python3 predictions-bot/tools/export_shadow_rows.py /tmp/pro_value_shadow.db "$run_id" /tmp/pro_value_sync/shadow_rows.json
+      - name: Deliver Pro value shadow rows to the server
+        if: steps.mode.outputs.mode == 'live' && inputs.sync_shadow_rows == true
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          test -f /tmp/pro_value_sync/shadow_rows.json || { echo "no export produced - nothing to deliver"; exit 0; }
+          workers/bot/ssh-relay/deliver-batch.sh pro-value-rows /tmp/pro_value_sync
+        env:
+          SUREODDS_SSH_HOST: ${{ secrets.SUREODDS_SSH_HOST }}
+          SUREODDS_SSH_KEY: ${{ secrets.SUREODDS_SSH_KEY }}
+          SUREODDS_SSH_KNOWN_HOSTS: ${{ secrets.SUREODDS_SSH_KNOWN_HOSTS }}
       - name: Prepare scratch (fixture rebase only; live uses native ids)
         run: |
           set -euo pipefail
@@ -337,7 +411,11 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Apply to production D1 (skipped in dry-run)
-        if: inputs.dry_run == false
+        # (inputs.write_target || 'd1') == 'd1': true for workflow_call too
+        # (stage7 never sets write_target, so it's empty there, falling
+        # back to 'd1') - the scheduled path can NEVER take the server
+        # branch below, only an explicit workflow_dispatch can.
+        if: inputs.dry_run == false && (inputs.write_target || 'd1') == 'd1'
         run: |
           set -euo pipefail
           cd workers
@@ -381,6 +459,30 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      # Rehearsal-only path - see docs/STAGE1_SERVER_MIGRATION_PLAN.md
+      # section 6. Only reachable via an explicit workflow_dispatch with
+      # write_target=server; the scheduled (workflow_call) path can never
+      # set write_target, so this is always skipped there.
+      - name: Apply to server (rehearsal only - write_target=server)
+        if: inputs.dry_run == false && inputs.write_target == 'server'
+        run: |
+          set -euo pipefail
+          cd workers
+          epoch="$(bot/ssh-relay/query-epoch.sh)"
+          python3 scripts/build_plan_manifest.py /tmp/prodacc_plan \
+            --rest-dir /tmp/prodacc_plan/rest \
+            --expect-epoch "$epoch"
+          if ! bot/ssh-relay/deliver-batch.sh generation /tmp/prodacc_plan; then
+            status=$?
+            if [ "$status" -eq 2 ]; then
+              echo "::error::server epoch moved before delivery (stale_epoch) - another writer landed first; re-run to retry with a fresh base" >&2
+            fi
+            exit "$status"
+          fi
+        env:
+          SUREODDS_SSH_HOST: ${{ secrets.SUREODDS_SSH_HOST }}
+          SUREODDS_SSH_KEY: ${{ secrets.SUREODDS_SSH_KEY }}
+          SUREODDS_SSH_KNOWN_HOSTS: ${{ secrets.SUREODDS_SSH_KNOWN_HOSTS }}
       - name: Release lease (always, if acquired)
         if: always() && steps.lease.outputs.acquired == 'true'
         run: |
@@ -443,7 +545,9 @@ jobs:
             /tmp/prodacc_gen.json
             /tmp/prodacc_run_meta.json
       - name: Tell the owner when backup providers were used
-        if: success() && steps.mode.outputs.mode == 'live'
+        # write_target=='d1' guard: real Telegram message to the real
+        # admin via the real production bot token.
+        if: success() && steps.mode.outputs.mode == 'live' && (inputs.write_target || 'd1') == 'd1'
         continue-on-error: true
         run: |
           # WHY: degraded publication is successful, but the owner should know.
@@ -468,7 +572,10 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
       - name: Alert the owner on failure (A6)
-        if: failure()
+        # write_target=='d1' guard: a rehearsal failure is visible directly
+        # in the Actions UI to whoever is running the rehearsal - it does
+        # not also need to ping the real admin via the real bot token.
+        if: failure() && (inputs.write_target || 'd1') == 'd1'
         run: |
           set -euo pipefail
           admin_id=$(grep '^TELEGRAM_ADMIN_IDS' workers/wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | cut -d',' -f1 | xargs)

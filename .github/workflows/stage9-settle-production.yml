@@ -32,6 +32,12 @@ on:
         required: false
         default: true
         type: boolean
+      write_target:
+        description: "Where writes land (default d1: today's unchanged behaviour). 'server' is rehearsal-only - see docs/STAGE1_SERVER_MIGRATION_PLAN.md"
+        required: false
+        default: "d1"
+        type: choice
+        options: [d1, server]
 
 env:
   PRODUCTION_DB_NAME: sureodds_production
@@ -178,7 +184,11 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Apply to production D1 (skipped in dry-run)
-        if: needs.guard.outputs.mode == 'live'
+        # (inputs.write_target || 'd1') == 'd1': true on a schedule trigger
+        # too (inputs is empty there, falling back to 'd1') - the scheduled
+        # path can NEVER take the server branch below, only an explicit
+        # workflow_dispatch can.
+        if: needs.guard.outputs.mode == 'live' && (inputs.write_target || 'd1') == 'd1'
         run: |
           set -euo pipefail
           cd workers
@@ -231,6 +241,30 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      # Rehearsal-only path - see docs/STAGE1_SERVER_MIGRATION_PLAN.md
+      # section 6. Only reachable via an explicit workflow_dispatch with
+      # write_target=server; a schedule trigger can never set write_target,
+      # so this is always skipped on the normal twice-daily runs.
+      - name: Apply to server (rehearsal only - write_target=server)
+        if: needs.guard.outputs.mode == 'live' && inputs.write_target == 'server'
+        run: |
+          set -euo pipefail
+          cd workers
+          epoch="$(bot/ssh-relay/query-epoch.sh)"
+          python3 scripts/build_plan_manifest.py /tmp/settle_plan \
+            --rest-dir /tmp/settle_plan/rest \
+            --expect-epoch "$epoch"
+          if ! bot/ssh-relay/deliver-batch.sh settlement /tmp/settle_plan; then
+            status=$?
+            if [ "$status" -eq 2 ]; then
+              echo "::error::server epoch moved before delivery (stale_epoch) - another writer landed first; re-run to retry with a fresh base" >&2
+            fi
+            exit "$status"
+          fi
+        env:
+          SUREODDS_SSH_HOST: ${{ secrets.SUREODDS_SSH_HOST }}
+          SUREODDS_SSH_KEY: ${{ secrets.SUREODDS_SSH_KEY }}
+          SUREODDS_SSH_KNOWN_HOSTS: ${{ secrets.SUREODDS_SSH_KNOWN_HOSTS }}
       - name: Release the shared D1-write lease (always, if acquired — A2)
         if: always() && steps.synclease.outputs.acquired == 'true'
         run: |
@@ -268,7 +302,11 @@ jobs:
             /tmp/settle_report.json
       - name: Check alert dedup state (A6; one alert per incident, not per tick)
         id: dedupcheck
-        if: failure()
+        # write_target=='d1' guard: this writes to the REAL job_state dedup
+        # row in production D1, regardless of where the settlement data
+        # itself was applied - a rehearsal failure must not touch the real
+        # alert-dedup bookkeeping (it could suppress a later real alert).
+        if: failure() && (inputs.write_target || 'd1') == 'd1'
         run: |
           set -euo pipefail
           cd workers
@@ -295,7 +333,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Alert the owner on failure (actionable only, deduplicated)
-        if: failure() && steps.dedupcheck.outputs.repeat != 'true'
+        # write_target=='d1' guard: see dedupcheck above - same reasoning,
+        # this is the real Telegram send to the real admin.
+        if: failure() && steps.dedupcheck.outputs.repeat != 'true' && (inputs.write_target || 'd1') == 'd1'
         run: |
           set -euo pipefail
           admin_id=$(grep '^TELEGRAM_ADMIN_IDS' workers/wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | cut -d',' -f1 | xargs)
@@ -307,7 +347,10 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
       - name: Reset alert dedup state on success
-        if: success()
+        # write_target=='d1' guard: a rehearsal success writing to the
+        # server must not reset the real stage9_alert dedup row in
+        # production D1 - that row tracks a REAL incident stream.
+        if: success() && (inputs.write_target || 'd1') == 'd1'
         run: |
           cd workers
           [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || exit 0

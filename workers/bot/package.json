@@ -1,0 +1,16 @@
+{
+  "name": "sureodds-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot polling client + cron timers for Sureodds predictions, running on a local SQLite database",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node bot.ts",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  }
+}

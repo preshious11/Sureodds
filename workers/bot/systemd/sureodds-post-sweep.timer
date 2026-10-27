@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Sureodds post sweep every 5 minutes, 09:00-23:55 Lagos (08:00-22:55 UTC)
+
+[Timer]
+OnCalendar=*-*-* 08..22:00/5:00
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

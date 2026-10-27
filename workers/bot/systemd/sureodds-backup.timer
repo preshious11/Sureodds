@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Sureodds SQLite backup once daily, 04:00 Lagos (03:00 UTC - low-traffic window)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+AccuracySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

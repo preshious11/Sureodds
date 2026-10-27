@@ -1,0 +1,13 @@
+[Unit]
+Description=Sureodds deliver sweep (webhook-retry observability, match-event delivery, Actions dispatch)
+
+[Service]
+Type=oneshot
+User=sureodds
+WorkingDirectory=/opt/sureodds/workers/bot
+# /var/lib/sureodds/runtime/bin/node is a stable symlink, see sureodds-bot.service.
+ExecStart=/usr/bin/flock -n /var/lock/sureodds-deliver-sweep.lock /var/lib/sureodds/runtime/bin/node cron/deliver-sweep.ts
+EnvironmentFile=/opt/sureodds/workers/bot/.env
+MemoryMax=200M
+MemoryAccounting=yes
+NoNewPrivileges=yes
