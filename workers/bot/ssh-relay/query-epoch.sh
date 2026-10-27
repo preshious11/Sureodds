@@ -21,8 +21,12 @@ trap 'rm -rf "$workdir"' EXIT
 
 key_file="$workdir/delivery_key"
 known_hosts_file="$workdir/known_hosts"
-printf '%s\n' "$SUREODDS_SSH_KEY" > "$key_file"
-printf '%s\n' "$SUREODDS_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+# Strip \r - see deliver-batch.sh's identical line for why: a secret
+# pasted from a Windows clipboard/terminal commonly carries CRLF line
+# endings, and a CRLF-corrupted private key fails ssh's parser with an
+# opaque "error in libcrypto", not an obvious "bad line ending".
+printf '%s\n' "$SUREODDS_SSH_KEY" | tr -d '\r' > "$key_file"
+printf '%s\n' "$SUREODDS_SSH_KNOWN_HOSTS" | tr -d '\r' > "$known_hosts_file"
 chmod 600 "$key_file"
 
 response="$(ssh -i "$key_file" \
