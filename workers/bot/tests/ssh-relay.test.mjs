@@ -98,6 +98,18 @@ describe("verifyManifest", () => {
     writeFileSync(join(batchDir, "x.sql"), "hello", "utf8");
     assert.equal(sha256OfFile(join(batchDir, "x.sql")), sha("hello"));
   });
+
+  it("rejects a manifest with no files, no statements, and no expect_epoch - genuinely nothing to apply", () => {
+    writeBatch(batchDir, "plan-empty", {});
+    assert.throws(() => verifyManifest(batchDir), /nothing to apply/);
+  });
+
+  it("accepts a manifest with no files/statements WHEN expect_epoch is set - an epoch-only plan (settlement found nothing new to grade), matching production D1's unconditional epoch bump", () => {
+    writeBatch(batchDir, "plan-epoch-only", {}, 7);
+    const manifest = verifyManifest(batchDir);
+    assert.equal(manifest.plan_id, "plan-epoch-only");
+    assert.equal(manifest.expect_epoch, 7);
+  });
 });
 
 describe("apply-plan.ts as a child process: duplicate and interrupted delivery", () => {
@@ -237,5 +249,36 @@ describe("apply-plan.ts: epoch passthrough from the manifest", () => {
     const rows = after.queryRaw("SELECT chat_id FROM subscribers WHERE chat_id = 'relay4'");
     after.close();
     assert.deepEqual(rows, [], "a stale-epoch rejection must not apply the data either");
+  });
+
+  it("an epoch-only plan (no files, no statements) still applies and bumps epoch - matches production D1's unconditional epoch bump on a settlement run that found nothing new to grade", () => {
+    const adapter = new LocalSqliteAdapter(dbPath);
+    const before = adapter.currentEpoch();
+    adapter.close();
+
+    writeBatch(batchDir, "plan-epoch-only-ok", {}, before);
+    const result = JSON.parse(runApplyPlan([dbPath, batchDir]));
+    assert.equal(result.outcome, "applied");
+    assert.equal(result.files, 0);
+    assert.equal(result.statements, 0);
+
+    const after = new LocalSqliteAdapter(dbPath);
+    assert.equal(after.currentEpoch(), before + 1);
+    after.close();
+  });
+
+  it("a repeated epoch-only plan (same plan id) is a no-op - does not bump epoch a second time", () => {
+    const adapter = new LocalSqliteAdapter(dbPath);
+    const before = adapter.currentEpoch();
+    adapter.close();
+
+    writeBatch(batchDir, "plan-epoch-only-repeat", {}, before);
+    JSON.parse(runApplyPlan([dbPath, batchDir]));
+    const second = JSON.parse(runApplyPlan([dbPath, batchDir]));
+    assert.equal(second.outcome, "already_applied");
+
+    const after = new LocalSqliteAdapter(dbPath);
+    assert.equal(after.currentEpoch(), before + 1, "the second (deduped) delivery must not bump epoch again");
+    after.close();
   });
 });

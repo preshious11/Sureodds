@@ -46,8 +46,16 @@ export function verifyManifest(batchDir: string): PlanManifest {
     throw new Error("manifest must have a checksums map");
   }
   const hasStatements = Array.isArray(manifest.statements) && manifest.statements.length > 0;
-  if (manifest.files.length === 0 && !hasStatements) {
-    throw new Error("manifest has neither files nor statements - nothing to apply");
+  // An empty files[]/statements[] IS legitimate when expect_epoch is set:
+  // the production D1 apply path bumps sync_state.epoch unconditionally on
+  // every settlement run, even a "nothing changed" one (see
+  // stage9-settle-production.yml's "Apply to production D1" step - its
+  // epoch UPDATE is never gated on ok/total being nonzero). Matching that
+  // means an epoch-only plan (data unchanged, epoch still advances) is a
+  // real case, not an error - only a manifest with NEITHER content NOR an
+  // epoch to bump is actually meaningless.
+  if (manifest.files.length === 0 && !hasStatements && manifest.expect_epoch === undefined) {
+    throw new Error("manifest has neither files, statements, nor an expect_epoch - nothing to apply");
   }
 
   for (const file of manifest.files) {

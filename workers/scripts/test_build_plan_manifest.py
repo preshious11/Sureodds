@@ -79,6 +79,49 @@ class BuildPlanManifestTests(unittest.TestCase):
         self.assertEqual(bpm.main([bpm.__name__, self.tmp]), 1)
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "plan.json")))
 
+    def test_empty_batch_with_expect_epoch_is_an_epoch_only_plan_not_an_error(self):
+        # Mirrors production's D1 apply step, which bumps sync_state.epoch
+        # unconditionally every run even when there's nothing to write
+        # (settlement found nothing new to grade) - an empty diff must
+        # still produce a deliverable, epoch-bumping plan, not a hard
+        # failure, or the SQLite path would diverge from that behaviour.
+        self.assertEqual(bpm.main([bpm.__name__, self.tmp, "--expect-epoch", "7"]), 0)
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        self.assertEqual(manifest["files"], [])
+        self.assertNotIn("statements", manifest)
+        self.assertEqual(manifest["expect_epoch"], 7)
+
+    def test_two_empty_plans_at_different_epochs_get_different_plan_ids(self):
+        # The critical correctness property: without folding expect_epoch
+        # into the id, two UNRELATED empty-diff runs (different days,
+        # different epochs) would collide on the same plan_id and the
+        # second would be wrongly treated as "already applied" - silently
+        # skipping ITS epoch bump.
+        bpm.main([bpm.__name__, self.tmp, "--expect-epoch", "7"])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            first_id = json.load(fh)["plan_id"]
+
+        bpm.main([bpm.__name__, self.tmp, "--expect-epoch", "8"])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            second_id = json.load(fh)["plan_id"]
+
+        self.assertNotEqual(first_id, second_id)
+
+    def test_two_empty_plans_at_the_same_epoch_get_the_same_plan_id(self):
+        # The flip side: a genuine RETRY of the same attempt (same
+        # expect_epoch) must still dedupe deterministically, same as every
+        # other plan_id case.
+        bpm.main([bpm.__name__, self.tmp, "--expect-epoch", "7"])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            first_id = json.load(fh)["plan_id"]
+
+        bpm.main([bpm.__name__, self.tmp, "--expect-epoch", "7"])
+        with open(os.path.join(self.tmp, "plan.json"), encoding="utf-8") as fh:
+            second_id = json.load(fh)["plan_id"]
+
+        self.assertEqual(first_id, second_id)
+
     def test_rest_jsonl_entries_become_manifest_statements(self):
         rest_dir = os.path.join(self.tmp, "rest")
         os.makedirs(rest_dir)

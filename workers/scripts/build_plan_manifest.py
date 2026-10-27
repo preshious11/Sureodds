@@ -87,7 +87,7 @@ def main(argv: list[str]) -> int:
         print(f"rest entry validation failed: {exc}", file=sys.stderr)
         return 1
 
-    if not files and not statements:
+    if not files and not statements and args.expect_epoch is None:
         print(f"no .sql files found in {args.batch_dir} and no rest entries", file=sys.stderr)
         return 1
 
@@ -95,9 +95,20 @@ def main(argv: list[str]) -> int:
     statement_hashes = [
         hashlib.sha256(json.dumps(s, sort_keys=True).encode("utf-8")).hexdigest() for s in statements
     ]
-    plan_id = hashlib.sha256(
-        ("".join(checksums[f] for f in files) + "".join(statement_hashes)).encode("utf-8")
-    ).hexdigest()
+    plan_id_material = "".join(checksums[f] for f in files) + "".join(statement_hashes)
+    if not files and not statements:
+        # Nothing changed this run (a legitimate outcome - e.g. settlement
+        # found nothing new to grade), but the production D1 apply path
+        # bumps sync_state.epoch unconditionally regardless of content, so
+        # this still has to be delivered as a real, epoch-bumping plan, not
+        # skipped. Fold expect_epoch into the plan id so a DIFFERENT empty
+        # run (a later day, a different epoch) never collides with an
+        # earlier empty run's plan id and gets silently treated as
+        # already-applied - which would wrongly skip ITS epoch bump, even
+        # though a genuine retry of this SAME attempt (identical
+        # expect_epoch) still correctly dedupes.
+        plan_id_material += f"epoch-only:{args.expect_epoch}"
+    plan_id = hashlib.sha256(plan_id_material.encode("utf-8")).hexdigest()
 
     manifest = {"plan_id": plan_id, "files": files, "checksums": checksums}
     if statements:
