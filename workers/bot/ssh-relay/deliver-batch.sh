@@ -44,8 +44,14 @@ trap 'rm -rf "$workdir"' EXIT
 
 key_file="$workdir/delivery_key"
 known_hosts_file="$workdir/known_hosts"
-printf '%s\n' "$SUREODDS_SSH_KEY" > "$key_file"
-printf '%s\n' "$SUREODDS_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+# Strip \r: a secret pasted from a Windows clipboard/terminal commonly
+# carries CRLF line endings. A CRLF-corrupted private key fails to parse
+# with an opaque "error in libcrypto" from ssh, not an obvious "bad line
+# ending" message - stripping defensively here means the secret's exact
+# paste source never matters, instead of requiring whoever sets it to
+# somehow guarantee LF-only beforehand.
+printf '%s\n' "$SUREODDS_SSH_KEY" | tr -d '\r' > "$key_file"
+printf '%s\n' "$SUREODDS_SSH_KNOWN_HOSTS" | tr -d '\r' > "$known_hosts_file"
 chmod 600 "$key_file"
 
 archive="$workdir/${job}.tar.gz"
