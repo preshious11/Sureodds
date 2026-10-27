@@ -1,0 +1,52 @@
+# One-off, read-only insurance snapshot of the Pro value shadow DB that
+# currently lives ONLY in GitHub Actions cache (pro-value-shadow- key,
+# restored/saved by stage5-acceptance-production.yml's Pro value shadow
+# steps and by pro-value-closing-shadow.yml - see
+# docs/STAGE1_SERVER_MIGRATION_PLAN.md's note on the selection/closing
+# design gap found during the server-migration rehearsal). Actions cache
+# has no durability guarantee (eviction on inactivity, no explicit
+# retention), so this captures a downloadable copy while the design gap
+# is fixed. Never resaves the cache, never touches D1, Telegram, or any
+# live system - restore-only, read the row counts, upload as an artifact.
+name: pro-value-shadow-snapshot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore shadow DB (read-only - never saved back)
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/pro_value_shadow.db
+          key: pro-value-shadow-snapshot-noop
+          restore-keys: |
+            pro-value-shadow-
+      - name: Fail loudly if there was nothing to restore
+        run: |
+          set -euo pipefail
+          if [ ! -f /tmp/pro_value_shadow.db ]; then
+            echo "::error::no pro-value-shadow- cache entry found - nothing to snapshot" >&2
+            exit 1
+          fi
+      - name: Report row counts and date range (sanity check before upload)
+        run: |
+          set -euo pipefail
+          sqlite3 /tmp/pro_value_shadow.db "SELECT COUNT(*) AS total_rows FROM pro_value_rows;"
+          sqlite3 /tmp/pro_value_shadow.db \
+            "SELECT MIN(datetime(run_at,'unixepoch')), MAX(datetime(run_at,'unixepoch')) FROM pro_value_rows;"
+          sqlite3 /tmp/pro_value_shadow.db "PRAGMA integrity_check;"
+      - name: Upload as a downloadable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pro-value-shadow-snapshot-${{ github.run_id }}
+          path: /tmp/pro_value_shadow.db
+          retention-days: 90
