@@ -56,7 +56,7 @@ on:
       write_target:
         description: "Where writes land (default d1: today's unchanged behaviour). 'server' is rehearsal-only - see docs/STAGE1_SERVER_MIGRATION_PLAN.md"
         required: false
-        default: "d1"
+        default: "server"
         type: choice
         options: [d1, server]
 
@@ -228,11 +228,11 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Apply to production D1 (skipped in dry-run) — SAME apply/retry loop as stage9
-        # (inputs.write_target || 'd1') == 'd1': true on a schedule trigger
-        # too (inputs is empty there, falling back to 'd1') - the scheduled
-        # path can NEVER take the server branch below, only an explicit
-        # workflow_dispatch can.
-        if: needs.guard.outputs.mode == 'live' && (inputs.write_target || 'd1') == 'd1'
+        # (inputs.write_target || 'server') == 'd1': only true when write_target
+        # is EXPLICITLY set to 'd1' (a manual workflow_dispatch) - post-cutover,
+        # the empty value a schedule trigger always has falls back to 'server'
+        # below instead, not here.
+        if: needs.guard.outputs.mode == 'live' && (inputs.write_target || 'server') == 'd1'
         run: |
           set -euo pipefail
           cd workers
@@ -265,12 +265,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
 
-      # Rehearsal-only path - see docs/STAGE1_SERVER_MIGRATION_PLAN.md
-      # section 6. Only reachable via an explicit workflow_dispatch with
-      # write_target=server; a schedule trigger can never set write_target,
-      # so this is always skipped on the normal daily run.
-      - name: Apply to server (rehearsal only - write_target=server)
-        if: needs.guard.outputs.mode == 'live' && inputs.write_target == 'server'
+      # Post-cutover default path - see docs/STAGE1_SERVER_MIGRATION_PLAN.md
+      # section 6/11. write_target falls back to 'server' when unset, so this
+      # now runs on the normal daily scheduled trigger too; write_target=d1
+      # is the opt-in exception (apply-to-D1 step above).
+      - name: Apply to server
+        if: needs.guard.outputs.mode == 'live' && (inputs.write_target || 'server') == 'server'
         run: |
           set -euo pipefail
           cd workers

@@ -35,7 +35,7 @@ on:
       write_target:
         description: "Where writes land (default d1: today's unchanged behaviour). 'server' is rehearsal-only - see docs/STAGE1_SERVER_MIGRATION_PLAN.md"
         required: false
-        default: "d1"
+        default: "server"
         type: choice
         options: [d1, server]
 
@@ -184,11 +184,11 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Apply to production D1 (skipped in dry-run)
-        # (inputs.write_target || 'd1') == 'd1': true on a schedule trigger
-        # too (inputs is empty there, falling back to 'd1') - the scheduled
-        # path can NEVER take the server branch below, only an explicit
-        # workflow_dispatch can.
-        if: needs.guard.outputs.mode == 'live' && (inputs.write_target || 'd1') == 'd1'
+        # (inputs.write_target || 'server') == 'd1': only true when write_target
+        # is EXPLICITLY set to 'd1' (a manual workflow_dispatch) - post-cutover,
+        # the empty value a schedule trigger always has falls back to 'server'
+        # below instead, not here.
+        if: needs.guard.outputs.mode == 'live' && (inputs.write_target || 'server') == 'd1'
         run: |
           set -euo pipefail
           cd workers
@@ -241,12 +241,12 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
-      # Rehearsal-only path - see docs/STAGE1_SERVER_MIGRATION_PLAN.md
-      # section 6. Only reachable via an explicit workflow_dispatch with
-      # write_target=server; a schedule trigger can never set write_target,
-      # so this is always skipped on the normal twice-daily runs.
-      - name: Apply to server (rehearsal only - write_target=server)
-        if: needs.guard.outputs.mode == 'live' && inputs.write_target == 'server'
+      # Post-cutover default path - see docs/STAGE1_SERVER_MIGRATION_PLAN.md
+      # section 6/11. write_target falls back to 'server' when unset, so this
+      # now runs on the normal twice-daily scheduled trigger too; write_target=d1
+      # is the opt-in exception (apply-to-D1 step above).
+      - name: Apply to server
+        if: needs.guard.outputs.mode == 'live' && (inputs.write_target || 'server') == 'server'
         run: |
           set -euo pipefail
           cd workers
@@ -306,7 +306,7 @@ jobs:
         # row in production D1, regardless of where the settlement data
         # itself was applied - a rehearsal failure must not touch the real
         # alert-dedup bookkeeping (it could suppress a later real alert).
-        if: failure() && (inputs.write_target || 'd1') == 'd1'
+        if: failure() && (inputs.write_target || 'server') == 'd1'
         run: |
           set -euo pipefail
           cd workers
@@ -335,7 +335,7 @@ jobs:
       - name: Alert the owner on failure (actionable only, deduplicated)
         # write_target=='d1' guard: see dedupcheck above - same reasoning,
         # this is the real Telegram send to the real admin.
-        if: failure() && steps.dedupcheck.outputs.repeat != 'true' && (inputs.write_target || 'd1') == 'd1'
+        if: failure() && steps.dedupcheck.outputs.repeat != 'true' && (inputs.write_target || 'server') == 'd1'
         run: |
           set -euo pipefail
           admin_id=$(grep '^TELEGRAM_ADMIN_IDS' workers/wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | cut -d',' -f1 | xargs)
@@ -350,7 +350,7 @@ jobs:
         # write_target=='d1' guard: a rehearsal success writing to the
         # server must not reset the real stage9_alert dedup row in
         # production D1 - that row tracks a REAL incident stream.
-        if: success() && (inputs.write_target || 'd1') == 'd1'
+        if: success() && (inputs.write_target || 'server') == 'd1'
         run: |
           cd workers
           [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || exit 0

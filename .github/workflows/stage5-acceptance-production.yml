@@ -60,7 +60,7 @@ on:
       write_target:
         description: "Where writes land (default d1: today's unchanged behaviour). 'server' is rehearsal-only - see docs/STAGE1_SERVER_MIGRATION_PLAN.md"
         required: false
-        default: "d1"
+        default: "server"
         type: choice
         options: [d1, server]
       sync_shadow_rows:
@@ -155,6 +155,13 @@ jobs:
       # would spend real API credits or post to the real community group
       # for a test run - blocked here rather than merely discouraged.
       - name: Rehearsal guard (write_target=server forbids live-generate and group posts)
+        # Deliberately NOT (inputs.write_target || 'server') - write_target=server
+        # is now the real production default (post-cutover), and the real
+        # scheduled/workflow_call path DOES run operation=live-generate and
+        # DOES post to the real group. This guard must only fire on an
+        # explicit manual rehearsal dispatch (inputs.write_target literally
+        # set to "server" by a human), never on the empty/unset value a
+        # schedule or workflow_call trigger always has.
         if: inputs.write_target == 'server'
         run: |
           set -euo pipefail
@@ -259,7 +266,7 @@ jobs:
         # save under this same prefix could become what a LATER production
         # run restores from. Skipped entirely for a rehearsal rather than
         # risk sharing state with the real closing job.
-        if: steps.mode.outputs.mode == 'live' && (inputs.write_target || 'd1') == 'd1'
+        if: steps.mode.outputs.mode == 'live' && (inputs.write_target || 'server') == 'd1'
         uses: actions/cache/restore@v4
         with:
           path: /tmp/pro_value_shadow.db
@@ -270,7 +277,7 @@ jobs:
         # write_target=='d1' guard: this step itself spends OddsAPI credits
         # (PRO_VALUE_CREDIT_CAP) - a rehearsal testing the server delivery
         # path has no reason to also spend these.
-        if: steps.mode.outputs.mode == 'live' && (inputs.write_target || 'd1') == 'd1'
+        if: steps.mode.outputs.mode == 'live' && (inputs.write_target || 'server') == 'd1'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -289,7 +296,7 @@ jobs:
         # write_target=='d1' guard: this sends a real Telegram message to
         # the real admin via the real production bot token - never during
         # a rehearsal.
-        if: steps.mode.outputs.mode == 'live' && (inputs.write_target || 'd1') == 'd1'
+        if: steps.mode.outputs.mode == 'live' && (inputs.write_target || 'server') == 'd1'
         continue-on-error: true
         run: |
           set -uo pipefail
@@ -298,7 +305,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
       - name: Upload Pro value shadow results (not published)
-        if: always() && steps.mode.outputs.mode == 'live' && (inputs.write_target || 'd1') == 'd1'
+        if: always() && steps.mode.outputs.mode == 'live' && (inputs.write_target || 'server') == 'd1'
         uses: actions/upload-artifact@v4
         with:
           name: pro-value-shadow-results
@@ -309,7 +316,7 @@ jobs:
       - name: Save Pro value shadow DB
         # write_target=='d1' guard: same shared-cache-namespace reasoning
         # as the restore step above.
-        if: steps.mode.outputs.mode == 'live' && always() && (inputs.write_target || 'd1') == 'd1'
+        if: steps.mode.outputs.mode == 'live' && always() && (inputs.write_target || 'server') == 'd1'
         uses: actions/cache/save@v4
         with:
           path: /tmp/pro_value_shadow.db
@@ -411,11 +418,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Apply to production D1 (skipped in dry-run)
-        # (inputs.write_target || 'd1') == 'd1': true for workflow_call too
-        # (stage7 never sets write_target, so it's empty there, falling
-        # back to 'd1') - the scheduled path can NEVER take the server
-        # branch below, only an explicit workflow_dispatch can.
-        if: inputs.dry_run == false && (inputs.write_target || 'd1') == 'd1'
+        # (inputs.write_target || 'server') == 'd1': only true when write_target
+        # is EXPLICITLY set to 'd1' - post-cutover, stage7's workflow_call
+        # (which never sets write_target) falls back to 'server' below instead.
+        if: inputs.dry_run == false && (inputs.write_target || 'server') == 'd1'
         run: |
           set -euo pipefail
           cd workers
@@ -459,12 +465,12 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
-      # Rehearsal-only path - see docs/STAGE1_SERVER_MIGRATION_PLAN.md
-      # section 6. Only reachable via an explicit workflow_dispatch with
-      # write_target=server; the scheduled (workflow_call) path can never
-      # set write_target, so this is always skipped there.
-      - name: Apply to server (rehearsal only - write_target=server)
-        if: inputs.dry_run == false && inputs.write_target == 'server'
+      # Post-cutover default path - see docs/STAGE1_SERVER_MIGRATION_PLAN.md
+      # section 6/11. write_target falls back to 'server' when unset, so this
+      # now runs on the normal scheduled/workflow_call path too, not only an
+      # explicit workflow_dispatch; write_target=d1 is the opt-in exception.
+      - name: Apply to server
+        if: inputs.dry_run == false && (inputs.write_target || 'server') == 'server'
         run: |
           set -euo pipefail
           cd workers
@@ -547,7 +553,7 @@ jobs:
       - name: Tell the owner when backup providers were used
         # write_target=='d1' guard: real Telegram message to the real
         # admin via the real production bot token.
-        if: success() && steps.mode.outputs.mode == 'live' && (inputs.write_target || 'd1') == 'd1'
+        if: success() && steps.mode.outputs.mode == 'live' && (inputs.write_target || 'server') == 'd1'
         continue-on-error: true
         run: |
           # WHY: degraded publication is successful, but the owner should know.
@@ -575,7 +581,7 @@ jobs:
         # write_target=='d1' guard: a rehearsal failure is visible directly
         # in the Actions UI to whoever is running the rehearsal - it does
         # not also need to ping the real admin via the real bot token.
-        if: failure() && (inputs.write_target || 'd1') == 'd1'
+        if: failure() && (inputs.write_target || 'server') == 'd1'
         run: |
           set -euo pipefail
           admin_id=$(grep '^TELEGRAM_ADMIN_IDS' workers/wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | cut -d',' -f1 | xargs)
