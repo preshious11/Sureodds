@@ -443,15 +443,97 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       await handleCustomPicksClarify(env, cb, cbId, chatId, msg);
       return;
     }
-    if (data === "admin|propicks") {
+    // Admin /start shortcut row (index.ts:601-606): one-tap equivalents of
+    // typing the matching command, gated identically (admin + private chat)
+    // on every tap, not just when the keyboard was built — a tap on an old
+    // message, or by someone who was admin when it was sent but isn't now,
+    // still goes through this same check.
+    if (data.startsWith("admin|")) {
       const tapUserId = String((cb.from as Record<string, unknown> | undefined)?.id ?? "");
       const tapChatType = String((msg?.chat as Record<string, unknown> | undefined)?.type ?? "private");
-      if (tapChatType !== "private" || !isAdmin(env, tapUserId) || !tapUserId) {
+      if (tapChatType !== "private" || !tapUserId || !isAdmin(env, tapUserId)) {
         await answerCallback(env, cbId);
         return;
       }
       await answerCallback(env, cbId);
-      await enterProPicks(env, tapUserId, chatId);
+      const [, action, arg] = data.split("|");
+      if (action === "propicks") {
+        await enterProPicks(env, tapUserId, chatId);
+        return;
+      }
+      if (action === "custompicks") {
+        await leaveCustomSession(env.DB, tapUserId, chatId);
+        await enterCustomSession(env.DB, tapUserId, chatId);
+        await tgApi(env, "sendMessage", { chat_id: chatId, text: introText(parseEnabledSports(env.ALLOWED_SPORTS)) });
+        return;
+      }
+      if (action === "menu" || action === "pinmenu") {
+        if (!env.TELEGRAM_CHAT_ID) {
+          await tgApi(env, "sendMessage", { chat_id: chatId, text: "Community destination is not configured. Set TELEGRAM_CHAT_ID." });
+          return;
+        }
+        if (!env.TELEGRAM_BOT_USERNAME) {
+          await tgApi(env, "sendMessage", { chat_id: chatId, text: "Could not resolve this bot's username. Try again." });
+          return;
+        }
+        if (action === "pinmenu") {
+          await pinCommunityMenu(env, chatId);
+        } else {
+          await tgApi(env, "sendMessage", { chat_id: env.TELEGRAM_CHAT_ID, text: COMMUNITY_MENU_TEXT, reply_markup: communityMenuKeyboard(env.TELEGRAM_BOT_USERNAME) });
+          await tgApi(env, "sendMessage", { chat_id: chatId, text: "Community menu posted." });
+        }
+        return;
+      }
+      if (action === "postpicks") {
+        const top = await postGroupPicks(env, "top");
+        const daily = await postGroupPicks(env, "daily");
+        await tgApi(env, "sendMessage", { chat_id: chatId, text: `Top: ${top}\nDaily: ${daily}` });
+        return;
+      }
+      if (action === "setcommands") {
+        const regular = ['start','top','daily','all'].map(command=>({command,description:command}));
+        const elevated = [...regular,...['stats','yesterday','gifs','addgif','cleargifs','done','setcommands','menu','pinmenu'].map(command=>({command,description:command}))];
+        const scopes = [{type:'default'},...(env.TELEGRAM_ADMIN_IDS??'').split(',').map(s=>s.trim()).filter(Boolean).map(chat_id=>({type:'chat',chat_id}))];
+        for (const scope of scopes) {
+          try {
+            const res = await tgApi(env, 'setMyCommands', { scope, commands: scope.type === 'default' ? regular : elevated });
+            const result = await res.json();
+            await tgApi(env, "sendMessage", { chat_id: chatId, text: `${JSON.stringify(scope)}: ${JSON.stringify(result)}` });
+          } catch (err) {
+            await tgApi(env, "sendMessage", { chat_id: chatId, text: `${JSON.stringify(scope)}: ${err instanceof Error ? err.message : 'failed'}` });
+          }
+        }
+        return;
+      }
+      if (action === "gifs") {
+        const { results } = await env.DB.prepare('SELECT kind,COUNT(*) AS n FROM result_gifs GROUP BY kind').all<{ kind: string; n: number }>();
+        await tgApi(env, "sendMessage", { chat_id: chatId, text: ['won','lost'].map(k=>`${k}: ${results.find(r=>r.kind===k)?.n??0}`).join('\n') });
+        return;
+      }
+      if (action === "addgif" && !arg) {
+        await tgApi(env, "sendMessage", { chat_id: chatId, text: "Add GIFs for which result?", reply_markup: { inline_keyboard: [[{ text: "✅ Won", callback_data: "admin|addgif|won" }, { text: "❌ Lost", callback_data: "admin|addgif|lost" }]] } });
+        return;
+      }
+      if (action === "addgif" && ['won','lost'].includes(arg)) {
+        const key = `gif_collect:${tapUserId}`;
+        await env.DB.prepare('INSERT INTO kv(k,v) VALUES(?1,?2) ON CONFLICT(k) DO UPDATE SET v=excluded.v')
+          .bind(key, JSON.stringify({ kind: arg, expires: Date.now() + 15 * 60000 })).run();
+        await tgApi(env, "sendMessage", { chat_id: chatId, text: `Send ${arg} GIFs for the next 15 minutes, then /done.` });
+        return;
+      }
+      if (action === "cleargifs" && !arg) {
+        await tgApi(env, "sendMessage", { chat_id: chatId, text: "Clear GIFs for which result?", reply_markup: { inline_keyboard: [[{ text: "✅ Won", callback_data: "admin|cleargifs|won" }, { text: "❌ Lost", callback_data: "admin|cleargifs|lost" }]] } });
+        return;
+      }
+      if (action === "cleargifs" && ['won','lost'].includes(arg)) {
+        await tgApi(env, "sendMessage", { chat_id: chatId, text: `Delete all "${arg}" GIFs? This cannot be undone.`, reply_markup: { inline_keyboard: [[{ text: `⚠️ Confirm clear ${arg}`, callback_data: `admin|cleargifsconfirm|${arg}` }]] } });
+        return;
+      }
+      if (action === "cleargifsconfirm" && ['won','lost'].includes(arg)) {
+        await env.DB.prepare('DELETE FROM result_gifs WHERE kind=?1').bind(arg).run();
+        await tgApi(env, "sendMessage", { chat_id: chatId, text: `Cleared all "${arg}" GIFs.` });
+        return;
+      }
       return;
     }
     const parsed = parseCallback(data);
@@ -596,9 +678,16 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
     }
     const name = String(from.first_name ?? "there");
     const keyboard = menuKeyboard(allButtonModeFor(chatType, env.TELEGRAM_BOT_USERNAME, admin)) as { inline_keyboard: unknown[][] };
-    // Admin-only, private-chat-only: no other user's /start ever sees this
-    // row, matching the "keep it invisible until it's ready" preview rule.
-    if (admin && chatType === "private") keyboard.inline_keyboard.push([{ text: "💎 Pro Picks", callback_data: "admin|propicks" }]);
+    // Admin-only, private-chat-only: no other user's /start ever sees these
+    // rows, matching the "keep it invisible until it's ready" preview rule.
+    // Every callback_data here is gated again on tap (admin + private chat)
+    // in routeUpdate, so this is just a shortcut to typing the command.
+    if (admin && chatType === "private") {
+      keyboard.inline_keyboard.push([{ text: "🎯 Custom Picks", callback_data: "admin|custompicks" }, { text: "💎 Pro Picks", callback_data: "admin|propicks" }]);
+      keyboard.inline_keyboard.push([{ text: "📋 Menu", callback_data: "admin|menu" }, { text: "📌 Pin Menu", callback_data: "admin|pinmenu" }]);
+      keyboard.inline_keyboard.push([{ text: "📤 Post Picks", callback_data: "admin|postpicks" }, { text: "🔧 Set Commands", callback_data: "admin|setcommands" }]);
+      keyboard.inline_keyboard.push([{ text: "🎞 Add GIF", callback_data: "admin|addgif" }, { text: "📁 List GIFs", callback_data: "admin|gifs" }, { text: "🗑 Clear GIFs", callback_data: "admin|cleargifs" }]);
+    }
     await tgApi(env, "sendMessage", {
       chat_id: chatId,
       text: welcomeMessage(name),
@@ -692,7 +781,7 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
   // actually changes. Deliberately not advertised anywhere a non-admin
   // would see it; the only visible entry points are this command and the
   // "💎 Pro Picks" button /start adds to an admin's own keyboard.
-  if (cmd === "/propicks" && args.length === 0) {
+  if ((cmd === "/propicks" || cmd === "/pro") && args.length === 0) {
     if (chatType !== "private") return;
     if (!admin) {
       await tgApi(env, "sendMessage", { chat_id: chatId, text: "Not allowed." });
