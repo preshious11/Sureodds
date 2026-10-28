@@ -146,33 +146,17 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
           SHARPAPI_KEY: ${{ secrets.SHARPAPI_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
-      # Rehearsal safety rail - see docs/STAGE1_SERVER_MIGRATION_PLAN.md
-      # section 6 and docs/STAGE1_REHEARSAL_SIDE_EFFECTS.md. write_target
-      # only changes WHERE data is written; it does nothing to stop live
-      # provider calls or a real group post, which are controlled by
-      # OTHER inputs entirely. A rehearsal has no reason to combine
-      # write_target=server with either, and an accidental combination
-      # would spend real API credits or post to the real community group
-      # for a test run - blocked here rather than merely discouraged.
-      - name: Rehearsal guard (write_target=server forbids live-generate and group posts)
-        # Deliberately NOT (inputs.write_target || 'server') - write_target=server
-        # is now the real production default (post-cutover), and the real
-        # scheduled/workflow_call path DOES run operation=live-generate and
-        # DOES post to the real group. This guard must only fire on an
-        # explicit manual rehearsal dispatch (inputs.write_target literally
-        # set to "server" by a human), never on the empty/unset value a
-        # schedule or workflow_call trigger always has.
-        if: inputs.write_target == 'server'
-        run: |
-          set -euo pipefail
-          if [ "${{ inputs.operation }}" = "live-generate" ]; then
-            echo "::error::write_target=server with operation=live-generate would spend real provider credits for a rehearsal run. Use operation=fixture-replay to rehearse delivery, or run live-generate separately with write_target=d1." >&2
-            exit 1
-          fi
-          if [ "${{ inputs.allow_telegram_posts }}" = "true" ]; then
-            echo "::error::write_target=server with allow_telegram_posts=true would post to the real community group from a rehearsal run." >&2
-            exit 1
-          fi
+      # Rehearsal guard REMOVED (Oct 2026, cutover day): its entire premise -
+      # "write_target=server literally means this is a rehearsal" - is false
+      # now that server is the production default (step 9). GitHub fills in
+      # that default on every workflow_dispatch that doesn't explicitly
+      # choose otherwise, so this guard blocked ALL manual live-generate
+      # dispatches post-cutover, not just rehearsals (caught live: 3 failed
+      # runs, 09:55/10:30/10:46 UTC, each failing harmlessly in ~16s before
+      # any provider call or write). No replacement guard added - there is
+      # currently no input that distinguishes "rehearsal" from "normal
+      # production dispatch" now that server is the default; revisit if a
+      # genuine need for a rehearsal-of-the-server-path safety rail returns.
       - name: Pull production base (export + load, timed)
         id: pull
         run: |
