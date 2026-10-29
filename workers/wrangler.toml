@@ -42,7 +42,15 @@ PAGE_SIZE = "5"
 # TELEGRAM_BOT_USERNAME = "BETTSUREbot"
 TELEGRAM_BOT_USERNAME = "BETTSUREbot"
 TELEGRAM_ADMIN_IDS = "8606823551"
-STAGE3_CRON_ENABLED = "1"
+# Disabled 2026-10-29: this Worker is a passive rollback target post-cutover
+# (see CUTOVER.md's own rollback section, which already treats this exact
+# flag as the on/off switch, independent of webhook/rollback readiness) -
+# it has no up-to-date view of generation/settlement/picks any more since
+# write_target moved those writes to the server, not D1. Left firing, its
+# own cron.ts handlers (same code the server now runs) were producing
+# false "no COMPLETE cache"/stale pending-count alerts against an
+# increasingly stale D1. Re-enable only as part of an actual rollback.
+STAGE3_CRON_ENABLED = "0"
 # Pro Picks evidence-aware policy rollout flag (pro_policy.ts). Hard default
 # everywhere except "evidence_v2" is legacy (byte-identical pre-existing
 # behavior) - see pro_policy.ts's own header comment for the rollback
