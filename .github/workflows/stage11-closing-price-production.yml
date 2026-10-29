@@ -276,10 +276,13 @@ jobs:
             /tmp/closing_plan/plan.json
             /tmp/closing_report.json
       - name: Alert the owner on failure (actionable only)
-        # write_target=='d1' guard: a rehearsal failure is visible directly
-        # in the Actions UI - it does not also need to ping the real admin
-        # via the real bot token.
-        if: failure() && (inputs.write_target || 'server') == 'd1'
+        # Always runs on failure, regardless of write_target. A stale
+        # '== d1' guard here (removed) meant a failure under the
+        # post-cutover default (write_target unset, falling back to
+        # 'server') never reached this step at all - found 2026-10-29
+        # while scoping the stage8 fix, same bug class as the
+        # rehearsal-guard regression during cutover.
+        if: failure()
         run: |
           set -euo pipefail
           admin_id=$(grep '^TELEGRAM_ADMIN_IDS' workers/wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | cut -d',' -f1 | xargs)

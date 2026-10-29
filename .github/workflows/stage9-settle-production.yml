@@ -302,11 +302,15 @@ jobs:
             /tmp/settle_report.json
       - name: Check alert dedup state (A6; one alert per incident, not per tick)
         id: dedupcheck
-        # write_target=='d1' guard: this writes to the REAL job_state dedup
-        # row in production D1, regardless of where the settlement data
-        # itself was applied - a rehearsal failure must not touch the real
-        # alert-dedup bookkeeping (it could suppress a later real alert).
-        if: failure() && (inputs.write_target || 'server') == 'd1'
+        # Always runs on failure, regardless of write_target: this dedup
+        # bookkeeping lives in job_state on D1 (the shared coordination
+        # store, unaffected by where application data lands) and must track
+        # every real incident. A stale '== d1' guard here (removed) meant a
+        # failure under the post-cutover default (write_target unset,
+        # falling back to 'server') never reached this step at all - found
+        # 2026-10-29 while scoping the stage8 fix, same bug class as the
+        # rehearsal-guard regression during cutover.
+        if: failure()
         run: |
           set -euo pipefail
           cd workers
@@ -333,9 +337,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Alert the owner on failure (actionable only, deduplicated)
-        # write_target=='d1' guard: see dedupcheck above - same reasoning,
-        # this is the real Telegram send to the real admin.
-        if: failure() && steps.dedupcheck.outputs.repeat != 'true' && (inputs.write_target || 'server') == 'd1'
+        # Always runs on failure (deduplicated via dedupcheck above),
+        # regardless of write_target - see dedupcheck's comment for why the
+        # stale '== d1' guard that used to be here was removed.
+        if: failure() && steps.dedupcheck.outputs.repeat != 'true'
         run: |
           set -euo pipefail
           admin_id=$(grep '^TELEGRAM_ADMIN_IDS' workers/wrangler.toml | sed -E 's/.*"([^"]+)".*/\1/' | cut -d',' -f1 | xargs)
@@ -347,10 +352,10 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.PRODUCTION_TELEGRAM_BOT_TOKEN }}
       - name: Reset alert dedup state on success
-        # write_target=='d1' guard: a rehearsal success writing to the
-        # server must not reset the real stage9_alert dedup row in
-        # production D1 - that row tracks a REAL incident stream.
-        if: success() && (inputs.write_target || 'server') == 'd1'
+        # Always runs on success, regardless of write_target - see
+        # dedupcheck's comment above for why the stale '== d1' guard that
+        # used to be here was removed.
+        if: success()
         run: |
           cd workers
           [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || exit 0
