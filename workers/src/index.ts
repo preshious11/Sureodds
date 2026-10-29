@@ -677,17 +677,13 @@ async function routeUpdate(env: Env, update: Record<string, unknown>): Promise<v
       });
     }
     const name = String(from.first_name ?? "there");
-    const keyboard = menuKeyboard(allButtonModeFor(chatType, env.TELEGRAM_BOT_USERNAME, admin)) as { inline_keyboard: unknown[][] };
-    // Admin-only, private-chat-only: no other user's /start ever sees these
-    // rows, matching the "keep it invisible until it's ready" preview rule.
-    // Every callback_data here is gated again on tap (admin + private chat)
-    // in routeUpdate, so this is just a shortcut to typing the command.
-    if (admin && chatType === "private") {
-      keyboard.inline_keyboard.push([{ text: "🎯 Custom Picks", callback_data: "admin|custompicks" }, { text: "💎 Pro Picks", callback_data: "admin|propicks" }]);
-      keyboard.inline_keyboard.push([{ text: "📋 Menu", callback_data: "admin|menu" }, { text: "📌 Pin Menu", callback_data: "admin|pinmenu" }]);
-      keyboard.inline_keyboard.push([{ text: "📤 Post Picks", callback_data: "admin|postpicks" }, { text: "🔧 Set Commands", callback_data: "admin|setcommands" }]);
-      keyboard.inline_keyboard.push([{ text: "🎞 Add GIF", callback_data: "admin|addgif" }, { text: "📁 List GIFs", callback_data: "admin|gifs" }, { text: "🗑 Clear GIFs", callback_data: "admin|cleargifs" }]);
-    }
+    // Admin-only, private-chat-only shortcut rows: menuKeyboard's own
+    // switchRows() already appends them whenever allButtonModeFor resolves
+    // to "admin" (chatType private && admin) - see telegram.ts's
+    // ADMIN_SHORTCUT_ROWS. No separate push here anymore: that used to
+    // duplicate this logic in a way that only covered THIS message, not
+    // every other re-render of it (the bug fixed alongside this).
+    const keyboard = menuKeyboard(allButtonModeFor(chatType, env.TELEGRAM_BOT_USERNAME, admin));
     await tgApi(env, "sendMessage", {
       chat_id: chatId,
       text: welcomeMessage(name),

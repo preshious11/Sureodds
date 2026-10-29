@@ -149,6 +149,24 @@ function allButton(mode: AllButtonMode): SwitchButton | null {
   return { text: `${VIEW_ICON.all} ${VIEW_LABEL.all}`, url: mode.url };
 }
 
+// Admin one-tap shortcuts (index.ts's "admin|*" callback branch handles
+// every one of these). Lives here, not just in /start's own keyboard
+// build, because switchRows is what EVERY admin-mode keyboard re-render
+// goes through - including editMessageTextIdempotent's in-place edit of
+// the /start message itself when an existing view-switch button (Top/
+// Daily/All/Stats/Yesterday) is tapped. Appending these only in /start's
+// handler (the original version of this change) meant any later tap on
+// one of THOSE buttons replaced the whole message+keyboard via
+// buildKeyboard/menuKeyboard, which rebuilds switchRows() from scratch -
+// silently dropping these rows until /start was sent again. Found
+// 2026-10-29 during live testing.
+const ADMIN_SHORTCUT_ROWS: KeyboardRow[] = [
+  [{ text: "🎯 Custom Picks", callback_data: "admin|custompicks" }, { text: "💎 Pro Picks", callback_data: "admin|propicks" }],
+  [{ text: "📋 Menu", callback_data: "admin|menu" }, { text: "📌 Pin Menu", callback_data: "admin|pinmenu" }],
+  [{ text: "📤 Post Picks", callback_data: "admin|postpicks" }, { text: "🔧 Set Commands", callback_data: "admin|setcommands" }],
+  [{ text: "🎞 Add GIF", callback_data: "admin|addgif" }, { text: "📁 List GIFs", callback_data: "admin|gifs" }, { text: "🗑 Clear GIFs", callback_data: "admin|cleargifs" }],
+];
+
 // predbot/bot/pagination.py SWITCH_ROWS: ((all,), (top, daily), (stats, yesterday)).
 function switchRows(allMode: AllButtonMode = "callback"): KeyboardRow[] {
   // WHY: group keyboards contain game links only; private stats switches require admin mode.
@@ -158,7 +176,7 @@ function switchRows(allMode: AllButtonMode = "callback"): KeyboardRow[] {
   return [
     ...(all ? [[all]] : []),
     [viewButton("top", allMode), viewButton("daily", allMode)],
-    ...(allMode === "admin" ? [[viewButton("stats"), viewButton("yesterday")]] : []),
+    ...(allMode === "admin" ? [[viewButton("stats"), viewButton("yesterday")], ...ADMIN_SHORTCUT_ROWS] : []),
   ];
 }
 
