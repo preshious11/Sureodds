@@ -1,0 +1,1 @@
+Trivial test commit to confirm the sureodds-server read-only deploy key can pull a NEW commit, not just report "up to date". Created 2026-10-29T08:54:10Z. Safe to delete - removed in the very next commit.
