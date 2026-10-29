@@ -33,7 +33,7 @@ PYTHON3="/var/lib/sureodds/runtime/bin/python3"
 # directory of its own.
 PRO_VALUE_DB_PATH="/opt/sureodds/predictions-bot/data/pro_value_shadow.db"
 
-ALLOWED_JOBS=("generation" "settlement" "history-backfill" "closing-price" "epoch-get" "pro-value-rows")
+ALLOWED_JOBS=("generation" "settlement" "history-backfill" "closing-price" "live-monitor" "epoch-get" "pro-value-rows")
 job="${SSH_ORIGINAL_COMMAND:-}"
 allowed=false
 for candidate in "${ALLOWED_JOBS[@]}"; do

@@ -18,7 +18,7 @@
 # plan-id idempotency for the epoch step specifically is not decided yet).
 #
 # Usage (once wired in): deliver-batch.sh <job-name> <batch-dir>
-#   job-name: one of generation, settlement, history-backfill, closing-price
+#   job-name: one of generation, settlement, history-backfill, closing-price, live-monitor
 #   batch-dir: must contain plan.json with a "checksums" map (see
 #     ssh-relay/verify-manifest.ts for the exact shape)
 #

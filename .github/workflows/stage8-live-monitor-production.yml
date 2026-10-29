@@ -30,6 +30,12 @@ on:
         required: false
         default: true
         type: boolean
+      write_target:
+        description: "Where writes land (default server: today's post-cutover behaviour). 'd1' is the pre-cutover/rehearsal path - see docs/STAGE1_SERVER_MIGRATION_PLAN.md"
+        required: false
+        default: "server"
+        type: choice
+        options: [d1, server]
 
 env:
   PRODUCTION_DB_NAME: sureodds_production
@@ -195,7 +201,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Apply to production D1 (skipped in dry-run)
-        if: steps.mode.outputs.dry_run == 'false' && steps.yield.outputs.skip != 'true' && steps.lease.outputs.acquired == 'true'
+        # (inputs.write_target || 'server') == 'd1': only true when write_target
+        # is EXPLICITLY set to 'd1' (a manual workflow_dispatch) - the empty
+        # value this input never actually has on workflow_dispatch (GitHub
+        # always fills a choice input's declared default) falls back to
+        # 'server' below instead, matching stage9/10/11's identical pattern.
+        if: steps.mode.outputs.dry_run == 'false' && steps.yield.outputs.skip != 'true' && steps.lease.outputs.acquired == 'true' && (inputs.write_target || 'server') == 'd1'
         run: |
           set -euo pipefail
           cd workers
@@ -258,6 +269,38 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
+      # Post-cutover default path - identical mechanism to stage9/10/11's own
+      # "Apply to server" step: the plan this delivers was built by the SAME
+      # "Build scoped plan" step above (d1_sync.py plan), so picks gets the
+      # SAME write_policy() guard (status='pending' re-check baked into the
+      # generated SQL, not a blind row replace - see d1_sync.py:162-180).
+      # live_fixture_state has its own monotonic-safe guard (d1_sync.py:200-220).
+      # results_seen is PRESERVE_ONLY (insert-only, no conflict possible).
+      # match_events/ratings/calibration fall to the generic INSERT OR REPLACE
+      # path, which is safe here only because the shared sync_write lease
+      # (acquired above) already serializes this apply against every other
+      # writer (stage9 included) - the same cross-workflow guarantee this
+      # relied on before cutover, unchanged by where the bytes land.
+      - name: Apply to server
+        if: steps.mode.outputs.dry_run == 'false' && steps.yield.outputs.skip != 'true' && steps.lease.outputs.acquired == 'true' && (inputs.write_target || 'server') == 'server'
+        run: |
+          set -euo pipefail
+          cd workers
+          epoch="$(bot/ssh-relay/query-epoch.sh)"
+          python3 scripts/build_plan_manifest.py /tmp/livemon_plan \
+            --rest-dir /tmp/livemon_plan/rest \
+            --expect-epoch "$epoch"
+          if ! bot/ssh-relay/deliver-batch.sh live-monitor /tmp/livemon_plan; then
+            status=$?
+            if [ "$status" -eq 2 ]; then
+              echo "::error::server epoch moved before delivery (stale_epoch) - another writer landed first; re-run to retry with a fresh base" >&2
+            fi
+            exit "$status"
+          fi
+        env:
+          SUREODDS_SSH_HOST: ${{ secrets.SUREODDS_SSH_HOST }}
+          SUREODDS_SSH_KEY: ${{ secrets.SUREODDS_SSH_KEY }}
+          SUREODDS_SSH_KNOWN_HOSTS: ${{ secrets.SUREODDS_SSH_KNOWN_HOSTS }}
       - name: Release the shared D1-write lease (always, if acquired)
         if: always() && steps.lease.outputs.acquired == 'true'
         run: |
