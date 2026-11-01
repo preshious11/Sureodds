@@ -54,7 +54,7 @@ def grade_pending_legs(legs: list[dict], results_by_event: dict[str, Optional[Ma
     return graded
 
 
-def run(resolver, db):
+def run(resolver, db, *, allow_lookup=True):
     """Settle issued contracts only from an exact fixture mapping and final evidence."""
     import logging
     from predbot.jobs.settle import stored_result, _resolve_args
@@ -84,7 +84,7 @@ def run(resolver, db):
             # Use the ISSUED contract, never today's representative market.
             for k in ('market','period','stat','entity','selection','line','price'): row[k]=leg[k]
             result=stored_result(row,db)
-            if result is None:
+            if result is None and allow_lookup:
                 alt,hints=_resolve_args(row)
                 result=resolver.resolve(row['provider'],row['provider_event_id'],leg['sport'],leg['home'],leg['away'],
                                         start,alt_ids=alt,cache=cache,hints=hints)

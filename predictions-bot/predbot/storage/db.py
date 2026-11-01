@@ -859,7 +859,7 @@ class Database:
         return bool(self.query("SELECT 1 FROM picks WHERE pick_date=? LIMIT 1", (pick_date,)))
 
     #: A prediction is PUBLISHED when it belongs to the Top or Daily collection. All-only predictions are generated
-    #: and browsable (/all) but are never tracked, settled, announced or counted in results.
+    #: and browsable (/all); full settlement grades them, while announcements and published-ticket statistics stay scoped.
     _PUBLISHED = ("EXISTS (SELECT 1 FROM prediction_memberships pm WHERE pm.prediction_id=picks.id "
                   "AND pm.collection IN ('top','daily'))")
 

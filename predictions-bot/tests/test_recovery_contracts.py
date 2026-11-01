@@ -132,5 +132,24 @@ def test_relay_ledger_update_requires_same_issued_contract(db):
     assert db.query('SELECT settlement_status FROM issued_ticket_legs')[0][0]=='pending'
     db.execute(sql,('ticket',0,2.,'won',2.,'2030-06-01'))
     assert db.query('SELECT settlement_status FROM issued_ticket_legs')[0][0]=='won'
+
     db.execute(sql,('ticket',0,2.,'lost',0.,'2030-06-02'))
     assert db.query('SELECT settlement_status FROM issued_ticket_legs')[0][0]=='won'
+
+
+def test_recovered_final_queues_one_end_only_after_real_publication(db):
+    from datetime import datetime,timezone
+    from predbot.jobs import settle
+    from predbot.providers.base import MatchResult
+    from tests.test_settle_parallel import _pick
+    _pick(db,0,'football','epl','Home')
+    pid=db.query('SELECT id FROM picks')[0][0]
+    db.settle_pick(pid,'won',{'status':'final','scores':{'full':[2.,1.]},'source':'verified-test'})
+    db.execute('CREATE TABLE match_events(pick_date TEXT,fixture_key TEXT,event_type TEXT,text TEXT,created_at TEXT,PRIMARY KEY(pick_date,fixture_key,event_type))')
+    now=datetime(2030,6,2,tzinfo=timezone.utc)
+    assert settle.queue_final_events(db,now)==0
+    db.execute("INSERT INTO posts(kind,post_date,message_id,created_at) VALUES('daily','2030-06-01','123','2030-06-01T08:30:00Z')")
+    assert settle.queue_final_events(db,now)==1
+    assert settle.queue_final_events(db,now)==0
+    assert db.query('SELECT event_type FROM match_events')[0][0]=='end'
+    assert db.query('SELECT settlement_done FROM live_fixture_state')[0][0]==1

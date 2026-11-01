@@ -80,7 +80,7 @@ def run(db_path: str) -> dict:
         # predbot/jobs/live_results.py's `if sink is not None` branches).
         live_results.run(resolver, db, cfg, tg=None, now=utcnow(), sink=sink)
         from predbot.jobs import ledger_settlement
-        ledger = ledger_settlement.run(resolver, db)
+        ledger = ledger_settlement.run(resolver, db, allow_lookup=False)
         after = db.query("SELECT COUNT(*) AS n FROM match_events")[0]["n"]
         if db.query("SELECT 1 FROM sqlite_master WHERE name='job_state'"):
             db.execute("INSERT INTO job_state(name,last_run_at,last_result,updated_at) "
