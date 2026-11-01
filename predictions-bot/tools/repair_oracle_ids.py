@@ -12,6 +12,24 @@ import sqlite3
 IDENTITY = ('pick_date','fixture_key','market','period','stat','entity','line','selection')
 
 
+def restore_rejections(db, incoming):
+    schema=db.execute("SELECT sql FROM sqlite_master WHERE name='selection_rejections'").fetchone()
+    if schema is None: return 0
+    inserted=0
+    for batch in sorted(Path(incoming).glob('generation-*')):
+        scratch=sqlite3.connect(':memory:');scratch.row_factory=sqlite3.Row
+        scratch.execute(schema[0])
+        for file in sorted(batch.glob('p0_*_selection_rejections_*.sql')):
+            scratch.executescript(file.read_text(encoding='utf-8'))
+        for row in scratch.execute('SELECT * FROM selection_rejections'):
+            cols=[key for key in row.keys() if key!='id']
+            cursor=db.execute('INSERT OR IGNORE INTO selection_rejections ('+','.join(cols)+') VALUES ('+
+                              ','.join('?' for _ in cols)+')',tuple(row[key] for key in cols))
+            inserted+=cursor.rowcount
+        scratch.close()
+    return inserted
+
+
 def repair(db, incoming):
     db.row_factory=sqlite3.Row
     schema=db.execute("SELECT sql FROM sqlite_master WHERE name='picks'").fetchone()[0]
@@ -74,6 +92,7 @@ def repair(db, incoming):
         for key,rank in desired.items():
             if not db.execute('SELECT 1 FROM prediction_memberships WHERE prediction_id=? AND collection=?',key).fetchone():
                 db.execute('INSERT INTO prediction_memberships(prediction_id,collection,rank) VALUES(?,?,?)',(*key,rank));counts['memberships_added']+=1
+    counts['diagnostics_restored']=restore_rejections(db,incoming)
     return counts
 
 

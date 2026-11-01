@@ -224,3 +224,16 @@ def test_provider_alias_cannot_match_a_different_team_id_or_league():
     assert _matches('Stade Brest',{'team':{'id':'6997','displayName':'Brest'}},'ligue_1')
     assert not _matches('Stade Brest',{'team':{'id':'9999','displayName':'Brest'}},'ligue_1')
     assert not _matches('Stade Brest',{'team':{'id':'6997','displayName':'Brest'}},'la_liga')
+
+
+def test_rejection_recovery_remaps_integer_ids_without_duplicate_diagnostics(db,tmp_path):
+    module=Path(__file__).resolve().parents[1]/'tools/repair_oracle_ids.py'
+    spec=importlib.util.spec_from_file_location('repair_logs',module);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+    migration=Path(__file__).resolve().parents[2]/'workers/migrations/0015_selection_rejections.sql'
+    db.conn.executescript(migration.read_text())
+    db.execute("INSERT INTO selection_rejections(id,pick_date,product,reason,run_id,created_at) VALUES(1,'2026-10-31','top','below_probability','old','2026-10-31')")
+    batch=tmp_path/'generation-new';batch.mkdir()
+    (batch/'p0_1_selection_rejections_0000.sql').write_text("INSERT OR IGNORE INTO selection_rejections(id,pick_date,product,reason,run_id,created_at) VALUES(1,'2026-11-01','top','below_probability','new','2026-11-01');")
+    assert m.restore_rejections(db.conn,tmp_path)==1
+    assert m.restore_rejections(db.conn,tmp_path)==0
+    assert len(db.query('SELECT * FROM selection_rejections'))==2
