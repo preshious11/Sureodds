@@ -505,7 +505,7 @@ def _run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]
     log.info("settlement: %s", counts)
     from predbot.jobs import ledger_settlement
     if db.query("SELECT 1 FROM sqlite_master WHERE name='issued_ticket_legs'"):
-        counts['issued_tickets'] = ledger_settlement.run(resolver, db)
+        counts.update({'issued_'+key:value for key,value in ledger_settlement.run(resolver, db).items()})
     if db.query("SELECT 1 FROM sqlite_master WHERE name='match_events'"):
         counts['final_events_queued'] = queue_final_events(db, now)
     if counts["settled"]:

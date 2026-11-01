@@ -66,7 +66,7 @@ def run(resolver, db, *, allow_lookup=True):
     legs=db.query("SELECT l.*,t.prediction_date FROM issued_ticket_legs l JOIN issued_tickets t "
                   "ON t.id=l.ticket_id WHERE l.settlement_status='pending'")
     counts={'settled_legs':0,'unresolved_legs':0,'errors':0}
-    candidates={};cache={}
+    candidates={};cache: dict[str, Optional[MatchResult]]={}
     for raw in legs:
         leg=dict(raw)
         try:

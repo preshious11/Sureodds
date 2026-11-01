@@ -34,12 +34,6 @@ def repair(db, incoming):
             if reference and all(row[k]==reference.get(k) for k in ('home','away','market','selection','line','price','period','stat','entity')):
                 recovered[key]=dict(row)
         scratch.close()
-    required=set()
-    for cache in db.execute('SELECT local_date,payload_json FROM prediction_cache'):
-        payload=json.loads(cache['payload_json'])
-        for field in ('all_predictions','top_picks','daily_picks'):
-            required.update((cache['local_date'],p.get('pick_id')) for p in payload.get(field,[]))
-    recovered={key:row for key,row in recovered.items() if key in required}
     mappings={}
     for (day,old),row in recovered.items():
         where=' AND '.join(k+' IS ?' for k in IDENTITY)

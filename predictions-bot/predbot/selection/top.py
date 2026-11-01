@@ -42,6 +42,8 @@ def promotion_reason(row, cfg, now_utc, top=False):
             return 'invalid_candidate_fields'
     except (TypeError, ValueError):
         return 'invalid_candidate_fields'
+    if row['price'] <= 1 or not 0 <= row['prob'] <= 1:
+        return 'invalid_candidate_fields'
     start, now = parse_iso(row['start_utc']), parse_iso(now_utc)
     if start is None or now is None:
         return 'invalid_candidate_fields'

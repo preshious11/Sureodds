@@ -15,6 +15,21 @@ def candidate(price):
                 stat='points',entity='all',prob=.9,price=price,ev=.05,books=10,quality='main',sources='{}')
 
 
+@pytest.mark.parametrize('price',[0.,-1.,1.,float('nan'),float('inf'),None,True])
+def test_invalid_odds_cannot_enter_ticket_search(price):
+    for selector in (select_top,select_daily):
+        rows,diag=selector([candidate(price)],Config(),'2030-06-01T12:00:00Z')
+        assert not rows
+        assert diag['rejections']['invalid_candidate_fields']==1
+
+
+def test_accumulator_uses_product_of_distinct_fixture_prices():
+    rows=[dict(candidate(1.44),id=i,fixture_key=str(i)) for i in (1,2)]
+    selected,diag=select_top(rows,Config(),'2030-06-01T12:00:00Z')
+    assert len(selected)==2
+    assert diag['combined_odds']==pytest.approx(1.44*1.44)
+
+
 @pytest.mark.parametrize('selector,target,ceiling',[(select_top,2.,2.3),(select_daily,10.,12.)])
 @pytest.mark.parametrize('price,valid',[(1.44,False),(2.,True),(2.2,True),(2.6,False)])
 def test_combined_target_is_mandatory(selector,target,ceiling,price,valid):
@@ -153,3 +168,38 @@ def test_recovered_final_queues_one_end_only_after_real_publication(db):
     assert settle.queue_final_events(db,now)==0
     assert db.query('SELECT event_type FROM match_events')[0][0]=='end'
     assert db.query('SELECT settlement_done FROM live_fixture_state')[0][0]==1
+
+
+def test_explicit_job_metadata_diff_preserves_coordinator_lease(tmp_path):
+    import sys
+    scripts=str(Path(__file__).resolve().parents[2]/'workers/scripts')
+    sys.path.insert(0,scripts)
+    try: import d1_sync
+    finally: sys.path.remove(scripts)
+    paths=[tmp_path/n for n in ('base.db','scratch.db','target.db')]
+    for path in paths:
+        c=sqlite3.connect(path)
+        c.execute('CREATE TABLE job_state(name TEXT PRIMARY KEY,lease_owner TEXT,last_run_at TEXT,last_result TEXT,updated_at TEXT)')
+        c.execute("INSERT INTO job_state VALUES('settle','original',NULL,NULL,'2030-06-01')")
+        c.commit();c.close()
+    c=sqlite3.connect(paths[1]);c.execute("UPDATE job_state SET last_run_at='2030-06-02',last_result='OK',updated_at='2030-06-02'");c.commit();c.close()
+    target=sqlite3.connect(paths[2]);target.execute("UPDATE job_state SET lease_owner='new-worker'");target.commit()
+    out=tmp_path/'plan'
+    assert d1_sync.cmd_diff(str(paths[0]),str(paths[1]),str(out),only_tables=['job_state'])==0
+    for file in sorted(out.glob('*.sql')): target.executescript(file.read_text())
+    assert target.execute('SELECT lease_owner,last_result FROM job_state').fetchone()==('new-worker','OK')
+
+
+def test_database_guards_reject_stale_ids_and_unverified_voids(db):
+    from tests.test_settle_parallel import _pick
+    migration=Path(__file__).resolve().parents[2]/'workers/migrations/0017_oracle_recovery_guards.sql'
+    db.conn.executescript(migration.read_text())
+    _pick(db,0,'football','epl','Home')
+    row=dict(db.query('SELECT * FROM picks')[0]);row['pick_date']='2030-06-02'
+    with pytest.raises(sqlite3.IntegrityError,match='different immutable contract'):
+        db.execute('INSERT OR IGNORE INTO picks('+','.join(row)+') VALUES('+','.join('?' for _ in row)+')',tuple(row.values()))
+    with pytest.raises(sqlite3.IntegrityError,match='unverified timeout'):
+        db.execute("UPDATE picks SET status='void',result_json=?",('{"reason":"settlement deadline expired"}',))
+    assert db.query('SELECT status FROM picks')[0][0]=='pending'
+    db.settle_pick(row['id'],'void',{'status':'cancelled','source':'verified-test'})
+    assert db.query('SELECT status FROM picks')[0][0]=='void'
