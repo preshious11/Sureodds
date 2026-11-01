@@ -1,0 +1,10 @@
+[Unit]
+Description=Check SureOdds subsystems every ten minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

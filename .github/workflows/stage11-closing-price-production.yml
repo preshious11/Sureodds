@@ -126,8 +126,12 @@ jobs:
         run: |
           set -euo pipefail
           cd workers
-          npx -y wrangler@4.151.1 d1 export "$PRODUCTION_DB_NAME" --remote \
-            --config wrangler.toml --output /tmp/closing_base.sql
+          if [ "${{ inputs.write_target || 'server' }}" = "server" ]; then
+            bash bot/ssh-relay/query-epoch.sh snapshot-get > /tmp/closing_base.sql
+          else
+            npx -y wrangler@4.151.1 d1 export "$PRODUCTION_DB_NAME" --remote \
+              --config wrangler.toml --output /tmp/closing_base.sql
+          fi
           python3 - <<'EOF'
           import sqlite3, shutil
           con = sqlite3.connect("/tmp/closing_base.db")
@@ -136,6 +140,9 @@ jobs:
           shutil.copyfile("/tmp/closing_base.db", "/tmp/closing_scratch.db")
           EOF
         env:
+          SUREODDS_SSH_HOST: ${{ secrets.SUREODDS_SSH_HOST }}
+          SUREODDS_SSH_KEY: ${{ secrets.SUREODDS_SSH_KEY }}
+          SUREODDS_SSH_KNOWN_HOSTS: ${{ secrets.SUREODDS_SSH_KNOWN_HOSTS }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Capture closing prices (writes only to the scratch copy)
@@ -241,11 +248,13 @@ jobs:
         run: |
           set -euo pipefail
           cd workers
-          epoch="$(bot/ssh-relay/query-epoch.sh)"
+          epoch="$(python3 scripts/d1_sync.py epoch-get /tmp/closing_base.db)"
           python3 scripts/build_plan_manifest.py /tmp/closing_plan \
             --rest-dir /tmp/closing_plan/rest \
             --expect-epoch "$epoch"
-          if ! bot/ssh-relay/deliver-batch.sh closing-price /tmp/closing_plan; then
+          if bot/ssh-relay/deliver-batch.sh closing-price /tmp/closing_plan; then
+            :
+          else
             status=$?
             if [ "$status" -eq 2 ]; then
               echo "::error::server epoch moved before delivery (stale_epoch) - another writer landed first; re-run to retry with a fresh base" >&2

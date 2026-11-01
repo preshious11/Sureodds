@@ -1,0 +1,13 @@
+[Unit]
+Description=SureOdds read-only subsystem health audit
+After=sureodds-bot.service
+
+[Service]
+Type=oneshot
+User=sureodds
+WorkingDirectory=/opt/sureodds/predictions-bot
+ExecStart=/var/lib/sureodds/runtime/bin/python3 tools/production_health.py /var/lib/sureodds/sureodds.db
+NoNewPrivileges=yes
+MemoryMax=200M
+StandardOutput=journal
+StandardError=journal

@@ -139,8 +139,12 @@ jobs:
           # That conditional path could not be exhaustively proven safe to
           # exclude within this pass, so the export stays full rather than
           # risk a "no such table" failure on a code path this didn't cover.
-          npx -y wrangler@4.151.1 d1 export "$PRODUCTION_DB_NAME" --remote \
-            --config wrangler.toml --output /tmp/livemon_base.sql
+          if [ "${{ inputs.write_target || 'server' }}" = "server" ]; then
+            bash bot/ssh-relay/query-epoch.sh snapshot-get > /tmp/livemon_base.sql
+          else
+            npx -y wrangler@4.151.1 d1 export "$PRODUCTION_DB_NAME" --remote \
+              --config wrangler.toml --output /tmp/livemon_base.sql
+          fi
           python3 - <<'EOF'
           import sqlite3, shutil
           con = sqlite3.connect("/tmp/livemon_base.db")
@@ -149,6 +153,9 @@ jobs:
           shutil.copyfile("/tmp/livemon_base.db", "/tmp/livemon_scratch.db")
           EOF
         env:
+          SUREODDS_SSH_HOST: ${{ secrets.SUREODDS_SSH_HOST }}
+          SUREODDS_SSH_KEY: ${{ secrets.SUREODDS_SSH_KEY }}
+          SUREODDS_SSH_KNOWN_HOSTS: ${{ secrets.SUREODDS_SSH_KNOWN_HOSTS }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Run live monitoring + settlement (writes only to the scratch copy)
@@ -286,11 +293,13 @@ jobs:
         run: |
           set -euo pipefail
           cd workers
-          epoch="$(bot/ssh-relay/query-epoch.sh)"
+          epoch="$(python3 scripts/d1_sync.py epoch-get /tmp/livemon_base.db)"
           python3 scripts/build_plan_manifest.py /tmp/livemon_plan \
             --rest-dir /tmp/livemon_plan/rest \
             --expect-epoch "$epoch"
-          if ! bot/ssh-relay/deliver-batch.sh live-monitor /tmp/livemon_plan; then
+          if bot/ssh-relay/deliver-batch.sh live-monitor /tmp/livemon_plan; then
+            :
+          else
             status=$?
             if [ "$status" -eq 2 ]; then
               echo "::error::server epoch moved before delivery (stale_epoch) - another writer landed first; re-run to retry with a fresh base" >&2

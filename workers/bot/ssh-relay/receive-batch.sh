@@ -33,7 +33,7 @@ PYTHON3="/var/lib/sureodds/runtime/bin/python3"
 # directory of its own.
 PRO_VALUE_DB_PATH="/opt/sureodds/predictions-bot/data/pro_value_shadow.db"
 
-ALLOWED_JOBS=("generation" "settlement" "history-backfill" "closing-price" "live-monitor" "epoch-get" "pro-value-rows")
+ALLOWED_JOBS=("generation" "settlement" "history-backfill" "closing-price" "live-monitor" "epoch-get" "snapshot-get" "pro-value-rows")
 job="${SSH_ORIGINAL_COMMAND:-}"
 allowed=false
 for candidate in "${ALLOWED_JOBS[@]}"; do
@@ -52,6 +52,10 @@ fi
 # (mirrors the existing D1 apply step's own "read epoch right before
 # applying" pattern). Handled here, before the tar extraction every other
 # job expects, so this connection never opens or reads from stdin at all.
+if [[ "$job" == "snapshot-get" ]]; then
+  exec "$PYTHON3" "$SUREODDS_ROOT/workers/bot/ssh-relay/snapshot.py" "$DB_PATH"
+fi
+
 if [[ "$job" == "epoch-get" ]]; then
   exec "$NODE" "$SUREODDS_ROOT/workers/bot/ssh-relay/get-epoch.ts" "$DB_PATH"
 fi

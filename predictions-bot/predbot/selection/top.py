@@ -1,7 +1,7 @@
 """Top tickets from validated alternatives, under unchanged odds and leg limits.
 
 A bounded search maximizes joint evidence-adjusted strict-win confidence within
- the odds band, then expected return. Below-band best-first fallback is retained.
+ the odds band, then expected return. Tickets outside the configured combined odds band are withheld.
 """
 import json
 import math
@@ -147,4 +147,7 @@ def select_top(rows, cfg, now_utc, reject_sink=None):
     if found and [r['id'] for r in found[0]] != [r['id'] for r in selected]:
         selected, odds = found
         diagnostics.update(selected=len(selected), combined_odds=odds, target_reached=True, search='combination')
+    if selected and not cfg.top_odds_target <= odds <= cfg.top_odds_max:
+        diagnostics.update(selected=0, target_reached=False, reason='target_unreachable')
+        return [], diagnostics
     return selected, diagnostics
