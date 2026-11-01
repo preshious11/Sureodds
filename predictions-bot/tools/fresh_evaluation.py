@@ -17,6 +17,15 @@ from predbot.storage.db import Database
 from predbot.util.timeutil import iso, to_local, utcnow
 
 
+def notice_lines(summary):
+    """Actions truncates individual annotation messages at 4096 characters."""
+    raw = json.dumps(summary, default=str)
+    chunks = [raw[i:i + 1000] for i in range(0, len(raw), 1000)]
+    for i, chunk in enumerate(chunks, 1):
+        escaped = chunk.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+        yield f'::notice title=Fresh evaluation part {i}/{len(chunks)}::{escaped}'
+
+
 def evaluate(db, cfg, now, chain, builder=build_picks):
     """Keep the selection pool separate from historical immutable forecasts."""
     day = to_local(now, cfg.timezone).date().isoformat()
@@ -76,8 +85,8 @@ def main():
             'provider_coverage', 'providers', 'api_usage')}
         summary['selection'] = report['selection']
         # A private-repository Actions annotation is readable through its API.
-        encoded = json.dumps(summary, default=str).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-        print('::notice title=Fresh evaluation::' + encoded)
+        for line in notice_lines(summary):
+            print(line)
     finally:
         db.close()
 

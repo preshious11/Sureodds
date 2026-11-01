@@ -11,6 +11,15 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
+def test_actions_annotations_are_lossless_and_bounded():
+    import json
+    summary = {'data': '%\n' * 5000}
+    lines = list(module.notice_lines(summary))
+    assert all(len(line.encode('utf-8')) < 4096 for line in lines)
+    parts = [line.split('::', 2)[2].replace('%0A', '\n').replace('%0D', '\r').replace('%25', '%') for line in lines]
+    assert json.loads(''.join(parts)) == summary
+
+
 def test_fresh_evaluation_selects_strict_tickets_without_writing_source(db):
     predictions = [sc(_fx(i), 'result2', 'home', .90,
                       1.44 if i < 2 else 2.20) for i in range(12)]
