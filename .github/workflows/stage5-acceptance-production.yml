@@ -157,6 +157,37 @@ jobs:
       # currently no input that distinguishes "rehearsal" from "normal
       # production dispatch" now that server is the default; revisit if a
       # genuine need for a rehearsal-of-the-server-path safety rail returns.
+      - name: Acquire the shared D1-write lease (retries, then fails — A2)
+        id: synclease
+        if: inputs.dry_run == false
+        run: |
+          set -euo pipefail
+          cd workers
+          # A2: serializes against the live monitor and settlement (stage9) —
+          # generation already has its own 'generate' lease (above) against
+          # another generation run, but needs this ONE TOO since stage8/
+          # stage9 can also be writing to the same tables right now. Unlike
+          # the live monitor (which just skips a tick), a generation run
+          # retries for up to 5 minutes before giving up loudly — a skipped
+          # generation is a much bigger deal than a delayed live update.
+          acquired=false
+          for i in $(seq 1 10); do
+            if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+              --config wrangler.toml --json \
+              --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until=strftime('%Y-%m-%dT%H:%M:%SZ','now','+90 minutes'), attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='sync_write' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1; then
+              acquired=true; break
+            fi
+            echo "::notice::sync_write lease held by another writer (attempt $i/10) - retrying in 30s"
+            sleep 30
+          done
+          if [ "$acquired" != "true" ]; then
+            echo "::error::could not acquire the sync_write lease after 10 attempts (5 minutes) - another writer held it the whole time" >&2
+            exit 1
+          fi
+          echo "acquired=true" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Pull production base (export + load, timed)
         id: pull
         run: |
@@ -377,37 +408,6 @@ jobs:
           today=$(TZ=Africa/Lagos date +%F)
           echo "Lagos today: $today"
           python3 workers/scripts/d1_sync.py require-complete /tmp/prodacc_rebased.db "$today"
-      - name: Acquire the shared D1-write lease (retries, then fails — A2)
-        id: synclease
-        if: inputs.dry_run == false
-        run: |
-          set -euo pipefail
-          cd workers
-          # A2: serializes against the live monitor and settlement (stage9) —
-          # generation already has its own 'generate' lease (above) against
-          # another generation run, but needs this ONE TOO since stage8/
-          # stage9 can also be writing to the same tables right now. Unlike
-          # the live monitor (which just skips a tick), a generation run
-          # retries for up to 5 minutes before giving up loudly — a skipped
-          # generation is a much bigger deal than a delayed live update.
-          acquired=false
-          for i in $(seq 1 10); do
-            if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
-              --config wrangler.toml --json \
-              --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until=strftime('%Y-%m-%dT%H:%M:%SZ','now','+20 minutes'), attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='sync_write' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1; then
-              acquired=true; break
-            fi
-            echo "::notice::sync_write lease held by another writer (attempt $i/10) - retrying in 30s"
-            sleep 30
-          done
-          if [ "$acquired" != "true" ]; then
-            echo "::error::could not acquire the sync_write lease after 10 attempts (5 minutes) - another writer held it the whole time" >&2
-            exit 1
-          fi
-          echo "acquired=true" >> "$GITHUB_OUTPUT"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Apply to production D1 (skipped in dry-run)
         # (inputs.write_target || 'server') == 'd1': only true when write_target
         # is EXPLICITLY set to 'd1' - post-cutover, stage7's workflow_call
