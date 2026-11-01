@@ -203,3 +203,24 @@ def test_database_guards_reject_stale_ids_and_unverified_voids(db):
     assert db.query('SELECT status FROM picks')[0][0]=='pending'
     db.settle_pick(row['id'],'void',{'status':'cancelled','source':'verified-test'})
     assert db.query('SELECT status FROM picks')[0][0]=='void'
+
+
+@pytest.mark.parametrize('home,away,start,league,score',[
+    ('Stade Brest','Nice','2026-10-23T18:45:00Z','france_-_ligue_1',(1.,2.)),
+    ('Athletic Bilbao','Getafe','2026-10-25T13:00:00Z','spain_-_la_liga',(4.,0.)),
+])
+def test_recorded_final_results_resolve_curated_provider_names(home,away,start,league,score):
+    from predbot.util.timeutil import parse_iso
+    from tests.test_results_espn import _espn
+    provider=_espn('espn_recovery_results.json')
+    result=provider.find_result('football',home,away,parse_iso(start),league_id=league)
+    assert result.status=='final'
+    assert result.scores['full']==score
+    assert provider.find_result('football',home+' B',away,parse_iso(start),league_id=league) is None
+
+
+def test_provider_alias_cannot_match_a_different_team_id_or_league():
+    from predbot.providers.espn import _matches
+    assert _matches('Stade Brest',{'team':{'id':'6997','displayName':'Brest'}},'ligue_1')
+    assert not _matches('Stade Brest',{'team':{'id':'9999','displayName':'Brest'}},'ligue_1')
+    assert not _matches('Stade Brest',{'team':{'id':'6997','displayName':'Brest'}},'la_liga')
