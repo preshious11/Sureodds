@@ -7,14 +7,8 @@ MarketLine shape ``grade()`` already expects (predbot/jobs/settle.py's own
 this is the same idea for ``issued_ticket_legs``) and calls the SAME
 function Top/Daily settlement already calls.
 
-NOT wired into a scheduled job yet. The remaining integration step -
-reading pending issued_ticket_legs rows out of production D1, resolving
-each one's MatchResult (reusing whatever live_monitor_d1.py/settle.py
-already use for that lookup), and writing the graded outcome back via
-workers/scripts/d1_sync.py's existing plan/apply pattern - touches the
-already-complex, live-data-writing stage8 job directly and deserves its
-own careful pass rather than a rushed addition today. This module is the
-tested, reusable piece that step will call into.
+Scheduled by the full settlement and live-monitor jobs; the relay applies
+monotonic settlement updates to the same authoritative Oracle database.
 """
 from __future__ import annotations
 
@@ -58,3 +52,57 @@ def grade_pending_legs(legs: list[dict], results_by_event: dict[str, Optional[Ma
         if outcome != "pending":
             graded[i] = outcome
     return graded
+
+
+def run(resolver, db):
+    """Settle issued contracts only from an exact fixture mapping and final evidence."""
+    import logging
+    from predbot.jobs.settle import stored_result, _resolve_args
+    from predbot.util.timeutil import parse_iso, utcnow, iso
+    from predbot.util.duration import expected_end
+
+    if not db.query("SELECT 1 FROM sqlite_master WHERE name='issued_ticket_legs'"):
+        return {'settled_legs': 0, 'unresolved_legs': 0, 'errors': 0}
+    legs=db.query("SELECT l.*,t.prediction_date FROM issued_ticket_legs l JOIN issued_tickets t "
+                  "ON t.id=l.ticket_id WHERE l.settlement_status='pending'")
+    counts={'settled_legs':0,'unresolved_legs':0,'errors':0}
+    candidates={};cache={}
+    for raw in legs:
+        leg=dict(raw)
+        try:
+            rows=db.query('SELECT * FROM picks WHERE canonical_event_id=? AND sport=? AND home=? AND away=?',
+                          (leg['canonical_event_id'],leg['sport'],leg['home'],leg['away']))
+            if not rows:
+                day=leg['prediction_date']
+                if day not in candidates: candidates[day]=db.ticket_candidate_rows(day)
+                rows=[r for r in candidates[day] if all(r.get(k)==leg[k] for k in ('canonical_event_id','sport','home','away'))]
+            if not rows:
+                counts['unresolved_legs']+=1;continue
+            row=dict(rows[0]);start=parse_iso(row['start_utc'])
+            if start is None or expected_end(start,leg['sport'])>utcnow():
+                counts['unresolved_legs']+=1;continue
+            # Use the ISSUED contract, never today's representative market.
+            for k in ('market','period','stat','entity','selection','line','price'): row[k]=leg[k]
+            result=stored_result(row,db)
+            if result is None:
+                alt,hints=_resolve_args(row)
+                result=resolver.resolve(row['provider'],row['provider_event_id'],leg['sport'],leg['home'],leg['away'],
+                                        start,alt_ids=alt,cache=cache,hints=hints)
+            if result is None or result.status not in ('final','cancelled','postponed'):
+                counts['unresolved_legs']+=1;continue
+            outcome=grade_ledger_leg(leg,result,leg['sport'])
+            if outcome=='pending': counts['unresolved_legs']+=1;continue
+            price=float(leg['price'])
+            payout={'won':price,'lost':0.,'push':1.,'void':1.,'half_won':(1+price)/2,'half_lost':.5}[outcome]
+            with db.transaction():
+                db.execute("UPDATE issued_ticket_legs SET settlement_status=?,payout_multiplier=?,settled_at=? "
+                           "WHERE ticket_id=? AND leg_index=? AND settlement_status='pending'",
+                           (outcome,payout,iso(utcnow()),leg['ticket_id'],leg['leg_index']))
+                db.execute("UPDATE issued_tickets SET status='settled' WHERE id=? AND NOT EXISTS "
+                           "(SELECT 1 FROM issued_ticket_legs WHERE ticket_id=? AND settlement_status='pending')",
+                           (leg['ticket_id'],leg['ticket_id']))
+            counts['settled_legs']+=1
+        except Exception:
+            logging.getLogger(__name__).exception('issued leg settlement failed')
+            counts['errors']+=1
+    return counts

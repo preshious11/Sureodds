@@ -6,6 +6,7 @@ After=sureodds-bot.service
 Type=oneshot
 User=sureodds
 WorkingDirectory=/opt/sureodds/predictions-bot
+EnvironmentFile=/opt/sureodds/workers/bot/.env
 ExecStart=/var/lib/sureodds/runtime/bin/python3 tools/production_health.py /var/lib/sureodds/sureodds.db
 NoNewPrivileges=yes
 MemoryMax=200M

@@ -180,7 +180,7 @@ jobs:
           set -euo pipefail
           python3 workers/scripts/d1_sync.py plan /tmp/livemon_base.db /tmp/livemon_scratch.db \
             --out /tmp/livemon_plan \
-            --tables match_events,picks,live_fixture_state,results_seen,ratings,calibration \
+            --tables issued_tickets,issued_ticket_legs,job_state,match_events,picks,live_fixture_state,results_seen,ratings,calibration \
             --write-budget 2000
           cat /tmp/livemon_plan/plan.json
       - name: Acquire the shared D1-write lease (or skip this tick)

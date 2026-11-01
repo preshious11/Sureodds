@@ -74,7 +74,7 @@ def lookup_allowed(r, db: Database, now: datetime, *, live: bool = False,
     if live:
         return start <= now < live_cutoff(start, r["sport"])
     due = start if confirmed_final else expected_end(start, r["sport"])
-    return current[0]["status"] == PENDING and due <= now < settlement_deadline(start, r["sport"])
+    return current[0]["status"] == PENDING and due <= now
 
 
 def _decode_result(payload):
@@ -144,15 +144,9 @@ def _void_expired(r, db: Database, now: datetime, counts: Dict[str, int]) -> Non
     start = parse_iso(r["start_utc"])
     if start is None or now < settlement_deadline(start, r["sport"]):
         return
-    with db.transaction():
-        current = db.query("SELECT status FROM picks WHERE id=?", (r["id"],))
-        if not current or current[0]["status"] != PENDING:
-            return
-        db.settle_pick(r["id"], VOID, {"reason": "settlement deadline expired",
-                                       "deadline": iso(settlement_deadline(start, r["sport"]))})
-        counts["void"] += 1
-        log.info("settlement: VOID unresolved pick %s | sport=%s | deadline=%s",
-                 r["id"], r["sport"], iso(settlement_deadline(start, r["sport"])))
+    # Elapsed time proves neither a result nor cancellation. Keep retryable.
+    counts['pending'] += 1
+    log.warning('overdue unresolved pick %s; awaiting authoritative result', r['id'])
 
 
 def expire_pending(db: Database, now: datetime, counts: Optional[Dict[str, int]] = None) -> Dict[str, int]:
@@ -204,9 +198,6 @@ def _settle_row(r, resolver: ResultsResolver, db: Database, elo: Elo, now: datet
     result = stored_result(r, db)
     if result is not None:
         settle_result(r, result, db, elo, now, counts)
-        return
-    if now >= settlement_deadline(start, r["sport"]):
-        _void_expired(r, db, now, counts)
         return
     try:
         src = json.loads(r["sources"]) if r["sources"] else {}
@@ -373,7 +364,7 @@ def _prefetch(resolver: ResultsResolver, rows, now: datetime, cache: Dict[str, M
     groups: Dict[str, list] = {}
     for r in rows:
         start = parse_iso(r["start_utc"])
-        if start is None or not expected_end(start, r["sport"]) <= now < settlement_deadline(start, r["sport"]):
+        if start is None or expected_end(start, r["sport"]) > now:
             continue
         if db is not None and stored_result(r, db) is not None:
             continue
@@ -512,6 +503,9 @@ def _run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]
     except Exception as e:  # noqa: BLE001
         log.warning("Elo harvest from ESPN failed (non-fatal): %s", e)
     log.info("settlement: %s", counts)
+    from predbot.jobs import ledger_settlement
+    if db.query("SELECT 1 FROM sqlite_master WHERE name='issued_ticket_legs'"):
+        counts['issued_tickets'] = ledger_settlement.run(resolver, db)
     if counts["settled"]:
         try:
             from predbot.jobs import stats as stats_mod

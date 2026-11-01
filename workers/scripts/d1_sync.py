@@ -159,6 +159,25 @@ def write_policy(table, cols, con=None):
     columns = ", ".join(cols)
     if table in MERGE_ONLY | PRESERVE_ONLY:
         return f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ", ""
+    if table == 'job_state':
+        return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
+                " ON CONFLICT(name) DO UPDATE SET last_run_at=excluded.last_run_at, "
+                "last_result=excluded.last_result,updated_at=excluded.updated_at "
+                "WHERE excluded.last_run_at IS NOT NULL AND "
+                "(job_state.last_run_at IS NULL OR excluded.last_run_at>job_state.last_run_at)")
+    if table == 'issued_ticket_legs':
+        mutable = {'settlement_status','payout_multiplier','settled_at'}
+        same = ' AND '.join(f'{table}.{c} IS excluded.{c}' for c in cols if c not in mutable)
+        changes = ', '.join(f'{c}=excluded.{c}' for c in cols if c in mutable)
+        return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
+                f" ON CONFLICT(ticket_id,leg_index) DO UPDATE SET {changes} WHERE "
+                f"{table}.settlement_status='pending' AND excluded.settlement_status!='pending' AND {same}")
+    if table == 'issued_tickets':
+        same = ' AND '.join(f'{table}.{c} IS excluded.{c}' for c in cols if c != 'status')
+        return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
+                " ON CONFLICT(id) DO UPDATE SET status='settled' WHERE issued_tickets.status='issued' "
+                f"AND excluded.status='settled' AND {same} AND NOT EXISTS "
+                "(SELECT 1 FROM issued_ticket_legs WHERE ticket_id=issued_tickets.id AND settlement_status='pending')")
     if table == "picks":
         mutable = [c for c in ("status", "settled_at", "result_json") if c in cols]
         if "id" not in cols or "status" not in cols:
@@ -440,6 +459,10 @@ def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
              "tables": {}, "deletes": {}}
     n_files = 0
     tables = push_tables(scon)
+    # Explicit job metadata replication uses write_policy's narrow, monotonic
+    # last-run update. Default pushes still exclude all coordinator state.
+    if only_tables and 'job_state' in only_tables and 'job_state' in app_tables(scon):
+        tables.append('job_state')
     if only_tables:
         unknown = set(only_tables) - set(tables)
         if unknown:
