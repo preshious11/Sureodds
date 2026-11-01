@@ -237,3 +237,25 @@ def test_rejection_recovery_remaps_integer_ids_without_duplicate_diagnostics(db,
     assert m.restore_rejections(db.conn,tmp_path)==1
     assert m.restore_rejections(db.conn,tmp_path)==0
     assert len(db.query('SELECT * FROM selection_rejections'))==2
+
+
+def test_health_requires_authenticated_telegram_and_never_changes_data(tmp_path,monkeypatch):
+    import json
+    from datetime import datetime,timezone
+    from zoneinfo import ZoneInfo
+    module=Path(__file__).resolve().parents[1]/'tools/production_health.py'
+    spec=importlib.util.spec_from_file_location('health_test',module);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+    path=tmp_path/'health.db';c=sqlite3.connect(path)
+    c.executescript('CREATE TABLE job_state(name TEXT,last_run_at TEXT,last_result TEXT); CREATE TABLE live_fixture_state(last_checked_at TEXT); CREATE TABLE picks(status TEXT,start_utc TEXT); CREATE TABLE prediction_cache(local_date TEXT,status TEXT,payload_json TEXT,generated_at TEXT);')
+    now=datetime.now(timezone.utc)
+    c.execute('INSERT INTO live_fixture_state VALUES(?)',(now.isoformat(),))
+    generation={'fixtures_discovered':0,'top':{},'daily':{},'provider_coverage':{'complete':True}}
+    c.execute('INSERT INTO prediction_cache VALUES(?,?,?,?)',(now.astimezone(ZoneInfo('Africa/Lagos')).date().isoformat(),'COMPLETE',json.dumps({'generation':generation}),now.isoformat()))
+    c.commit();before=c.iterdump();before='\n'.join(before);c.close()
+    monkeypatch.setattr(m.shutil,'which',lambda name:None)
+    monkeypatch.setattr(m,'connectivity',lambda:{'telegram':{'reachable':True,'authenticated':False}})
+    assert m.report(path)['healthy'] is False
+    monkeypatch.setattr(m,'connectivity',lambda:{'telegram':{'reachable':True,'authenticated':True}})
+    assert m.report(path)['healthy'] is True
+    c=sqlite3.connect(path)
+    assert '\n'.join(c.iterdump())==before

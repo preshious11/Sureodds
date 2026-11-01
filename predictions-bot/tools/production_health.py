@@ -57,6 +57,10 @@ def report(path):
         output['healthy'] = (output['integrity']=='ok' and output['disk_free_bytes']>100_000_000 and
                              output.get('process','active')=='active' and
                              all(v['reachable'] for v in output['external_connectivity'].values()) and
+                             output['external_connectivity'].get('telegram',{}).get('authenticated',False) and
+                             generation.get('fixtures_discovered') is not None and
+                             'top' in generation and 'daily' in generation and
+                             bool(coverage.get('complete')) and
                              overdue==0 and bool(live) and
                              (now-datetime.fromisoformat(live.replace('Z','+00:00'))).total_seconds()<1800 and bool(cached))
         return output

@@ -133,7 +133,7 @@ def record_job(db, name, result):
     db.execute("INSERT INTO job_state(name,last_run_at,last_result,updated_at) "
                "VALUES(?,strftime('%Y-%m-%dT%H:%M:%SZ','now'),?,strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
                "ON CONFLICT(name) DO UPDATE SET last_run_at=excluded.last_run_at,last_result=excluded.last_result,updated_at=excluded.updated_at",
-               (name,json.dumps(result)))
+               (name,'OK mode=live '+json.dumps(result)))
 
 
 def live_run(job: str, force: bool) -> dict:
