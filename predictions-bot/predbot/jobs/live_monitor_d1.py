@@ -86,7 +86,10 @@ def run(db_path: str) -> dict:
             db.execute("INSERT INTO job_state(name,last_run_at,last_result,updated_at) "
                        "VALUES('live_monitor',strftime('%Y-%m-%dT%H:%M:%SZ','now'),'OK completed',strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
                        "ON CONFLICT(name) DO UPDATE SET last_run_at=excluded.last_run_at,last_result=excluded.last_result,updated_at=excluded.updated_at")
-        return {"events_recorded": after - before, "issued_tickets": ledger}
+        summary: dict[str, object] = {"events_recorded": after - before}
+        if db.query("SELECT 1 FROM sqlite_master WHERE name='issued_ticket_legs'"):
+            summary['issued_tickets'] = ledger
+        return summary
     finally:
         db.close()
 
