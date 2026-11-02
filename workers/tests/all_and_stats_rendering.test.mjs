@@ -32,12 +32,13 @@ function stubDb(sql) {
 function baseSchema() {
   const sql = new DatabaseSync(":memory:");
   sql.exec(`
-    CREATE TABLE picks(id INTEGER PRIMARY KEY, pick_date TEXT, tier TEXT, rank INTEGER,
+    CREATE TABLE picks(id INTEGER PRIMARY KEY, pick_date TEXT, revision_id INTEGER NOT NULL DEFAULT 1, tier TEXT, rank INTEGER,
       sport TEXT, league TEXT, home TEXT, away TEXT, start_utc TEXT, market TEXT DEFAULT 'result3',
       period TEXT DEFAULT 'full', stat TEXT DEFAULT 'points', entity TEXT DEFAULT 'all', line REAL,
       selection TEXT, label TEXT, price REAL, prob REAL, status TEXT, result_json TEXT);
     CREATE TABLE prediction_memberships(prediction_id INTEGER REFERENCES picks(id),
       collection TEXT, rank INTEGER, PRIMARY KEY(prediction_id, collection));
+    CREATE TABLE active_ticket_revisions(pick_date TEXT PRIMARY KEY, revision_id INTEGER, updated_at TEXT);
     CREATE TABLE prediction_cache(cache_key TEXT PRIMARY KEY, local_date TEXT,
       timezone TEXT, status TEXT, payload_json TEXT);
   `);

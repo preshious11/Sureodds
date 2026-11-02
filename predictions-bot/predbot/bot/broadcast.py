@@ -137,8 +137,16 @@ def deliver_community_live(db: Database, tg: Telegram, pick_date: str, fixture_k
     if not tg or not tg.enabled():
         return 0, True
     chat_id = str(tg.chat_id)
-    published = {tier for tier in ("top", "daily")
-                 if db.delivery_done(f"community_picks_{tier}", pick_date, chat_id)}
+    revision_id = db.active_ticket_revision(pick_date)
+    if revision_id is None:
+        return 0, True
+    published = {
+        collection
+        for collection in ("top", "daily")
+        if (receipt := db.ticket_publication(pick_date, collection, revision_id, "group"))
+        and receipt["state"] == "sent"
+        and receipt["recipient_id"] == chat_id
+    }
     relevant = [r for r in rows if published.intersection(r.get("collections") or ())]
     if not relevant:
         return 0, True

@@ -38,7 +38,7 @@ function stubDb(sql) {
 function fixture() {
   const sql = new DatabaseSync(":memory:");
   sql.exec(`
-    CREATE TABLE picks(id INTEGER PRIMARY KEY, pick_date TEXT, tier TEXT, rank INTEGER,
+    CREATE TABLE picks(id INTEGER PRIMARY KEY, pick_date TEXT, revision_id INTEGER NOT NULL DEFAULT 1, tier TEXT, rank INTEGER,
       sport TEXT, league TEXT, home TEXT, away TEXT, start_utc TEXT, market TEXT,
       period TEXT DEFAULT 'full', stat TEXT DEFAULT 'points', entity TEXT DEFAULT 'all', line REAL DEFAULT 2.5,
       selection TEXT, label TEXT, price REAL, prob REAL, status TEXT);
@@ -48,6 +48,10 @@ function fixture() {
       timezone TEXT, status TEXT, payload_json TEXT);
     CREATE TABLE posts(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, post_date TEXT,
       message_id TEXT, created_at TEXT, UNIQUE(kind, post_date));
+    CREATE TABLE active_ticket_revisions(pick_date TEXT PRIMARY KEY, revision_id INTEGER, updated_at TEXT);
+    CREATE TABLE ticket_publications(pick_date TEXT, collection TEXT, revision_id INTEGER, destination TEXT,
+      recipient_id TEXT, state TEXT, message_id TEXT, attempts INTEGER, error TEXT, created_at TEXT, updated_at TEXT,
+      PRIMARY KEY(pick_date,collection,revision_id,destination));
     CREATE TABLE job_state(name TEXT PRIMARY KEY, due_at TEXT, lease_owner TEXT,
       lease_until TEXT, attempts INTEGER NOT NULL DEFAULT 0, last_run_at TEXT,
       updated_at TEXT, last_result TEXT);
@@ -60,10 +64,11 @@ function seedDay(sql, day, { dailyCount = 8 } = {}) {
     "INSERT INTO picks(id,pick_date,tier,rank,sport,league,home,away,start_utc,market,selection,label,price,prob,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
   );
   const insertMembership = sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)");
+  const price = dailyCount > 5 ? 1.35 : 2.2;
   for (let i = 1; i <= dailyCount; i += 1) {
     insertPick.run(
       i, day, "all", i, "football", "League", `Home${i}`, `Away${i}`,
-      `${day}T${String(10 + i).padStart(2, "0")}:00:00Z`, "total", "over", `Over 2.5 (#${i})`, 1.9, 0.6, "pending",
+      `${day}T${String(10 + i).padStart(2, "0")}:00:00Z`, "total", "over", `Over 2.5 (#${i})`, price, 0.6, "pending",
     );
     insertMembership.run(i, "all", i);
     insertMembership.run(i, "daily", i);
@@ -104,7 +109,7 @@ describe("automatic group post renders the whole ticket, never paginated", () =>
     assert.equal(outcome, "sent");
     assert.equal("reply_markup" in sentPayload, false);
   });
-  it("a genuinely-empty Top card carries the Custom Picks deep-link keyboard when a bot username is configured", async () => {
+  it("a genuinely-empty Top card is not sent", async () => {
     const sql = fixture();
     const day = "2026-10-14";
     // COMPLETE cache, zero top-collection rows -> genuinely empty, not "not ready".
@@ -123,17 +128,11 @@ describe("automatic group post renders the whole ticket, never paginated", () =>
       sentPayload = p;
       return { ok: true, messageId: 1 };
     });
-    assert.equal(outcome, "sent");
-    assert.match(sentPayload.text, /No Bet of the Day for today/);
-    const kb = JSON.stringify(sentPayload.reply_markup);
-    assert.match(kb, /✨ Custom Picks/);
-    assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=custom_picks/);
-    // This card is posted to the group; its All button must be the private
-    // deep link too, never the in-group callback (pg|all|0).
-    assert.match(kb, /https:\/\/t\.me\/SureOddsBot\?start=all/);
-    assert.doesNotMatch(kb, /"callback_data":"pg\|all\|0"/);
+    assert.equal(outcome, "skipped");
+    assert.equal(sentPayload, null);
+    assert.equal(sql.prepare("SELECT COUNT(*) AS n FROM ticket_publications").get().n, 0);
   });
-  it("without a configured bot username, the empty Top card is sent with no keyboard rather than a dead link", async () => {
+  it("without a configured bot username, an empty Top is still not sent", async () => {
     const sql = fixture();
     const day = "2026-10-14";
     sql.prepare("INSERT INTO prediction_cache VALUES(?,?,?,?,?)").run(
@@ -141,10 +140,11 @@ describe("automatic group post renders the whole ticket, never paginated", () =>
     );
     const env = { DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5", TELEGRAM_CHAT_ID: "-100123" };
     let sentPayload = null;
-    await postGroupPicks(env, "top", AFTER_GATE, async (_e, _m, p) => {
+    const outcome = await postGroupPicks(env, "top", AFTER_GATE, async (_e, _m, p) => {
       sentPayload = p;
       return { ok: true, messageId: 1 };
     });
-    assert.equal("reply_markup" in sentPayload, false);
+    assert.equal(outcome, "skipped");
+    assert.equal(sentPayload, null);
   });
 });

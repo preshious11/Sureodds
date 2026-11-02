@@ -9,7 +9,8 @@ const DAY = '2026-10-18';
 const iso = ms => new Date(ms).toISOString();
 function world() {
   const sql = new DatabaseSync(':memory:');
-  for (const file of ['0001_foundation.sql','0003_engine_state.sql','0005_ticket_candidates.sql','0011_pipeline_dispatch.sql']) {
+  for (const file of ['0001_foundation.sql','0003_engine_state.sql','0005_ticket_candidates.sql','0011_pipeline_dispatch.sql',
+    '0018_ticket_publication_revisions.sql','0019_ticket_publication_recipient.sql']) {
     sql.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
   }
   const DB = { prepare(query) { return {

@@ -1,7 +1,9 @@
 """Collection orchestration over persisted canonical predictions."""
 from dataclasses import dataclass, field
+import math
 from predbot.selection.top import select_top
 from predbot.selection.daily import select_daily
+from predbot.util.timeutil import parse_iso
 
 
 @dataclass
@@ -48,6 +50,9 @@ class PredictionPool:
 
     def __init__(self, db, day, scratch=False):
         self.db, self.day, self.scratch = db, day, scratch
+        self.fresh_rows = []
+        self.fresh_evaluation = False
+        self.evaluation_id = None
 
     @classmethod
     def persistent(cls, db, day):
@@ -62,8 +67,15 @@ class PredictionPool:
         return self.db.transaction()
 
     def store(self, pickset):
-        from predbot.jobs.daily_picks import store_picks
+        from predbot.jobs.daily_picks import prediction_row, store_picks
         store_picks(pickset, self.db, self.day)
+        self.fresh_evaluation = bool(pickset.diagnostics.get('generated_at'))
+        self.evaluation_id = pickset.diagnostics.get('generated_at')
+        for scored in pickset.ticket_predictions:
+            row = prediction_row(scored, self.day)
+            row['id'] = self.db._candidate_identity(row)
+            row['status'] = 'pending'
+            self.fresh_rows.append(row)
 
     def rows(self, collection='all'):
         return [dict(r) for r in self.db.collection_predictions(collection, self.day)]
@@ -78,7 +90,10 @@ class PredictionPool:
         tests/test_rejection_logging.py."""
         db, day = self.db, self.day
         has_archive = bool(db.query('SELECT 1 FROM ticket_candidates WHERE pick_date=? LIMIT 1', (day,)))
-        pool = db.ticket_candidate_rows(day) if has_archive else self.rows('all')
+        if self.fresh_evaluation:
+            pool = self.fresh_rows
+        else:
+            pool = db.ticket_candidate_rows(day) if has_archive else self.rows('all')
         top_sink = top_flush = daily_sink = daily_flush = None
         if not self.scratch:
             from predbot.selection.rejections import collector, new_run_id
@@ -94,19 +109,49 @@ class PredictionPool:
         daily, daily_diag = select_daily(daily_pool, cfg, now_utc, reject_sink=daily_sink)
         if daily_flush and (errors := daily_flush(daily)):
             daily_diag['rejection_log_errors'] = errors
-        # WHY: Worker top/daily receipts freeze both cards, just like legacy pick receipts.
-        with db.transaction():
-            if not db.deliveries_exist('picks', day) and not db.query(
-                    "SELECT 1 FROM posts WHERE post_date=? AND kind IN ('picks','picks_top','picks_daily','top','daily')", (day,)):
-                db.execute("DELETE FROM prediction_memberships WHERE collection IN ('top','daily') "
-                           "AND prediction_id IN (SELECT id FROM picks WHERE pick_date=?)", (day,))
-                for collection, rows in (('top', top), ('daily', daily)):
-                    for rank, row in enumerate(rows, 1):
-                        pid = db.store_ticket_prediction(row) if isinstance(row['id'], str) else row['id']
-                        db.add_membership(pid, collection, rank)
+        active_revision = db.active_ticket_revision(day)
+        should_create_revision = bool(top or daily) and (
+            self.fresh_evaluation or active_revision is None)
+        no_qualifying_ticket = not (top or daily)
+        if should_create_revision:
+            now = parse_iso(now_utc)
+
+            def revalidate(rows, lower, upper):
+                if not rows or now is None:
+                    return False
+                product = 1.0
+                for row in rows:
+                    kickoff = parse_iso(row.get('start_utc'))
+                    price = row.get('price')
+                    if (row.get('status') != 'pending' or kickoff is None or kickoff <= now
+                            or not isinstance(price, (int, float)) or isinstance(price, bool)
+                            or not math.isfinite(price) or price <= 1):
+                        return False
+                    product *= price
+                return lower <= product <= upper
+
+            if not revalidate(top, cfg.top_odds_target, cfg.top_odds_max):
+                top = []
+            if not revalidate(daily, cfg.daily_odds_min, cfg.daily_odds_max):
+                daily = []
+            no_qualifying_ticket = not (top or daily)
+            if top or daily:
+                evaluation_id = self.evaluation_id or f"package:{now_utc}"
+                with db.transaction():
+                    revision_id = db.create_ticket_revision(day, evaluation_id, now_utc)
+                    for collection, rows in (('top', top), ('daily', daily)):
+                        for rank, row in enumerate(rows, 1):
+                            if isinstance(row.get('id'), str):
+                                prediction_id = db.store_ticket_prediction(
+                                    row, revision_id=revision_id, collection=collection)
+                            else:
+                                prediction_id = int(row['id'])
+                                db.add_membership(prediction_id, collection, rank)
         return {'top': top_diag, 'daily': daily_diag,
                 'all_predictions': len(self.rows('all')), 'ticket_candidates': len(pool), 'top_selected': len(self.rows('top')),
-                'daily_selected': len(self.rows('daily'))}
+                'daily_selected': len(self.rows('daily')),
+                'active_ticket_revision': db.active_ticket_revision(day),
+                'no_qualifying_ticket': no_qualifying_ticket}
 
     def close(self):
         if self.scratch:

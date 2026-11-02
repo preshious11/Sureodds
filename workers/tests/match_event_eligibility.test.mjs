@@ -51,13 +51,17 @@ const iso = (ms) => new Date(ms).toISOString();
 function world() {
   const sql = new DatabaseSync(":memory:");
   sql.exec(`
-    CREATE TABLE picks(id INTEGER PRIMARY KEY, pick_date TEXT, tier TEXT DEFAULT 'all', rank INTEGER DEFAULT 0,
+    CREATE TABLE picks(id INTEGER PRIMARY KEY, pick_date TEXT, revision_id INTEGER NOT NULL DEFAULT 1, tier TEXT DEFAULT 'all', rank INTEGER DEFAULT 0,
       sport TEXT DEFAULT 'football', league TEXT, home TEXT DEFAULT 'H', away TEXT DEFAULT 'A', start_utc TEXT,
       market TEXT DEFAULT 'result3', period TEXT DEFAULT 'full', stat TEXT DEFAULT 'points',
       entity TEXT DEFAULT 'all', line REAL, selection TEXT DEFAULT 'home', label TEXT DEFAULT 'H to Win', price REAL DEFAULT 2,
       prob REAL DEFAULT 0.6, status TEXT, fixture_key TEXT, result_json TEXT);
     CREATE TABLE prediction_memberships(prediction_id INTEGER, collection TEXT, rank INTEGER,
       PRIMARY KEY(prediction_id, collection));
+    CREATE TABLE active_ticket_revisions(pick_date TEXT PRIMARY KEY, revision_id INTEGER, updated_at TEXT);
+    CREATE TABLE ticket_publications(pick_date TEXT, collection TEXT, revision_id INTEGER, destination TEXT,
+      recipient_id TEXT, state TEXT, message_id TEXT, attempts INTEGER, error TEXT, created_at TEXT, updated_at TEXT,
+      PRIMARY KEY(pick_date,collection,revision_id,destination));
     CREATE TABLE posts(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, post_date TEXT, message_id TEXT,
       created_at TEXT, UNIQUE(kind, post_date));
     CREATE TABLE live_fixture_state(pick_date TEXT, fixture_key TEXT, status TEXT, settlement_done INTEGER DEFAULT 0,
@@ -81,9 +85,10 @@ function world() {
   return {
     sql,
     env: { DB: stubDb(sql), TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5", TELEGRAM_CHAT_ID: "-100", TELEGRAM_ADMIN_IDS: "999" },
-    fixture(key, { collections = [], status = "pending", live = null, settled = 0 } = {}) {
+    fixture(key, { collections = [], status = "pending", live = null, settled = 0, price = 2 } = {}) {
       const id = nextId++;
-      sql.prepare("INSERT INTO picks(id,pick_date,fixture_key,start_utc,status) VALUES(?,?,?,?,?)").run(id, DAY, key, iso(KICKOFF), status);
+      sql.prepare("INSERT INTO picks(id,pick_date,fixture_key,start_utc,status,price) VALUES(?,?,?,?,?,?)")
+        .run(id, DAY, key, iso(KICKOFF), status, price);
       for (const c of collections) sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)").run(id, c, 1);
       if (live) sql.prepare("INSERT INTO live_fixture_state(pick_date,fixture_key,status,settlement_done) VALUES(?,?,?,?)").run(DAY, key, live, settled);
       return id;
@@ -96,6 +101,10 @@ function world() {
     },
     receipts() {
       return sql.prepare("SELECT kind FROM posts ORDER BY id").all().map((r) => r.kind);
+    },
+    publicationReceipts() {
+      return sql.prepare("SELECT collection,destination,state FROM ticket_publications ORDER BY collection,destination")
+        .all();
     },
   };
 }
@@ -386,13 +395,14 @@ describe("daily posting schedule and failure handling", () => {
     // 08:00 UTC is 09:00 Lagos (UTC+1, no DST); 06:00 UTC is 07:00 Lagos.
     assert.equal(lagosMinutes(Date.UTC(2026, 9, 16, 8, 0)), 9 * 60);
     assert.equal(lagosMinutes(Date.UTC(2026, 9, 16, 6, 45)), 7 * 60 + 45);
-    assert.match(toml, /STAGE3_CRON_ENABLED = "1"/);
+    assert.match(toml, /STAGE3_CRON_ENABLED = "0"/);
     assert.match(toml, /DELIVERY_TIME = "09:30"/);
   });
 
   it("group posts wait for 09:30 Lagos, then publish once to group and owner", async () => {
     const w = world();
     w.sql.prepare("INSERT INTO prediction_cache VALUES(?,?,?,?,?)").run("k", DAY, "Africa/Lagos", "COMPLETE", "{}");
+    w.fixture("publish-top", { collections: ["top"], price: 2 });
     const r = recorder();
     const at0929 = Date.UTC(2026, 9, 16, 8, 29);
     const at0930 = Date.UTC(2026, 9, 16, 8, 30);
@@ -421,17 +431,20 @@ describe("daily posting schedule and failure handling", () => {
   it("a transient group failure is retried by the next sweep without duplicating the owner", async () => {
     const w = world();
     w.sql.prepare("INSERT INTO prediction_cache VALUES(?,?,?,?,?)").run("k", DAY, "Africa/Lagos", "COMPLETE", "{}");
+    w.fixture("publish-daily", { collections: ["daily"], price: 10.5 });
     const at = Date.UTC(2026, 9, 16, 8, 35);
+    const first = recorder(new Set(["-100"]));
     const quiet = console.error;
     console.error = () => {};
     try {
-      assert.equal(await postGroupPicks(w.env, "daily", at, recorder(new Set(["-100"])).fn), "failed");
+      assert.equal(await postGroupPicks(w.env, "daily", at, first.fn), "failed");
     } finally {
       console.error = quiet;
     }
     const r = recorder();
     assert.equal(await postGroupPicks(w.env, "daily", at + 300_000, r.fn), "sent");
-    assert.deepEqual(r.sent.map((s) => s.chat), ["-100", "999"]);
+    assert.deepEqual(first.sent.map((s) => s.chat), ["999"]);
+    assert.deepEqual(r.sent.map((s) => s.chat), ["-100"]);
   });
 
   it("handleScheduled routes the deliver sweep to match events", async () => {
@@ -466,10 +479,10 @@ describe("integration: publication -> kickoff -> settlement -> full time -> next
     w.sql.exec("CREATE TABLE telegram_updates(update_id INTEGER, status TEXT, attempts INTEGER, last_error TEXT)");
     w.sql.prepare("INSERT INTO prediction_cache VALUES(?,?,?,?,?)").run("k", DAY, "Africa/Lagos", "COMPLETE", "{}");
     // Persisted selection: Top-only, Daily-only, in both, All-only fixture, All-only sibling of a Top fixture.
-    const topOnly = w.fixture("top-fx", { collections: ["all", "top"] });
-    const dailyOnly = w.fixture("daily-fx", { collections: ["all", "daily"] });
-    const bothA = w.fixture("both-fx", { collections: ["all", "top"] });
-    const bothB = w.fixture("both-fx", { collections: ["all", "daily"] });
+    const topOnly = w.fixture("top-fx", { collections: ["all", "top"], price: 1.5 });
+    const dailyOnly = w.fixture("daily-fx", { collections: ["all", "daily"], price: 3.2 });
+    const bothA = w.fixture("both-fx", { collections: ["all", "top"], price: 1.5 });
+    const bothB = w.fixture("both-fx", { collections: ["all", "daily"], price: 3.2 });
     const allFx = w.fixture("all-fx", { collections: ["all"] });
     const allSibling = w.fixture("top-fx", { collections: ["all"] });
     w.sql.prepare("UPDATE picks SET label='Hidden pick' WHERE id IN (?,?)").run(allFx, allSibling);
@@ -489,9 +502,14 @@ describe("integration: publication -> kickoff -> settlement -> full time -> next
       const at0930 = Date.UTC(2026, 9, 16, 8, 30);
       await handleScheduled(env, CRON_POST_SWEEP, at0930);
       await handleScheduled(env, CRON_POST_SWEEP, at0930 + 300_000);
-      assert.equal(sent.length, 4, "top+daily x (group, owner), no duplicates on the second sweep");
+      assert.equal(sent.length, 4, `top+daily x (group, owner), no duplicates on the second sweep; receipts=${JSON.stringify(w.publicationReceipts())}`);
       assert.deepEqual([...new Set(sent.map((s) => s.chat))].sort(), ["-100", "999"]);
-      assert.ok(w.receipts().includes("top") && w.receipts().includes("daily"));
+      assert.equal(JSON.stringify(w.publicationReceipts()), JSON.stringify([
+        { collection: "daily", destination: "group", state: "sent" },
+        { collection: "daily", destination: "owner", state: "sent" },
+        { collection: "top", destination: "group", state: "sent" },
+        { collection: "top", destination: "owner", state: "sent" },
+      ]));
       assert.ok(sent.every((s) => !s.text.includes("Hidden pick")), "All-only never appears in the published cards");
 
       // Live monitor (GitHub Actions) records start events for tracked fixtures only; All-only has none.

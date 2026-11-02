@@ -1,7 +1,11 @@
 import importlib.util
+import json
 from pathlib import Path
+from unittest.mock import Mock
 
 from predbot.config import Config
+from predbot.jobs import daily_picks
+from tests.real_events import real_ev
 from tests.conftest import dt
 from tests.test_picker import _fx, sc
 from tests.real_events import pickset
@@ -50,3 +54,40 @@ def test_fresh_evaluation_never_substitutes_started_or_below_target_picks(db):
     assert report['tickets']['top'] == {'selections': [], 'combined_odds': None}
     assert report['tickets']['daily'] == {'selections': [], 'combined_odds': None}
     assert not db.query('SELECT * FROM picks')
+
+
+def test_required_partial_provider_stays_incomplete_through_fresh_report(db, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime(2030, 6, 1, 10, tzinfo=timezone.utc)
+    events = [real_ev(i, start=now + timedelta(hours=4)) for i in range(3)]
+    for i, event in enumerate(events):
+        event.canonical_event_id = f'fixture-{i}'
+    chain = Mock()
+    chain.collect.return_value = events
+    chain.last_report = {
+        'sharpapi': {'status': 'partial'},
+        'oddsapi': {'status': 'complete'},
+    }
+    chain.order = ['sharpapi', 'oddsapi']
+    chain.providers = {}
+    monkeypatch.setattr(daily_picks, 'resolve_events_detailed', lambda batch, *args: (batch, []))
+    monkeypatch.setattr(daily_picks, 'score_events', lambda batch, *args: [
+        sc(event, 'result3', 'home', .76, 1.5) for event in batch])
+    cfg = Config(timezone='UTC', provider_fallback_enabled=False)
+    generated = []
+
+    def build(*args):
+        pickset = daily_picks.build_picks(*args)
+        generated.append(pickset)
+        return pickset
+
+    report = module.evaluate(db, cfg, now, chain, builder=build)
+    assert generated[0].complete is False
+    assert generated[0].diagnostics['complete'] is False
+    assert generated[0].diagnostics['provider_coverage']['missing_required'] == ['sharpapi']
+    assert report['complete'] is False
+    assert report['generation']['complete'] is False
+    serialized = json.loads(json.dumps(report))
+    assert serialized['complete'] is False
+    assert serialized['generation']['providers'] == chain.last_report

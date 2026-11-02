@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS ticket_candidates (
 CREATE TABLE IF NOT EXISTS picks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     pick_date TEXT NOT NULL,             -- local date the pick was published for (YYYY-MM-DD)
+    revision_id INTEGER NOT NULL DEFAULT 1,
     tier TEXT NOT NULL,                  -- top | daily
     rank INTEGER NOT NULL,
     provider TEXT NOT NULL,
@@ -190,7 +191,34 @@ CREATE TABLE IF NOT EXISTS posts (
     created_at TEXT NOT NULL,
     UNIQUE(kind, post_date)
 );
-
+CREATE TABLE IF NOT EXISTS ticket_revisions (
+    pick_date TEXT NOT NULL,
+    revision_id INTEGER NOT NULL,
+    evaluation_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(pick_date, revision_id),
+    UNIQUE(pick_date, evaluation_id)
+);
+CREATE TABLE IF NOT EXISTS active_ticket_revisions (
+    pick_date TEXT PRIMARY KEY,
+    revision_id INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(pick_date, revision_id) REFERENCES ticket_revisions(pick_date, revision_id)
+);
+CREATE TABLE IF NOT EXISTS ticket_publications (
+    pick_date TEXT NOT NULL,
+    collection TEXT NOT NULL CHECK(collection IN ('top','daily')),
+    revision_id INTEGER NOT NULL,
+    destination TEXT NOT NULL CHECK(destination IN ('group','owner')),
+    recipient_id TEXT,
+    state TEXT NOT NULL CHECK(state IN ('sending','failed','sent','uncertain')),
+    message_id TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(pick_date, collection, revision_id, destination)
+);
 CREATE TABLE IF NOT EXISTS kv (
     k TEXT PRIMARY KEY,
     v TEXT
@@ -323,11 +351,17 @@ class Database:
 
     def _migrate(self) -> None:
         """Additive migrations for databases created by older versions."""
+        publication_cols = {str(r["name"]) for r in self.query("PRAGMA table_info(ticket_publications)")}
+        if "recipient_id" not in publication_cols:
+            self.conn.execute("ALTER TABLE ticket_publications ADD COLUMN recipient_id TEXT")
         cols = {str(r["name"]) for r in self.query("PRAGMA table_info(subscribers)")}
         if "timezone" not in cols:                      # per-subscriber local delivery zone
             self.conn.execute("ALTER TABLE subscribers ADD COLUMN timezone TEXT NOT NULL DEFAULT ''")
             self.conn.commit()
         pick_cols = {str(r["name"]) for r in self.query("PRAGMA table_info(picks)")}
+        if pick_cols and "revision_id" not in pick_cols:
+            self.conn.execute("ALTER TABLE picks ADD COLUMN revision_id INTEGER NOT NULL DEFAULT 1")
+            pick_cols.add("revision_id")
         if pick_cols and "prob_raw" not in pick_cols:   # pre-calibration probability
             self.conn.execute("ALTER TABLE picks ADD COLUMN prob_raw REAL")
             self.conn.commit()
@@ -352,7 +386,43 @@ class Database:
             self.conn.execute("INSERT OR IGNORE INTO prediction_memberships SELECT id,'all',rank FROM picks")
             self.conn.execute("INSERT OR IGNORE INTO prediction_memberships SELECT id,tier,rank FROM picks WHERE tier IN ('top','daily')")
             self.conn.execute("INSERT OR REPLACE INTO kv VALUES('migration:prediction_memberships:v1','done')")
+        self._migrate_ticket_revisions()
         self.conn.commit()
+
+    def _migrate_ticket_revisions(self) -> None:
+        """Register legacy Top/Daily memberships as revision 1 without rewriting them."""
+        self.conn.execute(
+            "INSERT OR IGNORE INTO ticket_revisions(pick_date,revision_id,evaluation_id,created_at) "
+            "SELECT p.pick_date,1,'legacy',MIN(p.created_at) FROM picks p "
+            "JOIN prediction_memberships m ON m.prediction_id=p.id "
+            "WHERE m.collection IN ('top','daily') GROUP BY p.pick_date")
+        self.conn.execute(
+            "INSERT OR IGNORE INTO active_ticket_revisions(pick_date,revision_id,updated_at) "
+            "SELECT pick_date,revision_id,created_at FROM ticket_revisions")
+        self.conn.execute(
+            "INSERT OR IGNORE INTO ticket_publications "
+            "(pick_date,collection,revision_id,destination,state,message_id,created_at,updated_at) "
+            "SELECT post_date, "
+            "CASE WHEN kind IN ('picks_top','top','top_owner') THEN 'top' ELSE 'daily' END, "
+            "1, CASE WHEN kind IN ('top_owner','daily_owner') THEN 'owner' ELSE 'group' END, "
+            "CASE WHEN message_id IS NULL THEN 'uncertain' ELSE 'sent' END, message_id,created_at,created_at "
+            "FROM posts WHERE kind IN ('picks_top','picks_daily','top','daily','top_owner','daily_owner')")
+        self.conn.execute(
+            "INSERT OR IGNORE INTO ticket_publications "
+            "(pick_date,collection,revision_id,destination,recipient_id,state,created_at,updated_at) "
+            "SELECT post_date,CASE WHEN kind='community_picks_top' THEN 'top' ELSE 'daily' END,"
+            "1,'group',chat_id,'sent',created_at,created_at FROM deliveries "
+            "WHERE kind IN ('community_picks_top','community_picks_daily')")
+        self.conn.execute(
+            "UPDATE ticket_publications SET recipient_id=(SELECT d.chat_id FROM deliveries d "
+            "WHERE d.post_date=ticket_publications.pick_date AND "
+            "d.kind=CASE WHEN ticket_publications.collection='top' "
+            "THEN 'community_picks_top' ELSE 'community_picks_daily' END "
+            "ORDER BY d.created_at DESC LIMIT 1) "
+            "WHERE destination='group' AND recipient_id IS NULL AND EXISTS ("
+            "SELECT 1 FROM deliveries d WHERE d.post_date=ticket_publications.pick_date AND "
+            "d.kind=CASE WHEN ticket_publications.collection='top' "
+            "THEN 'community_picks_top' ELSE 'community_picks_daily' END)")
 
     def _migrate_prediction_uniqueness(self) -> None:
         """One representative per fixture/family; ticket-only alternates may coexist.
@@ -362,7 +432,7 @@ class Database:
         self.conn.execute("DROP INDEX IF EXISTS uq_prediction_event_day")
         self.conn.execute("DROP INDEX IF EXISTS uq_prediction_event_family_day")
         self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_prediction_event_family_day "
-                          "ON picks(pick_date,canonical_event_id,market) "
+                          "ON picks(pick_date,revision_id,canonical_event_id,market) "
                           "WHERE canonical_event_id IS NOT NULL AND canonical_event_id<>'' AND is_representative=1")
 
     def _migrate_split_picks_kind(self) -> None:
@@ -395,8 +465,12 @@ class Database:
                     ident = (r["pick_date"], key, r["market"], r["period"], r["stat"], r["entity"], r["line"], r["selection"])
                 seen.add(ident)
                 self.conn.execute("UPDATE picks SET fixture_key=? WHERE id=?", (key, r["id"]))
+        if self.get_kv('migration:ticket_revisions:exact-index') != 'done':
+            self.conn.execute("DROP INDEX IF EXISTS uq_picks_fixture_selection")
+            self.conn.execute("INSERT OR REPLACE INTO kv VALUES('migration:ticket_revisions:exact-index','done')")
         self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_picks_fixture_selection ON picks("
-                          "pick_date, fixture_key, market, period, stat, entity, COALESCE(line, -999999), selection)")
+                          "pick_date, revision_id, fixture_key, market, period, stat, entity, "
+                          "COALESCE(line, -999999), selection)")
         self.conn.commit()
 
     # ---- generic ----
@@ -635,6 +709,9 @@ class Database:
         if pick_date is not None:
             where.append('p.pick_date=?')
             params.append(pick_date)
+        if collection in ('top', 'daily'):
+            where.append("p.revision_id=COALESCE((SELECT revision_id FROM active_ticket_revisions "
+                         "WHERE pick_date=p.pick_date),1)")
         if settled_only:
             where.append("p.status<>'pending'")
         return self.query("SELECT p.*,m.collection AS collection,m.rank AS collection_rank FROM picks p "
@@ -653,12 +730,16 @@ class Database:
         ids existed (NULL) or under another provider's event id - by ``fixture_key`` and the family's own coordinates
         (market, period, stat, entity). Without the second, such a row slips past the first check and the insert then
         collides with ``uq_picks_fixture_selection`` (the exact-duplicate guard on fixture_key)."""
-        existing = self.query("SELECT id FROM picks WHERE pick_date=? AND canonical_event_id=? AND market=? AND EXISTS (SELECT 1 FROM prediction_memberships WHERE prediction_id=picks.id AND collection='all')",
-                              (row['pick_date'], row['canonical_event_id'], row['market']))
+        revision_id = int(row.get('revision_id', 1))
+        existing = self.query("SELECT id FROM picks WHERE pick_date=? AND revision_id=? "
+                              "AND canonical_event_id=? AND market=? AND EXISTS "
+                              "(SELECT 1 FROM prediction_memberships WHERE prediction_id=picks.id AND collection='all')",
+                              (row['pick_date'], revision_id, row['canonical_event_id'], row['market']))
         if not existing and row.get('fixture_key'):
-            existing = self.query("SELECT id FROM picks WHERE pick_date=? AND fixture_key=? AND market=? AND period=? "
+            existing = self.query("SELECT id FROM picks WHERE pick_date=? AND revision_id=? "
+                                  "AND fixture_key=? AND market=? AND period=? "
                                   "AND stat=? AND entity=? AND EXISTS (SELECT 1 FROM prediction_memberships WHERE prediction_id=picks.id AND collection='all') ORDER BY id LIMIT 1",
-                                  (row['pick_date'], row['fixture_key'], row['market'], row.get('period', 'full'),
+                                  (row['pick_date'], revision_id, row['fixture_key'], row['market'], row.get('period', 'full'),
                                    row.get('stat', 'points'), row.get('entity', 'all')))
         if existing:
             return int(existing[0]['id'])
@@ -677,9 +758,9 @@ class Database:
             # second one. First write wins: keep the stored forecast, adopt it
             # into 'all' so it becomes visible, and never rewrite history.
             clash = self.query("SELECT id, selection, line, period, stat, entity, status FROM picks "
-                               "WHERE pick_date=? AND canonical_event_id=? AND market=? "
+                               "WHERE pick_date=? AND revision_id=? AND canonical_event_id=? AND market=? "
                                "AND is_representative=1 ORDER BY id LIMIT 1",
-                               (row['pick_date'], row['canonical_event_id'], row['market']))
+                               (row['pick_date'], revision_id, row['canonical_event_id'], row['market']))
             if clash:
                 pid = int(clash[0]['id'])
                 logging.getLogger(__name__).warning(
@@ -692,9 +773,10 @@ class Database:
         try:
             return self.insert_pick(dict(row, tier='all'))
         except sqlite3.IntegrityError:                  # lost a race / an index we did not anticipate: first write wins
-            winner = self.query("SELECT id FROM picks WHERE pick_date=? AND fixture_key=? AND market=? AND period=? "
+            winner = self.query("SELECT id FROM picks WHERE pick_date=? AND revision_id=? "
+                                "AND fixture_key=? AND market=? AND period=? "
                                 "AND stat=? AND entity=? AND selection=? ORDER BY id LIMIT 1",
-                                (row['pick_date'], row.get('fixture_key') or '', row['market'], row.get('period', 'full'),
+                                (row['pick_date'], revision_id, row.get('fixture_key') or '', row['market'], row.get('period', 'full'),
                                  row.get('stat', 'points'), row.get('entity', 'all'), row['selection']))
             if not winner:
                 raise
@@ -783,19 +865,133 @@ class Database:
 
     def _exact_prediction(self, row):
         return self.query('SELECT * FROM picks WHERE pick_date=? AND canonical_event_id=? '
-                          'AND market=? AND period=? AND stat=? AND entity=? AND line IS ? AND selection=?',
-                          (row['pick_date'], row['canonical_event_id'], row['market'], row['period'],
+                          'AND revision_id=? AND market=? AND period=? AND stat=? AND entity=? AND line IS ? AND selection=?',
+                          (row['pick_date'], row['canonical_event_id'], int(row.get('revision_id', 1)), row['market'], row['period'],
                            row['stat'], row['entity'], row['line'], row['selection']))
 
-    def store_ticket_prediction(self, row):
-        existing = self._exact_prediction(row)
-        if existing:
-            return existing[0]['id']
+    def store_ticket_prediction(self, row, revision_id=1, collection=None):
         values = dict(row)
+        values['revision_id'] = int(revision_id)
+        if collection is not None:
+            if collection not in ('top', 'daily'):
+                raise ValueError('ticket collection must be top or daily')
+            values['tier'] = collection
+        existing = self._exact_prediction(values)
+        if existing:
+            prediction_id = int(existing[0]['id'])
+            with self.transaction():
+                if existing[0]['is_representative']:
+                    self.add_membership(prediction_id, 'all', values.get('rank', 0))
+                if collection:
+                    self.add_membership(prediction_id, collection, values.get('rank', 0))
+            return prediction_id
         values.pop('id', None)
         values.pop('status', None)
         values['is_representative'] = 0
-        return self.insert_pick(values)
+        with self.transaction():
+            prediction_id = self.insert_pick(values)
+            return prediction_id
+
+    def active_ticket_revision(self, pick_date):
+        rows = self.query("SELECT revision_id FROM active_ticket_revisions WHERE pick_date=?", (pick_date,))
+        return int(rows[0]['revision_id']) if rows else None
+
+    def create_ticket_revision(self, pick_date, evaluation_id, created_at=None):
+        """Create or reuse one immutable revision for an evaluation; caller owns the transaction."""
+        created_at = created_at or _now()
+        existing = self.query("SELECT revision_id FROM ticket_revisions WHERE pick_date=? AND evaluation_id=?",
+                              (pick_date, str(evaluation_id)))
+        if existing:
+            revision_id = int(existing[0]['revision_id'])
+        else:
+            latest = self.query("SELECT COALESCE(MAX(revision_id),0) AS revision_id "
+                                "FROM ticket_revisions WHERE pick_date=?", (pick_date,))
+            revision_id = int(latest[0]['revision_id']) + 1
+            self.execute("INSERT INTO ticket_revisions(pick_date,revision_id,evaluation_id,created_at) "
+                         "VALUES(?,?,?,?)", (pick_date, revision_id, str(evaluation_id), created_at))
+        self.execute("INSERT INTO active_ticket_revisions(pick_date,revision_id,updated_at) VALUES(?,?,?) "
+                     "ON CONFLICT(pick_date) DO UPDATE SET revision_id=excluded.revision_id,"
+                     "updated_at=excluded.updated_at "
+                     "WHERE excluded.revision_id>=active_ticket_revisions.revision_id",
+                     (pick_date, revision_id, created_at))
+        return revision_id
+
+    def ticket_revision_rows(self, pick_date):
+        return self.query("SELECT * FROM ticket_revisions WHERE pick_date=? ORDER BY revision_id", (pick_date,))
+
+    def ticket_revision_predictions(self, pick_date, collection, revision_id):
+        """Read an immutable ticket revision for normal serving or historical audit."""
+        if collection not in ('top', 'daily'):
+            raise ValueError('ticket collection must be top or daily')
+        return self.query(
+            "SELECT p.*,m.collection AS collection,m.rank AS collection_rank FROM picks p "
+            "JOIN prediction_memberships m ON m.prediction_id=p.id "
+            "WHERE p.pick_date=? AND p.revision_id=? AND m.collection=? "
+            "ORDER BY m.rank,p.id",
+            (pick_date, int(revision_id), collection))
+
+    #: seconds an unresolved 'sending' claim may sit before it's considered abandoned
+    #: (the process died/was killed after claim_ticket_publication but before
+    #: finish_ticket_publication ever ran).
+    STALE_TICKET_PUBLICATION_TIMEOUT_SECONDS = 300
+
+    def sweep_stale_ticket_publications(self, timeout_seconds=None):
+        """Transition any claim stuck in 'sending' past the timeout to 'uncertain'.
+
+        Never back to 'failed': the crash could have happened after Telegram
+        actually accepted the message, so claim_ticket_publication's own
+        ``WHERE state='failed'`` guard must not treat this as auto-retryable -
+        resending here could duplicate a community broadcast. Revision,
+        collection, destination, recipient and attempts are left untouched;
+        only state/error/updated_at change. Returns the number of rows swept.
+        """
+        timeout_seconds = self.STALE_TICKET_PUBLICATION_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cur = self.execute(
+            "UPDATE ticket_publications SET state='uncertain',"
+            "error=?,updated_at=? WHERE state='sending' AND updated_at<?",
+            (f"stale claim: no finish recorded within {int(timeout_seconds)}s", _now(), cutoff))
+        return cur.rowcount
+
+    def uncertain_ticket_publications(self, limit=20):
+        """Recent ambiguous-send receipts awaiting manual review (never auto-retried)."""
+        return self.query(
+            "SELECT pick_date,collection,revision_id,destination,recipient_id,error,updated_at "
+            "FROM ticket_publications WHERE state='uncertain' ORDER BY updated_at DESC LIMIT ?",
+            (int(limit),))
+
+    def claim_ticket_publication(self, pick_date, collection, revision_id, destination, recipient_id=None):
+        if collection not in ('top', 'daily') or destination not in ('group', 'owner'):
+            raise ValueError('invalid ticket publication identity')
+        now = _now()
+        with self.transaction():
+            cur = self.execute(
+                "INSERT INTO ticket_publications(pick_date,collection,revision_id,destination,state,attempts,"
+                "recipient_id,created_at,updated_at) VALUES(?,?,?,?,'sending',1,?,?,?) "
+                "ON CONFLICT(pick_date,collection,revision_id,destination) DO UPDATE SET "
+                "state='sending',recipient_id=excluded.recipient_id,"
+                "attempts=ticket_publications.attempts+1,error=NULL,updated_at=excluded.updated_at "
+                "WHERE ticket_publications.state='failed'",
+                (pick_date, collection, int(revision_id), destination, recipient_id, now, now))
+            return cur.rowcount > 0
+
+    def finish_ticket_publication(self, pick_date, collection, revision_id, destination, *,
+                                  message_id=None, state='sent', error=None):
+        if state not in ('failed', 'sent', 'uncertain'):
+            raise ValueError('invalid terminal publication state')
+        cur = self.execute(
+            "UPDATE ticket_publications SET state=?,message_id=?,error=?,updated_at=? "
+            "WHERE pick_date=? AND collection=? AND revision_id=? AND destination=? AND state='sending'",
+            (state, str(message_id) if message_id is not None else None,
+             str(error)[:500] if error else None, _now(), pick_date, collection, int(revision_id), destination))
+        if cur.rowcount != 1:
+            raise RuntimeError('ticket publication claim was not active')
+
+    def ticket_publication(self, pick_date, collection, revision_id, destination):
+        rows = self.query("SELECT * FROM ticket_publications WHERE pick_date=? AND collection=? "
+                          "AND revision_id=? AND destination=?",
+                          (pick_date, collection, int(revision_id), destination))
+        return dict(rows[0]) if rows else None
 
     def reset_prediction_day(self, day, timezone, now_utc, dry_run=False):
         """Invalidate only the shared snapshot and the unpublished future pending pool for ``day``.
@@ -804,8 +1000,11 @@ class Database:
         so the next read regenerates once from cached provider data without spending quota. A published day is
         refused rather than altering cards subscribers already hold. ``dry_run`` reports without deleting."""
         date.fromisoformat(day)
-        if self.deliveries_exist('picks', day) or self.query("SELECT 1 FROM posts WHERE post_date=? "
-                                                          "AND kind IN ('picks','picks_top','picks_daily')", (day,)):
+        if (self.deliveries_exist('picks', day)
+                or self.query("SELECT 1 FROM posts WHERE post_date=? "
+                              "AND kind IN ('picks','picks_top','picks_daily')", (day,))
+                or self.query("SELECT 1 FROM ticket_publications WHERE pick_date=? "
+                              "AND state IN ('sent','uncertain') LIMIT 1", (day,))):
             raise ValueError('cannot reset a published prediction day')
         key = f'daily_predictions:{timezone}:{day}'
         with self.prediction_lock, self.transaction():
@@ -823,9 +1022,13 @@ class Database:
 
     _WITH_COLLECTIONS = (
         "SELECT p.*, "
-        "(SELECT group_concat(collection) FROM prediction_memberships m WHERE m.prediction_id=p.id) AS collections, "
-        "(SELECT rank FROM prediction_memberships m WHERE m.prediction_id=p.id AND m.collection='top') AS top_rank, "
-        "(SELECT rank FROM prediction_memberships m WHERE m.prediction_id=p.id AND m.collection='daily') AS daily_rank "
+        "(SELECT group_concat(collection) FROM prediction_memberships m WHERE m.prediction_id=p.id "
+        "AND (m.collection='all' OR (m.collection IN ('top','daily') AND p.revision_id="
+        "COALESCE((SELECT revision_id FROM active_ticket_revisions WHERE pick_date=p.pick_date),1)))) AS collections, "
+        "(SELECT rank FROM prediction_memberships m WHERE m.prediction_id=p.id AND m.collection='top' "
+        "AND p.revision_id=COALESCE((SELECT revision_id FROM active_ticket_revisions WHERE pick_date=p.pick_date),1)) AS top_rank, "
+        "(SELECT rank FROM prediction_memberships m WHERE m.prediction_id=p.id AND m.collection='daily' "
+        "AND p.revision_id=COALESCE((SELECT revision_id FROM active_ticket_revisions WHERE pick_date=p.pick_date),1)) AS daily_rank "
         "FROM picks p ")
 
     def picks_where(self, where: str = "1=1", params=(), published_only: bool = False) -> List[Dict]:

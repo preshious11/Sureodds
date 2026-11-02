@@ -172,6 +172,13 @@ def lastrun_text(db, cfg, now: Optional[datetime] = None) -> str:
                 f"Top {len(snapshot.top_picks)} legs · combined {_product(snapshot.top_picks):.2f} | "
                 f"Daily {len(snapshot.daily_picks)} picks · combined {_product(snapshot.daily_picks):.2f}"]
 
+    # Ambiguous sends (crashed mid-send, or a confirmed send whose outcome
+    # couldn't be recorded) never auto-retry - surfaced here for manual review.
+    uncertain = db.uncertain_ticket_publications()
+    out += ["", "<b>Uncertain publications</b> (never auto-retried; verify with subscribers before resending)"]
+    out += [f"• {esc(r['pick_date'])} {esc(r['collection'])}#{r['revision_id']}/{esc(r['destination'])} "
+            f"— {esc(r['error'] or 'unknown')} ({esc(r['updated_at'])})" for r in uncertain] or ["• none"]
+
     # Both slates exactly as a subscriber's card renders them at DELIVERY_TIME in the bot's zone.
     d_hour, d_minute = parse_hhmm(cfg.delivery_time, "09:30")
     sent_at = to_local(at, tz).replace(hour=d_hour, minute=d_minute, second=0, microsecond=0) if at else None

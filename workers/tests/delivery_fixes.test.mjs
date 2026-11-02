@@ -20,7 +20,24 @@ function stubDb({ cache = null, statuses = {} } = {}) {
   // Models the real `posts` table the same way cronDb does: a row with
   // message_id === null is an unconfirmed claim, non-null is confirmed.
   const postsTable = new Map();
+  const publications = new Map();
+  const startUtc = new Date(Date.now() + 3_600_000).toISOString();
+  const ticketRows = {
+    top: [{
+      id: 1, tier: "top", rank: 1, revision_id: 1, sport: "football", league: "Test League",
+      home: "Alpha", away: "Bravo", start_utc: startUtc, market: "result3", period: "full",
+      stat: "points", entity: "all", line: null, selection: "home", label: "Alpha to Win",
+      price: 2.2, prob: 0.7, status: "pending",
+    }],
+    daily: [1, 2, 3].map((id) => ({
+      id: id + 10, tier: "daily", rank: id, revision_id: 1, sport: "football", league: `League ${id}`,
+      home: `Home ${id}`, away: `Away ${id}`, start_utc: startUtc, market: "result3", period: "full",
+      stat: "points", entity: "all", line: null, selection: "home", label: `Home ${id} to Win`,
+      price: 2.2, prob: 0.7, status: "pending",
+    })),
+  };
   return {
+    publications,
     prepare(sql) {
       return {
         _sql: sql,
@@ -31,6 +48,7 @@ function stubDb({ cache = null, statuses = {} } = {}) {
         },
         async first() {
           if (this._sql.includes("FROM prediction_cache")) return cache;
+          if (this._sql.includes("FROM active_ticket_revisions")) return { revision_id: 1 };
           if (this._sql.includes("FROM posts")) {
             const [kind, postDate] = this._args;
             return postsTable.has(`${kind}|${postDate}`) ? { one: 1 } : null;
@@ -45,11 +63,39 @@ function stubDb({ cache = null, statuses = {} } = {}) {
             const [, collection] = this._args;
             return { results: (statuses[collection] ?? []).map((status) => ({ status })) };
           }
+          if (this._sql.includes("FROM picks p JOIN prediction_memberships")) {
+            const [, collection] = this._args;
+            return { results: ticketRows[collection] ?? [] };
+          }
           // getAllPicksForCollection (renderGroupCard): no fixtures needed for
           // these tests — an empty collection still renders a valid (empty) card.
           return { results: [] };
         },
         async run() {
+          if (this._sql.includes("INSERT INTO ticket_publications")) {
+            const [date, collection, revision, destination] = this._args;
+            const key = `${collection}|${date}|${revision}|${destination}`;
+            const previous = publications.get(key);
+            if (!previous) {
+              publications.set(key, { state: "sending", attempts: 1 });
+              return { meta: { changes: 1 } };
+            }
+            if (previous.state === "failed") {
+              publications.set(key, { state: "sending", attempts: previous.attempts + 1 });
+              return { meta: { changes: 1 } };
+            }
+            return { meta: { changes: 0 } };
+          }
+          if (this._sql.startsWith("UPDATE ticket_publications SET")) {
+            const [date, collection, revision, destination, nextState, messageId, error] = this._args;
+            const key = `${collection}|${date}|${revision}|${destination}`;
+            const previous = publications.get(key);
+            if (previous?.state === "sending") {
+              publications.set(key, { ...previous, state: nextState, messageId, error });
+              return { meta: { changes: 1 } };
+            }
+            return { meta: { changes: 0 } };
+          }
           if (this._sql.includes("INTO posts") && this._sql.includes("DO UPDATE")) {
             // claimPost
             const [kind, postDate] = this._args;

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import sqlite3
 import os
 from datetime import datetime, timedelta
@@ -187,6 +188,12 @@ def build_picks(chain: ProviderChain, db: Database, cfg: Config, now: Optional[d
     # set can never be satisfied, so a typo fails closed to PARTIAL.
     run_order = getattr(chain, "order", [])
     considered = set(run_order if isinstance(run_order, (list, tuple)) else []) | set(providers)
+    configured_order = getattr(cfg, "provider_order", [])
+    if isinstance(configured_order, (list, tuple)) and considered.intersection(configured_order):
+        # ProviderChain.order contains only instantiated providers. Retain the
+        # configured names for a real provider chain so a missing required
+        # provider cannot disappear from the completeness check.
+        considered.update(configured_order)
     required = [p for p in dict.fromkeys(getattr(cfg, "required_providers", ["sharpapi"]) or [])
                 if p in considered]
     skipped_required = [p for p in dict.fromkeys(getattr(cfg, "required_providers", ["sharpapi"]) or [])
@@ -331,6 +338,20 @@ def store_picks(ps: PickSet, db: Database, pick_date: str) -> None:
     ps.diagnostics['stored_all_predictions'] = len(db.collection_predictions('all', pick_date))
 
 
+def _publishable_ticket(picks, lower, upper, now):
+    if not picks:
+        return False
+    combined = 1.0
+    for pick in picks:
+        kickoff = parse_iso(pick.kickoff_utc)
+        if kickoff is None or kickoff <= now or pick.status != 'pending':
+            return False
+        if not isinstance(pick.price, (int, float)) or not math.isfinite(pick.price) or pick.price <= 1:
+            return False
+        combined *= pick.price
+    return lower <= combined <= upper
+
+
 def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram], force: bool = False,
         dry_run: bool = False, service=None):
     from predbot.cache.fetcher import UnifiedFetcher
@@ -349,6 +370,9 @@ def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram],
     if dry_run:
         print(picks_text(snapshot, cfg.timezone))
         return snapshot
+    if snapshot.generation.get('no_qualifying_ticket'):
+        log.info('Publication skipped | day=%s | fresh evaluation produced no qualifying ticket', snapshot.date)
+        return snapshot
     if tg and tg.enabled():
         # the community gets the same two static cards, each recorded on its own: a retry after a
         # partial failure posts only the missing one, and the Daily is never posted before the Top.
@@ -358,29 +382,51 @@ def run(chain: ProviderChain, db: Database, cfg: Config, tg: Optional[Telegram],
         # Shared across services/DB handles for this file. Receipt check, send and
         # receipt commit are serialized, without holding the generation lock.
         with db.publication_lock:
+            # Reclaims any claim a crashed/killed previous run left stuck in
+            # 'sending' - transitions it to 'uncertain', never auto-retried
+            # (see sweep_stale_ticket_publications), so a dead process can
+            # never silently block this day's publication forever.
+            db.sweep_stale_ticket_publications()
             destination = str(tg.chat_id)
+            revision_id = db.active_ticket_revision(snapshot.date)
+            if revision_id is None:
+                log.info('Publication skipped | day=%s | no active ticket revision', snapshot.date)
+                return snapshot
             for kind, text, _markup in messages:
-                community_done = db.delivery_done(f"community_{kind}", snapshot.date, destination)
-                legacy_done = db.post_done(kind, snapshot.date)
-                log.info('Community publication check | day=%s | kind=%s | destination=%s | '
-                         'community_receipt=%s | legacy_receipt=%s | db=%s',
-                         snapshot.date, kind, destination, community_done, legacy_done, os.path.abspath(db.path))
-                if community_done or legacy_done:
+                collection = 'top' if kind == 'picks_top' else 'daily'
+                ticket = snapshot.top_picks if collection == 'top' else snapshot.daily_picks
+                lower, upper = ((cfg.top_odds_target, cfg.top_odds_max) if collection == 'top'
+                                else (cfg.daily_odds_min, cfg.daily_odds_max))
+                if not _publishable_ticket(ticket, lower, upper, utcnow()):
+                    log.info('Publication skipped | day=%s | collection=%s | revision=%s | '
+                             'ticket is empty, outside its odds band, or contains a started match',
+                             snapshot.date, collection, revision_id)
+                    continue
+                if not db.claim_ticket_publication(snapshot.date, collection, revision_id, 'group',
+                                                   recipient_id=str(tg.chat_id)):
                     continue
                 markup = None
                 if kind == 'picks_top' and text == pagination.empty_view_message(snapshot, 'top', cfg.timezone):
                     username = tg.get_bot_username()
                     if not username:
                         log.warning('Community empty Top publication deferred: bot username unavailable')
+                        db.finish_ticket_publication(snapshot.date, collection, revision_id, 'group',
+                                                     state='failed', error='bot username unavailable')
                         break  # never publish a dead-end empty card; leave it retryable
                     markup = callbacks.top_empty_markup(username)
-                mid = tg.send(text, reply_markup=markup) if markup else tg.send(text)
+                try:
+                    mid = tg.send(text, reply_markup=markup) if markup else tg.send(text)
+                except Exception as exc:
+                    db.finish_ticket_publication(snapshot.date, collection, revision_id, 'group',
+                                                 state='uncertain', error=type(exc).__name__)
+                    raise
                 if not mid:
                     log.warning('Community publication failed | day=%s | kind=%s; remains retryable', snapshot.date, kind)
+                    db.finish_ticket_publication(snapshot.date, collection, revision_id, 'group',
+                                                 state='failed', error='Telegram send failed')
                     break
-                with db.transaction():
-                    db.mark_post(kind, snapshot.date, mid)
-                    db.mark_delivery(f"community_{kind}", snapshot.date, destination)
+                db.finish_ticket_publication(snapshot.date, collection, revision_id, 'group',
+                                             message_id=mid, state='sent')
                 log.info('Community publication recorded | day=%s | kind=%s | destination=%s | message_id=%s',
                          snapshot.date, kind, destination, mid)
     return snapshot

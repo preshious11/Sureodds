@@ -48,6 +48,21 @@ function cronDb({
 } = {}) {
   const jobs = {};
   const state = { cache };
+  const publications = new Map();
+  const ticketRows = {
+    top: [{
+      id: 1, tier: "top", rank: 1, revision_id: 1, sport: "football", league: "Test League",
+      home: "Alpha", away: "Bravo", start_utc: new Date(Date.now() + 3_600_000).toISOString(),
+      market: "result3", period: "full", stat: "points", entity: "all", line: null,
+      selection: "home", label: "Alpha to Win", price: 2.2, prob: 0.7, status: "pending",
+    }],
+    daily: [1, 2, 3].map((id) => ({
+      id: id + 10, tier: "daily", rank: id, revision_id: 1, sport: "football", league: `League ${id}`,
+      home: `Home ${id}`, away: `Away ${id}`, start_utc: new Date(Date.now() + 3_600_000).toISOString(),
+      market: "result3", period: "full", stat: "points", entity: "all", line: null,
+      selection: "home", label: `Home ${id} to Win`, price: 2.2, prob: 0.7, status: "pending",
+    })),
+  };
   // Models the real `posts` table: a row with message_id === null is an
   // unconfirmed claim (claimPost), non-null is a confirmed send. Seed
   // entries from the `posted` param (pre-existing receipts) as confirmed.
@@ -62,6 +77,7 @@ function cronDb({
   return {
     jobs,
     posted: postedView,
+    publications,
     events,
     get cache() {
       return state.cache;
@@ -85,6 +101,7 @@ function cronDb({
             return (contextFor ?? eligibleContext)(evt, pickDate, fixtureKey);
           }
           if (this._sql.includes("FROM prediction_cache")) return state.cache;
+          if (this._sql.includes("FROM active_ticket_revisions")) return { revision_id: 1 };
           if (this._sql.includes("FROM job_state")) return null;
           if (this._sql.includes("FROM posts")) {
             const [kind, postDate] = this._args;
@@ -113,6 +130,10 @@ function cronDb({
             const [, collection] = this._args;
             return { results: (recapStatuses[collection] ?? []).map((status) => ({ status })) };
           }
+          if (this._sql.includes("FROM picks p JOIN prediction_memberships") && this._sql.includes("UNION ALL")) {
+            const [, collection] = this._args;
+            return { results: ticketRows[collection] ?? [] };
+          }
           if (this._sql.includes("FROM match_events")) {
             // Mirrors getUndeliveredMatchEvents's own NOT EXISTS filtering against
             // `posts`, using the same postsTable the rest of this mock maintains,
@@ -132,6 +153,30 @@ function cronDb({
           return { results: [] };
         },
         async run() {
+          if (this._sql.includes("INSERT INTO ticket_publications")) {
+            const [date, collection, revision, destination] = this._args;
+            const key = `${collection}|${date}|${revision}|${destination}`;
+            const previous = publications.get(key);
+            if (!previous) {
+              publications.set(key, { state: "sending", attempts: 1 });
+              return { meta: { changes: 1 } };
+            }
+            if (previous.state === "failed") {
+              publications.set(key, { state: "sending", attempts: previous.attempts + 1 });
+              return { meta: { changes: 1 } };
+            }
+            return { meta: { changes: 0 } };
+          }
+          if (this._sql.startsWith("UPDATE ticket_publications SET")) {
+            const [date, collection, revision, destination, nextState, messageId, error] = this._args;
+            const key = `${collection}|${date}|${revision}|${destination}`;
+            const previous = publications.get(key);
+            if (previous?.state === "sending") {
+              publications.set(key, { ...previous, state: nextState, messageId, error });
+              return { meta: { changes: 1 } };
+            }
+            return { meta: { changes: 0 } };
+          }
           if(this._sql.includes('json_each(?1)')) {
             const data=JSON.parse(this._args[0]);
             if(this._sql.startsWith('UPDATE posts')) for(const r of data) {const row=postsTable.get(`${r.kind}|${r.date}`);if(row)row.message_id=r.message;}
@@ -336,11 +381,12 @@ describe("group posting (production model: single group, never per-subscriber)",
     });
     assert.equal(outcome2, "skipped");
   });
-  it("a failed send leaves no receipt so the next sweep retries", async () => {
+  it("a definite failed send records a retryable receipt", async () => {
     const db = cronDb({ cache: { status: "COMPLETE", payload_json: "{}" } });
     const env = { DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5", TELEGRAM_CHAT_ID: "-100123" };
     assert.equal(await postGroupPicks(env, "top", AFTER_GATE, async () => ({ ok: false })), "failed");
-    assert.equal(db.posted.size, 0);
+    assert.equal(db.publications.get("top|2026-10-11|1|group")?.state, "failed");
+    assert.equal(db.publications.get("top|2026-10-11|1|group")?.attempts, 1);
   });
 });
 
@@ -355,8 +401,8 @@ describe("owner-private delivery (production repair, 2026-10-15: no subscriber D
     });
     assert.equal(outcome, "sent");
     assert.deepEqual(sent, ["-100123", "999"]);
-    assert.ok(db.posted.has("top|2026-10-11"));
-    assert.ok(db.posted.has("top_owner|2026-10-11"));
+    assert.equal(db.publications.get("top|2026-10-11|1|group")?.state, "sent");
+    assert.equal(db.publications.get("top|2026-10-11|1|owner")?.state, "sent");
   });
   it("a failed owner send never causes the group message to be resent, and retries independently next sweep", async () => {
     const db = cronDb({ cache: { status: "COMPLETE", payload_json: "{}" } });
@@ -367,8 +413,8 @@ describe("owner-private delivery (production repair, 2026-10-15: no subscriber D
       return { ok: p.chat_id !== "999" }; // group succeeds, owner fails
     });
     assert.deepEqual(sent, ["-100123", "999"]);
-    assert.ok(db.posted.has("top|2026-10-11"), "the group's own receipt must still be recorded");
-    assert.ok(!db.posted.has("top_owner|2026-10-11"), "the failed owner leg must have no receipt, so it retries");
+    assert.equal(db.publications.get("top|2026-10-11|1|group")?.state, "sent", "the group's receipt is independent");
+    assert.equal(db.publications.get("top|2026-10-11|1|owner")?.state, "failed", "the failed owner leg is retryable");
 
     sent.length = 0;
     const outcome2 = await postGroupPicks(env, "top", AFTER_GATE, async (_e, _m, p) => {
@@ -379,19 +425,20 @@ describe("owner-private delivery (production repair, 2026-10-15: no subscriber D
     // never a second group message.
     assert.equal(outcome2, "skipped");
     assert.deepEqual(sent, ["999"]);
-    assert.ok(db.posted.has("top_owner|2026-10-11"));
+    assert.equal(db.publications.get("top|2026-10-11|1|owner")?.state, "sent");
   });
-  it("a failed group send never attempts the owner leg that sweep (group goes first, then owner)", async () => {
+  it("a failed group send does not block the independent owner receipt", async () => {
     const db = cronDb({ cache: { status: "COMPLETE", payload_json: "{}" } });
     const env = { DB: db, TIMEZONE: "Africa/Lagos", PAGE_SIZE: "5", TELEGRAM_CHAT_ID: "-100123", TELEGRAM_ADMIN_IDS: "999" };
     const sent = [];
     const outcome = await postGroupPicks(env, "top", AFTER_GATE, async (_e, _m, p) => {
       sent.push(p.chat_id);
-      return { ok: false };
+      return { ok: p.chat_id === "999", messageId: 45 };
     });
     assert.equal(outcome, "failed");
-    assert.deepEqual(sent, ["-100123"]);
-    assert.equal(db.posted.size, 0);
+    assert.deepEqual(sent, ["-100123", "999"]);
+    assert.equal(db.publications.get("top|2026-10-11|1|group")?.state, "failed");
+    assert.equal(db.publications.get("top|2026-10-11|1|owner")?.state, "sent");
   });
   it("no owner configured: group delivery is entirely unaffected, no owner send attempted", async () => {
     const db = cronDb({ cache: { status: "COMPLETE", payload_json: "{}" } });

@@ -72,6 +72,12 @@ def test_failed_sharpapi_forces_partial():
     assert ps.diagnostics["provider_coverage"]["missing_required"] == ["sharpapi"]
 
 
+def test_missing_required_provider_in_configured_chain_forces_partial():
+    ps = _run({"oddsapi": _ok("oddsapi")}, order=("oddsapi",))
+    assert ps.complete is False
+    assert ps.diagnostics["provider_coverage"]["missing_required"] == ["sharpapi"]
+
+
 def test_all_providers_failed_is_partial():
     ps = _run({"sharpapi": {"status": "failed"}, "sportsgameodds": {"status": "failed"}})
     assert ps.complete is False
@@ -131,9 +137,10 @@ def test_fallback_uses_real_collection_selection(monkeypatch, sharp_status, back
     # Identity matching is tested separately; keep every synthetic fixture distinct.
     for i, event in enumerate(events):
         event.canonical_event_id = f"fixture-{i}"
+        event.league = f"League {i}"
     monkeypatch.setattr(daily_picks, "resolve_events_detailed", lambda batch, *args: (batch, []))
     monkeypatch.setattr(daily_picks, "score_events", lambda batch, *args: [
-        sc(e, "result3", "home", .76, 1.40) for e in batch])
+        sc(e, "result3", "home", .76, 1.50) for e in batch])
     ps = _run({"sharpapi": {"status": sharp_status}, "oddsapi": {"status": backup_status}},
               events=events, provider_fallback_enabled=enabled,
               top_min_prob=.62 if usable else .99, daily_min_prob=.55 if usable else .99)

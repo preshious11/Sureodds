@@ -24,13 +24,13 @@ import sys
 # Shared-mutable tables (posts, deliveries, subscribers) are included: their
 # D1 columns must match even though replication is insert-only.
 ENGINE_TABLES = (
-    "api_budget", "calibration", "canonical_events", "canonical_participants",
+    "active_ticket_revisions", "api_budget", "calibration", "canonical_events", "canonical_participants",
     "custom_pick_candidates", "custom_pick_pools", "deliveries",
     "history_fetches", "kv", "live_fixture_state", "match_odds",
     "match_odds_ext", "match_results", "participant_aliases", "picks",
     "posts", "prediction_cache", "prediction_memberships", "provider_cache",
     "provider_identity", "ratings", "results_seen", "sgo_usage",
-    "subscribers", "ticket_candidates",
+    "subscribers", "ticket_candidates", "ticket_publications", "ticket_revisions",
 )
 
 
