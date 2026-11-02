@@ -68,12 +68,14 @@ function insertPick(sql, { id, tier, status, startMs, price = tier === "top" ? 2
   sql.prepare("INSERT INTO prediction_memberships VALUES (?,?,1)").run(id, tier);
 }
 
-function insertPublicationReceipt(sql, kind, day) {
+function insertPublicationReceipt(sql, kind, day, recipientId = "-100") {
+  // recipient_id must match the test's configured TELEGRAM_CHAT_ID for the
+  // group leg to authorize a match-event send (see getUndeliveredMatchEvents).
   sql.prepare(
     `INSERT INTO ticket_publications
-      (pick_date,collection,revision_id,destination,state,message_id,attempts,created_at,updated_at)
-     VALUES (?, ?, 1, 'group', 'sent', '123', 1, ?, ?)`,
-  ).run(day, kind, iso(NOW), iso(NOW));
+      (pick_date,collection,revision_id,destination,state,message_id,recipient_id,attempts,created_at,updated_at)
+     VALUES (?, ?, 1, 'group', 'sent', '123', ?, 1, ?, ?)`,
+  ).run(day, kind, recipientId, iso(NOW), iso(NOW));
 }
 
 async function noopFetch() {
@@ -184,6 +186,9 @@ describe("query budget: every scheduled invocation stays at or below 40 D1 queri
     sql.prepare(
       "INSERT INTO prediction_cache (cache_key, local_date, timezone, status, payload_json, generated_at, updated_at, expires_at) VALUES ('k',?,?,'COMPLETE','{}',?,?,?)",
     ).run(DAY, "Africa/Lagos", iso(NOW), iso(NOW), iso(NOW + 86_400_000));
+    // The group leg now needs an actual ticket_publications 'sent' receipt
+    // with a matching recipient - a COMPLETE cache alone no longer authorizes it.
+    insertPublicationReceipt(sql, "top", DAY);
     const env = { DB, TELEGRAM_CHAT_ID: "-100", STAGE3_CRON_ENABLED: "1", TIMEZONE: "Africa/Lagos" };
     const sent = [];
     const realFetch = globalThis.fetch;

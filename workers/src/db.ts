@@ -1128,7 +1128,8 @@ export async function getUndeliveredMatchEvents(
   groupConfigured: boolean,
   ownerConfigured: boolean,
   limit = 5,
-): Promise<(MatchEventRow & MatchEventContext)[]> {
+  groupChatId: string | null = null,
+): Promise<(MatchEventRow & MatchEventContext & { group_authorized: number })[]> {
   const { results } = await db
     .prepare(
       `SELECT me.*,
@@ -1142,7 +1143,27 @@ export async function getUndeliveredMatchEvents(
          (SELECT COUNT(DISTINCT p.id) FROM picks p JOIN prediction_memberships m ON m.prediction_id=p.id
            WHERE p.pick_date=me.pick_date AND p.fixture_key=me.fixture_key AND p.status<>'void' AND m.collection IN ('top','daily')
            AND (EXISTS(SELECT 1 FROM posts po WHERE po.post_date=p.pick_date AND po.kind=m.collection)
-             OR EXISTS(SELECT 1 FROM prediction_cache c WHERE c.local_date=p.pick_date AND c.status='COMPLETE'))) AS published_open
+             OR EXISTS(SELECT 1 FROM prediction_cache c WHERE c.local_date=p.pick_date AND c.status='COMPLETE'))) AS published_open,
+         -- Community (group) authorization: a legacy posts row or a COMPLETE cache
+         -- (published_total/published_open above) decides whether this fixture is
+         -- still worth TRACKING at all; it is never sufficient to AUTHORIZE the
+         -- group send itself. That requires an actual ticket_publications receipt,
+         -- for the fixture's own collection, scoped to the pick_date's CURRENT
+         -- active revision (an older revision's receipt never carries forward),
+         -- destination='group', state EXACTLY 'sent' (failed/sending/uncertain
+         -- never qualify), and a recorded recipient_id matching the configured
+         -- group chat (NULL - including every historical backfilled receipt -
+         -- never matches, by design: fail closed, never inferred).
+         (SELECT COUNT(*) FROM (
+            SELECT DISTINCT m.collection FROM picks p JOIN prediction_memberships m ON m.prediction_id=p.id
+            WHERE p.pick_date=me.pick_date AND p.fixture_key=me.fixture_key AND m.collection IN ('top','daily')
+          ) fc
+          WHERE EXISTS (
+            SELECT 1 FROM ticket_publications tp
+            WHERE tp.pick_date=me.pick_date AND tp.collection=fc.collection AND tp.destination='group'
+              AND tp.state='sent' AND tp.recipient_id IS NOT NULL AND tp.recipient_id=?5
+              AND tp.revision_id=COALESCE((SELECT revision_id FROM active_ticket_revisions WHERE pick_date=me.pick_date),1)
+          )) AS group_authorized
          FROM match_events me
        WHERE created_at >= ?1
          AND NOT EXISTS (SELECT 1 FROM posts po WHERE po.post_date = me.pick_date
@@ -1157,8 +1178,8 @@ export async function getUndeliveredMatchEvents(
          )
        ORDER BY created_at ASC LIMIT ?4`,
     )
-    .bind(sinceIso, groupConfigured ? 1 : 0, ownerConfigured ? 1 : 0, limit)
-    .all<MatchEventRow & MatchEventContext>();
+    .bind(sinceIso, groupConfigured ? 1 : 0, ownerConfigured ? 1 : 0, limit, groupChatId)
+    .all<MatchEventRow & MatchEventContext & { group_authorized: number }>();
   return results ?? [];
 }
 

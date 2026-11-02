@@ -30,6 +30,11 @@ function eligibleContext(evt) {
     settlement_done: evt.event_type === "end" ? 1 : 0,
     published_open: 1,
     published_total: 1,
+    // Default fixture is eligible AND the group leg carries a real, matching
+    // ticket_publications 'sent' receipt - the group-send authorization gate
+    // (distinct from published_total/published_open, which only govern
+    // whether decideMatchEvent keeps tracking vs. expires the fixture).
+    group_authorized: 1,
   };
 }
 

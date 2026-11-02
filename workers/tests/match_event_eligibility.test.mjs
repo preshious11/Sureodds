@@ -94,7 +94,20 @@ function world() {
       return id;
     },
     publish(...kinds) {
-      for (const k of kinds) sql.prepare("INSERT INTO posts(kind,post_date,created_at) VALUES(?,?,?)").run(k, DAY, iso(KICKOFF));
+      // Legacy posts receipt (still used by published_total/published_open
+      // to decide whether a fixture is worth tracking at all) PLUS the real
+      // ticket_publications receipt the group-send authorization now
+      // requires (state='sent', recipient matching the configured group,
+      // scoped to the day's active revision) - a posts row alone is no
+      // longer sufficient to authorize a group send.
+      sql.prepare("INSERT OR IGNORE INTO active_ticket_revisions(pick_date,revision_id,updated_at) VALUES(?,1,?)")
+        .run(DAY, iso(KICKOFF));
+      for (const k of kinds) {
+        sql.prepare("INSERT INTO posts(kind,post_date,created_at) VALUES(?,?,?)").run(k, DAY, iso(KICKOFF));
+        sql.prepare(`INSERT INTO ticket_publications
+            (pick_date,collection,revision_id,destination,recipient_id,state,message_id,attempts,error,created_at,updated_at)
+          VALUES(?,?,1,'group','-100','sent','1',1,NULL,?,?)`).run(DAY, k, iso(KICKOFF), iso(KICKOFF));
+      }
     },
     event(key, type, createdMs = KICKOFF + 60_000) {
       sql.prepare("INSERT INTO match_events VALUES(?,?,?,?,?)").run(DAY, key, type, `${type} ${key}`, iso(createdMs));
@@ -182,14 +195,21 @@ describe("which fixtures are eligible (persisted publication records are the sou
 });
 
 describe("publication receipts", () => {
-  it("a COMPLETE day cache keeps Top/Daily fixtures tracked even though the Telegram send never succeeded", async () => {
+  it("a COMPLETE day cache keeps a Top/Daily fixture tracked, but a COMPLETE cache alone never authorizes the group send", async () => {
+    // A COMPLETE cache (no posts receipt, no ticket_publications 'sent' receipt:
+    // the group send itself never succeeded) is still enough evidence to keep
+    // decideMatchEvent tracking/waiting rather than prematurely expiring the
+    // fixture - but it must NOT be treated as authorization to actually send
+    // the group alert (the exact gap this test used to assert the wrong way
+    // around). The owner leg is independent and still fires.
     const w = world();
     w.fixture("fx", { collections: ["top"], live: "in_progress" });
     CACHE(w.sql); // official publication exists, but there is no posts receipt (group send failed)
     w.event("fx", "start");
     const r = recorder();
     await sweepMatchEvents(w.env, AT_KICKOFF, r.fn);
-    assert.equal(r.sent.length, 2);
+    assert.equal(r.sent.length, 1);
+    assert.deepEqual(r.sent.map((s) => s.chat), ["999"]); // owner only, never the group
   });
   it("a membership with neither a receipt nor a COMPLETE cache is not published", async () => {
     const w = world();
@@ -199,6 +219,139 @@ describe("publication receipts", () => {
     const r = recorder();
     await sweepMatchEvents(w.env, AT_KICKOFF, r.fn);
     assert.equal(r.sent.length, 0);
+  });
+});
+
+// ============================================================ group-send authorization
+//
+// The group leg of a match-start/end alert must be authorized by an actual
+// ticket_publications receipt (state='sent', recipient matching the
+// configured group, scoped to the day's active revision) - never by a
+// legacy posts row or a COMPLETE cache alone. The owner leg is independent
+// of all of this (ownerChatId, no ticket_publications check at all).
+function receipt(w, { collection = "top", destination = "group", state = "sent", recipient = "-100", revision = 1 } = {}) {
+  w.sql.prepare(`INSERT INTO ticket_publications
+      (pick_date,collection,revision_id,destination,recipient_id,state,message_id,attempts,error,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,'1',1,NULL,?,?)`)
+    .run(DAY, collection, revision, destination, recipient, state, iso(KICKOFF), iso(KICKOFF));
+}
+
+// Legacy evidence that a card exists for this collection (published_total/
+// published_open: whether decideMatchEvent keeps tracking the fixture at
+// all) - deliberately separate from `receipt()`'s strict group-send
+// authorization evidence, so each test can control them independently.
+function legacyPublished(w, collection = "top") {
+  w.sql.prepare("INSERT INTO posts(kind,post_date,created_at) VALUES(?,?,?)").run(collection, DAY, iso(KICKOFF));
+}
+
+describe("group match-event authorization (ticket_publications, not legacy posts)", () => {
+  it("a matching active-revision group receipt with the matching recipient authorizes the notification", async () => {
+    const w = world();
+    w.fixture("fx", { collections: ["top"], live: "in_progress" });
+    legacyPublished(w);
+    w.sql.prepare("INSERT INTO active_ticket_revisions(pick_date,revision_id,updated_at) VALUES(?,1,?)").run(DAY, iso(KICKOFF));
+    receipt(w, { collection: "top", destination: "group", state: "sent", recipient: "-100", revision: 1 });
+    w.event("fx", "start");
+    const r = recorder();
+    await sweepMatchEvents(w.env, AT_KICKOFF, r.fn);
+    assert.ok(r.sent.some((s) => s.chat === "-100"));
+  });
+
+  it("a mismatched recipient rejects the group notification", async () => {
+    const w = world();
+    w.fixture("fx", { collections: ["top"], live: "in_progress" });
+    legacyPublished(w);
+    w.sql.prepare("INSERT INTO active_ticket_revisions(pick_date,revision_id,updated_at) VALUES(?,1,?)").run(DAY, iso(KICKOFF));
+    receipt(w, { recipient: "-100999" }); // w.env.TELEGRAM_CHAT_ID is "-100"
+    w.event("fx", "start");
+    const r = recorder();
+    await sweepMatchEvents(w.env, AT_KICKOFF, r.fn);
+    assert.ok(!r.sent.some((s) => s.chat === "-100"));
+  });
+
+  it("a NULL recipient (the exact historical backfill case) rejects the group notification", async () => {
+    const w = world();
+    w.fixture("fx", { collections: ["top"], live: "in_progress" });
+    legacyPublished(w);
+    w.sql.prepare("INSERT INTO active_ticket_revisions(pick_date,revision_id,updated_at) VALUES(?,1,?)").run(DAY, iso(KICKOFF));
+    receipt(w, { recipient: null });
+    w.event("fx", "start");
+    const r = recorder();
+    await sweepMatchEvents(w.env, AT_KICKOFF, r.fn);
+    assert.ok(!r.sent.some((s) => s.chat === "-100"));
+    // The historical receipt itself is never touched/rewritten by the sweep.
+    assert.deepEqual(w.publicationReceipts().map((r) => ({ ...r })), [{ collection: "top", destination: "group", state: "sent" }]);
+    assert.equal(w.sql.prepare("SELECT recipient_id FROM ticket_publications").get().recipient_id, null);
+  });
+
+  it("an owner receipt never authorizes a group notification", async () => {
+    const w = world();
+    w.fixture("fx", { collections: ["top"], live: "in_progress" });
+    legacyPublished(w);
+    w.sql.prepare("INSERT INTO active_ticket_revisions(pick_date,revision_id,updated_at) VALUES(?,1,?)").run(DAY, iso(KICKOFF));
+    receipt(w, { destination: "owner", recipient: "999" }); // fully sent, but for the OWNER destination only
+    w.event("fx", "start");
+    const r = recorder();
+    await sweepMatchEvents(w.env, AT_KICKOFF, r.fn);
+    assert.ok(!r.sent.some((s) => s.chat === "-100"));
+    assert.ok(r.sent.some((s) => s.chat === "999")); // the owner's OWN receipt still authorizes its own leg
+  });
+
+  for (const state of ["failed", "sending", "uncertain"]) {
+    it(`a '${state}' receipt never authorizes a group notification`, async () => {
+      const w = world();
+      w.fixture("fx", { collections: ["top"], live: "in_progress" });
+      legacyPublished(w);
+      w.sql.prepare("INSERT INTO active_ticket_revisions(pick_date,revision_id,updated_at) VALUES(?,1,?)").run(DAY, iso(KICKOFF));
+      receipt(w, { state });
+      w.event("fx", "start");
+      const r = recorder();
+      await sweepMatchEvents(w.env, AT_KICKOFF, r.fn);
+      assert.ok(!r.sent.some((s) => s.chat === "-100"));
+    });
+  }
+
+  it("an older revision's receipt never authorizes an event for a newer active revision", async () => {
+    const w = world();
+    w.fixture("fx", { collections: ["top"], live: "in_progress" });
+    legacyPublished(w);
+    // Revision 1 was fully, correctly published to the group...
+    w.sql.prepare("INSERT INTO active_ticket_revisions(pick_date,revision_id,updated_at) VALUES(?,1,?)").run(DAY, iso(KICKOFF));
+    receipt(w, { revision: 1 });
+    // ...but a fresh evaluation has since activated revision 2, which has no
+    // receipt of its own yet.
+    w.sql.prepare("UPDATE active_ticket_revisions SET revision_id=2 WHERE pick_date=?").run(DAY);
+    w.event("fx", "start");
+    const r = recorder();
+    await sweepMatchEvents(w.env, AT_KICKOFF, r.fn);
+    assert.ok(!r.sent.some((s) => s.chat === "-100"));
+  });
+
+  it("match-start and match-end events use the same group authorization rule", async () => {
+    const w = world();
+    w.fixture("fx", { collections: ["top"], live: "final", settled: 1 });
+    legacyPublished(w);
+    w.sql.prepare("INSERT INTO active_ticket_revisions(pick_date,revision_id,updated_at) VALUES(?,1,?)").run(DAY, iso(KICKOFF));
+    receipt(w, { recipient: null }); // same unauthorized historical shape for both event types
+    w.event("fx", "start");
+    w.event("fx", "end", KICKOFF + 3 * 3_600_000);
+    const r = recorder();
+    await sweepMatchEvents(w.env, AT_KICKOFF, r.fn);
+    await sweepMatchEvents(w.env, KICKOFF + 3 * 3_600_000 + 60_000, r.fn);
+    assert.ok(!r.sent.some((s) => s.chat === "-100"), "neither start nor end reaches the group without an authorized receipt");
+  });
+
+  it("no subscriber-private delivery path is introduced by this authorization check", async () => {
+    const w = world();
+    w.fixture("fx", { collections: ["top"], live: "in_progress" });
+    legacyPublished(w);
+    w.sql.prepare("INSERT INTO active_ticket_revisions(pick_date,revision_id,updated_at) VALUES(?,1,?)").run(DAY, iso(KICKOFF));
+    receipt(w, { recipient: "-100" });
+    w.event("fx", "start");
+    const r = recorder();
+    await sweepMatchEvents(w.env, AT_KICKOFF, r.fn);
+    // Only the configured group and the configured owner ever receive anything.
+    assert.deepEqual(new Set(r.sent.map((s) => s.chat)), new Set(["-100", "999"]));
   });
 });
 

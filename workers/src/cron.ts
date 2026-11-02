@@ -618,7 +618,8 @@ export async function sweepMatchEvents(env: Env, nowMs = Date.now(), sender: typ
   const ownerConfigured = !!owner;
   // Receipt filtering and persisted fixture/publication context share one
   // batch query; no per-event context or receipt reads are needed.
-  const events = await getUndeliveredMatchEvents(env.DB, since, groupConfigured, ownerConfigured, limit);
+  const events = await getUndeliveredMatchEvents(env.DB, since, groupConfigured, ownerConfigured, limit,
+    env.TELEGRAM_CHAT_ID ?? null);
   // One atomic statement claims every destination in the batch. It has the
   // same stale-claim timeout and conflict predicate as claimPost.
   const claims: {kind:string;date:string;message:string|null}[]=[];
@@ -632,7 +633,15 @@ export async function sweepMatchEvents(env: Env, nowMs = Date.now(), sender: typ
       return false;
     }
     if(decision.action!=='send') return false;
-    if(groupConfigured) claims.push({kind:base,date:evt.pick_date,message:null});
+    // The group leg is claimed ONLY when ticket_publications proves a 'sent'
+    // receipt, for the active revision, with a recorded recipient matching
+    // this group - never on the legacy posts/cache signal alone (that still
+    // gates published_total/published_open above, i.e. whether to keep
+    // tracking the fixture at all, not whether the group send is authorized).
+    // Unauthorized here is not an error - including every historical receipt
+    // backfilled with recipient_id=NULL - and is never retried as a failure;
+    // the event simply never claims/sends this leg (owner is independent).
+    if(groupConfigured && evt.group_authorized) claims.push({kind:base,date:evt.pick_date,message:null});
     if(ownerConfigured) claims.push({kind:`${base}_owner`,date:evt.pick_date,message:null});
     return true;
   });

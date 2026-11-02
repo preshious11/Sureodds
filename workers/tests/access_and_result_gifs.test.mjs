@@ -29,6 +29,12 @@ function world(){
 function ticket(w,statuses,kind='top',day=DAY){
  const id=kind==='top'?123:456;
  w.sql.prepare('INSERT INTO posts(kind,post_date,message_id,created_at) VALUES(?,?,?,?)').run(kind,day,String(id),new Date(NOW).toISOString());
+ // Real ticket_publications 'sent' receipt, recipient matching env.TELEGRAM_CHAT_ID
+ // ('-100') - a legacy posts row alone no longer authorizes a group match-event send.
+ w.sql.prepare(`INSERT INTO ticket_publications
+     (pick_date,collection,revision_id,destination,recipient_id,state,message_id,attempts,error,created_at,updated_at)
+   VALUES(?,?,1,'group','-100','sent',?,1,NULL,?,?)`)
+   .run(day,kind,String(id),new Date(NOW).toISOString(),new Date(NOW).toISOString());
  for(const [i,status] of statuses.entries()){
  const r=w.sql.prepare(`INSERT INTO picks(pick_date,tier,rank,provider,provider_event_id,sport,home,away,start_utc,market,period,stat,entity,selection,label,price,prob,ev,status,created_at)
  VALUES(?,?,?,'test',?,'football','H','A',?,'result3','full','points','all','home','H',1.5,.7,.1,?,?)`).run(day,kind,i+1,`${kind}-${day}-${i}`,new Date(NOW-3600000).toISOString(),status,new Date(NOW).toISOString());
@@ -38,7 +44,10 @@ function ticket(w,statuses,kind='top',day=DAY){
 function gif(w,kind='won'){w.sql.prepare('INSERT INTO result_gifs VALUES(?,?,?,?)').run(kind,`${kind}-file`,`${kind}-unique`,new Date(NOW).toISOString());}
 
 function photoCache(w, broken=false) {
- ticket(w,['pending']);w.sql.prepare("DELETE FROM posts").run();
+ // ticket() leaves a 'sent' receipt behind (for the GIF-reply tests that need
+ // it); this fixture wants a clean slate before postGroupPicks runs for
+ // real, exactly like its own DELETE FROM posts below.
+ ticket(w,['pending']);w.sql.prepare("DELETE FROM posts").run();w.sql.prepare("DELETE FROM ticket_publications").run();
  w.sql.prepare("UPDATE picks SET fixture_key='test:fixture',start_utc=?,price=2.2").run(new Date(NOW+3600000).toISOString());
  const row=w.sql.prepare('SELECT * FROM picks').get();
  const p={...row,pick_id:row.id,fixture_id:'test:fixture',kickoff_utc:row.start_utc};
