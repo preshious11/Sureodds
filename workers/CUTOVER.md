@@ -66,7 +66,13 @@ $migrations = @(
   # 0002_update_retry.sql deliberately OMITTED — upgrade-only, see above.
   "migrations/0003_engine_state.sql", "migrations/0004_sync_state.sql",
   "migrations/0005_ticket_candidates.sql", "migrations/0006_custom_sessions.sql",
-  "migrations/0007_custom_picks_conversation.sql", "migrations/0008_pinned_menu.sql", "migrations/0009_match_events.sql"
+  "migrations/0007_custom_picks_conversation.sql", "migrations/0008_pinned_menu.sql",
+  "migrations/0009_match_events.sql", "migrations/0010_sync_lease.sql",
+  "migrations/0011_pipeline_dispatch.sql", "migrations/0012_result_gifs.sql",
+  "migrations/0013_pro_picks.sql", "migrations/0014_issued_picks_ledger.sql",
+  "migrations/0015_selection_rejections.sql", "migrations/0016_closing_capture_columns.sql",
+  "migrations/0017_oracle_recovery_guards.sql", "migrations/0018_ticket_publication_revisions.sql",
+  "migrations/0019_ticket_publication_recipient.sql"
 )
 foreach ($f in $migrations) {
   wrangler d1 execute sureodds_production --remote --config wrangler.toml --file $f
@@ -89,7 +95,13 @@ rolling back:
   $remaining = @(
     "migrations/0003_engine_state.sql", "migrations/0004_sync_state.sql",
     "migrations/0005_ticket_candidates.sql", "migrations/0006_custom_sessions.sql",
-    "migrations/0007_custom_picks_conversation.sql", "migrations/0008_pinned_menu.sql", "migrations/0009_match_events.sql"
+    "migrations/0007_custom_picks_conversation.sql", "migrations/0008_pinned_menu.sql",
+    "migrations/0009_match_events.sql", "migrations/0010_sync_lease.sql",
+    "migrations/0011_pipeline_dispatch.sql", "migrations/0012_result_gifs.sql",
+    "migrations/0013_pro_picks.sql", "migrations/0014_issued_picks_ledger.sql",
+    "migrations/0015_selection_rejections.sql", "migrations/0016_closing_capture_columns.sql",
+    "migrations/0017_oracle_recovery_guards.sql", "migrations/0018_ticket_publication_revisions.sql",
+    "migrations/0019_ticket_publication_recipient.sql"
   )
   foreach ($f in $remaining) {
     wrangler d1 execute sureodds_production --remote --config wrangler.toml --file $f
@@ -122,7 +134,7 @@ applied with `wrangler d1 execute`:
 # your control, and this command makes no network call).
 python workers/scripts/d1_sync.py plan <path-to-live-predbot.db> <path-to-live-predbot.db> `
   --out C:\temp\prod_seed `
-  --tables picks,prediction_memberships,ticket_candidates,prediction_cache,custom_pick_candidates,custom_pick_pools `
+  --tables picks,prediction_memberships,ticket_candidates,prediction_cache,custom_pick_candidates,custom_pick_pools,ticket_revisions,active_ticket_revisions,ticket_publications `
   --write-budget 200000
 # Review C:\temp\prod_seed\plan.json BEFORE applying anything — it lists
 # every row the plan would write, so you can confirm it's historical data
@@ -143,11 +155,21 @@ production access).
   subscriber broadcasting is disabled in both production and this port, so
   there is nothing meaningful to carry over (and doing so would risk
   re-enabling a delivery path that's supposed to stay off).
-- **`posts`/`deliveries` receipts** — deliberately excluded from the
-  `--tables` list above. Carrying over old receipt rows would make the new
-  Worker think today's cards are already posted when they aren't (or, if
-  the dates don't collide, they're just dead rows). Let the new system
-  write its own receipts from cutover day forward.
+- **Ticket publication history** — include `ticket_revisions`,
+  `active_ticket_revisions`, and `ticket_publications` in the reviewed sync
+  plan. Migration `0018_ticket_publication_revisions.sql` keeps existing
+  forecasts, memberships, and day-level receipts intact, registers the
+  legacy ticket as revision 1, and creates its revision-specific receipt.
+  Migration `0019_ticket_publication_recipient.sql` adds the recipient
+  identity used to authorize community live notifications and backfills it
+  only from matching legacy community delivery receipts. New revisions use
+  independent prices and per-destination receipts. Never delete/reset
+  receipts or reprice a historical forecast.
+- The SQLite backup uses `VACUUM INTO`, so it preserves table schema and
+  receipt recipient values as part of the same consistent snapshot. The
+  D1 schema must apply migration `0019` before `d1_sync.py diff` or push:
+  the sync rejects a SQLite/D1 column mismatch rather than silently dropping
+  the recipient field.
 - **In-flight Custom Picks UI state** (conversation refinement, pending
   suggestion tokens) — inherently ephemeral (10-minute TTL in both
   production's in-memory dicts and this port's D1 tables); there is

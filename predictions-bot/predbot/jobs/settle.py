@@ -74,7 +74,7 @@ def lookup_allowed(r, db: Database, now: datetime, *, live: bool = False,
     if live:
         return start <= now < live_cutoff(start, r["sport"])
     due = start if confirmed_final else expected_end(start, r["sport"])
-    return current[0]["status"] == PENDING and due <= now < settlement_deadline(start, r["sport"])
+    return current[0]["status"] == PENDING and due <= now
 
 
 def _decode_result(payload):
@@ -144,15 +144,9 @@ def _void_expired(r, db: Database, now: datetime, counts: Dict[str, int]) -> Non
     start = parse_iso(r["start_utc"])
     if start is None or now < settlement_deadline(start, r["sport"]):
         return
-    with db.transaction():
-        current = db.query("SELECT status FROM picks WHERE id=?", (r["id"],))
-        if not current or current[0]["status"] != PENDING:
-            return
-        db.settle_pick(r["id"], VOID, {"reason": "settlement deadline expired",
-                                       "deadline": iso(settlement_deadline(start, r["sport"]))})
-        counts["void"] += 1
-        log.info("settlement: VOID unresolved pick %s | sport=%s | deadline=%s",
-                 r["id"], r["sport"], iso(settlement_deadline(start, r["sport"])))
+    # Elapsed time proves neither a result nor cancellation. Keep retryable.
+    counts['pending'] += 1
+    log.warning('overdue unresolved pick %s; awaiting authoritative result', r['id'])
 
 
 def expire_pending(db: Database, now: datetime, counts: Optional[Dict[str, int]] = None) -> Dict[str, int]:
@@ -160,7 +154,7 @@ def expire_pending(db: Database, now: datetime, counts: Optional[Dict[str, int]]
     if counts is None:
         counts = {"settled": 0, "pending": 0, "void": 0, "errors": 0}
     fixtures = set()
-    for r in db.pending_picks(before_utc=iso(now), published_only=True):
+    for r in db.pending_picks(before_utc=iso(now), published_only=False):
         start = parse_iso(r["start_utc"])
         if start is None or now < settlement_deadline(start, r["sport"]):
             continue
@@ -168,13 +162,10 @@ def expire_pending(db: Database, now: datetime, counts: Optional[Dict[str, int]]
             result = stored_result(r, db)
             if result is not None:
                 settle_result(r, result, db, Elo(db), now, counts)
-            _void_expired(r, db, now, counts)
             fixtures.add((r["pick_date"], r["fixture_key"]))
         except PICK_ERRORS:
             log.exception("expired prediction finalization failed for pick %s", r["id"])
             counts["errors"] += 1
-            # Bad stored evidence must not keep a valid, expired fixture retryable.
-            _void_expired(r, db, now, counts)
     for day, fixture in fixtures:
         rows = db.picks_where("p.pick_date=? AND p.fixture_key=?", (day, fixture))
         if rows and all(r["status"] != PENDING for r in rows):
@@ -204,9 +195,6 @@ def _settle_row(r, resolver: ResultsResolver, db: Database, elo: Elo, now: datet
     result = stored_result(r, db)
     if result is not None:
         settle_result(r, result, db, elo, now, counts)
-        return
-    if now >= settlement_deadline(start, r["sport"]):
-        _void_expired(r, db, now, counts)
         return
     try:
         src = json.loads(r["sources"]) if r["sources"] else {}
@@ -373,7 +361,7 @@ def _prefetch(resolver: ResultsResolver, rows, now: datetime, cache: Dict[str, M
     groups: Dict[str, list] = {}
     for r in rows:
         start = parse_iso(r["start_utc"])
-        if start is None or not expected_end(start, r["sport"]) <= now < settlement_deadline(start, r["sport"]):
+        if start is None or expected_end(start, r["sport"]) > now:
             continue
         if db is not None and stored_result(r, db) is not None:
             continue
@@ -489,7 +477,7 @@ def _run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]
         begin = getattr(provider, "begin_run", None)      # per-run response caches (credits / rate limits)
         if callable(begin):
             begin()
-    rows = db.pending_picks(before_utc=iso(now), published_only=True)
+    rows = db.pending_picks(before_utc=iso(now), published_only=False)
     needs = _needs_by_event(rows)
     _prefetch(resolver, rows, now, cache, needs, db=db, counts=counts)
 
@@ -512,6 +500,11 @@ def _run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]
     except Exception as e:  # noqa: BLE001
         log.warning("Elo harvest from ESPN failed (non-fatal): %s", e)
     log.info("settlement: %s", counts)
+    from predbot.jobs import ledger_settlement
+    if db.query("SELECT 1 FROM sqlite_master WHERE name='issued_ticket_legs'"):
+        counts.update({'issued_'+key:value for key,value in ledger_settlement.run(resolver, db).items()})
+    if db.query("SELECT 1 FROM sqlite_master WHERE name='match_events'"):
+        counts['final_events_queued'] = queue_final_events(db, now)
     if counts["settled"]:
         try:
             from predbot.jobs import stats as stats_mod
@@ -519,3 +512,36 @@ def _run(resolver: ResultsResolver, db: Database, cfg: Config) -> Dict[str, int]
         except Exception as e:  # noqa: BLE001 - a report must never break settlement
             log.warning("accuracy report failed (non-fatal): %s", e)
     return counts
+
+
+def queue_final_events(db, now):
+    """Recover missed completion alerts for recent published fixtures only.
+
+    Uses the same final evidence and formatter as live monitoring. No Telegram
+    calls here; the normal group/owner delivery sweep owns delivery receipts.
+    """
+    if not db.query("SELECT 1 FROM sqlite_master WHERE name='match_events'") or not db.query(
+            "SELECT 1 FROM sqlite_master WHERE name='posts'"):
+        return 0
+    from predbot.bot.format import live_match_message
+    groups={}
+    for row in db.picks_where('p.start_utc>=? AND p.start_utc<=?',
+                              (iso(now-timedelta(hours=48)),iso(now)),published_only=True):
+        if not db.query("SELECT 1 FROM posts WHERE post_date=? AND kind IN (?,?) AND message_id IS NOT NULL",
+                        (row['pick_date'],row['tier'],row['tier']+'_owner')):
+            continue
+        groups.setdefault((row['pick_date'],row['fixture_key']),[]).append(row)
+    queued=0
+    for (day,fixture),rows in groups.items():
+        if any(row['status']==PENDING for row in rows):
+            continue
+        result=stored_result(rows[0],db)
+        if result is None or result.status!='final':
+            continue
+        with db.transaction():
+            db.save_live_result(day,fixture,result,iso(now))
+            db.complete_live_settlement(day,fixture)
+            cursor=db.execute("INSERT OR IGNORE INTO match_events(pick_date,fixture_key,event_type,text,created_at) "
+                              "VALUES(?,?,'end',?,?)",(day,fixture,live_match_message(rows,result,ended=True),iso(now)))
+            queued+=cursor.rowcount
+    return queued

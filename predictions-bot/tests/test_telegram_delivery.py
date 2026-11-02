@@ -79,11 +79,14 @@ def test_malformed_json_does_not_report_delivery_success():
 
 def test_partial_card_failure_does_not_record_a_community_publication(db):
     snapshot = DailySnapshot(date="2030-06-01", top_picks=_long_picks(24))
+    for pick in snapshot.top_picks:
+        pick.price = 2.2 ** (1 / len(snapshot.top_picks))
+    with db.transaction():
+        revision = db.create_ticket_revision(snapshot.date, "chunk-failure-test", "2030-01-01T00:00:00Z")
     service = Mock()
     service.get_daily_snapshot.return_value = snapshot
     tg = client(response(), response(400))
     daily_picks.run(None, db, Config(timezone="UTC"), tg, service=service)
     assert tg.session.post.call_count == 2
-    assert not db.post_done("picks_top", snapshot.date)
-    assert not db.post_done("picks_daily", snapshot.date)
-    assert not db.query("SELECT 1 FROM deliveries WHERE kind LIKE 'community_picks_%'")
+    assert db.ticket_publication(snapshot.date, "top", revision, "group")["state"] == "failed"
+    assert db.ticket_publication(snapshot.date, "daily", revision, "group") is None

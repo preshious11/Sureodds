@@ -12,10 +12,24 @@ from predbot.jobs import daily_picks, live_results, recap
 from predbot.providers.base import MatchResult
 from predbot.providers.chain import ResultsResolver
 from predbot.storage.db import Database
-from tests.test_live_results import DAY, NOW, Provider, pick, received
+from tests.test_live_results import DAY, NOW, Provider, pick as _pick, received
 from tests.test_subscribers_broadcast import FakeTG, _cb, _snapshot
 
 COMMUNITY = "-1001234567890"
+
+
+def pick(db, **changes):
+    tier = changes.get("tier", "top")
+    changes.setdefault("price", 2.2 if tier == "top" else 1.6 if tier == "daily" else 1.8)
+    return _pick(db, **changes)
+
+
+def ensure_daily_ticket(db):
+    count = len(db.collection_predictions("daily", DAY))
+    for index in range(count, 5):
+        pick(db, tier="daily", provider_event_id=f"daily-support-{index}",
+             home=f"Daily Home {index}", away=f"Daily Away {index}",
+             label=f"Daily Home {index} to Win", start_utc="2030-06-02T15:00:00Z")
 
 
 class CommunityTelegram(FakeTG):
@@ -45,6 +59,11 @@ def community(db):
 
 def publish(db, cfg, tg):
     # Render the real stored collections without fetching or selecting anything.
+    if db.collection_predictions("daily", DAY):
+        ensure_daily_ticket(db)
+    if db.active_ticket_revision(DAY) is None:
+        with db.transaction():
+            db.create_ticket_revision(DAY, "community-test-evaluation", "2030-06-01T09:00:00Z")
     snapshot = UnifiedFetcher(None, db, cfg).snapshot_for(DAY)
     service = Mock()
     service.get_daily_snapshot.return_value = snapshot
@@ -61,6 +80,7 @@ def test_community_picks_and_recap_continue_without_subscriber_broadcasts(db, co
     cfg, tg, _, _ = community
     top_id = pick(db)
     pick(db, tier="daily", market="total", selection="over", line=3.5, label="Over 3.5 Total Goals")
+    ensure_daily_ticket(db)
     received(db, "42", ("top", "daily"))
     before = [dict(r) for r in db.picks_for_date(DAY)]
     history = [dict(r) for r in db.query("SELECT * FROM subscribers")]
@@ -125,18 +145,34 @@ def test_community_live_lifecycle_repeated_polls_and_restart(db, community, monk
 
 
 @pytest.mark.parametrize("status", ["in_progress", "final"])
-@pytest.mark.parametrize("publication", ["none", "legacy_posts", "other_destination", "subscriber_only", "all_only"])
+@pytest.mark.parametrize("publication", [
+    "none", "legacy_posts", "legacy_community", "other_destination",
+    "subscriber_only", "all_only", "failed_revision", "historical_revision",
+])
 def test_community_rejects_unpublished_or_unrelated_predictions(db, community, status, publication):
     cfg, tg, provider, _ = community
     pick(db, tier="all" if publication == "all_only" else "top")
     if publication == "legacy_posts":
         db.mark_post("picks_top", DAY, "old-message")
+    elif publication == "legacy_community":
+        db.mark_delivery("community_picks_top", DAY, COMMUNITY)
     elif publication == "other_destination":
         db.mark_delivery("community_picks_top", DAY, "-1009999999999")
     elif publication == "subscriber_only":
         received(db, "42")
     elif publication == "all_only":
         db.mark_delivery("community_picks_top", DAY, COMMUNITY)
+    elif publication in ("failed_revision", "historical_revision"):
+        with db.transaction():
+            revision = db.create_ticket_revision(DAY, "morning-evaluation", "2030-06-01T08:00:00Z")
+        if publication == "historical_revision":
+            assert db.claim_ticket_publication(DAY, "top", revision, "group", recipient_id=COMMUNITY)
+            db.finish_ticket_publication(DAY, "top", revision, "group", state="sent", message_id="old")
+            with db.transaction():
+                db.create_ticket_revision(DAY, "fresh-evaluation", "2030-06-01T09:00:00Z")
+        else:
+            assert db.claim_ticket_publication(DAY, "top", revision, "group", recipient_id=COMMUNITY)
+            db.finish_ticket_publication(DAY, "top", revision, "group", state="failed", error="rejected")
     provider.result = MatchResult(status, {"full": (2., 1.)} if status == "final" else {}, source="espn")
     poll(db, community)
     assert tg.sends == []
@@ -152,7 +188,9 @@ def test_partial_publication_only_notifies_for_the_successful_collection(db, com
     pick(db, tier="daily", home="Liverpool", away="Everton", provider_event_id="other")
     tg.fail_daily = True
     publish(db, cfg, tg)
-    assert db.post_done("picks_top", DAY) and not db.post_done("picks_daily", DAY)
+    revision = db.active_ticket_revision(DAY)
+    assert db.ticket_publication(DAY, "top", revision, "group")["state"] == "sent"
+    assert db.ticket_publication(DAY, "daily", revision, "group")["state"] == "failed"
     tg.sends.clear()
     provider.result = MatchResult("in_progress", source="espn")
     poll(db, community)
@@ -292,7 +330,8 @@ def test_community_receipts_preserve_publication_freeze_and_retry_history(db, co
     cfg, tg, _, _ = community
     pick(db)
     publish(db, cfg, tg)
-    assert db.post_done("picks_top", DAY)
+    revision = db.active_ticket_revision(DAY)
+    assert db.ticket_publication(DAY, "top", revision, "group")["state"] == "sent"
     assert not db.deliveries_exist("picks", DAY), "community receipt must not impersonate subscriber delivery"
     with pytest.raises(ValueError, match="published prediction day"):
         db.reset_prediction_day(DAY, "UTC", "2030-06-01T00:00:00Z")
@@ -303,10 +342,13 @@ def test_community_filtered_reversed_leg_preserves_score_orientation(db, communi
     pick(db)
     pick(db, tier="daily", home="Arsenal", away="Chelsea", selection="away", label="Chelsea to Win",
          provider="oddsapi", provider_event_id="reversed")
-    # Legacy Top publication has no destination receipt; only Daily is newly
-    # published here. Live lookup uses Top's orientation, delivery uses Daily's.
-    db.mark_post("picks_top", DAY, "legacy-top")
-    publish(db, cfg, tg)
+    ensure_daily_ticket(db)
+    with db.transaction():
+        revision = db.create_ticket_revision(DAY, "community-test-evaluation", "2030-06-01T09:00:00Z")
+    assert db.claim_ticket_publication(DAY, "daily", revision, "group", recipient_id=COMMUNITY)
+    db.finish_ticket_publication(DAY, "daily", revision, "group", state="sent", message_id="daily-card")
+    # Live lookup uses the first stored row for score orientation, while the
+    # Daily receipt authorizes only its distinct selection for delivery.
     tg.sends.clear()
     provider.result = MatchResult("final", {"full": (2., 1.)}, source="espn")
     poll(db, community)

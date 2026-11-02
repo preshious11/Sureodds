@@ -7,6 +7,7 @@ all 24 synced tables.
 """
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -93,6 +94,34 @@ def test_newer_d1_receipts_survive_push(tmp_path):
     assert fresh.execute("SELECT message_id FROM posts").fetchone()[0] == "m1"
 
 
+def test_publication_sync_fills_unknown_recipient_without_overwriting_known_recipient():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("d1_sync_test", SYNC)
+    d1_sync = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(d1_sync)
+    con = sqlite3.connect(":memory:")
+    con.execute("""CREATE TABLE ticket_publications (
+        pick_date TEXT, collection TEXT, revision_id INTEGER, destination TEXT,
+        recipient_id TEXT, state TEXT, message_id TEXT, attempts INTEGER, error TEXT,
+        created_at TEXT, updated_at TEXT,
+        PRIMARY KEY(pick_date,collection,revision_id,destination))""")
+    cols = [row[1] for row in con.execute("PRAGMA table_info(ticket_publications)")]
+    head, suffix = d1_sync.write_policy("ticket_publications", cols)
+    statement = head + "(" + ",".join("?" for _ in cols) + ")" + suffix
+
+    def apply(recipient):
+        con.execute(statement, ("2026-11-01", "top", 1, "group", recipient, "sent",
+                                "message", 1, None, "t", "t"))
+
+    apply(None)
+    apply("-100123")
+    assert con.execute("SELECT recipient_id FROM ticket_publications").fetchone()[0] == "-100123"
+    apply("-100999")
+    assert con.execute("SELECT recipient_id FROM ticket_publications").fetchone()[0] == "-100123"
+    con.close()
+
+
 def test_roster_excluded_unless_seed(tmp_path):
     src = str(tmp_path / "src.db")
     make_db(src)
@@ -176,7 +205,8 @@ def test_compat_covers_all_synced_tables(tmp_path):
     with open(merged, "w", encoding="utf-8") as fh_out:
         for name in ("0001_foundation.sql", "0002_update_retry.sql",
                      "0003_engine_state.sql", "0004_sync_state.sql", "0005_ticket_candidates.sql",
-                     "0016_closing_capture_columns.sql"):
+                     "0016_closing_capture_columns.sql", "0017_oracle_recovery_guards.sql",
+                     "0018_ticket_publication_revisions.sql", "0019_ticket_publication_recipient.sql"):
             with open(os.path.join(MIGRATIONS, name), encoding="utf-8") as fh_in:
                 fh_out.write(fh_in.read() + "\n")
     proc = subprocess.run([sys.executable, COMPAT, "--sqlite", engine, "--migrations", merged],
@@ -236,7 +266,8 @@ def test_0005_migration_preserves_rows_and_unblocks_sync(tmp_path):
     with open(merged, "w", encoding="utf-8") as fh_out:
         for name in ("0001_foundation.sql", "0002_update_retry.sql",
                      "0003_engine_state.sql", "0004_sync_state.sql", "0005_ticket_candidates.sql",
-                     "0016_closing_capture_columns.sql"):
+                     "0016_closing_capture_columns.sql", "0017_oracle_recovery_guards.sql",
+                     "0018_ticket_publication_revisions.sql", "0019_ticket_publication_recipient.sql"):
             with open(os.path.join(MIGRATIONS, name), encoding="utf-8") as fh_in:
                 fh_out.write(fh_in.read() + "\n")
     proc = subprocess.run([sys.executable, COMPAT, "--sqlite", engine, "--migrations", merged],
@@ -1021,3 +1052,179 @@ def test_plan_destructive_budget_counts_deletes(tmp_path, monkeypatch):
     assert module.cmd_plan("base", "src", str(out), destructive_budget=0) == 2
     assert json.loads((out / "plan.json").read_text())["destructive_writes"] == 1
     assert not list(out.glob("*.sql"))
+
+
+WORKFLOW = os.path.join(os.path.dirname(__file__), "..", "..", ".github", "workflows",
+                        "stage5-acceptance-production.yml")
+
+REVISION_TABLES = ("ticket_revisions", "active_ticket_revisions", "ticket_publications")
+
+
+def _production_sync_tables():
+    """The exact --tables list stage5-acceptance-production.yml's 'Build scoped
+    plan with write budget' step passes to `d1_sync.py plan` - read from the
+    workflow file itself so this test fails the moment the two drift apart,
+    instead of asserting a copy-pasted string that can silently go stale."""
+    with open(WORKFLOW, encoding="utf-8") as fh:
+        text = fh.read()
+    match = re.search(r"--tables ([\w,]+)", text)
+    assert match, "could not find the production plan step's --tables argument"
+    return match.group(1).split(",")
+
+
+def _seed_revision_tables(path):
+    """A realistic engine DB (predbot's real schema) with one published
+    revision: the exact shape stage5-acceptance-production.yml's scratch
+    runner produces after a fresh generation + publish."""
+    from predbot.storage.db import Database
+    db = Database(path)
+    with db.transaction():
+        revision = db.create_ticket_revision("2026-11-01", "morning-evaluation", "2026-11-01T08:00:00Z")
+    db.claim_ticket_publication("2026-11-01", "top", revision, "group", recipient_id="-100123")
+    db.finish_ticket_publication("2026-11-01", "top", revision, "group", message_id="555", state="sent")
+    db.close()
+    return revision
+
+
+def test_production_tables_list_includes_all_three_revision_tables():
+    """The exact regression the audit caught: without this, a fresh revision
+    is computed on the Actions runner but never reaches the Oracle server."""
+    tables = _production_sync_tables()
+    for table in REVISION_TABLES:
+        assert table in tables, f"{table} missing from stage5-acceptance-production.yml's --tables list"
+
+
+def test_revision_tables_sync_with_composite_keys_and_become_visible_on_target(tmp_path):
+    """End to end: a fresh revision + its publication receipt, diffed and
+    applied using the EXACT production --tables list, lands on an empty
+    target server DB with every composite key intact, and the active
+    revision becomes visible there (what getActiveTicketRevision/
+    postGroupPicks on the server actually reads)."""
+    base = str(tmp_path / "base.db")
+    src = str(tmp_path / "src.db")
+    from predbot.storage.db import Database
+    Database(base).close()  # empty server-shaped DB, already migrated
+    revision = _seed_revision_tables(src)
+    # job_state is Worker-owned (workers/migrations), not part of predbot's
+    # own schema, but the production list names it explicitly (see
+    # cmd_diff's dedicated job_state carve-out) - add the minimal shape to
+    # both sides so this test exercises the real production --tables string
+    # verbatim, rather than silently trimming it down to only the new tables.
+    for p in (base, src):
+        con = sqlite3.connect(p)
+        con.execute("CREATE TABLE IF NOT EXISTS job_state (name TEXT PRIMARY KEY, due_at TEXT,"
+                    " lease_owner TEXT, lease_until TEXT, attempts INTEGER NOT NULL DEFAULT 0,"
+                    " last_run_at TEXT, last_result TEXT,"
+                    " updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')))")
+        con.commit()
+        con.close()
+
+    tables = _production_sync_tables()
+    out = str(tmp_path / "plan")
+    proc = sync("plan", base, src, "--out", out, "--tables", ",".join(tables),
+                "--write-budget", "1000")
+    assert proc.returncode == 0, proc.stderr
+    names = os.listdir(out)
+    for table in REVISION_TABLES:
+        assert any(table in n for n in names if n.endswith(".sql")), \
+            f"{table} produced no SQL batch in the production-scoped plan"
+
+    assert sync("apply", base, out).returncode == 0
+    target = sqlite3.connect(base)
+    row = target.execute(
+        "SELECT revision_id FROM active_ticket_revisions WHERE pick_date='2026-11-01'").fetchone()
+    assert row and row[0] == revision, "active revision pointer did not arrive with its revision"
+    rev_row = target.execute(
+        "SELECT pick_date, revision_id, evaluation_id FROM ticket_revisions "
+        "WHERE pick_date='2026-11-01' AND revision_id=?", (revision,)).fetchone()
+    assert rev_row == ("2026-11-01", revision, "morning-evaluation")
+    pub = target.execute(
+        "SELECT collection, destination, recipient_id, state, message_id FROM ticket_publications "
+        "WHERE pick_date='2026-11-01' AND revision_id=?", (revision,)).fetchone()
+    assert pub == ("top", "group", "-100123", "sent", "555")
+
+
+def test_revision_tables_replay_is_idempotent(tmp_path):
+    base = str(tmp_path / "base.db")
+    src = str(tmp_path / "src.db")
+    from predbot.storage.db import Database
+    Database(base).close()
+    _seed_revision_tables(src)
+    tables = ",".join(REVISION_TABLES)
+
+    out1 = str(tmp_path / "plan1")
+    assert sync("plan", base, src, "--out", out1, "--tables", tables).returncode == 0
+    assert sync("apply", base, out1).returncode == 0
+    fingerprint_after_first = sqlite3.connect(base).execute(
+        "SELECT COUNT(*) FROM ticket_publications").fetchone()[0]
+
+    # Replaying the SAME source against the now-updated base must be a no-op:
+    # a retried workflow step, or a second plan built from an unchanged runner.
+    out2 = str(tmp_path / "plan2")
+    assert sync("diff", base, src, "--out", out2, "--tables", tables).returncode == 0
+    sql_files = [n for n in os.listdir(out2) if n.endswith(".sql")]
+    assert sql_files == [], f"replaying an unchanged source must emit no SQL, got {sql_files}"
+    assert sync("apply", base, out2).returncode == 0
+    assert sqlite3.connect(base).execute(
+        "SELECT COUNT(*) FROM ticket_publications").fetchone()[0] == fingerprint_after_first
+
+
+def test_revision_tables_cannot_downgrade_successful_or_uncertain_receipts(tmp_path):
+    """A sync must never let an older/less-authoritative source overwrite a
+    production receipt that is already 'sent', nor let a stale re-send
+    attempt erase an 'uncertain' receipt's ambiguous-send evidence."""
+    base = str(tmp_path / "base.db")
+    src = str(tmp_path / "src.db")
+    from predbot.storage.db import Database
+
+    # The server already recorded a successful send.
+    db = Database(base)
+    with db.transaction():
+        revision = db.create_ticket_revision("2026-11-01", "morning-evaluation", "2026-11-01T08:00:00Z")
+    db.claim_ticket_publication("2026-11-01", "top", revision, "group", recipient_id="-100123")
+    db.finish_ticket_publication("2026-11-01", "top", revision, "group", message_id="555", state="sent")
+    db.close()
+
+    # A stale/replayed source only ever saw the claim before the send confirmed.
+    import shutil
+    shutil.copy(base, src)
+    stale = sqlite3.connect(src)
+    stale.execute("UPDATE ticket_publications SET state='failed', message_id=NULL, "
+                  "error='stale retry attempt', recipient_id=NULL WHERE pick_date='2026-11-01'")
+    stale.commit()
+    stale.close()
+
+    out = str(tmp_path / "plan")
+    assert sync("plan", base, src, "--out", out, "--tables",
+               ",".join(REVISION_TABLES)).returncode == 0
+    assert sync("apply", base, out).returncode == 0
+    row = sqlite3.connect(base).execute(
+        "SELECT state, message_id, recipient_id, error FROM ticket_publications "
+        "WHERE pick_date='2026-11-01'").fetchone()
+    assert row == ("sent", "555", "-100123", None), \
+        f"a successful receipt must never be downgraded by a stale source, got {row}"
+
+    # Same guarantee for 'uncertain': a stale source retrying must not erase
+    # the ambiguous-send evidence or make it look like a fresh retryable failure.
+    base2 = str(tmp_path / "base2.db")
+    src2 = str(tmp_path / "src2.db")
+    db2 = Database(base2)
+    with db2.transaction():
+        revision2 = db2.create_ticket_revision("2026-11-01", "morning-evaluation", "2026-11-01T08:00:00Z")
+    db2.claim_ticket_publication("2026-11-01", "top", revision2, "group", recipient_id="-100123")
+    db2.finish_ticket_publication("2026-11-01", "top", revision2, "group", state="uncertain", error="timeout")
+    db2.close()
+    shutil.copy(base2, src2)
+    stale2 = sqlite3.connect(src2)
+    stale2.execute("UPDATE ticket_publications SET state='failed', error='stale retry attempt' "
+                   "WHERE pick_date='2026-11-01'")
+    stale2.commit()
+    stale2.close()
+    out2 = str(tmp_path / "plan2")
+    assert sync("plan", base2, src2, "--out", out2, "--tables",
+               ",".join(REVISION_TABLES)).returncode == 0
+    assert sync("apply", base2, out2).returncode == 0
+    row2 = sqlite3.connect(base2).execute(
+        "SELECT state, error FROM ticket_publications WHERE pick_date='2026-11-01'").fetchone()
+    assert row2[0] == "uncertain", \
+        f"an uncertain receipt must never be downgraded to a retryable failed state, got {row2}"

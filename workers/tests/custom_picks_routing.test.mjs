@@ -29,7 +29,7 @@ function realDb() {
   // 0002 only ALTERs columns that 0001 already defines inline for a fresh
   // DB (see 0001's own comment) — applying both to a brand-new :memory: DB
   // would duplicate those columns, so 0002 is skipped here deliberately.
-  for (const file of ["0001_foundation.sql", "0003_engine_state.sql", "0006_custom_sessions.sql", "0007_custom_picks_conversation.sql", "0008_pinned_menu.sql", "0013_pro_picks.sql", "0014_issued_picks_ledger.sql"]) {
+  for (const file of ["0001_foundation.sql", "0003_engine_state.sql", "0005_ticket_candidates.sql", "0006_custom_sessions.sql", "0007_custom_picks_conversation.sql", "0008_pinned_menu.sql", "0013_pro_picks.sql", "0014_issued_picks_ledger.sql", "0018_ticket_publication_revisions.sql", "0019_ticket_publication_recipient.sql"]) {
     sql.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), "utf8"));
   }
   return {

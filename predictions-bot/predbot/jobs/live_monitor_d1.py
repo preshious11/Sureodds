@@ -79,8 +79,17 @@ def run(db_path: str) -> dict:
         # call is bypassed in favor of deliver_match_event — see
         # predbot/jobs/live_results.py's `if sink is not None` branches).
         live_results.run(resolver, db, cfg, tg=None, now=utcnow(), sink=sink)
+        from predbot.jobs import ledger_settlement
+        ledger = ledger_settlement.run(resolver, db, allow_lookup=False)
         after = db.query("SELECT COUNT(*) AS n FROM match_events")[0]["n"]
-        return {"events_recorded": after - before}
+        if db.query("SELECT 1 FROM sqlite_master WHERE name='job_state'"):
+            db.execute("INSERT INTO job_state(name,last_run_at,last_result,updated_at) "
+                       "VALUES('live_monitor',strftime('%Y-%m-%dT%H:%M:%SZ','now'),'OK completed',strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+                       "ON CONFLICT(name) DO UPDATE SET last_run_at=excluded.last_run_at,last_result=excluded.last_result,updated_at=excluded.updated_at")
+        summary: dict[str, object] = {"events_recorded": after - before}
+        if db.query("SELECT 1 FROM sqlite_master WHERE name='issued_ticket_legs'"):
+            summary['issued_tickets'] = ledger
+        return summary
     finally:
         db.close()
 

@@ -135,17 +135,32 @@ export async function renderGroupCard(
   env: Env,
   kind: "top" | "daily",
   localDate: string,
-): Promise<{ text: string; isEmpty: boolean }> {
-  const all = await getAllPicksForCollection(env.DB, localDate, kind);
+  revisionId: number | null = null,
+  nowMs = Date.now(),
+): Promise<{ text: string; isEmpty: boolean; isEligible: boolean }> {
+  const all = await getAllPicksForCollection(env.DB, localDate, kind, revisionId);
   const title = kind === "top" ? TOP_TITLE : DAILY_TITLE;
   if (all.length === 0) {
-    return { text: wrapTitleHtml(picksCard([], localDate, title, { zone: ZONE_LABEL }), title), isEmpty: true };
+    return { text: wrapTitleHtml(picksCard([], localDate, title, { zone: ZONE_LABEL }), title), isEmpty: true, isEligible: false };
+  }
+  const odds = all.reduce((product, pick) => product * pick.price, 1);
+  const [minOdds, maxOdds] = kind === "top" ? [2, 2.5] : [10, 12];
+  const allFuture = all.every((pick) => {
+    const kickoff = Date.parse(pick.start_utc);
+    return Number.isFinite(kickoff) && kickoff > nowMs;
+  });
+  if (!allFuture || !Number.isFinite(odds) || odds < minOdds || odds > maxOdds) {
+    return {
+      text: wrapTitleHtml(picksCard([], localDate, title, { zone: ZONE_LABEL }), title),
+      isEmpty: false,
+      isEligible: false,
+    };
   }
   const sorted = all
     .map(toPickLineInput)
     .sort((a, b) => new Date(a.startUtc).getTime() - new Date(b.startUtc).getTime());
   const body = picksCard(sorted, localDate, title, { zone: ZONE_LABEL });
-  return { text: wrapTitleHtml(body, title), isEmpty: false };
+  return { text: wrapTitleHtml(body, title), isEmpty: false, isEligible: true };
 }
 
 async function renderTicket(

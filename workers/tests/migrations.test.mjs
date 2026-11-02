@@ -34,6 +34,12 @@ const FRESH_DB_SEQUENCE = [
   "0011_pipeline_dispatch.sql",
   "0012_result_gifs.sql",
   "0013_pro_picks.sql",
+  "0014_issued_picks_ledger.sql",
+  "0015_selection_rejections.sql",
+  "0016_closing_capture_columns.sql",
+  "0017_oracle_recovery_guards.sql",
+  "0018_ticket_publication_revisions.sql",
+  "0019_ticket_publication_recipient.sql",
 ];
 
 describe("migration chain against a fresh database (workers/CUTOVER.md step 2)", () => {
@@ -55,9 +61,14 @@ describe("migration chain against a fresh database (workers/CUTOVER.md step 2)",
     // Spot-check a few tables from later migrations exist too, proving the
     // chain actually ran through to the end, not just 0001.
     const tables = sql.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((t) => t.name);
-    for (const table of ["custom_pick_candidates", "sync_state", "ticket_candidates", "custom_sessions", "custom_suggestions"]) {
+    for (const table of ["custom_pick_candidates", "sync_state", "ticket_candidates", "custom_sessions",
+      "custom_suggestions", "ticket_revisions", "active_ticket_revisions", "ticket_publications"]) {
       assert.ok(tables.includes(table), `${table} must exist after the full fresh-database sequence`);
     }
+    const pickCols = sql.prepare("PRAGMA table_info(picks)").all().map((c) => c.name);
+    assert.ok(pickCols.includes("revision_id"));
+    const publicationCols = sql.prepare("PRAGMA table_info(ticket_publications)").all().map((c) => c.name);
+    assert.ok(publicationCols.includes("recipient_id"));
     const sessionCols = sql.prepare("PRAGMA table_info(custom_sessions)").all().map((c) => c.name);
     assert.ok(sessionCols.includes("request_json"), "0007's ALTER TABLE custom_sessions must have applied");
     // 0010 (A2): the shared D1-write lease and the live-monitor dispatch
@@ -108,5 +119,43 @@ describe("migration chain against a fresh database (workers/CUTOVER.md step 2)",
     for (const col of ["status", "attempts", "last_error", "updated_at"]) {
       assert.ok(cols.includes(col));
     }
+  });
+
+  it("0018 keeps existing forecasts, memberships, and receipts as active revision 1", () => {
+    const sql = new DatabaseSync(":memory:");
+    for (const name of FRESH_DB_SEQUENCE.slice(0, -2)) {
+      sql.exec(readFileSync(migrationPath(name), "utf8"));
+    }
+    sql.exec(`INSERT INTO picks(id,pick_date,tier,rank,provider,provider_event_id,sport,home,away,start_utc,
+      market,period,stat,entity,selection,label,price,prob,ev,status,created_at,fixture_key,canonical_event_id,
+      is_representative) VALUES(7,'2026-11-01','all',1,'p','e','football','A','B',
+      '2026-11-01T20:00:00Z','result3','full','points','all','home','A to win',1.44,.7,0,'pending',
+      '2026-11-01T08:00:00Z','fixture-a','event-a',1);
+      INSERT INTO prediction_memberships VALUES(7,'all',1),(7,'top',1);
+      INSERT INTO posts(kind,post_date,message_id,created_at) VALUES
+        ('top','2026-11-01','437','2026-11-01T08:30:00Z');`);
+    const before = sql.prepare("SELECT price,created_at FROM picks WHERE id=7").get();
+    sql.exec(readFileSync(migrationPath("0018_ticket_publication_revisions.sql"), "utf8"));
+    assert.deepEqual(sql.prepare("SELECT price,created_at FROM picks WHERE id=7").get(), before);
+    assert.equal(sql.prepare("SELECT collection FROM prediction_memberships WHERE prediction_id=7 AND collection='top'").get().collection, "top");
+    assert.equal(sql.prepare("SELECT revision_id FROM active_ticket_revisions WHERE pick_date='2026-11-01'").get().revision_id, 1);
+    assert.equal(sql.prepare("SELECT state FROM ticket_publications WHERE pick_date='2026-11-01' AND collection='top' AND destination='group'").get().state, "sent");
+  });
+
+  it("0019 adds the recipient column and backfills known legacy community recipients", () => {
+    const sql = new DatabaseSync(":memory:");
+    for (const name of FRESH_DB_SEQUENCE.slice(0, -1)) {
+      sql.exec(readFileSync(migrationPath(name), "utf8"));
+    }
+    sql.exec(`INSERT INTO deliveries(kind,post_date,chat_id,created_at)
+      VALUES('community_picks_top','2026-11-01','-100123','2026-11-01T08:30:00Z');
+      INSERT INTO ticket_revisions VALUES('2026-11-01',1,'legacy','2026-11-01T08:00:00Z');
+      INSERT INTO active_ticket_revisions VALUES('2026-11-01',1,'2026-11-01T08:00:00Z');
+      INSERT INTO ticket_publications
+        (pick_date,collection,revision_id,destination,state,created_at,updated_at)
+      VALUES('2026-11-01','top',1,'group','sent','2026-11-01T08:30:00Z','2026-11-01T08:30:00Z');`);
+    sql.exec(readFileSync(migrationPath("0019_ticket_publication_recipient.sql"), "utf8"));
+    assert.equal(sql.prepare("SELECT recipient_id FROM ticket_publications").get().recipient_id, "-100123");
+    sql.close();
   });
 });

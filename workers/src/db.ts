@@ -269,6 +269,7 @@ export async function hasPicksForDate(db: D1Database, pickDate: string): Promise
 
 export interface CachedPick {
   id: number;
+  revision_id: number;
   tier: string;
   rank: number;
   sport: string;
@@ -289,14 +290,19 @@ export interface CachedPick {
 }
 
 const PICKS_PAGE_SQL = `SELECT p.id, m.collection AS tier, m.rank AS rank, p.sport, p.league, p.home, p.away,
-              p.start_utc, p.market, p.period, p.stat, p.entity, p.line, p.selection, p.label, p.price, p.prob, p.status
+              p.revision_id, p.start_utc, p.market, p.period, p.stat, p.entity, p.line, p.selection, p.label, p.price, p.prob, p.status
        FROM picks p JOIN prediction_memberships m ON m.prediction_id = p.id
        WHERE p.pick_date = ?1 AND m.collection = ?2
+         AND (?2 = 'all' OR p.revision_id = COALESCE(?3,
+           (SELECT revision_id FROM active_ticket_revisions WHERE pick_date = ?1), 1))
        UNION ALL
        SELECT p.id, ?2 AS tier, p.rank AS rank, p.sport, p.league, p.home, p.away,
+              p.revision_id,
               p.start_utc, p.market, p.period, p.stat, p.entity, p.line, p.selection, p.label, p.price, p.prob, p.status
        FROM picks p
        WHERE p.pick_date = ?1 AND (?2 = 'all' OR p.tier = ?2)
+         AND (?2 = 'all' OR p.revision_id = COALESCE(?3,
+           (SELECT revision_id FROM active_ticket_revisions WHERE pick_date = ?1), 1))
          AND NOT EXISTS (SELECT 1 FROM prediction_memberships m WHERE m.prediction_id = p.id)
        ORDER BY rank ASC, id ASC`;
 
@@ -306,12 +312,13 @@ export async function getPicksPage(
   collection: "top" | "daily" | "all",
   limit: number,
   offset: number,
+  revisionId: number | null = null,
 ): Promise<CachedPick[]> {
   const safeLimit = Math.min(Math.max(limit, 1), 25);
   const safeOffset = Math.max(offset, 0);
   const { results } = await db
-    .prepare(`${PICKS_PAGE_SQL} LIMIT ?3 OFFSET ?4`)
-    .bind(pickDate, collection, safeLimit, safeOffset)
+    .prepare(`${PICKS_PAGE_SQL} LIMIT ?4 OFFSET ?5`)
+    .bind(pickDate, collection, revisionId, safeLimit, safeOffset)
     .all<CachedPick>();
   return (results ?? []).filter((row) => !marketContractReason(row));
 }
@@ -326,9 +333,17 @@ export async function getAllPicksForCollection(
   db: D1Database,
   pickDate: string,
   collection: "top" | "daily" | "all",
+  revisionId: number | null = null,
 ): Promise<CachedPick[]> {
-  const { results } = await db.prepare(PICKS_PAGE_SQL).bind(pickDate, collection).all<CachedPick>();
+  const { results } = await db.prepare(PICKS_PAGE_SQL).bind(pickDate, collection, revisionId).all<CachedPick>();
   return (results ?? []).filter((row) => !marketContractReason(row));
+}
+
+export async function getActiveTicketRevision(db: D1Database, pickDate: string): Promise<number> {
+  const row = await db.prepare(
+    "SELECT revision_id FROM active_ticket_revisions WHERE pick_date = ?1",
+  ).bind(pickDate).first<{ revision_id: number }>();
+  return row?.revision_id ?? 1;
 }
 
 export interface StatsRow {
@@ -621,6 +636,81 @@ export async function releaseClaim(db: D1Database, kind: string, postDate: strin
     .prepare("DELETE FROM posts WHERE kind = ?1 AND post_date = ?2 AND message_id IS NULL")
     .bind(kind, postDate)
     .run();
+}
+
+export type TicketPublicationState = "sending" | "failed" | "sent" | "uncertain";
+
+/// Seconds after which an unresolved `sending` ticket_publications claim is
+/// considered abandoned (the Worker was evicted/crashed after claiming but
+/// before finishTicketPublication ran). Same window as CLAIM_POST_TIMEOUT_SECONDS.
+export const STALE_TICKET_PUBLICATION_TIMEOUT_SECONDS = 300;
+
+/**
+ * Transitions any claim stuck in `sending` past
+ * STALE_TICKET_PUBLICATION_TIMEOUT_SECONDS to `uncertain` — never back to
+ * `failed`, because the crash could have happened after Telegram actually
+ * accepted the message; only a confirmed failed send (finishTicketPublication
+ * called with state='failed') is auto-retryable via claimTicketPublication's
+ * `WHERE state='failed'`, so an `uncertain` row stays parked for a human to
+ * verify rather than risking a duplicate community broadcast.
+ */
+export async function sweepStaleTicketPublications(
+  db: D1Database,
+  timeoutSeconds = STALE_TICKET_PUBLICATION_TIMEOUT_SECONDS,
+): Promise<number> {
+  const secs = Math.max(1, Math.floor(timeoutSeconds));
+  const result = await db
+    .prepare(
+      `UPDATE ticket_publications SET state='uncertain',error=?1,
+         updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+       WHERE state='sending'
+         AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ','now',?2)`,
+    )
+    .bind(`stale claim: no finish recorded within ${secs}s`, `-${secs} seconds`)
+    .run();
+  return result.meta?.changes ?? 0;
+}
+
+/** Claims one destination for one immutable ticket revision. Only a known failed send is retryable. */
+export async function claimTicketPublication(
+  db: D1Database,
+  pickDate: string,
+  collection: "top" | "daily",
+  revisionId: number,
+  destination: "group" | "owner",
+  recipientId: string | null = null,
+): Promise<boolean> {
+  const result = await db.prepare(
+    `INSERT INTO ticket_publications
+       (pick_date,collection,revision_id,destination,recipient_id,state,attempts,created_at,updated_at)
+     VALUES (?1,?2,?3,?4,?5,'sending',1,strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+       strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+     ON CONFLICT(pick_date,collection,revision_id,destination) DO UPDATE SET
+       state='sending',recipient_id=excluded.recipient_id,
+       attempts=ticket_publications.attempts+1,error=NULL,
+       updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+     WHERE ticket_publications.state='failed'`,
+  ).bind(pickDate, collection, revisionId, destination, recipientId).run();
+  return (result.meta?.changes ?? 0) > 0;
+}
+
+export async function finishTicketPublication(
+  db: D1Database,
+  pickDate: string,
+  collection: "top" | "daily",
+  revisionId: number,
+  destination: "group" | "owner",
+  state: Exclude<TicketPublicationState, "sending">,
+  messageId?: string | null,
+  error?: string,
+): Promise<void> {
+  const result = await db.prepare(
+    `UPDATE ticket_publications SET state=?5,message_id=?6,error=?7,
+       updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+     WHERE pick_date=?1 AND collection=?2 AND revision_id=?3 AND destination=?4 AND state='sending'`,
+  ).bind(pickDate, collection, revisionId, destination, state,
+    messageId ?? null, error?.slice(0, 500) ?? null).run();
+  if ((result.meta?.changes ?? 0) !== 1) throw new Error("ticket publication claim was not active");
 }
 
 export async function getFailedUpdates(
@@ -1038,7 +1128,8 @@ export async function getUndeliveredMatchEvents(
   groupConfigured: boolean,
   ownerConfigured: boolean,
   limit = 5,
-): Promise<(MatchEventRow & MatchEventContext)[]> {
+  groupChatId: string | null = null,
+): Promise<(MatchEventRow & MatchEventContext & { group_authorized: number })[]> {
   const { results } = await db
     .prepare(
       `SELECT me.*,
@@ -1052,7 +1143,27 @@ export async function getUndeliveredMatchEvents(
          (SELECT COUNT(DISTINCT p.id) FROM picks p JOIN prediction_memberships m ON m.prediction_id=p.id
            WHERE p.pick_date=me.pick_date AND p.fixture_key=me.fixture_key AND p.status<>'void' AND m.collection IN ('top','daily')
            AND (EXISTS(SELECT 1 FROM posts po WHERE po.post_date=p.pick_date AND po.kind=m.collection)
-             OR EXISTS(SELECT 1 FROM prediction_cache c WHERE c.local_date=p.pick_date AND c.status='COMPLETE'))) AS published_open
+             OR EXISTS(SELECT 1 FROM prediction_cache c WHERE c.local_date=p.pick_date AND c.status='COMPLETE'))) AS published_open,
+         -- Community (group) authorization: a legacy posts row or a COMPLETE cache
+         -- (published_total/published_open above) decides whether this fixture is
+         -- still worth TRACKING at all; it is never sufficient to AUTHORIZE the
+         -- group send itself. That requires an actual ticket_publications receipt,
+         -- for the fixture's own collection, scoped to the pick_date's CURRENT
+         -- active revision (an older revision's receipt never carries forward),
+         -- destination='group', state EXACTLY 'sent' (failed/sending/uncertain
+         -- never qualify), and a recorded recipient_id matching the configured
+         -- group chat (NULL - including every historical backfilled receipt -
+         -- never matches, by design: fail closed, never inferred).
+         (SELECT COUNT(*) FROM (
+            SELECT DISTINCT m.collection FROM picks p JOIN prediction_memberships m ON m.prediction_id=p.id
+            WHERE p.pick_date=me.pick_date AND p.fixture_key=me.fixture_key AND m.collection IN ('top','daily')
+          ) fc
+          WHERE EXISTS (
+            SELECT 1 FROM ticket_publications tp
+            WHERE tp.pick_date=me.pick_date AND tp.collection=fc.collection AND tp.destination='group'
+              AND tp.state='sent' AND tp.recipient_id IS NOT NULL AND tp.recipient_id=?5
+              AND tp.revision_id=COALESCE((SELECT revision_id FROM active_ticket_revisions WHERE pick_date=me.pick_date),1)
+          )) AS group_authorized
          FROM match_events me
        WHERE created_at >= ?1
          AND NOT EXISTS (SELECT 1 FROM posts po WHERE po.post_date = me.pick_date
@@ -1067,8 +1178,8 @@ export async function getUndeliveredMatchEvents(
          )
        ORDER BY created_at ASC LIMIT ?4`,
     )
-    .bind(sinceIso, groupConfigured ? 1 : 0, ownerConfigured ? 1 : 0, limit)
-    .all<MatchEventRow & MatchEventContext>();
+    .bind(sinceIso, groupConfigured ? 1 : 0, ownerConfigured ? 1 : 0, limit, groupChatId)
+    .all<MatchEventRow & MatchEventContext & { group_authorized: number }>();
   return results ?? [];
 }
 

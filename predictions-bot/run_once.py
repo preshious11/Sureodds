@@ -127,6 +127,15 @@ def summarize_snapshot(snapshot) -> dict:
     }
 
 
+def record_job(db, name, result):
+    if not db.query("SELECT 1 FROM sqlite_master WHERE name='job_state'"):
+        return
+    db.execute("INSERT INTO job_state(name,last_run_at,last_result,updated_at) "
+               "VALUES(?,strftime('%Y-%m-%dT%H:%M:%SZ','now'),?,strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+               "ON CONFLICT(name) DO UPDATE SET last_run_at=excluded.last_run_at,last_result=excluded.last_result,updated_at=excluded.updated_at",
+               (name,'OK mode=live '+json.dumps(result)))
+
+
 def live_run(job: str, force: bool) -> dict:
     from predbot.bot.telegram import Telegram
     from predbot.cache.fetcher import UnifiedFetcher
@@ -161,9 +170,11 @@ def live_run(job: str, force: bool) -> dict:
             # post (empty unevaluated slate); a missing snapshot is itself
             # diagnostic evidence, recorded without any further provider calls.
             report["generation"] = summarize_snapshot(snapshot) if snapshot is not None else None
+            record_job(db, "generate", report["generation"])
             return report
         elif job == "settle":
             outcome = settle.run(resolver, db, cfg)
+            record_job(db, "settle", outcome)
             wall = time.perf_counter() - t0
             return {"job": job, "mode": "live", "lagos_now": lagos_now.isoformat(),
                     "wall_s": round(wall, 3), "outcome": outcome}

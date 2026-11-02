@@ -11,7 +11,10 @@ function world(){
  const sql=new DatabaseSync(':memory:');
  for(const file of ['0001_foundation.sql','0003_engine_state.sql','0004_sync_state.sql','0005_ticket_candidates.sql',
  '0006_custom_sessions.sql','0007_custom_picks_conversation.sql','0008_pinned_menu.sql','0009_match_events.sql',
- '0010_sync_lease.sql','0011_pipeline_dispatch.sql','0012_result_gifs.sql','0013_pro_picks.sql'])sql.exec(readFileSync(new URL(`../migrations/${file}`,import.meta.url),'utf8'));
+ '0010_sync_lease.sql','0011_pipeline_dispatch.sql','0012_result_gifs.sql','0013_pro_picks.sql',
+ '0014_issued_picks_ledger.sql','0015_selection_rejections.sql','0016_closing_capture_columns.sql',
+ '0017_oracle_recovery_guards.sql','0018_ticket_publication_revisions.sql',
+ '0019_ticket_publication_recipient.sql'])sql.exec(readFileSync(new URL(`../migrations/${file}`,import.meta.url),'utf8'));
  let count=0;
  const DB={prepare(query){count++;return {args:[],bind(...a){this.args=a;return this;},async first(){return sql.prepare(query).get(...this.args)??null;},
  async all(){return {results:sql.prepare(query).all(...this.args)};},async run(){return {meta:{changes:sql.prepare(query).run(...this.args).changes}};}};}};
@@ -26,6 +29,12 @@ function world(){
 function ticket(w,statuses,kind='top',day=DAY){
  const id=kind==='top'?123:456;
  w.sql.prepare('INSERT INTO posts(kind,post_date,message_id,created_at) VALUES(?,?,?,?)').run(kind,day,String(id),new Date(NOW).toISOString());
+ // Real ticket_publications 'sent' receipt, recipient matching env.TELEGRAM_CHAT_ID
+ // ('-100') - a legacy posts row alone no longer authorizes a group match-event send.
+ w.sql.prepare(`INSERT INTO ticket_publications
+     (pick_date,collection,revision_id,destination,recipient_id,state,message_id,attempts,error,created_at,updated_at)
+   VALUES(?,?,1,'group','-100','sent',?,1,NULL,?,?)`)
+   .run(day,kind,String(id),new Date(NOW).toISOString(),new Date(NOW).toISOString());
  for(const [i,status] of statuses.entries()){
  const r=w.sql.prepare(`INSERT INTO picks(pick_date,tier,rank,provider,provider_event_id,sport,home,away,start_utc,market,period,stat,entity,selection,label,price,prob,ev,status,created_at)
  VALUES(?,?,?,'test',?,'football','H','A',?,'result3','full','points','all','home','H',1.5,.7,.1,?,?)`).run(day,kind,i+1,`${kind}-${day}-${i}`,new Date(NOW-3600000).toISOString(),status,new Date(NOW).toISOString());
@@ -35,8 +44,11 @@ function ticket(w,statuses,kind='top',day=DAY){
 function gif(w,kind='won'){w.sql.prepare('INSERT INTO result_gifs VALUES(?,?,?,?)').run(kind,`${kind}-file`,`${kind}-unique`,new Date(NOW).toISOString());}
 
 function photoCache(w, broken=false) {
- ticket(w,['pending']);w.sql.prepare("DELETE FROM posts").run();
- w.sql.prepare("UPDATE picks SET fixture_key='test:fixture'").run();
+ // ticket() leaves a 'sent' receipt behind (for the GIF-reply tests that need
+ // it); this fixture wants a clean slate before postGroupPicks runs for
+ // real, exactly like its own DELETE FROM posts below.
+ ticket(w,['pending']);w.sql.prepare("DELETE FROM posts").run();w.sql.prepare("DELETE FROM ticket_publications").run();
+ w.sql.prepare("UPDATE picks SET fixture_key='test:fixture',start_utc=?,price=2.2").run(new Date(NOW+3600000).toISOString());
  const row=w.sql.prepare('SELECT * FROM picks').get();
  const p={...row,pick_id:row.id,fixture_id:'test:fixture',kickoff_utc:row.start_utc};
  const identity=JSON.stringify([DAY,[[p.pick_id,p.fixture_id,p.market,p.selection,p.price,p.home,p.away,p.label,p.kickoff_utc]]]);
@@ -52,8 +64,10 @@ describe('Bet of the Day photo publications',()=>{
   await postGroupPicks(w.env,'top',NOW,sender);failOwner=false;await postGroupPicks(w.env,'top',NOW,sender);
   assert.equal(w.sent.filter(p=>p.chat_id==='-100').length,1);
   assert.ok(w.sent.every(p=>p.method==='sendPhoto'&&p.caption.includes('Join the Kovqi community')));
-  assert.equal(w.sql.prepare("SELECT message_id FROM posts WHERE kind='top'").get().message_id,'101');
-  assert.equal(w.sql.prepare("SELECT message_id FROM posts WHERE kind='top_owner'").get().message_id,'202');
+  assert.equal(w.sql.prepare("SELECT message_id FROM ticket_publications WHERE collection='top' AND destination='group'").get().message_id,'101');
+  assert.equal(w.sql.prepare("SELECT message_id FROM ticket_publications WHERE collection='top' AND destination='owner'").get().message_id,'202');
+  ticket(w,['pending'],'daily');
+  w.sql.prepare("UPDATE picks SET start_utc=?,price=10.5 WHERE tier='daily'").run(new Date(NOW+3600000).toISOString());
   await postGroupPicks(w.env,'daily',NOW,w.sender);assert.equal(w.sent.at(-1).method,'sendMessage');
  });
  it('invalid media falls back once and upload failures stay retryable',async()=>{
@@ -65,14 +79,14 @@ describe('Bet of the Day photo publications',()=>{
  });
  it('stale image selections cannot override structured storage',async()=>{
   const w=world();photoCache(w);
-  w.sql.prepare('UPDATE picks SET price=1.7').run();
+  w.sql.prepare('UPDATE picks SET price=2.3').run();
   await postGroupPicks(w.env,'top',NOW,w.sender);
-  assert.ok(w.sent.every(p=>p.method==='sendMessage'&&p.text.includes('1.70')));
+  assert.ok(w.sent.every(p=>p.method==='sendMessage'&&p.text.includes('2.30')));
  });
  it('receipt write failure never triggers a second text publication',async()=>{
   const w=world();photoCache(w);const prepare=w.env.DB.prepare;
   w.env.DB.prepare=query=>{
-   if(query.startsWith('UPDATE posts SET message_id')) return {bind(){return this;},async run(){throw Error('D1 unavailable');}};
+   if(query.startsWith('UPDATE ticket_publications SET state')) return {bind(){return this;},async run(){throw Error('D1 unavailable');}};
    return prepare(query);
   };
   await assert.rejects(()=>postGroupPicks(w.env,'top',NOW,w.sender));

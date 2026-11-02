@@ -43,7 +43,25 @@ def publication(db, monkeypatch):
     chain.collect.side_effect = forbidden
     service = UnifiedFetcher(chain, db, cfg)
     snapshot = _snapshot()
+    snapshot.top_picks = [replace(pick, price=2.2) for pick in snapshot.top_picks]
+    snapshot.daily_picks = [replace(pick, price=2.2) for pick in snapshot.daily_picks]
     snapshot.all_predictions = snapshot.top_picks + snapshot.daily_picks
+    with db.transaction():
+        revision = db.create_ticket_revision(DAY, snapshot.generated_at, NOW.isoformat())
+        for collection, picks in (('top', snapshot.top_picks), ('daily', snapshot.daily_picks)):
+            for rank, pick in enumerate(picks, 1):
+                db.store_prediction({
+                    'pick_date': DAY, 'revision_id': revision, 'tier': collection, 'rank': rank,
+                    'provider': 'test', 'provider_event_id': f'{collection}-{rank}',
+                    'sport': pick.sport, 'league': 'League', 'home': pick.home, 'away': pick.away,
+                    'start_utc': pick.kickoff_utc, 'market': pick.market, 'period': pick.period,
+                    'stat': pick.stat, 'entity': pick.entity, 'line': pick.line,
+                    'canonical_event_id': f'{collection}-{rank}',
+                    'canonical_competition_id': 'league', 'home_id': f'{collection}-home-{rank}',
+                    'away_id': f'{collection}-away-{rank}',
+                    'selection': pick.selection, 'label': pick.label, 'price': pick.price,
+                    'prob': pick.prob, 'ev': pick.ev, 'status': 'pending',
+                })
     service._store(snapshot, NOW)
     return SimpleNamespace(cfg=cfg, tg=PublicationTelegram(), service=service, snapshot=snapshot, chain=chain)
 
@@ -54,19 +72,21 @@ def publish(db, p):
 
 @pytest.mark.parametrize('kind', ['picks_top', 'picks_daily'])
 def test_destination_receipt_alone_prevents_republication(db, publication, kind):
-    db.mark_delivery('community_' + kind, DAY, COMMUNITY)
+    collection = 'top' if kind == 'picks_top' else 'daily'
+    revision = db.active_ticket_revision(DAY)
+    assert db.claim_ticket_publication(DAY, collection, revision, 'group')
+    db.finish_ticket_publication(DAY, collection, revision, 'group', state='sent', message_id='existing')
     publish(db, publication)
     prefix = '🔥' if kind == 'picks_top' else '📋'
     assert not any(s['text'].startswith(prefix) for s in publication.tg.sends)
 
 
-def test_completed_empty_generation_publishes_top_once(db, publication):
+def test_completed_empty_generation_does_not_publish_a_ticket(db, publication):
     snapshot = replace(publication.snapshot, top_picks=[], daily_picks=[], all_predictions=[])
     publication.service._store(snapshot, NOW)
     publish(db, publication)
-    assert len(publication.tg.sends) == 2
-    assert publication.tg.sends[0]['text'] == '🔥 BET OF THE DAY · Sat 1 Jun\nNo Bet of the Day for today.\n\nSee other picks:\n\nBet only what you can afford to lose.'
-    assert db.delivery_done('community_picks_top', DAY, COMMUNITY)
+    assert not publication.tg.sends
+    assert not db.ticket_publication(DAY, 'top', db.active_ticket_revision(DAY), 'group')
 
 
 @pytest.mark.parametrize('partial', [False, True])
@@ -77,8 +97,10 @@ def test_restart_and_repeated_polling_send_each_card_once(db, publication, parti
                        top_picks=[] if empty_top else p.snapshot.top_picks)
     p.service._store(snapshot, NOW)
     publish(db, p)
-    assert len(p.tg.sends) == 2
-    assert {r['kind'] for r in db.query('SELECT kind FROM posts')} == {'picks_top', 'picks_daily'}
+    expected_sends = 1 if empty_top else 2
+    assert len(p.tg.sends) == expected_sends
+    assert db.ticket_publication(DAY, 'daily', db.active_ticket_revision(DAY), 'group')['state'] == 'sent'
+    assert bool(db.ticket_publication(DAY, 'top', db.active_ticket_revision(DAY), 'group')) is not empty_top
     for _ in range(3):
         publish(db, p)
     path = db.path
@@ -89,9 +111,9 @@ def test_restart_and_repeated_polling_send_each_card_once(db, publication, parti
     try:
         p.service = UnifiedFetcher(p.chain, reopened, p.cfg)
         publish(reopened, p)
-        assert len(p.tg.sends) == 2
-        assert reopened.delivery_done('community_picks_top', DAY, COMMUNITY)
-        assert reopened.delivery_done('community_picks_daily', DAY, COMMUNITY)
+        assert len(p.tg.sends) == expected_sends
+        assert reopened.ticket_publication(DAY, 'daily', reopened.active_ticket_revision(DAY), 'group')['state'] == 'sent'
+        assert bool(reopened.ticket_publication(DAY, 'top', reopened.active_ticket_revision(DAY), 'group')) is not empty_top
     finally:
         reopened.close()
     p.chain.collect.assert_not_called()
@@ -126,27 +148,23 @@ def assert_ctas(markup):
     assert rows[1][0] == callbacks.community_menu_markup(BOT_USERNAME)['inline_keyboard'][3][0]
 
 
-def test_automatic_and_pinned_menu_empty_top_have_same_ctas_and_cached_navigation(db, publication, monkeypatch):
+def test_empty_top_is_not_published_but_remains_browsable(db, publication, monkeypatch):
     p = publication
     snapshot = replace(p.snapshot, top_picks=[], status='PARTIAL')
     p.service._store(snapshot, NOW)
     publish(db, p)
-    auto = p.tg.sends[0]
-    assert_ctas(auto['reply_markup'])
+    assert len(p.tg.sends) == 1
+    assert p.tg.sends[0]['text'].startswith('📋')
     loop = CommandLoop(p.tg, db, p.cfg, {}, service=p.service)
     monkeypatch.setattr(callbacks, 'navigation_mode', lambda cfg: 'edit')
     loop._handle_update(button_update(pagination.encode_callback('top', 0)))
-    pinned = p.tg.sends[-1]
-    assert pinned['text'] == auto['text'] and pinned['chat_id'] == COMMUNITY
-    assert_ctas(pinned['reply_markup'])
-    assert not p.tg.edits  # pinned menu remains intact
-    for entry in (auto, pinned):
-        for button in entry['reply_markup']['inline_keyboard'][0]:
-            loop._handle_update(button_update(button['callback_data'], text=entry['text']))
+    top_view = p.tg.sends[-1]
+    assert 'No Bet of the Day for today.' in top_view['text']
+    assert_ctas(top_view['reply_markup'])
     p.chain.collect.assert_not_called()
     assert p.service.api_batches == 0
     for phrase in ('being analyzed', 'Our model', 'Check back soon', '09:00 AM'):
-        assert phrase not in auto['text']
+        assert phrase not in top_view['text']
 
 
 @pytest.mark.parametrize('reason', ['before_post_time', 'generating', 'awaiting scheduled fetch'])
@@ -161,14 +179,13 @@ def test_ungenerated_snapshot_is_not_a_completed_empty_publication(db, publicati
     assert 'No Bet of the Day for today.' not in text
 
 
-def test_partial_evaluation_with_no_qualifiers_still_publishes_empty_top(db, publication):
+def test_partial_evaluation_with_no_qualifiers_publishes_nothing(db, publication):
     p = publication
     snapshot = replace(p.snapshot, status='PARTIAL', top_picks=[], daily_picks=[], all_predictions=[],
                        generation={'complete': False, 'top': {'selected': 0}})
     p.service._store(snapshot, NOW)
     publish(db, p)
-    assert len(p.tg.sends) == 2
-    assert_ctas(p.tg.sends[0]['reply_markup'])
+    assert not p.tg.sends
 
 
 def test_snapshot_status_and_generation_timestamp_do_not_change_receipt_identity(db, publication):
@@ -178,6 +195,9 @@ def test_snapshot_status_and_generation_timestamp_do_not_change_receipt_identity
     p.service._store(replace(p.snapshot, status='COMPLETE', generated_at='2030-06-01T10:00:00Z'), NOW)
     publish(db, p)
     assert len(p.tg.sends) == 2
+    revision = db.active_ticket_revision(DAY)
+    assert db.ticket_publication(DAY, 'top', revision, 'group')['state'] == 'sent'
+    assert db.ticket_publication(DAY, 'daily', revision, 'group')['state'] == 'sent'
 
 
 def test_foreign_destination_receipts_do_not_impersonate_this_destination(db, publication):
@@ -187,19 +207,22 @@ def test_foreign_destination_receipts_do_not_impersonate_this_destination(db, pu
     assert len(publication.tg.sends) == 2
     assert all(s['chat_id'] == COMMUNITY for s in publication.tg.sends)
     for kind in ('picks_top', 'picks_daily'):
-        assert db.delivery_done('community_' + kind, DAY, COMMUNITY)
+        collection = 'top' if kind == 'picks_top' else 'daily'
+        assert db.ticket_publication(DAY, collection, db.active_ticket_revision(DAY), 'group')['state'] == 'sent'
 
 
-def test_empty_top_without_a_private_bot_link_is_deferred_not_posted_as_a_dead_end(db, publication):
+def test_empty_top_is_skipped_independently_of_bot_link_configuration(db, publication):
     p = publication
     p.tg.username = None
     p.service._store(replace(p.snapshot, top_picks=[]), NOW)
     publish(db, p)
-    assert not p.tg.sends and not db.post_done('picks_top', DAY)
+    revision = db.active_ticket_revision(DAY)
+    assert len(p.tg.sends) == 1
+    assert p.tg.sends[0]['text'].startswith('📋')
+    assert db.ticket_publication(DAY, 'top', revision, 'group') is None
     p.tg.username = BOT_USERNAME
     publish(db, p)
-    assert len(p.tg.sends) == 2
-    assert_ctas(p.tg.sends[0]['reply_markup'])
+    assert len(p.tg.sends) == 1
 
 
 @pytest.mark.parametrize('failed_kind', ['picks_top', 'picks_daily'])
@@ -209,7 +232,9 @@ def test_failed_send_retries_only_missing_publication_after_restart(db, publicat
     prefix = '🔥' if failed_kind == 'picks_top' else '📋'
     p.tg.send = lambda text, **kwargs: None if text.startswith(prefix) else send(text, **kwargs)
     publish(db, p)
-    assert not db.delivery_done('community_' + failed_kind, DAY, COMMUNITY)
+    collection = 'top' if failed_kind == 'picks_top' else 'daily'
+    revision = db.active_ticket_revision(DAY)
+    assert db.ticket_publication(DAY, collection, revision, 'group')['state'] == 'failed'
     p.tg.send = send
     path = db.path
     db.close()
@@ -218,6 +243,7 @@ def test_failed_send_retries_only_missing_publication_after_restart(db, publicat
         p.service = UnifiedFetcher(p.chain, reopened, p.cfg)
         publish(reopened, p)
         assert len(p.tg.sends) == 2
+        assert reopened.ticket_publication(DAY, collection, revision, 'group')['state'] == 'sent'
     finally:
         reopened.close()
 

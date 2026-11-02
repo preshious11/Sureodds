@@ -258,18 +258,19 @@ NOW = "2030-06-01T08:00:00Z"
 
 def test_top_promotes_at_most_one_prediction_per_fixture():
     rows = [promoted("a", "result3", 0.80, 1.30), promoted("a", "dnb", 0.79, 1.28), promoted("a", "dc", 0.78, 1.25),
-            promoted("b", "result3", 0.70, 1.40)]
+            promoted("b", "result3", 0.70, 1.60)]
     chosen, diag = select_top(rows, Config(), NOW)
     events = [r["canonical_event_id"] for r in chosen]
     assert len(events) == len(set(events)) and set(events) == {"evt-a", "evt-b"}
     assert diag["rejections"]["duplicate_event"] >= 1
-    assert diag["combined_odds"] == pytest.approx(1.30 * 1.40)                   # the duplicate never inflates the ticket
+    assert diag["combined_odds"] == pytest.approx(1.30 * 1.60)                   # the duplicate never inflates the ticket
 
 
 def test_top_is_never_padded_to_reach_its_target():
     rows = [promoted("a", "result3", 0.80, 1.30), promoted("a", "dnb", 0.79, 1.28)]       # one fixture only
     chosen, diag = select_top(rows, Config(), NOW)
-    assert len(chosen) == 1 and diag["combined_odds"] == pytest.approx(1.30) and diag["target_reached"] is False
+    assert chosen == [] and diag["selected"] == 0
+    assert diag["combined_odds"] == pytest.approx(1.30) and diag["target_reached"] is False
 
 
 def test_daily_keeps_one_prediction_per_fixture():

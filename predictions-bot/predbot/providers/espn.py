@@ -47,7 +47,7 @@ import requests
 from predbot.markets.competitions import BY_ID, Competition, lookup
 from predbot.providers.base import BaseProvider, Event, MatchResult
 from predbot.util.http import Http, ProviderError, RateLimiter
-from predbot.util.names import same_team
+from predbot.util.names import same_team, normalize
 from predbot.util.timeutil import parse_iso
 
 log = logging.getLogger(__name__)
@@ -74,7 +74,18 @@ def _names(competitor: Dict) -> List[str]:
                                   "name", "location") if src.get(k)]
 
 
-def _matches(name: str, competitor: Dict) -> bool:
+ESPN_TEAM_ALIASES = {
+    # Verified against the final scoreboards on Oracle, 2026-11-01. Scoped
+    # to the competition and ESPN's stable team ID; no fuzzy threshold change.
+    ("ligue_1", "stade brest"): "6997",
+    ("la_liga", "athletic bilbao"): "93",
+}
+
+
+def _matches(name: str, competitor: Dict, competition: str = "") -> bool:
+    expected = ESPN_TEAM_ALIASES.get((competition, normalize(name)))
+    if expected and str((competitor.get('team') or {}).get('id')) == expected:
+        return True
     return any(same_team(name, n) for n in _names(competitor))
 
 
@@ -187,9 +198,9 @@ class ESPNProvider(BaseProvider):
                 if pair is None:
                     continue
                 h, a = pair
-                if _matches(home, h) and _matches(away, a):
+                if _matches(home, h, comp.id) and _matches(away, a, comp.id):
                     home_id, away_id = h.get("team", {}).get("id"), a.get("team", {}).get("id")
-                elif _matches(home, a) and _matches(away, h):
+                elif _matches(home, a, comp.id) and _matches(away, h, comp.id):
                     home_id, away_id = a.get("team", {}).get("id"), h.get("team", {}).get("id")
                 if home_id and away_id:
                     break
@@ -328,9 +339,9 @@ class ESPNProvider(BaseProvider):
             if pair is None:
                 continue
             h, a = pair
-            if _matches(home, h) and _matches(away, a):
+            if _matches(home, h, comp.id) and _matches(away, a, comp.id):
                 return self._to_result(comp, c, h, a)
-            if _matches(home, a) and _matches(away, h):          # provider disagrees on home/away
+            if _matches(home, a, comp.id) and _matches(away, h, comp.id):          # provider disagrees on home/away
                 return self._to_result(comp, c, a, h)
         return None
 

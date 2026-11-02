@@ -33,7 +33,7 @@ on:
         required: true
         default: "fixture-replay"
         type: choice
-        options: [live-generate, fixture-replay]
+        options: [live-generate, fixture-replay, fresh-evaluate]
       dry_run:
         description: "Plan only, no D1 writes (default true)"
         required: false
@@ -101,7 +101,41 @@ env:
   TIMEZONE: Africa/Lagos
 
 jobs:
+  fresh-evaluation:
+    if: inputs.operation == 'fresh-evaluate' && inputs.live_confirm == 'RUN-LIVE'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install evaluation dependencies
+        run: python -m pip install -r predictions-bot/requirements.txt
+      - name: Read consistent Oracle snapshot
+        run: bash workers/bot/ssh-relay/query-epoch.sh snapshot-get > /tmp/fresh-source.sql
+        env:
+          SUREODDS_SSH_HOST: ${{ secrets.SUREODDS_SSH_HOST }}
+          SUREODDS_SSH_KEY: ${{ secrets.SUREODDS_SSH_KEY }}
+          SUREODDS_SSH_KNOWN_HOSTS: ${{ secrets.SUREODDS_SSH_KNOWN_HOSTS }}
+      - name: Evaluate fresh quotes without production writes or Telegram
+        run: python predictions-bot/tools/fresh_evaluation.py --source-sql /tmp/fresh-source.sql --workdir /tmp/fresh-evaluation
+        env:
+          SHARPAPI_KEY: ${{ secrets.SHARPAPI_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          SPORTSGAMEODDS_KEY: ${{ secrets.SPORTSGAMEODDS_KEY }}
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
+          TIMEZONE: Africa/Lagos
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fresh-evaluation
+          path: /tmp/fresh-evaluation/report.json
+          retention-days: 7
   acceptance:
+    if: inputs.operation != 'fresh-evaluate'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     concurrency:
@@ -157,14 +191,49 @@ jobs:
       # currently no input that distinguishes "rehearsal" from "normal
       # production dispatch" now that server is the default; revisit if a
       # genuine need for a rehearsal-of-the-server-path safety rail returns.
+      - name: Acquire the shared D1-write lease (retries, then fails — A2)
+        id: synclease
+        if: inputs.dry_run == false
+        run: |
+          set -euo pipefail
+          cd workers
+          # A2: serializes against the live monitor and settlement (stage9) —
+          # generation already has its own 'generate' lease (above) against
+          # another generation run, but needs this ONE TOO since stage8/
+          # stage9 can also be writing to the same tables right now. Unlike
+          # the live monitor (which just skips a tick), a generation run
+          # retries for up to 5 minutes before giving up loudly — a skipped
+          # generation is a much bigger deal than a delayed live update.
+          acquired=false
+          for i in $(seq 1 10); do
+            if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
+              --config wrangler.toml --json \
+              --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until=strftime('%Y-%m-%dT%H:%M:%SZ','now','+90 minutes'), attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='sync_write' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1; then
+              acquired=true; break
+            fi
+            echo "::notice::sync_write lease held by another writer (attempt $i/10) - retrying in 30s"
+            sleep 30
+          done
+          if [ "$acquired" != "true" ]; then
+            echo "::error::could not acquire the sync_write lease after 10 attempts (5 minutes) - another writer held it the whole time" >&2
+            exit 1
+          fi
+          echo "acquired=true" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Pull production base (export + load, timed)
         id: pull
         run: |
           set -euo pipefail
           cd workers
           start=$SECONDS
-          npx -y wrangler@4.151.1 d1 export "$PRODUCTION_DB_NAME" --remote \
-            --config wrangler.toml --output /tmp/prodacc_base.sql
+          if [ "${{ inputs.write_target || 'server' }}" = "server" ]; then
+            bash bot/ssh-relay/query-epoch.sh snapshot-get > /tmp/prodacc_base.sql
+          else
+            npx -y wrangler@4.151.1 d1 export "$PRODUCTION_DB_NAME" --remote \
+              --config wrangler.toml --output /tmp/prodacc_base.sql
+          fi
           python3 - <<'EOF'
           import sqlite3, time
           t0 = time.perf_counter()
@@ -176,6 +245,9 @@ jobs:
           EOF
           echo "pull_seconds=$((SECONDS - start))" >> "$GITHUB_OUTPUT"
         env:
+          SUREODDS_SSH_HOST: ${{ secrets.SUREODDS_SSH_HOST }}
+          SUREODDS_SSH_KEY: ${{ secrets.SUREODDS_SSH_KEY }}
+          SUREODDS_SSH_KNOWN_HOSTS: ${{ secrets.SUREODDS_SSH_KNOWN_HOSTS }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Acquire generation lease (or stop)
@@ -359,7 +431,7 @@ jobs:
           fi
           python3 workers/scripts/d1_sync.py plan /tmp/prodacc_base.db /tmp/prodacc_rebased.db \
             --out /tmp/prodacc_plan \
-            --tables picks,prediction_memberships,ticket_candidates,prediction_cache,custom_pick_candidates,custom_pick_pools,selection_rejections $deletes_flag \
+            --tables job_state,api_budget,sgo_usage,picks,prediction_memberships,ticket_candidates,prediction_cache,custom_pick_candidates,custom_pick_pools,selection_rejections,ticket_revisions,active_ticket_revisions,ticket_publications $deletes_flag \
             --write-budget "${{ inputs.write_budget }}" \
             --destructive-budget "${{ inputs.destructive_budget }}"
           cat /tmp/prodacc_plan/plan.json
@@ -370,37 +442,6 @@ jobs:
           today=$(TZ=Africa/Lagos date +%F)
           echo "Lagos today: $today"
           python3 workers/scripts/d1_sync.py require-complete /tmp/prodacc_rebased.db "$today"
-      - name: Acquire the shared D1-write lease (retries, then fails — A2)
-        id: synclease
-        if: inputs.dry_run == false
-        run: |
-          set -euo pipefail
-          cd workers
-          # A2: serializes against the live monitor and settlement (stage9) —
-          # generation already has its own 'generate' lease (above) against
-          # another generation run, but needs this ONE TOO since stage8/
-          # stage9 can also be writing to the same tables right now. Unlike
-          # the live monitor (which just skips a tick), a generation run
-          # retries for up to 5 minutes before giving up loudly — a skipped
-          # generation is a much bigger deal than a delayed live update.
-          acquired=false
-          for i in $(seq 1 10); do
-            if npx -y wrangler@4.151.1 d1 execute "$PRODUCTION_DB_NAME" --remote \
-              --config wrangler.toml --json \
-              --command "UPDATE job_state SET lease_owner='gha-${{ github.run_id }}', lease_until=strftime('%Y-%m-%dT%H:%M:%SZ','now','+20 minutes'), attempts=attempts+1, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE name='sync_write' AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until < strftime('%Y-%m-%dT%H:%M:%SZ','now'))" | python3 scripts/d1_json.py --expect-changes 1; then
-              acquired=true; break
-            fi
-            echo "::notice::sync_write lease held by another writer (attempt $i/10) - retrying in 30s"
-            sleep 30
-          done
-          if [ "$acquired" != "true" ]; then
-            echo "::error::could not acquire the sync_write lease after 10 attempts (5 minutes) - another writer held it the whole time" >&2
-            exit 1
-          fi
-          echo "acquired=true" >> "$GITHUB_OUTPUT"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.PRODUCTION_CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PRODUCTION_CLOUDFLARE_ACCOUNT_ID }}
       - name: Apply to production D1 (skipped in dry-run)
         # (inputs.write_target || 'server') == 'd1': only true when write_target
         # is EXPLICITLY set to 'd1' - post-cutover, stage7's workflow_call
@@ -458,11 +499,13 @@ jobs:
         run: |
           set -euo pipefail
           cd workers
-          epoch="$(bot/ssh-relay/query-epoch.sh)"
+          epoch="$(python3 scripts/d1_sync.py epoch-get /tmp/prodacc_base.db)"
           python3 scripts/build_plan_manifest.py /tmp/prodacc_plan \
             --rest-dir /tmp/prodacc_plan/rest \
             --expect-epoch "$epoch"
-          if ! bot/ssh-relay/deliver-batch.sh generation /tmp/prodacc_plan; then
+          if bot/ssh-relay/deliver-batch.sh generation /tmp/prodacc_plan; then
+            :
+          else
             status=$?
             if [ "$status" -eq 2 ]; then
               echo "::error::server epoch moved before delivery (stale_epoch) - another writer landed first; re-run to retry with a fresh base" >&2

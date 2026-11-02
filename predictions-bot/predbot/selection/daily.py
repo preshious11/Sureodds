@@ -1,7 +1,7 @@
 """Daily tickets over validated alternatives, preserving existing gates and caps.
 
 Compare qualifying combinations across fixture groups. Search is bounded and
-falls back to the unchanged best-first build if no ticket reaches the band.
+withholds the ticket if no combination reaches the configured odds band.
 No minimum diversity quotas; existing maximum concentration limits remain.
 """
 import math
@@ -113,4 +113,7 @@ def select_daily(rows, cfg, now_utc, reject_sink=None):
                    'rejections': dict(rejected)}
     if repaired:
         diagnostics['search'] = 'end_game'
+    if selected and not cfg.daily_odds_min <= odds <= cfg.daily_odds_max:
+        diagnostics.update(selected=0, target_reached=False, reason='target_unreachable')
+        return [], diagnostics
     return selected, diagnostics

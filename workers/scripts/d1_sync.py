@@ -48,7 +48,7 @@ from pathlib import Path
 #:     posts, deliveries). Readers gate on the COMPLETE row for the date, so
 #:     a partial apply is INVISIBLE until the final phase lands; verify then
 #:     proves completeness before cutover. Coalesce preserves lexical order.
-PHASE_GATE_TABLES = {"prediction_cache", "posts", "deliveries"}
+PHASE_GATE_TABLES = {"active_ticket_revisions", "prediction_cache", "posts", "deliveries", "ticket_publications"}
 
 #: Parent tables that must sort before their FOREIGN KEY children within a
 #: phase (D1 enforces FKs; local SQLite leaves them off by default, which is
@@ -56,7 +56,7 @@ PHASE_GATE_TABLES = {"prediction_cache", "posts", "deliveries"}
 #: match_odds/match_odds_ext -> match_results, prediction_memberships -> picks.
 #: picks already sorts before prediction_memberships alphabetically; only the
 #: match_* family needs an explicit rank.
-PARENT_FIRST = {"match_results"}
+PARENT_FIRST = {"match_results", "ticket_revisions"}
 
 #: Max bytes per emitted SQL statement. D1's per-statement cap is 100,000
 #: bytes; 90,000 leaves headroom for multi-byte characters and the import
@@ -136,6 +136,7 @@ PRESERVE_ONLY = {"prediction_memberships", "match_results", "match_odds",
                  "match_odds_ext", "results_seen", "canonical_events",
                  "canonical_participants", "provider_identity", "participant_aliases",
                  "custom_pick_candidates", "custom_pick_pools",
+                 "ticket_revisions",
                  # Rejection log (Part 4, 2026-10-23): append-only diagnostic history,
                  # same insert-only discipline as match_results/custom_pick_candidates above.
                  "selection_rejections"}
@@ -143,7 +144,9 @@ PRESERVE_ONLY = {"prediction_memberships", "match_results", "match_odds",
 
 def unsafe_history_sql(sql):
     """Reject legacy destructive batches before any local/REST batch is applied."""
-    protected = '|'.join(sorted(PRESERVE_ONLY | MERGE_ONLY | {'picks', 'ticket_candidates', 'prediction_cache'}))
+    protected = '|'.join(sorted(PRESERVE_ONLY | MERGE_ONLY |
+                                {'picks', 'ticket_candidates', 'prediction_cache',
+                                 'active_ticket_revisions', 'ticket_publications'}))
     return bool(re.search(
         rf'\b(?:DELETE\s+FROM|DROP\s+TABLE|INSERT\s+OR\s+REPLACE\s+INTO)\s+["`\[]?(?:{protected})\b',
         sql, re.IGNORECASE))
@@ -159,6 +162,53 @@ def write_policy(table, cols, con=None):
     columns = ", ".join(cols)
     if table in MERGE_ONLY | PRESERVE_ONLY:
         return f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ", ""
+    if table == "active_ticket_revisions":
+        return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
+                " ON CONFLICT(pick_date) DO UPDATE SET "
+                "revision_id=MAX(active_ticket_revisions.revision_id,excluded.revision_id),"
+                "updated_at=CASE WHEN excluded.revision_id>=active_ticket_revisions.revision_id "
+                "THEN excluded.updated_at ELSE active_ticket_revisions.updated_at END")
+    if table == "ticket_publications":
+        return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
+                " ON CONFLICT(pick_date,collection,revision_id,destination) DO UPDATE SET "
+                "state=CASE WHEN ticket_publications.state='sent' THEN 'sent' "
+                "WHEN excluded.state='sent' THEN 'sent' "
+                "WHEN ticket_publications.state='uncertain' THEN 'uncertain' "
+                "ELSE excluded.state END,"
+                "message_id=CASE WHEN ticket_publications.state='sent' THEN ticket_publications.message_id "
+                "WHEN excluded.state='sent' THEN excluded.message_id ELSE ticket_publications.message_id END,"
+                "recipient_id=COALESCE(ticket_publications.recipient_id,excluded.recipient_id),"
+                "attempts=MAX(ticket_publications.attempts,excluded.attempts),"
+                # Mirrors the `state` CASE above column-for-column: error must
+                # only change when the incoming row actually wins that
+                # resolution, never just because the incoming row's OWN raw
+                # state happens to be failed/uncertain. Without this, a stale
+                # source row could leave state correctly protected as 'sent'
+                # while still clobbering error with its own misleading text.
+                "error=CASE WHEN ticket_publications.state='sent' THEN NULL "
+                "WHEN excluded.state='sent' THEN NULL "
+                "WHEN ticket_publications.state='uncertain' THEN ticket_publications.error "
+                "ELSE excluded.error END,"
+                "updated_at=MAX(ticket_publications.updated_at,excluded.updated_at)")
+    if table == 'job_state':
+        return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
+                " ON CONFLICT(name) DO UPDATE SET last_run_at=excluded.last_run_at, "
+                "last_result=excluded.last_result,updated_at=excluded.updated_at "
+                "WHERE excluded.last_run_at IS NOT NULL AND "
+                "(job_state.last_run_at IS NULL OR excluded.last_run_at>job_state.last_run_at)")
+    if table == 'issued_ticket_legs':
+        mutable = {'settlement_status','payout_multiplier','settled_at'}
+        same = ' AND '.join(f'{table}.{c} IS excluded.{c}' for c in cols if c not in mutable)
+        changes = ', '.join(f'{c}=excluded.{c}' for c in cols if c in mutable)
+        return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
+                f" ON CONFLICT(ticket_id,leg_index) DO UPDATE SET {changes} WHERE "
+                f"{table}.settlement_status='pending' AND excluded.settlement_status!='pending' AND {same}")
+    if table == 'issued_tickets':
+        same = ' AND '.join(f'{table}.{c} IS excluded.{c}' for c in cols if c != 'status')
+        return (f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ",
+                " ON CONFLICT(id) DO UPDATE SET status='settled' WHERE issued_tickets.status='issued' "
+                f"AND excluded.status='settled' AND {same} AND NOT EXISTS "
+                "(SELECT 1 FROM issued_ticket_legs WHERE ticket_id=issued_tickets.id AND settlement_status='pending')")
     if table == "picks":
         mutable = [c for c in ("status", "settled_at", "result_json") if c in cols]
         if "id" not in cols or "status" not in cols:
@@ -440,6 +490,10 @@ def cmd_diff(base: str, src: str, out: str, only_tables=None, allow_deletes: boo
              "tables": {}, "deletes": {}}
     n_files = 0
     tables = push_tables(scon)
+    # Explicit job metadata replication uses write_policy's narrow, monotonic
+    # last-run update. Default pushes still exclude all coordinator state.
+    if only_tables and 'job_state' in only_tables and 'job_state' in app_tables(scon):
+        tables.append('job_state')
     if only_tables:
         unknown = set(only_tables) - set(tables)
         if unknown:

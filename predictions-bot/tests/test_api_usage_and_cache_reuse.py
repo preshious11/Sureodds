@@ -6,6 +6,8 @@
 4. db.reset_prediction_day clears only the unpublished, still-pending, future pool (+ the snapshot key)."""
 from __future__ import annotations
 
+from math import prod
+
 import pytest
 
 from predbot.bot.callbacks import handle_callback, handle_command
@@ -13,11 +15,31 @@ from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import Config
 from predbot.jobs import daily_picks
 from tests.test_picker import sc
+from tests.real_events import real_ev
 from tests.test_sqlite_prediction_cache import clock, service  # noqa: F401  (fixtures/helpers)
 from tests.test_subscribers_broadcast import FakeTG, _cb
 
 DAY = "2030-06-01"
 TZ = "Africa/Lagos"
+
+
+def _score_fixture_candidates(events, probability_override=None):
+    scored = []
+    for event in events:
+        event_id = int(event.provider_event_id)
+        if event_id <= 2:
+            market, selection, probability = "result3", "home", 0.80
+        elif event.sport == "baseball":
+            market, selection, probability = "result2", "home", 0.70
+        else:
+            market = ("result3", "dnb", "total")[(event_id - 3) % 3]
+            selection = "over" if market == "total" else "home"
+            probability = 0.70
+        if probability_override is not None:
+            probability = probability_override
+        scored.append(sc(event, market, selection, probability, 1.42,
+                         line=2.5 if market == "total" else None))
+    return scored
 
 
 class ExplodingChain:
@@ -36,8 +58,27 @@ class ExplodingChain:
 
 def _generated(db, monkeypatch):
     app, football, baseball = service(db, monkeypatch)
+    football_events = [
+        real_ev(i, sport="football", league=league)
+        for i, league in enumerate((
+            "England - Premier League", "England - Premier League",
+            "Spain - La Liga", "Spain - La Liga",
+            "Italy - Serie A", "Italy - Serie A",
+            "Germany - Bundesliga", "Germany - Bundesliga",
+        ), 1)
+    ]
+    baseball_events = [
+        real_ev(i, sport="baseball", league="MLB")
+        for i in range(9, 13)
+    ]
+    football.fetch_events.return_value = football_events
+    baseball.fetch_events.return_value = baseball_events
+
+    monkeypatch.setattr(daily_picks, "score_events", lambda events, *args: _score_fixture_candidates(events))
     snap = app.get_daily_snapshot(scheduled=True)
     assert snap.status == "COMPLETE" and snap.all_predictions and snap.top_picks and snap.daily_picks
+    assert 2.0 <= prod(p.price for p in snap.top_picks) <= 2.5
+    assert 10.0 <= prod(p.price for p in snap.daily_picks) <= 12.0
     return app, snap
 
 
@@ -115,7 +156,7 @@ def test_regeneration_with_different_probabilities_never_changes_a_stored_predic
     before = _rows(db)
 
     def changed(events, *a):                                   # a model that now disagrees with itself
-        return [sc(e, "result3" if e.sport == "football" else "result2", "away", .97, 3.9) for e in events]
+        return _score_fixture_candidates(events, probability_override=.97)
 
     monkeypatch.setattr(daily_picks, "score_events", changed)
     again = app.get_daily_snapshot(force_refresh=True, scheduled=True)

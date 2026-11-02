@@ -250,8 +250,8 @@ def test_no_early_or_stale_or_unknown_competition_polling(db, env):
     pick(db, start_utc=iso(NOW - timedelta(days=5)), provider_event_id="old")
     pick(db, league="Unknown League", sources={}, provider_event_id="unsupported")
     poll(db, env)
-    assert env[0].calls == 0 and not env[3].messages and len(db.pending_picks()) == 2
-    assert db.query("SELECT status FROM picks WHERE provider_event_id='old'")[0]["status"] == "void"
+    assert env[0].calls == 0 and not env[3].messages and len(db.pending_picks()) == 3
+    assert db.query("SELECT status FROM picks WHERE provider_event_id='old'")[0]["status"] == "pending"
 
 
 def test_subscribers_never_multiply_result_calls(db, env):
@@ -666,3 +666,127 @@ def test_end_event_reports_void_and_push_outcomes(db, env):
     text = live_match_message([dict(r) for r in db.picks_where("p.id=?", (pid,))],
                               MatchResult("final", {"full": (1., 1.)}, source="espn"), ended=True)
     assert "VOID" in text
+
+
+# ============================================================ deliver_community_live recipient authorization
+#
+# Covers the recipient_id gate broadcast.deliver_community_live applies before
+# sending a live match-start/end alert to the configured community group.
+# These exercise the function directly (not through the full live_results.run
+# cycle) since the behaviour under test is the authorization gate itself, not
+# fixture detection/polling.
+
+GROUP_CHAT = "-100999"
+
+
+def _active_revision(db, day=DAY, evaluation_id="community-live-test"):
+    with db.transaction():
+        return db.create_ticket_revision(day, evaluation_id, "2030-01-01T00:00:00Z")
+
+
+def _rows_for(db, pid):
+    return [dict(r) for r in db.picks_where("p.id=?", (pid,))]
+
+
+def test_matching_recipient_id_authorizes_group_notification(db):
+    pid = pick(db, tier="top")
+    revision = _active_revision(db)
+    db.claim_ticket_publication(DAY, "top", revision, "group", recipient_id=GROUP_CHAT)
+    db.finish_ticket_publication(DAY, "top", revision, "group", message_id="465", state="sent")
+    tg = Telegram(chat_id=GROUP_CHAT)
+    sent, complete = broadcast.deliver_community_live(
+        db, tg, DAY, "fixture", _rows_for(db, pid), MatchResult("in_progress", source="espn"))
+    assert sent == 1 and complete
+    assert [c for c, _ in tg.messages] == [GROUP_CHAT]
+
+
+def test_mismatched_recipient_id_rejects_group_notification(db):
+    pid = pick(db, tier="top")
+    revision = _active_revision(db)
+    db.claim_ticket_publication(DAY, "top", revision, "group", recipient_id="-100111")
+    db.finish_ticket_publication(DAY, "top", revision, "group", message_id="465", state="sent")
+    tg = Telegram(chat_id=GROUP_CHAT)  # the CONFIGURED group differs from the receipt's recipient
+    sent, complete = broadcast.deliver_community_live(
+        db, tg, DAY, "fixture", _rows_for(db, pid), MatchResult("in_progress", source="espn"))
+    assert sent == 0 and complete
+    assert tg.messages == []
+
+
+def test_null_recipient_id_rejects_group_notification(db):
+    """The exact historical case: a backfilled receipt with no recorded recipient."""
+    pid = pick(db, tier="top")
+    revision = _active_revision(db)
+    db.claim_ticket_publication(DAY, "top", revision, "group", recipient_id=None)
+    db.finish_ticket_publication(DAY, "top", revision, "group", message_id="465", state="sent")
+    assert db.ticket_publication(DAY, "top", revision, "group")["recipient_id"] is None
+    tg = Telegram(chat_id=GROUP_CHAT)
+    sent, complete = broadcast.deliver_community_live(
+        db, tg, DAY, "fixture", _rows_for(db, pid), MatchResult("in_progress", source="espn"))
+    assert sent == 0 and complete
+    assert tg.messages == []
+
+
+def test_historical_null_recipient_receipt_is_never_rewritten(db):
+    pid = pick(db, tier="top")
+    revision = _active_revision(db)
+    db.claim_ticket_publication(DAY, "top", revision, "group", recipient_id=None)
+    db.finish_ticket_publication(DAY, "top", revision, "group", message_id="465", state="sent")
+    before = dict(db.ticket_publication(DAY, "top", revision, "group"))
+    tg = Telegram(chat_id=GROUP_CHAT)
+    for _ in range(3):
+        broadcast.deliver_community_live(db, tg, DAY, "fixture", _rows_for(db, pid),
+                                         MatchResult("in_progress", source="espn"))
+    after = dict(db.ticket_publication(DAY, "top", revision, "group"))
+    assert after == before
+    assert after["recipient_id"] is None and after["state"] == "sent"
+    assert tg.messages == []
+
+
+def test_owner_receipt_never_authorizes_a_group_notification(db):
+    pid = pick(db, tier="top")
+    revision = _active_revision(db)
+    owner_chat = "999"
+    # Owner leg is fully sent and even "matches" nothing group-related - it must
+    # never be consulted as a stand-in for a missing/rejected group receipt.
+    db.claim_ticket_publication(DAY, "top", revision, "owner", recipient_id=owner_chat)
+    db.finish_ticket_publication(DAY, "top", revision, "owner", message_id="1689", state="sent")
+    tg = Telegram(chat_id=GROUP_CHAT)
+    sent, complete = broadcast.deliver_community_live(
+        db, tg, DAY, "fixture", _rows_for(db, pid), MatchResult("in_progress", source="espn"))
+    assert sent == 0 and complete
+    assert tg.messages == []
+
+
+@pytest.mark.parametrize("state", ["failed", "sending", "uncertain"])
+def test_non_sent_states_never_authorize_a_notification(db, state):
+    pid = pick(db, tier="top")
+    revision = _active_revision(db)
+    db.claim_ticket_publication(DAY, "top", revision, "group", recipient_id=GROUP_CHAT)
+    if state != "sending":
+        db.finish_ticket_publication(DAY, "top", revision, "group", state=state, error="x")
+    # else: leave it claimed ('sending') - never finished.
+    tg = Telegram(chat_id=GROUP_CHAT)
+    sent, complete = broadcast.deliver_community_live(
+        db, tg, DAY, "fixture", _rows_for(db, pid), MatchResult("in_progress", source="espn"))
+    assert sent == 0 and complete
+    assert tg.messages == []
+
+
+def test_a_new_active_revision_does_not_inherit_an_older_revisions_authorization(db):
+    old_revision = _active_revision(db, evaluation_id="morning-evaluation")
+    pick(db, tier="top", revision_id=old_revision)
+    db.claim_ticket_publication(DAY, "top", old_revision, "group", recipient_id=GROUP_CHAT)
+    db.finish_ticket_publication(DAY, "top", old_revision, "group", message_id="465", state="sent")
+
+    # A fresh evaluation creates (and activates) a new revision for the same day.
+    new_revision = _active_revision(db, evaluation_id="fresh-evaluation")
+    assert new_revision != old_revision
+    pid_v2 = pick(db, tier="top", provider_event_id="fresh-fixture", revision_id=new_revision)
+    # No receipt at all yet for the new revision.
+    tg = Telegram(chat_id=GROUP_CHAT)
+    sent, complete = broadcast.deliver_community_live(
+        db, tg, DAY, "fixture", _rows_for(db, pid_v2), MatchResult("in_progress", source="espn"))
+    assert sent == 0 and complete
+    assert tg.messages == []
+    # The old revision's receipt is untouched by this.
+    assert db.ticket_publication(DAY, "top", old_revision, "group")["state"] == "sent"

@@ -285,7 +285,7 @@ class Config:
     top_odds_target: float = field(default_factory=lambda: _float("TOP_COMBINED_ODDS", 2.00))
     #: Daily ticket: ``DAILY_COMBINED_MIN_ODDS`` is the odds the builder AIMS for (it stops adding legs once it is
     #: reached) and ``DAILY_COMBINED_MAX_ODDS`` is a hard ceiling it never exceeds. Neither is ever bought with a
-    #: weaker pick: a slate that only holds 6.4 of qualifying odds posts 6.4.
+    #: weaker pick: a slate below the minimum is withheld.
     daily_odds_min: float = field(default_factory=lambda: _float("DAILY_COMBINED_MIN_ODDS", 10.0))
     daily_odds_max: float = field(default_factory=lambda: _float("DAILY_COMBINED_MAX_ODDS", 12.0))
     pick_window_hours: int = field(default_factory=lambda: _int("PICK_WINDOW_HOURS", 24))
@@ -366,7 +366,7 @@ class Config:
     #: Daily-list diversity quotas, so one market (e.g. corners totals), one
     #: sport or one league can never take over the single daily ticket. Shares
     #: are of daily_target. They are never relaxed - not even when the qualifying pool then cannot reach
-    #: DAILY_COMBINED_MIN_ODDS (the ticket is posted below the target instead) - and no QUALITY gate
+    #: DAILY_COMBINED_MIN_ODDS (the ticket is withheld instead) - and no QUALITY gate
     #: (probability floor, book coverage, edge) is ever relaxed either. See predbot/selection/daily.py.
     daily_max_market_share: float = field(default_factory=lambda: _float("DAILY_MAX_MARKET_SHARE", 0.25))
     #: Cross-market cap on one stat ("corners" can appear as totals AND 1X2

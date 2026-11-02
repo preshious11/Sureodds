@@ -101,5 +101,5 @@ def test_expired_published_selection_is_settled_but_all_only_is_not(db):
     hidden = pick(db, tier="all", home="X", away="Y", provider_event_id="e9")
     counts = settle.expire_pending(db, NOW + timedelta(days=5))
     status = {r["id"]: r["status"] for r in db.picks_for_date(DAY)}
-    assert status[pub] == "void" and status[hidden] == "pending"
-    assert counts["void"] == 1
+    assert status[pub] == "pending" and status[hidden] == "pending"
+    assert counts["void"] == 0

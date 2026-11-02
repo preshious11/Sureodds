@@ -1,0 +1,14 @@
+{
+  "complete": true,
+  "deletes": 0,
+  "destructive_budget": null,
+  "destructive_writes": 0,
+  "estimated_writes": 0,
+  "excluded": {},
+  "inserts": 0,
+  "rest_pending": 0,
+  "sql_batches": 0,
+  "tables": {},
+  "updates": 0,
+  "write_budget": 2000
+}

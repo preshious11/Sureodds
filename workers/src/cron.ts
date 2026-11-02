@@ -18,11 +18,13 @@
 
 import {
   claimPost,
+  claimTicketPublication,
   confirmPosted,
   deliveriesDone,
   getCustomPickCandidates,
   getCustomPickPool,
   getDayCache,
+  getActiveTicketRevision,
   getFailedUpdates,
   getJobLastRunAt,
   type MatchEventContext,
@@ -36,12 +38,14 @@ import {
   markPosted,
   recordJobRun,
   releaseClaim,
+  finishTicketPublication,
+  sweepStaleTicketPublications,
   setJobResult,
   type Env,
 } from "./db.ts";
 import { lagosDateString, renderGroupCard, renderGroupRecap, renderRecapStats, renderView } from "./views.ts";
 import { shiftDate, splitMessage } from "./format.ts";
-import { allButtonModeFor, topEmptyKeyboard, menuKeyboard, isAdmin } from "./telegram.ts";
+import { menuKeyboard, isAdmin } from "./telegram.ts";
 import { ticketPhoto, type TicketPhoto } from './ticket_image.ts';
 import { buildProPicks } from "./pro_picks.ts";
 import { recordIssuedTicket } from "./ledger.ts";
@@ -87,6 +91,7 @@ async function sleep(ms: number): Promise<void> {
 export interface SendResult {
   ok: boolean;
   messageId?: number;
+  uncertain?: boolean;
 }
 
 export async function sendTelegram(
@@ -168,7 +173,7 @@ export async function sendSplit(
       parse_mode: "HTML",
       ...(i === chunks.length - 1 && replyMarkup ? { reply_markup: replyMarkup } : {}),
     });
-    if (!ok) return { ok: false };
+    if (!ok) return { ok: false, uncertain: i > 0 };
     if (i === 0) firstMessageId = messageId;
   }
   return { ok: true, messageId: firstMessageId };
@@ -277,6 +282,7 @@ async function postToOwner(
   env: Env,
   kind: string,
   localDate: string,
+  revisionId: number,
   text: string,
   replyMarkup: Record<string, unknown> | undefined,
   sender: typeof sendTelegram,
@@ -284,17 +290,27 @@ async function postToOwner(
 ): Promise<void> {
   const owner = ownerChatId(env);
   if (!owner) return; // no admin configured — never a dead destination, just skipped
-  const ownerKind = `${kind}_owner`;
-  if (!(await claimPost(env.DB, ownerKind, localDate))) return;
-  const { ok, messageId } = photo
-    ? await sender(env,'sendPhoto',{chat_id:owner,photo_base64:photo.jpeg,caption:photo.caption,parse_mode:'HTML'})
-    : await sendSplit(env, owner, text, replyMarkup ? menuKeyboard(isAdmin(env, owner) ? "admin" : "callback") : undefined, sender);
+  const collection = kind as "top" | "daily";
+  if (!(await claimTicketPublication(env.DB, localDate, collection, revisionId, "owner", owner))) return;
+  let result: SendResult;
+  try {
+    result = photo
+      ? await sender(env,'sendPhoto',{chat_id:owner,photo_base64:photo.jpeg,caption:photo.caption,parse_mode:'HTML'})
+      : await sendSplit(env, owner, text, replyMarkup ? menuKeyboard(isAdmin(env, owner) ? "admin" : "callback") : undefined, sender);
+  } catch (error) {
+    await finishTicketPublication(env.DB, localDate, collection, revisionId, "owner", "uncertain", null,
+      error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+  const { ok, messageId } = result;
   if (!ok) {
     await recordDeliveryFailure(env, "owner", `${kind} ${localDate}`);
-    await releaseClaim(env.DB, ownerKind, localDate);
+    await finishTicketPublication(env.DB, localDate, collection, revisionId, "owner", result.uncertain ? "uncertain" : "failed", null,
+      `${kind} ${localDate} send failed`);
     return;
   }
-  await confirmPosted(env.DB, ownerKind, localDate, messageId != null ? String(messageId) : null);
+  await finishTicketPublication(env.DB, localDate, collection, revisionId, "owner", "sent",
+    messageId != null ? String(messageId) : null);
 }
 
 /**
@@ -327,52 +343,58 @@ export async function postGroupPicks(
     await setJobResult(env.DB, "post", `waiting: no COMPLETE cache for ${localDate}`);
     return "waiting"; // Generation (Actions) hasn't landed — never fabricate.
   }
-  // Claim BEFORE sending: two overlapping Cron fires calling claimPost for
-  // the same (kind, localDate) can never both win, since only one atomic
-  // INSERT/DO UPDATE can report a changed row for the unique key — this
-  // closes the read-then-send-then-write race a plain hasPosted() check
-  // (read) followed by markPosted() (write) left open. The loser treats the
-  // group as already being handled by the winner and only retries the
-  // (independently-gated) owner leg. Nothing to claim when there is no group chat.
-  const claimedGroup = env.TELEGRAM_CHAT_ID ? await claimPost(env.DB, kind, localDate) : false;
+  const revisionId = await getActiveTicketRevision(env.DB, localDate);
+  // Reclaims any ticket_publications row a crashed/evicted invocation left
+  // stuck in 'sending' - never auto-retried (see sweepStaleTicketPublications),
+  // just unblocked so a human can see it via dailyHealthReport. Advisory only:
+  // a sweep failure must never block this invocation's own send attempt.
+  try {
+    await sweepStaleTicketPublications(env.DB);
+  } catch (error) {
+    console.error(JSON.stringify({ event: "stale_publication_sweep_failed",
+      error: error instanceof Error ? error.message : String(error) }));
+  }
   // The WHOLE ticket in one message, never paginated (predbot/bot/
   // broadcast.py picks_messages/summary_card) — renderView()'s paginated
   // /top /daily output is for interactive replies, not this automatic post.
-  const { text, isEmpty } = await renderGroupCard(env, kind, localDate);
-  const photo = kind === 'top' && !isEmpty ? await ticketPhoto(env,localDate,cache.payload_json) : undefined;
-  // predbot/jobs/daily_picks.py: markup is None for every automatic group
-  // card EXCEPT the genuinely-empty Top card, which swaps in the Custom
-  // Picks deep-link keyboard (top_empty_markup). Never shown without a
-  // configured bot username (never a dead link). This card is always
-  // posted to the group, so its All button is the private deep link too
-  // (allButtonModeFor("group", ...)), never the in-group callback.
-  const replyMarkup =
-    kind === "top" && isEmpty && env.TELEGRAM_BOT_USERNAME
-      ? topEmptyKeyboard(env.TELEGRAM_BOT_USERNAME, allButtonModeFor("group", env.TELEGRAM_BOT_USERNAME))
-      : undefined;
+  const { text, isEmpty, isEligible } = await renderGroupCard(env, kind, localDate, revisionId, nowMs);
+  if (isEmpty || !isEligible) return "skipped";
+  const photo = kind === 'top' ? await ticketPhoto(env,localDate,cache.payload_json) : undefined;
+  const replyMarkup = undefined;
   if (!env.TELEGRAM_CHAT_ID) {
     // No group configured: the owner leg still gets this card (independent destination).
-    await postToOwner(env, kind, localDate, text, replyMarkup, sender, photo);
+    await postToOwner(env, kind, localDate, revisionId, text, replyMarkup, sender, photo);
     return "no-chat";
   }
+  const claimedGroup = await claimTicketPublication(
+    env.DB, localDate, kind, revisionId, "group", env.TELEGRAM_CHAT_ID ?? null,
+  );
   if (!claimedGroup) {
-    await postToOwner(env, kind, localDate, text, replyMarkup, sender, photo);
+    await postToOwner(env, kind, localDate, revisionId, text, replyMarkup, sender, photo);
     return "skipped";
   }
-  const { ok, messageId } = photo
-    ? await sender(env,'sendPhoto',{chat_id:env.TELEGRAM_CHAT_ID,photo_base64:photo.jpeg,caption:photo.caption,parse_mode:'HTML'})
-    : await sendSplit(env, env.TELEGRAM_CHAT_ID, text, replyMarkup, sender);
+  let result: SendResult;
+  try {
+    result = photo
+      ? await sender(env,'sendPhoto',{chat_id:env.TELEGRAM_CHAT_ID,photo_base64:photo.jpeg,caption:photo.caption,parse_mode:'HTML'})
+      : await sendSplit(env, env.TELEGRAM_CHAT_ID, text, replyMarkup, sender);
+  } catch (error) {
+    await finishTicketPublication(env.DB, localDate, kind, revisionId, "group", "uncertain", null,
+      error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+  const { ok, messageId } = result;
   if (!ok) {
     await recordDeliveryFailure(env, "group", `${kind} ${localDate}`);
-    // Release the claim so the very next sweep retries immediately rather
-    // than waiting out CLAIM_POST_TIMEOUT_SECONDS; a genuine crash (rather
-    // than this clean failure return) is still covered by that timeout.
-    await releaseClaim(env.DB, kind, localDate);
+    await finishTicketPublication(env.DB, localDate, kind, revisionId, "group", result.uncertain ? "uncertain" : "failed", null,
+      `${kind} ${localDate} send failed`);
+    await postToOwner(env, kind, localDate, revisionId, text, replyMarkup, sender, photo);
     return "failed";
   }
-  await confirmPosted(env.DB, kind, localDate, messageId != null ? String(messageId) : null);
+  await finishTicketPublication(env.DB, localDate, kind, revisionId, "group", "sent",
+    messageId != null ? String(messageId) : null);
   await setJobResult(env.DB, "post", `${kind} ${localDate}: posted message=${messageId ?? "?"}`);
-  await postToOwner(env, kind, localDate, text, replyMarkup, sender, photo);
+  await postToOwner(env, kind, localDate, revisionId, text, replyMarkup, sender, photo);
   return "sent";
 }
 
@@ -596,7 +618,8 @@ export async function sweepMatchEvents(env: Env, nowMs = Date.now(), sender: typ
   const ownerConfigured = !!owner;
   // Receipt filtering and persisted fixture/publication context share one
   // batch query; no per-event context or receipt reads are needed.
-  const events = await getUndeliveredMatchEvents(env.DB, since, groupConfigured, ownerConfigured, limit);
+  const events = await getUndeliveredMatchEvents(env.DB, since, groupConfigured, ownerConfigured, limit,
+    env.TELEGRAM_CHAT_ID ?? null);
   // One atomic statement claims every destination in the batch. It has the
   // same stale-claim timeout and conflict predicate as claimPost.
   const claims: {kind:string;date:string;message:string|null}[]=[];
@@ -610,7 +633,15 @@ export async function sweepMatchEvents(env: Env, nowMs = Date.now(), sender: typ
       return false;
     }
     if(decision.action!=='send') return false;
-    if(groupConfigured) claims.push({kind:base,date:evt.pick_date,message:null});
+    // The group leg is claimed ONLY when ticket_publications proves a 'sent'
+    // receipt, for the active revision, with a recorded recipient matching
+    // this group - never on the legacy posts/cache signal alone (that still
+    // gates published_total/published_open above, i.e. whether to keep
+    // tracking the fixture at all, not whether the group send is authorized).
+    // Unauthorized here is not an error - including every historical receipt
+    // backfilled with recipient_id=NULL - and is never retried as a failure;
+    // the event simply never claims/sends this leg (owner is independent).
+    if(groupConfigured && evt.group_authorized) claims.push({kind:base,date:evt.pick_date,message:null});
     if(ownerConfigured) claims.push({kind:`${base}_owner`,date:evt.pick_date,message:null});
     return true;
   });
@@ -997,6 +1028,11 @@ export async function dailyHealthReport(env: Env, nowMs = Date.now(), sender: ty
     (SELECT COUNT(*) FROM ticket_candidates) AS ticket_candidates,
     (SELECT COUNT(*) FROM custom_pick_candidates) AS custom_pick_candidates,
     (SELECT COUNT(*) FROM telegram_updates) AS telegram_updates`).first<Record<string, number>>();
+  // Ambiguous sends (crashed mid-send or a confirmed send whose outcome
+  // couldn't be recorded) never auto-retry - surface them so a human decides.
+  const { results: uncertainPublications } = await env.DB.prepare(
+    "SELECT pick_date, collection, revision_id, destination FROM ticket_publications WHERE state = 'uncertain'"
+  ).all<{ pick_date: string; collection: string; revision_id: number; destination: string }>();
   const posted = (kind: string) => receipts.find((r) => r.kind === kind && r.message_id != null);
   const job = (name: string) => jobs.find((r) => r.name === name);
   const summary = (name: string) => `${job(name)?.last_result ?? 'never run'} @ ${job(name)?.last_run_at ?? '?'}`;
@@ -1013,6 +1049,9 @@ export async function dailyHealthReport(env: Env, nowMs = Date.now(), sender: ty
     problems.push('no successful live settlement today');
   }
   if (cache?.status !== 'COMPLETE') problems.push('no COMPLETE cache today');
+  if (uncertainPublications.length) {
+    problems.push(`${uncertainPublications.length} uncertain publication(s) need manual review`);
+  }
   let fallback = false;
   let generation: Record<string, any> = {};
   try {
@@ -1052,7 +1091,11 @@ export async function dailyHealthReport(env: Env, nowMs = Date.now(), sender: ty
     `Settlement: ${summary('settle')}`, `Live monitor: ${summary('livemon_dispatch')}`,
     `Generation dispatches: ${job('generation_dispatch')?.due_at === day ? job('generation_dispatch')?.attempts : 0}/${env.GENERATION_MAX_DISPATCHES_PER_DAY ?? '5'}.`,
     ...providerLines,
-    `Rows: ${Object.entries(counts ?? {}).map(([k,v]) => `${k}=${v}`).join(', ')}.`].join('\n');
+    `Rows: ${Object.entries(counts ?? {}).map(([k,v]) => `${k}=${v}`).join(', ')}.`,
+    ...(uncertainPublications.length
+      ? [`Uncertain publications: ${uncertainPublications.map((p) =>
+          `${p.pick_date} ${p.collection}#${p.revision_id}/${p.destination}`).join(', ')}.`]
+      : [])].join('\n');
   await ownerNoticeOnce(env, "daily_health", day, text, sender);
 }
 
