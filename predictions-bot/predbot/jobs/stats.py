@@ -5,9 +5,8 @@ Outcomes are counted apart, never folded into each other:
 * won / lost (a half win or half loss counts as its side for the hit rate, at half stake for ROI);
 * push - stake returned;
 * void - the bet itself was void (match cancelled or postponed, a void market): stake returned;
-* unresolved - stored as VOID by the bounded settlement lifecycle because no result could be confirmed before the
-  settlement deadline (``settle._void_expired``). It is NOT a win, NOT a loss and NOT a genuine void: it is shown as
-  its own count (❔) so a gap in grading is visible instead of quietly shrinking the sample;
+* unresolved - a legacy VOID record created by an earlier bounded settlement policy because no result could be
+  confirmed before its deadline. Current unresolved picks remain pending until an authoritative result arrives;
 * pending - not settled yet.
 
 Hit rate = won / (won + lost). ROI = profit / stakes on won, lost and push. Void and unresolved legs are in neither.

@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from predbot.config import Config
+from predbot.config import Config, require_provider_keys
 from predbot.jobs.daily_picks import build_picks
 from predbot.log import setup_logging
 from predbot.providers.chain import ProviderChain, build_providers
@@ -70,6 +70,7 @@ def main():
         con.close()
     cfg = Config()
     assert (cfg.top_odds_target, cfg.top_odds_max, cfg.daily_odds_min, cfg.daily_odds_max) == (2, 2.5, 10, 12)
+    require_provider_keys(cfg)
     cfg.telegram_token = cfg.telegram_chat_id = ''
     setup_logging('WARNING', str(folder / 'evaluation.log'),
                   secrets=[cfg.odds_api_key, cfg.sharpapi_key, cfg.sgo_key, cfg.football_data_key])

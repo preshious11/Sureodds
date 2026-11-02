@@ -162,13 +162,10 @@ def expire_pending(db: Database, now: datetime, counts: Optional[Dict[str, int]]
             result = stored_result(r, db)
             if result is not None:
                 settle_result(r, result, db, Elo(db), now, counts)
-            _void_expired(r, db, now, counts)
             fixtures.add((r["pick_date"], r["fixture_key"]))
         except PICK_ERRORS:
             log.exception("expired prediction finalization failed for pick %s", r["id"])
             counts["errors"] += 1
-            # Bad stored evidence must not keep a valid, expired fixture retryable.
-            _void_expired(r, db, now, counts)
     for day, fixture in fixtures:
         rows = db.picks_where("p.pick_date=? AND p.fixture_key=?", (day, fixture))
         if rows and all(r["status"] != PENDING for r in rows):

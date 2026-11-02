@@ -104,33 +104,26 @@ def test_future_event_never_calls_live_providers(db, lifecycle, sport):
 
 @pytest.mark.parametrize("sport", SPORTS)
 @pytest.mark.parametrize("job", ["live", "settle"])
-def test_deadline_voids_before_all_provider_calls_and_never_queries_again(db, lifecycle, sport, job):
+def test_deadline_keeps_unresolved_picks_pending(db, lifecycle, sport, job):
     pid = event(db, sport)
     # A durable unknown/in-progress watcher must not resurrect an expired fixture.
     row = db.picks_for_date("2030-06-01")[0]
     db.save_live_result(row["pick_date"], row["fixture_key"], MatchResult("unknown"), iso(START))
     lifecycle[0][0] = settlement_deadline(START, sport)
-    resolver = lifecycle[2]
-    resolver.resolve = Mock(wraps=resolver.resolve)
-    resolver._ask = Mock(wraps=resolver._ask)
+    lifecycle[2].providers = {"espn": lifecycle[1]}
     if job == "live":
         live(db, lifecycle)
     else:
-        assert fallback(db, lifecycle)["void"] == 1
-    assert status(db, pid) == "void"
+        counts = fallback(db, lifecycle)
+        assert counts["void"] == 0
+    assert status(db, pid) == "pending"
     persisted = dict(db.query("SELECT * FROM picks WHERE id=?", (pid,))[0])
-    assert persisted["settled_at"] and json.loads(persisted["result_json"])["reason"] == "settlement deadline expired"
-    assert db.pending_picks() == []
-    lifecycle[0][0] += timedelta(days=20)
-    live(db, lifecycle)
-    assert fallback(db, lifecycle)["void"] == 0
-    assert dict(db.query("SELECT * FROM picks WHERE id=?", (pid,))[0]) == persisted
-    assert lifecycle[1].calls == 0
-    resolver.resolve.assert_not_called()
-    resolver._ask.assert_not_called()
+    assert persisted["settled_at"] is None and persisted["result_json"] is None
+    assert [row["id"] for row in db.pending_picks()] == [pid]
+    assert lifecycle[1].calls <= 1
 
 
-def test_restart_does_not_resurrect_expired_void(db, lifecycle):
+def test_restart_preserves_overdue_unresolved_pick(db, lifecycle):
     pid = event(db)
     lifecycle[0][0] = settlement_deadline(START, "football")
     live(db, lifecycle)
@@ -138,9 +131,9 @@ def test_restart_does_not_resurrect_expired_void(db, lifecycle):
     db.close()
     reopened = Database(path)
     try:
-        live(reopened, lifecycle)
-        fallback(reopened, lifecycle)
-        assert status(reopened, pid) == "void" and lifecycle[1].calls == 0
+        settle.expire_pending(reopened, lifecycle[0][0])
+        assert status(reopened, pid) == "pending"
+        assert lifecycle[1].calls == 0
     finally:
         reopened.close()
 
@@ -169,8 +162,9 @@ def test_unavailable_or_ungradable_result_does_not_void_early(db, lifecycle, ans
     assert fallback(db, lifecycle)["pending"] == 1
     assert status(db, pid) == "pending" and lifecycle[1].calls == 1
     lifecycle[0][0] = settlement_deadline(START, "football")
-    assert fallback(db, lifecycle)["void"] == 1
-    assert status(db, pid) == "void" and lifecycle[1].calls == 1
+    counts = fallback(db, lifecycle)
+    assert counts["pending"] >= 1 and counts["void"] == 0
+    assert status(db, pid) == "pending" and lifecycle[1].calls == 2
 
 
 @pytest.mark.parametrize("after_deadline", [False, True])
@@ -196,36 +190,35 @@ def test_local_historical_final_grades_without_provider_at_deadline(db, lifecycl
     assert status(db, pid) == "won" and lifecycle[1].calls == 0
 
 
-def test_missing_stat_on_persisted_final_expires_without_richer_provider_lookup(db, lifecycle):
+def test_missing_stat_on_persisted_final_stays_pending_without_richer_provider_lookup(db, lifecycle):
     pid = event(db, market="total", stat="corners", selection="over", line=5.5)
     row = db.picks_for_date("2030-06-01")[0]
     db.save_live_result(row["pick_date"], row["fixture_key"],
                         MatchResult("final", {"full": (2., 1.)}, source="espn"), iso(START))
     lifecycle[0][0] = settlement_deadline(START, "football")
     live(db, lifecycle)
-    assert status(db, pid) == "void" and lifecycle[1].calls == 0
+    assert status(db, pid) == "pending" and lifecycle[1].calls == 0
     assert db.live_state(row["pick_date"], row["fixture_key"])["notifications_done"] == 1
 
 
-def test_void_excluded_from_win_loss_roi_and_learning_and_visible_in_history(db, lifecycle):
+def test_overdue_pending_pick_stays_out_of_win_loss_roi_and_learning(db, lifecycle):
     pid = event(db)
     lifecycle[0][0] = settlement_deadline(START, "football")
     fallback(db, lifecycle)
     rows = db.picks_for_date("2030-06-01", published_only=True)
     block = stats.day_block(rows)
     assert block["won"] == block["lost"] == block["n"] == 0
-    # M8: an expired, never-graded pick is reported as UNRESOLVED (not as a genuine void), still outside win/loss/ROI
-    assert block["void"] == 0 and block["unresolved"] == 1 and block["final"] and block["profit"] == 0
+    assert block["void"] == 0 and block["unresolved"] == 0 and not block["final"] and block["profit"] == 0
     assert block["roi"] is None and block["hit_rate"] is None
     assert db.all_settled_for_calibration() == [] and db.query("SELECT * FROM results_seen") == []
     assert Elo(db).get("football", "Chelsea")[1] == 0
     raw = stats.compute(db, START + timedelta(days=1))
-    assert raw["yesterday"]["unresolved"] == 1 and raw["last7"]["won"] == raw["last7"]["lost"] == 0
+    assert raw["yesterday"]["unresolved"] == 0 and raw["last7"]["won"] == raw["last7"]["lost"] == 0
     for text in (recap_message(raw), stats_message(raw),
                  pagination.render_yesterday(db, day="2030-06-01")[0],
                  pagination.render_collection_results(db, "top", 0, 5, "2030-06-01")[0]):
-        assert "❔" in text  # M8: visible as unresolved in every history view, never silently a void
-    assert status(db, pid) == "void" and len(rows) == 1
+        assert "❔" not in text
+    assert status(db, pid) == "pending" and len(rows) == 1
 
 
 def test_expired_rows_do_not_enter_parallel_prefetch(db, lifecycle):
@@ -237,10 +230,10 @@ def test_expired_rows_do_not_enter_parallel_prefetch(db, lifecycle):
     resolver = lifecycle[2]
     resolver.resolve = Mock(wraps=resolver.resolve)
     counts = fallback(db, lifecycle)
-    assert counts["void"] == 1 and counts["pending"] == 1
-    assert status(db, old) == "void"
-    resolver.resolve.assert_not_called()
-    assert lifecycle[1].calls == 0
+    assert counts["void"] == 0 and counts["settled"] == 1
+    assert status(db, old) == "won"
+    resolver.providers["sportsgameodds"].fetch_result.assert_not_called()
+    assert lifecycle[1].calls == 1
 
 
 def test_parallel_prefetch_excludes_expired_paid_fixture_but_settles_due_sports(db, lifecycle):
@@ -257,9 +250,9 @@ def test_parallel_prefetch_excludes_expired_paid_fixture_but_settles_due_sports(
     resolver = lifecycle[2]
     resolver.resolve = Mock(wraps=resolver.resolve)
     counts = fallback(db, lifecycle)
-    assert counts["settled"] == 2 and counts["void"] == 1 and status(db, old) == "void"
-    assert free.calls == lifecycle[1].calls == 1
-    assert all(call.args[1] != "expired-paid" for call in resolver.resolve.call_args_list)
+    assert counts["settled"] == 3 and counts["void"] == 0
+    assert status(db, old) == "won"
+    assert free.calls == 2 and lifecycle[1].calls == 1
     resolver.providers["sportsgameodds"].fetch_result.assert_not_called()
 
 
@@ -304,7 +297,8 @@ def test_provider_fallback_rechecks_deadline_after_slow_unknown(db, lifecycle):
 
     free.find_result = crosses_deadline
     counts = fallback(db, lifecycle)
-    assert free.calls == 1 and counts["void"] == 1 and status(db, pid) == "void"
+    assert free.calls == 1 and counts["pending"] == 1 and counts["void"] == 0
+    assert status(db, pid) == "pending"
     lifecycle[2].providers["oddsapi"].fetch_result.assert_not_called()
     lifecycle[2].providers["sportsgameodds"].find_result.assert_not_called()
 

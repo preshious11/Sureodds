@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --test tests/access_and_result_gifs.test.mjs)"
+    ]
+  }
+}

@@ -119,15 +119,18 @@ def test_selectors_work_from_plain_hand_written_rows_without_the_model():
     """No Scored, no provider data, no engine: a row dict is the whole input contract."""
     def row(i, **kw):
         base = dict(id=i, canonical_event_id=f"e{i}", fixture_key=f"f{i}", status='pending', prob=0.72, price=1.45,
-                    ev=0.04, books=5, quality='main', rank_score=0.7 - i / 100, edge_ev=None, market='result3',
+                    ev=0.04, books=8, quality='main', rank_score=0.7 - i / 100, edge_ev=None, market='result3',
                     selection='home', period='full', entity='all', line=None, stat='points',
                     sport='football', league=f'L{i}', start_utc='2030-06-01T20:00:00Z',
                     sources='{}', canonical_competition_id='')
         return {**base, **kw}
-    rows = [row(i) for i in range(4)]
+    rows = [row(i, price=1.5) for i in range(8)]
     top, diag = select_top(rows, Config(), '2030-06-01T18:00:00Z')
     assert [r['id'] for r in top] == [0, 1] and diag['target_reached']
-    assert select_daily(rows, Config(), '2030-06-01T18:00:00Z')[0]
+    markets = [("result3", "home"), ("dnb", "home"), ("dc", "home_draw"), ("btts", "yes")]
+    daily_rows = [row(i, price=1.8, market=markets[i % len(markets)][0],
+                      selection=markets[i % len(markets)][1]) for i in range(8)]
+    assert select_daily(daily_rows, Config(), '2030-06-01T18:00:00Z')[0]
 
 
 # ============================================================ gates never delete predictions
@@ -142,7 +145,7 @@ def test_combined_odds_failure_does_not_delete_predictions(db):
 def test_value_failure_does_not_delete_a_model_prediction(db):
     bad = sc(_fx(1), "result3", "home", 0.70, 1.50, sources=1, ev_val=-0.12)
     bad.sources, bad.independent = {"market": 0.68, "elo": 0.72}, ["elo"]      # the independent model says: overpriced
-    good = sc(_fx(2), "result3", "home", 0.70, 1.50, sources=1, ev_val=0.05)
+    good = sc(_fx(2), "result3", "home", 0.70, 2.10, sources=1, ev_val=0.05)
     good.sources, good.independent = {"market": 0.68, "elo": 0.72}, ["elo"]
     ps = stored(db, [bad, good])
     rows = {r['canonical_event_id']: r for r in db.collection_predictions('all', DAY)}
@@ -221,10 +224,10 @@ def test_top_may_have_three_legs_and_never_more():
 
 
 def test_top_never_adds_a_weak_leg_to_chase_the_target():
-    pool = [sc(_fx(0), "result3", "home", 0.72, 1.40)] + [sc(_fx(i), "result3", "home", 0.50, 1.80) for i in range(1, 8)]
+    pool = [sc(_fx(0), "result3", "home", 0.72, 2.10)] + [sc(_fx(i), "result3", "home", 0.50, 1.80) for i in range(1, 8)]
     top, diag = _top(pool)
-    assert [s.price for s in top] == [1.40]                   # one honest leg, below the 2.00 target
-    assert diag['target_reached'] is False
+    assert [s.price for s in top] == [2.10]                   # a qualifying leg is never padded with weak legs
+    assert diag['target_reached'] is True
 
 
 # ============================================================ one representative per fixture x family

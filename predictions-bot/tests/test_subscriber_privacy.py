@@ -70,9 +70,10 @@ def _canary_pool():
     """Well-covered main-market candidates carrying sharp-reference data, so every internal field is populated."""
     pool = []
     for i in range(14):
-        quotes = {f"canarybook{k}": round(1.45 + 0.003 * k, 4) for k in range(5)}
-        quotes["pinnacle"] = 1.44
-        s = cand(_fx(i), selection="home" if i % 2 == 0 else "away", p=0.70, price=1.45, quotes=quotes,
+        price = 2.20
+        quotes = {f"canarybook{k}": round(price + 0.003 * (k - 2), 4) for k in range(5)}
+        quotes["pinnacle"] = price
+        s = cand(_fx(i), selection="home" if i % 2 == 0 else "away", p=0.70, price=price, quotes=quotes,
                  p_fair=CANARY_FAIR, edge_ev=CANARY_EDGE, sources=("market", "score_model", "sharp", "canary_signal"),
                  independent=("sharp",))
         s.p_market = 0.31337
