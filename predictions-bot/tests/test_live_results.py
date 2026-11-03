@@ -235,14 +235,22 @@ def test_crash_between_settlement_and_send_does_not_repeat_grading(db, env, monk
 
 
 @pytest.mark.parametrize("status", ["postponed", "cancelled"])
-def test_postponed_cancelled_void_without_false_notification(db, env, status):
+def test_postponed_cancelled_void_with_end_notification(db, env, status):
+    """A postponed/cancelled match is void settlement AND a real end-of-match alert (regression:
+    these terminal-but-non-final statuses used to fall through to `complete_live_notifications`
+    without ever calling `deliver_match_event`/`deliver_live`, so subscribers got no notification at
+    all for a postponed or cancelled fixture)."""
     pick(db)
     received(db)
     env[0].result = MatchResult(status, source="espn")
     poll(db, env)
     poll(db, env)
     assert db.picks_for_date(DAY)[0]["status"] == "void"
-    assert not env[3].messages and env[0].calls == 1
+    assert env[0].calls == 1
+    assert len(env[3].messages) == 1
+    text = env[3].messages[0][1]
+    assert ("Postponed" if status == "postponed" else "Cancelled") in text
+    assert db.query("SELECT notifications_done FROM live_fixture_state")[0]["notifications_done"] == 1
 
 
 def test_no_early_or_stale_or_unknown_competition_polling(db, env):

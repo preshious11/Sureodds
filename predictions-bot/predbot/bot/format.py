@@ -593,9 +593,14 @@ def live_match_message(rows, result, ended: bool = False) -> str:
     row = rows[0]
     sport = row["sport"]
     home, away = display_name(row["home"], sport), display_name(row["away"], sport)
-    score = result.score("full") if ended else None
+    score = result.score("full") if ended and result.status == "final" else None
     match = f"{home} {score[0]:g}–{score[1]:g} {away}" if score else f"{home} vs {away}"
-    lines = ["🏁 Match Ended" if ended else "🟢 Match Started", "",
+    non_final_header = {"postponed": "🚧 Match Postponed", "cancelled": "🚫 Match Cancelled"}
+    if ended:
+        header = non_final_header.get(result.status, "🏁 Match Ended")
+    else:
+        header = "🟢 Match Started"
+    lines = [header, "",
              f"{SPORT_ICON.get(sport, SPORT_ICON['other'])} {sport_name(sport)}"]
     if row["league"]:
         lines.append(f"🏆 {esc(row['league'])}")
