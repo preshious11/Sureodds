@@ -703,7 +703,7 @@ export async function sweepMatchEvents(env: Env, nowMs = Date.now(), sender: typ
 
 interface ResultTicket {
   kind:string;post_date:string;message_id:string;legs:number;pending:number;losses:number;wins:number;
-  file_id:string|null;fixtures:string;pending_ends:string;
+  file_id:string|null;fixtures:string;pending_ends:string;authorized:number;
 }
 async function getResultTickets(env:Env,nowMs:number,fixtures?:{date:string;fixture:string}[]):Promise<ResultTicket[]> {
   if ((!env.TELEGRAM_CHAT_ID && !ownerChatId(env)) || !/^\d{4}-\d{2}-\d{2}$/.test(env.RESULT_GIFS_START_DATE??'')) return [];
@@ -719,6 +719,22 @@ async function getResultTickets(env:Env,nowMs:number,fixtures?:{date:string;fixt
         AND er.kind='evt_'||me.fixture_key||'_end' AND er.message_id IS NOT NULL)
       AND NOT EXISTS(SELECT 1 FROM posts expired WHERE expired.post_date=me.pick_date
         AND expired.kind='evt_'||me.fixture_key||'_end_expired')) AS pending_ends,
+    -- Same authorization rule sweepMatchEvents uses for its group leg
+    -- (ticket_publications 'sent' receipt, for THIS collection, scoped to the
+    -- pick_date's CURRENT active revision, with the exact message_id this
+    -- reply is about to target - never the legacy posts row alone). A
+    -- republish that moves to a new revision/message_id leaves the stale
+    -- publication's receipt not matching po.message_id, so this stays 0 and
+    -- the GIF reply is simply skipped (never claimed, never retried as a
+    -- failure) until/unless a fresh 'sent' receipt for the current revision
+    -- and message appears. Owner is never recipient-filtered, matching
+    -- sweepMatchEvents' own owner leg.
+    (SELECT COUNT(*) FROM ticket_publications tp WHERE tp.pick_date=po.post_date
+      AND tp.collection=replace(po.kind,'_owner','')
+      AND tp.destination=(CASE WHEN po.kind LIKE '%_owner' THEN 'owner' ELSE 'group' END)
+      AND tp.state='sent' AND tp.message_id=po.message_id
+      AND tp.revision_id=COALESCE((SELECT revision_id FROM active_ticket_revisions WHERE pick_date=po.post_date),1)
+      AND (tp.destination='owner' OR (tp.recipient_id IS NOT NULL AND tp.recipient_id=?6))) AS authorized,
     SUM(CASE WHEN p.status NOT IN ('won','half_won','lost','half_lost','void','push','cancelled','canceled','abandoned') THEN 1 ELSE 0 END) AS pending,
     SUM(CASE WHEN p.status IN ('lost','half_lost') THEN 1 ELSE 0 END) AS losses,
     SUM(CASE WHEN p.status IN ('won','half_won') THEN 1 ELSE 0 END) AS wins,
@@ -741,7 +757,8 @@ async function getResultTickets(env:Env,nowMs:number,fixtures?:{date:string;fixt
     GROUP BY po.kind,po.post_date,po.message_id)
     SELECT tickets.*, (SELECT file_id FROM result_gifs WHERE kind=CASE WHEN tickets.losses>0 THEN 'lost' ELSE 'won' END
       ORDER BY random() LIMIT 1) AS file_id FROM tickets ORDER BY post_date,kind`)
-    .bind(shiftDate(day,-2),env.RESULT_GIFS_START_DATE,day,nowStr(nowMs),fixtures?JSON.stringify(fixtures):null)
+    .bind(shiftDate(day,-2),env.RESULT_GIFS_START_DATE,day,nowStr(nowMs),fixtures?JSON.stringify(fixtures):null,
+      env.TELEGRAM_CHAT_ID??null)
     .all<ResultTicket>();
   return results;
 }
@@ -749,10 +766,13 @@ async function getResultTickets(env:Env,nowMs:number,fixtures?:{date:string;fixt
 async function sendReadyResultGifs(env:Env,nowMs:number,sender:typeof sendTelegram,tickets:ResultTicket[],
   endAlerts=new Set<string>(),alerted=new Set<string>()):Promise<void> {
   const day=lagosDateString(nowMs);
-  const ready=tickets.filter(ticket=>!ticket.pending && /^\d+$/.test(ticket.message_id) &&
+  const ready=tickets.filter(ticket=>!ticket.pending && /^\d+$/.test(ticket.message_id) && ticket.authorized &&
     JSON.parse(ticket.pending_ends).every((key:string)=>endAlerts.has(key)));
   for(const ticket of ready) {
-    if (ticket.pending || !/^\d+$/.test(ticket.message_id)) continue;
+    // Re-check (not just the `ready` filter above) in case this ticket object
+    // is shared/mutated across a batch - same belt-and-suspenders pattern as
+    // the pending/message_id re-check right below.
+    if (ticket.pending || !/^\d+$/.test(ticket.message_id) || !ticket.authorized) continue;
     ticket.pending=1; // This batch attempts a ticket at most once, including clean send failures.
     const receipt=`result_gif_${ticket.kind}`;
     if (!(await claimPost(env.DB,receipt,ticket.post_date))) continue;

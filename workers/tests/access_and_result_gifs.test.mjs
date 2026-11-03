@@ -95,6 +95,10 @@ describe('Bet of the Day photo publications',()=>{
  it('GIF replies use each destination photo id and dedupe independently',async()=>{
   const w=world();ticket(w,['won']);gif(w);
   w.sql.prepare("INSERT INTO posts(kind,post_date,message_id,created_at) VALUES('top_owner',?,'789',?)").run(DAY,new Date(NOW).toISOString());
+  w.sql.prepare(`INSERT INTO ticket_publications
+      (pick_date,collection,revision_id,destination,recipient_id,state,message_id,attempts,error,created_at,updated_at)
+    VALUES(?,'top',1,'owner',NULL,'sent','789',1,NULL,?,?)`)
+    .run(DAY,new Date(NOW).toISOString(),new Date(NOW).toISOString());
   await sweepResultGifs(w.env,NOW,w.sender);await sweepResultGifs(w.env,NOW,w.sender);
   assert.deepEqual(w.sent.map(p=>[p.chat_id,p.reply_parameters.message_id,p.caption]),[['-100',123,'Won'],['999',789,'Won']]);
  });
@@ -209,6 +213,89 @@ describe('settled ticket GIF replies',()=>{
  it('recap is private and includes yesterday and last-seven-day stats',async()=>{
  const w=world();ticket(w,['won'],'top','2026-10-17');const outcome=await postGroupRecap(w.env,NOW,w.sender);
  assert.equal(outcome,'sent');assert.equal(w.sent.length,1);assert.equal(w.sent[0].chat_id,'999');assert.match(w.sent[0].text,/Yesterday/);assert.match(w.sent[0].text,/Last 7 days/);
+ });
+});
+
+describe('result GIF reply requires a current, matching ticket_publications receipt',()=>{
+ it('a valid active Top ticket with a matching sent receipt gets its reply',async()=>{
+  const w=world();ticket(w,['won']);gif(w);
+  await sweepResultGifs(w.env,NOW,w.sender);
+  assert.equal(w.sent.length,1);assert.equal(w.sent[0].method,'sendAnimation');assert.equal(w.sent[0].chat_id,'-100');
+ });
+ it('a valid active Daily ticket with a matching sent receipt gets its reply',async()=>{
+  const w=world();ticket(w,['won'],'daily');gif(w);
+  await sweepResultGifs(w.env,NOW,w.sender);
+  assert.equal(w.sent.length,1);assert.equal(w.sent[0].method,'sendAnimation');assert.equal(w.sent[0].chat_id,'-100');
+ });
+ it('a superseded revision (receipt points at an older revision than active_ticket_revisions) is skipped, not claimed',async()=>{
+  const w=world();ticket(w,['won']);gif(w);
+  // A republish bumped the active revision to 2; the existing receipt is still revision 1.
+  w.sql.prepare("INSERT INTO ticket_revisions(pick_date,revision_id,evaluation_id,created_at) VALUES(?,2,'eval-2',?)").run(DAY,new Date(NOW).toISOString());
+  w.sql.prepare("INSERT OR REPLACE INTO active_ticket_revisions(pick_date,revision_id,updated_at) VALUES(?,2,?)").run(DAY,new Date(NOW).toISOString());
+  await sweepResultGifs(w.env,NOW,w.sender);
+  assert.equal(w.sent.length,0);
+  assert.equal(w.sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind='result_gif_top' AND message_id IS NOT NULL").get().n,0);
+ });
+ it('a publication linked to a different collection (wrong revision scope) is skipped',async()=>{
+  const w=world();ticket(w,['won']);gif(w);
+  w.sql.prepare("UPDATE ticket_publications SET collection='daily' WHERE pick_date=? AND destination='group'").run(DAY);
+  await sweepResultGifs(w.env,NOW,w.sender);
+  assert.equal(w.sent.length,0);
+ });
+ it('a missing publication (no ticket_publications row at all) is skipped',async()=>{
+  const w=world();ticket(w,['won']);gif(w);
+  w.sql.prepare("DELETE FROM ticket_publications").run();
+  await sweepResultGifs(w.env,NOW,w.sender);
+  assert.equal(w.sent.length,0);
+ });
+ it('an invalid/missing reply target (receipt message_id no longer matches the posts row) is skipped',async()=>{
+  const w=world();ticket(w,['won']);gif(w);
+  // Simulate the group message having been superseded: posts now carries a
+  // newer message id than the one the ticket_publications receipt recorded.
+  w.sql.prepare("UPDATE posts SET message_id='999999' WHERE kind='top' AND post_date=?").run(DAY);
+  await sweepResultGifs(w.env,NOW,w.sender);
+  assert.equal(w.sent.length,0);
+ });
+ it('a repeated sweep over an authorized ticket never duplicates the reply',async()=>{
+  const w=world();ticket(w,['won']);gif(w);
+  await sweepResultGifs(w.env,NOW,w.sender);await sweepResultGifs(w.env,NOW,w.sender);await sweepResultGifs(w.env,NOW,w.sender);
+  assert.equal(w.sent.filter(s=>s.method==='sendAnimation').length,1);
+ });
+ it('group and owner authorization are tracked independently: only the leg with a sent receipt fires',async()=>{
+  const w=world();ticket(w,['won']);gif(w);
+  // Owner posts row exists but has no ticket_publications receipt at all.
+  w.sql.prepare("INSERT INTO posts(kind,post_date,message_id,created_at) VALUES('top_owner',?,'789',?)").run(DAY,new Date(NOW).toISOString());
+  await sweepResultGifs(w.env,NOW,w.sender);
+  assert.equal(w.sent.length,1);
+  assert.equal(w.sent[0].chat_id,'-100');
+ });
+ it('no subscriber-targeted send ever happens for a result GIF (only group/owner chat ids appear)',async()=>{
+  const w=world();ticket(w,['won']);gif(w);
+  w.sql.prepare("INSERT INTO posts(kind,post_date,message_id,created_at) VALUES('top_owner',?,'789',?)").run(DAY,new Date(NOW).toISOString());
+  w.sql.prepare(`INSERT INTO ticket_publications
+      (pick_date,collection,revision_id,destination,recipient_id,state,message_id,attempts,error,created_at,updated_at)
+    VALUES(?,'top',1,'owner',NULL,'sent','789',1,NULL,?,?)`)
+    .run(DAY,new Date(NOW).toISOString(),new Date(NOW).toISOString());
+  await sweepResultGifs(w.env,NOW,w.sender);
+  const chatIds=new Set(w.sent.map(s=>s.chat_id));
+  assert.deepEqual(chatIds,new Set(['-100','999']));
+ });
+ it('verdict precedence (lost beats won beats null/void) is unchanged by the authorization gate',async()=>{
+  for(const [statuses,kind] of [[['won','lost'],'lost'],[['won','half_lost'],'lost'],[['won','void'],'won'],[['void','push'],null]]){
+   const w=world();ticket(w,statuses);gif(w,'won');gif(w,'lost');
+   await sweepResultGifs(w.env,NOW,w.sender);
+   if(kind===null){assert.equal(w.sent.length,0);}
+   else {assert.equal(w.sent.length,1);assert.equal(w.sent[0].caption,kind==='won'?'Won':'Lost');}
+  }
+ });
+ it('an uncertain send (stale sending claim) is never auto-retried by the GIF sweep',async()=>{
+  const w=world();ticket(w,['won']);gif(w);
+  w.sql.prepare("UPDATE ticket_publications SET state='uncertain' WHERE pick_date=? AND destination='group'").run(DAY);
+  await sweepResultGifs(w.env,NOW,w.sender);
+  assert.equal(w.sent.length,0);
+  // Still parked as uncertain afterward - the sweep must not flip it to a
+  // retryable state on its own.
+  assert.equal(w.sql.prepare("SELECT state FROM ticket_publications WHERE pick_date=? AND destination='group'").get(DAY).state,'uncertain');
  });
 });
 
