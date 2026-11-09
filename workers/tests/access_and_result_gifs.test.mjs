@@ -210,9 +210,11 @@ describe('settled ticket GIF replies',()=>{
  for(const [date,start,send] of [['2026-10-15','2026-10-01',false],['2026-10-16','2026-10-17',false],['2026-10-16','2026-10-16',true],['2026-10-18','',false]]){
  const w=world();ticket(w,['won'],'top',date);gif(w);w.env.RESULT_GIFS_START_DATE=start;await sweepResultGifs(w.env,NOW,w.sender);assert.equal(w.sent.length,Number(send));}
  });
- it('recap is private and includes yesterday and last-seven-day stats',async()=>{
+ it('recap is private and covers the previous Sunday through Saturday',async()=>{
  const w=world();ticket(w,['won'],'top','2026-10-17');const outcome=await postGroupRecap(w.env,NOW,w.sender);
- assert.equal(outcome,'sent');assert.equal(w.sent.length,1);assert.equal(w.sent[0].chat_id,'999');assert.match(w.sent[0].text,/Yesterday/);assert.match(w.sent[0].text,/Last 7 days/);
+ assert.equal(outcome,'sent');assert.equal(w.sent.length,1);assert.equal(w.sent[0].chat_id,'999');
+ assert.match(w.sent[0].text,/SUREODDS WEEKLY RESULTS/);assert.match(w.sent[0].text,/2026-10-11 – 2026-10-17/);
+ assert.match(w.sent[0].text,/Weekly performance/);assert.doesNotMatch(w.sent[0].text,/Yesterday/);
  });
 });
 
@@ -314,12 +316,14 @@ it('empty posted tickets are receipted without sending and concurrent sweeps sen
  await Promise.all([sweepResultGifs(w.env,NOW,w.sender),sweepResultGifs(w.env,NOW,w.sender)]);assert.equal(w.sent.length,1);
 });
 
-it('the deadline recap still includes both stats windows when every leg remains pending',async()=>{
+it('the weekly recap reports pending picks for the completed week',async()=>{
  const w=world();ticket(w,['pending'],'top','2026-10-17');
  await postGroupRecap(w.env,NOW,w.sender);
  assert.equal(w.sent.length,1);assert.equal(w.sent[0].chat_id,'999');
- assert.match(w.sent[0].text,/Yesterday\nNo settled results yet/);
- assert.match(w.sent[0].text,/Last 7 days\nNo settled results yet/);
+ assert.match(w.sent[0].text,/<b>📊 SUREODDS WEEKLY RESULTS<\/b>/);
+ assert.match(w.sent[0].text,/2026-10-11 – 2026-10-17/);
+ assert.match(w.sent[0].text,/1 Pending/);
+ assert.doesNotMatch(w.sent[0].text,/Yesterday/);
 });
 
 function fixture(w,id,key,type='end',at=NOW){
@@ -363,10 +367,11 @@ it('even if all legs are settled before delivery, GIF waits for the final queued
  const group=w.sent.filter(s=>s.chat_id==='-100');assert.deepEqual(group.map(s=>s.method),['sendMessage','sendMessage','sendAnimation']);
  assert.equal(group[1].text,'end last');
 });
-it('stage9 settlement with no END event is delivered by the scheduled POST backup',async()=>{
+it('scheduled POST never sends individual won/lost result GIFs',async()=>{
  const w=world();ticket(w,['won']);gif(w);await scheduled(w,CRON_POST_SWEEP);
- assert.equal(w.sent.filter(s=>s.method==='sendAnimation').length,1);
- await scheduled(w,CRON_POST_SWEEP);assert.equal(w.sent.filter(s=>s.method==='sendAnimation').length,1);
+ assert.equal(w.sent.filter(s=>s.method==='sendAnimation').length,0);
+ await scheduled(w,CRON_POST_SWEEP);assert.equal(w.sent.filter(s=>s.method==='sendAnimation').length,0);
+ assert.equal(w.sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'result_gif_%'").get().n,0);
 });
 it('POST backup racing immediate END delivery sends exactly one GIF, after END confirmation',async()=>{
  const w=world();ticket(w,['won']);gif(w);fixture(w,w.sql.prepare('SELECT id FROM picks').get().id,'race');

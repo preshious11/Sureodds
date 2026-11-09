@@ -413,24 +413,21 @@ export async function getItemizedStatsRowsForDate(db: D1Database, pickDate: stri
   return results ?? [];
 }
 
-/**
- * Settlement statuses of ONE published collection for a day, in rank order —
- * backs the compact results recap. Membership-scoped, so an All-only
- * prediction can never appear.
- */
-export async function getRecapStatuses(
+/** Published Top/Daily settlement statuses in a half-open date range. */
+export async function getRecapStatusesForRange(
   db: D1Database,
-  pickDate: string,
+  sinceDate: string,
+  beforeDate: string,
   collection: "top" | "daily",
 ): Promise<string[]> {
   const { results } = await db
     .prepare(
       `SELECT p.status AS status FROM picks p
        JOIN prediction_memberships m ON m.prediction_id = p.id
-       WHERE p.pick_date = ?1 AND m.collection = ?2
-       ORDER BY m.rank ASC, p.start_utc ASC, p.id ASC`,
+       WHERE p.pick_date >= ?1 AND p.pick_date < ?2 AND m.collection = ?3
+       ORDER BY p.pick_date ASC, m.rank ASC, p.start_utc ASC, p.id ASC`,
     )
-    .bind(pickDate, collection)
+    .bind(sinceDate, beforeDate, collection)
     .all<{ status: string }>();
   return (results ?? []).map((r) => r.status);
 }
@@ -1094,9 +1091,9 @@ export interface MatchEventRow {
 }
 
 /**
- * Match-start/match-end events (0009_match_events.sql) that STILL need
- * delivery to at least one configured destination — the Worker's own Cron
- * sweep is the only thing that ever delivers these to Telegram.
+ * Match-start/match-end events (0009_match_events.sql) that have not been
+ * reconciled with delivery receipts. The live monitor continues writing these
+ * records for backend tracking; scheduled Telegram delivery is disabled.
  *
  * Previously this read the last 30 days oldest-first with LIMIT 200 and let
  * the caller check each row's group/owner/expired receipts itself: on the

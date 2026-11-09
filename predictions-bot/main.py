@@ -16,7 +16,7 @@ from predbot.bot.telegram import Telegram
 from predbot.cache.fetcher import UnifiedFetcher
 from predbot.config import load_config
 from predbot.jobs import daily_picks, live_results, recap, settle
-from predbot.jobs.scheduler import DailyJob, DynamicJob, IntervalJob, drain, loop
+from predbot.jobs.scheduler import DailyJob, DynamicJob, IntervalJob, WeeklyJob, drain, loop
 from predbot.log import setup_logging
 from predbot.config import require_provider_keys, startup_lines
 from predbot.markets.settlement import log_coverage
@@ -77,7 +77,7 @@ def main() -> None:
     # a subscriber Telegram definitively refuses (blocked the bot, deleted the account) stops being retried
     tg.on_permanent_failure = broadcast.deactivate_unreachable(db)
     service = UnifiedFetcher(chain, db, cfg)
-    log.info("providers: %s | timezone %s | picks at %s local | recap at %s | "
+    log.info("providers: %s | timezone %s | picks at %s local | weekly recap Sunday at %s | "
              "subscriber delivery: %s local, checked every %dm | cache: %s",
              ", ".join(chain.order) or "none", cfg.timezone, cfg.post_time, cfg.recap_time,
              cfg.post_time, DELIVERY_POLL_MINUTES, "sqlite")
@@ -95,13 +95,12 @@ def main() -> None:
         settle.run(resolver, db, cfg)
 
     def job_live_results():
-        # Settlement inside still runs when subscriber DMs are disabled; only
-        # the pushes are skipped (see live_results._run).
+        # Match monitoring and settlement continue; live Telegram messages are disabled.
         live_results.run(resolver, db, cfg, tg)
 
     def job_recap():
         try:
-            job_settle()           # make sure yesterday is graded first
+            job_settle()           # settle the completed reporting week first
         except Exception:  # noqa: BLE001 - a settlement failure must not cancel the recap
             log.exception("settlement before recap failed; recap continues")
         text = recap.run(db, cfg, tg)                # channel mirror (optional)
@@ -109,7 +108,7 @@ def main() -> None:
             db.set_kv("recap_text", text)            # cache recap for broadcast job
 
     def job_broadcast_recap():
-        """Send recap to each subscriber after last fixture ends in their timezone."""
+        """Send the weekly recap to subscribers after the reporting Saturday's fixtures end."""
         if not getattr(cfg, "subscriber_delivery_enabled", True):
             return  # channel-only mode: the channel recap above still runs
         text = db.get_kv("recap_text")
@@ -139,7 +138,7 @@ def main() -> None:
         return settle.compute_settlement_deadline(db, today)
 
     jobs = [
-        DailyJob("recap", cfg.recap_time, cfg.timezone, job_recap),
+        WeeklyJob("recap", cfg.recap_time, cfg.timezone, job_recap),
         DailyJob("picks", cfg.post_time, cfg.timezone, job_picks),
         # Per-subscriber local-time gates, so both must poll rather than fire once.
         IntervalJob("deliver", DELIVERY_POLL_MINUTES, job_deliver),   # everyone's card at DELIVERY_TIME

@@ -103,9 +103,9 @@ describe("query budget: every scheduled invocation stays at or below 40 D1 queri
     assert.ok(DB.count <= BUDGET, `CRON_POST_SWEEP used ${DB.count} queries, budget is ${BUDGET}`);
   });
 
-  it("CRON_RECAP_SWEEP: unclaimed recap, yesterday fully settled (non-pending), full group+owner send", async () => {
+  it("CRON_RECAP_SWEEP: unclaimed weekly recap stays within the D1 query budget", async () => {
     const { sql, DB } = world();
-    const yesterday = "2026-10-16";
+    const yesterday = "2026-10-17";
     for (const [id, tier, status] of [[1, "top", "won"], [2, "daily", "lost"]]) {
       insertPick(sql, { id, tier, status, startMs: Date.UTC(2026, 9, 16, 18, 0) });
     }
@@ -114,7 +114,7 @@ describe("query budget: every scheduled invocation stays at or below 40 D1 queri
     const realFetch = globalThis.fetch;
     globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, result: { message_id: 1 } }) });
     try {
-      await handleScheduled(env, CRON_RECAP_SWEEP, NOW);
+      await handleScheduled(env, CRON_RECAP_SWEEP, Date.UTC(2026, 9, 18, 8, 35));
     } finally {
       globalThis.fetch = realFetch;
     }
@@ -201,7 +201,7 @@ describe("query budget: every scheduled invocation stays at or below 40 D1 queri
     } finally {
       globalThis.fetch = realFetch;
     }
-    assert.ok(sent.some((s) => s.chat_id === "-100"), "the new event's group leg was sent despite the 300-event backlog");
+    assert.equal(sent.some((s) => s.chat_id === "-100"), false, "match-event notifications stay disabled");
     assert.ok(DB.count <= BUDGET, `used ${DB.count} queries, budget is ${BUDGET}`);
   });
 
@@ -283,7 +283,7 @@ for(const [status,registered] of [['won',true],['lost',true],['void',false],['pe
 
 
 for(const [tickets,registered] of [[6,false],[6,true],[2,false]]) {
-  it(`${tickets} ready result tickets in the POST backup, registered=${registered}, stays under 40`,async()=>{
+  it(`${tickets} ready result tickets never send from the POST sweep, registered=${registered}`,async()=>{
     const {sql,DB}=world();
     const dates=tickets===2?['2026-10-17']:['2026-10-15','2026-10-16','2026-10-17'];
     sql.prepare("INSERT INTO telegram_updates(update_id,status,updated_at) VALUES(1,'failed',?)").run(iso(NOW));
@@ -302,8 +302,8 @@ for(const [tickets,registered] of [[6,false],[6,true],[2,false]]) {
     try{await handleScheduled({DB,TELEGRAM_CHAT_ID:'-100',TELEGRAM_ADMIN_IDS:'999',STAGE3_CRON_ENABLED:'1',RESULT_GIFS_START_DATE:dates[0],
       GITHUB_REPO:'owner/repo',GITHUB_DISPATCH_TOKEN:'t'},CRON_POST_SWEEP,NOW);}
     finally{globalThis.fetch=saved;}
-    assert.equal(animations,registered?tickets:0,'all receipted result tickets are handled in one sweep');
-    assert.equal(sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'result_gif_%'").get().n,registered?0:tickets);
+    assert.equal(animations,0,'individual won/lost result animations stay disabled');
+    assert.equal(sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'result_gif_%'").get().n,0);
     assert.ok(DB.count<=BUDGET,`six tickets: ${DB.count} queries, budget ${BUDGET}`);
   });
 }
@@ -335,9 +335,8 @@ for(const cron of [CRON_DELIVER_SWEEP,CRON_POST_SWEEP])it(`maximum batch with si
  };
  try {await handleScheduled({DB,STAGE3_CRON_ENABLED:'1',TELEGRAM_CHAT_ID:'-100',TELEGRAM_ADMIN_IDS:'999',RESULT_GIFS_START_DATE:'2026-10-15',
   GITHUB_REPO:'owner/repo',GITHUB_DISPATCH_TOKEN:'t'},cron,NOW);}finally{globalThis.fetch=saved;}
- assert.equal(sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'result_gif_%' AND message_id='no-gif'").get().n,
-  cron===CRON_POST_SWEEP?4:6);
- if(cron===CRON_DELIVER_SWEEP)assert.equal(sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'evt_%_end' AND message_id IS NOT NULL").get().n,6);
+ assert.equal(sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'result_gif_%'").get().n,0);
+ if(cron===CRON_DELIVER_SWEEP)assert.equal(sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'evt_%_end' AND message_id IS NOT NULL").get().n,0);
  t.diagnostic(`D1 queries: ${DB.count}`);
  // Query count varies with whether revision receipts make a ticket eligible
  // for posting; the production guard is the hard per-invocation budget.

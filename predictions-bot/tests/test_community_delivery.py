@@ -95,7 +95,7 @@ def test_community_picks_and_recap_continue_without_subscriber_broadcasts(db, co
     monkeypatch.setattr(recap, "utcnow", lambda: NOW + timedelta(days=1))
     text = recap.run(db, cfg, tg)
     assert text and tg.sends[-1]["text"] == text
-    assert db.post_done("recap", DAY)
+    assert db.post_done("weekly_recap", DAY)
     assert broadcast.deliver_recap(db, cfg, tg, text) == 0
     assert len(tg.sends) == 3 and {s["chat_id"] for s in tg.sends} == {COMMUNITY}
     assert [dict(r) for r in db.query("SELECT * FROM subscribers")] == history
@@ -120,9 +120,7 @@ def test_community_live_lifecycle_repeated_polls_and_restart(db, community, monk
     reopened = Database(path)
     try:
         poll(reopened, community)
-        assert len(tg.sends) == 1 and "Match Started" in tg.sends[0]["text"]
-        assert "Chelsea to Win" in tg.sends[0]["text"] and "Over 3.5" in tg.sends[0]["text"]
-        assert "Both Teams to Score" not in tg.sends[0]["text"]
+        assert tg.sends == []
         provider.result = MatchResult("final", {"full": (2., 1.)}, source="espn")
         poll(reopened, community)
         settled = [dict(r) for r in reopened.picks_for_date(DAY)]
@@ -135,10 +133,9 @@ def test_community_live_lifecycle_repeated_polls_and_restart(db, community, monk
         poll(reopened, community)
         assert provider.calls == calls
         assert [dict(r) for r in reopened.picks_for_date(DAY)] == settled
-        assert len(tg.sends) == 2 and all(s["chat_id"] == COMMUNITY for s in tg.sends)
-        assert "Match Ended" in tg.sends[-1]["text"]
-        assert "— WON" in tg.sends[-1]["text"] and "— LOST" in tg.sends[-1]["text"]
-        assert len(reopened.query("SELECT 1 FROM deliveries WHERE kind LIKE 'match_%'")) == 2
+        assert tg.sends == []
+        assert reopened.query("SELECT notifications_done FROM live_fixture_state")[0]["notifications_done"] == 1
+        assert len(reopened.query("SELECT 1 FROM deliveries WHERE kind LIKE 'match_%'")) == 0
         assert not reopened.query("SELECT 1 FROM subscribers WHERE chat_id=?", (COMMUNITY,))
     finally:
         reopened.close()
@@ -181,7 +178,7 @@ def test_community_rejects_unpublished_or_unrelated_predictions(db, community, s
         assert db.picks_for_date(DAY)[0]["status"] == "won"
 
 
-def test_partial_publication_only_notifies_for_the_successful_collection(db, community):
+def test_live_monitor_does_not_notify_for_any_publication(db, community):
     cfg, tg, provider, _ = community
     pick(db)
     pick(db, tier="daily", market="total", selection="over", line=3.5, label="Over 3.5 Total Goals")
@@ -194,36 +191,31 @@ def test_partial_publication_only_notifies_for_the_successful_collection(db, com
     tg.sends.clear()
     provider.result = MatchResult("in_progress", source="espn")
     poll(db, community)
-    assert len(tg.sends) == 1
-    assert "Chelsea to Win" in tg.sends[0]["text"]
-    assert "Over 3.5" not in tg.sends[0]["text"] and "Liverpool" not in tg.sends[0]["text"]
+    assert tg.sends == []
 
 
 @pytest.mark.parametrize("ended", [False, True])
-@pytest.mark.parametrize("raises", [False, True])
-def test_failed_live_send_remains_retryable_after_restart(db, community, monkeypatch, ended, raises):
+def test_live_notifications_are_not_sent_or_retried_after_restart(db, community, monkeypatch, ended):
     cfg, tg, provider, _ = community
     pick(db)
     publish(db, cfg, tg)
     tg.sends.clear()
     provider.result = MatchResult("final" if ended else "in_progress",
                                   {"full": (2., 1.)} if ended else {}, source="espn")
-    real_send = tg.send
-    with monkeypatch.context() as patch:
-        patch.setattr(tg, "send", Mock(side_effect=RuntimeError("offline")) if raises else Mock(return_value=None))
-        poll(db, community)
+    forbidden_send = Mock(side_effect=AssertionError("live notification must not send"))
+    monkeypatch.setattr(tg, "send", forbidden_send)
+    poll(db, community)
     row = db.picks_for_date(DAY)[0]
-    kind = broadcast.live_delivery_kind(row["fixture_key"], ended)
-    assert not db.delivery_done(kind, DAY, COMMUNITY) and tg.sends == []
+    forbidden_send.assert_not_called()
+    assert tg.sends == []
     if ended:
-        assert row["status"] == "won" and not db.live_state(DAY, row["fixture_key"])["notifications_done"]
+        assert row["status"] == "won" and db.live_state(DAY, row["fixture_key"])["notifications_done"]
     path = db.path
     db.close()
     reopened = Database(path)
     try:
-        assert tg.send == real_send
         poll(reopened, community, NOW + timedelta(days=6) if ended else NOW)
-        assert len(tg.sends) == 1 and reopened.delivery_done(kind, DAY, COMMUNITY)
+        assert forbidden_send.call_count == 0 and tg.sends == []
         if ended:
             assert provider.calls == 1
             assert reopened.picks_for_date(DAY)[0]["settled_at"] == row["settled_at"]
@@ -243,12 +235,12 @@ def test_subscriber_and_community_completion_are_independent(db, community, monk
     tg.fail.add("42")
     provider.result = MatchResult("final", {"full": (2., 1.)}, source="espn")
     poll(db, community)
-    assert [s["chat_id"] for s in tg.sends] == [COMMUNITY]
     row = db.picks_for_date(DAY)[0]
-    assert not db.live_state(DAY, row["fixture_key"])["notifications_done"]
+    assert tg.sends == []
+    assert db.live_state(DAY, row["fixture_key"])["notifications_done"]
     tg.fail.clear()
     poll(db, community)
-    assert [s["chat_id"] for s in tg.sends] == [COMMUNITY, "42"]
+    assert tg.sends == []
     assert db.live_state(DAY, row["fixture_key"])["notifications_done"]
     assert provider.calls == 1
 
@@ -264,15 +256,12 @@ def test_owner_receives_live_start_and_end_alerts_alongside_community(db, commun
     tg.sends.clear()
     provider.result = MatchResult("in_progress", source="espn")
     poll(db, community)
-    assert {s["chat_id"] for s in tg.sends} == {COMMUNITY, OWNER}
-    owner_send = next(s for s in tg.sends if s["chat_id"] == OWNER)
-    community_send = next(s for s in tg.sends if s["chat_id"] == COMMUNITY)
-    assert owner_send["text"] == community_send["text"]
+    assert tg.sends == []
 
     tg.sends.clear()
     provider.result = MatchResult("final", {"full": (2., 1.)}, source="espn")
     poll(db, community)
-    assert {s["chat_id"] for s in tg.sends} == {COMMUNITY, OWNER}
+    assert tg.sends == []
     row = db.picks_for_date(DAY)[0]
     assert db.live_state(DAY, row["fixture_key"])["notifications_done"]
 
@@ -286,15 +275,12 @@ def test_owner_and_community_live_delivery_retry_independently(db, community):
     tg.fail.add(OWNER)
     provider.result = MatchResult("final", {"full": (2., 1.)}, source="espn")
     poll(db, community)
-    # Community succeeded, owner failed: the fixture must stay retryable
-    # (owner's failure alone blocks completion) without re-sending to the
-    # community, which already has its own receipt.
-    assert [s["chat_id"] for s in tg.sends] == [COMMUNITY]
+    assert tg.sends == []
     row = db.picks_for_date(DAY)[0]
-    assert not db.live_state(DAY, row["fixture_key"])["notifications_done"]
+    assert db.live_state(DAY, row["fixture_key"])["notifications_done"]
     tg.fail.clear()
     poll(db, community)
-    assert [s["chat_id"] for s in tg.sends] == [COMMUNITY, OWNER]
+    assert tg.sends == []
     assert db.live_state(DAY, row["fixture_key"])["notifications_done"]
     assert provider.calls == 1  # settlement/provider lookup not repeated on retry
 
@@ -307,7 +293,7 @@ def test_no_owner_configured_never_blocks_community_delivery(db, community):
     tg.sends.clear()
     provider.result = MatchResult("final", {"full": (2., 1.)}, source="espn")
     poll(db, community)
-    assert [s["chat_id"] for s in tg.sends] == [COMMUNITY]
+    assert tg.sends == []
     row = db.picks_for_date(DAY)[0]
     assert db.live_state(DAY, row["fixture_key"])["notifications_done"]
 
@@ -347,13 +333,16 @@ def test_community_filtered_reversed_leg_preserves_score_orientation(db, communi
         revision = db.create_ticket_revision(DAY, "community-test-evaluation", "2030-06-01T09:00:00Z")
     assert db.claim_ticket_publication(DAY, "daily", revision, "group", recipient_id=COMMUNITY)
     db.finish_ticket_publication(DAY, "daily", revision, "group", state="sent", message_id="daily-card")
-    # Live lookup uses the first stored row for score orientation, while the
-    # Daily receipt authorizes only its distinct selection for delivery.
+    # Live monitoring still settles in the first stored row's score orientation.
     tg.sends.clear()
     provider.result = MatchResult("final", {"full": (2., 1.)}, source="espn")
     poll(db, community)
-    assert len(tg.sends) == 1 and "Arsenal 1–2 Chelsea" in tg.sends[0]["text"]
-    assert "— WON" in tg.sends[0]["text"] and provider.calls == 1
+    assert tg.sends == []
+    fixture_key = db.picks_for_date(DAY)[0]["fixture_key"]
+    fixture_rows = [row for row in db.picks_for_date(DAY) if row["fixture_key"] == fixture_key]
+    assert {row["status"] for row in fixture_rows} == {"won"}
+    assert provider.calls == 1
+    assert provider.calls == 1
 
 
 @pytest.mark.parametrize("command", ["/top", "/daily", "/stats", "/yesterday", "/all", "/timezone", "/help"])

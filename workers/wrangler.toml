@@ -18,14 +18,11 @@ DELIVERY_TIME = "09:30"
 RECAP_TIME = "07:45"
 # WHY: set this to the deploy date after migration 0012; empty disables result GIFs.
 RESULT_GIFS_START_DATE = "2026-10-18"
-# Latest the recap may wait for yesterday's settlement before posting anyway (never skipped entirely). Must stay inside the CRON_RECAP_SWEEP window (07:00-08:55 Lagos).
+# Latest the recap may wait for the week's settlement before posting anyway (never skipped entirely). Must stay inside the Sunday CRON_RECAP_SWEEP window (07:00-08:55 Lagos).
 RECAP_DEADLINE = "08:45"
-# Match-start alerts are only sent from kickoff through this many minutes after kickoff, then expire.
-# Must equal stage8-live-monitor-production.yml's MATCH_START_WINDOW_MIN env var: a start event has
-# to clear GitHub's schedule jitter, the D1 export/apply round trip and this Worker's own sweep before
-# this window closes, so 10 minutes dropped nearly every alert.
+# Retained for event recording/reconciliation; match-start/end events are not delivered to Telegram.
 MATCH_START_WINDOW_MIN = "45"
-# Match-end alerts expire this many hours after the result was recorded.
+# Retained for event recording/reconciliation; match-end events are not delivered to Telegram.
 MATCH_END_WINDOW_HOURS = "24"
 # Minutes between the Worker's own on-demand dispatches of stage8-live-monitor-production.yml
 # (CRON_DELIVER_SWEEP decides whether there is any work before dispatching at all).
@@ -62,7 +59,7 @@ PRO_POLICY_MODE = "evidence_v2"
 # exact string equality, never a substring, so these four strings must stay
 # byte-identical to those constants.
 [triggers]
-crons = ["*/5 8-22 * * *", "*/5 6-7 * * *", "*/5 * * * *", "0 10 * * *"]
+crons = ["*/5 8-22 * * *", "*/5 6-7 * * 0", "*/5 * * * *", "0 10 * * *"]
 
 # Secrets (never in this file):
 #   wrangler secret put TELEGRAM_BOT_TOKEN

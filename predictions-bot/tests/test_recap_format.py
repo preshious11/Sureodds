@@ -122,16 +122,20 @@ def test_recap_card_serves_the_summary_card(db):
     assert "Geylang International FC Win" in text and "@1.44" in text
 
 
-def test_recap_job_renders_the_new_card(db, capsys):
-    today_utc = datetime.now(timezone.utc)
-    y = (today_utc - timedelta(days=1)).strftime("%Y-%m-%d")
-    _pick(db, date=y, label="Geylang International FC Win", price=1.44)
+def test_recap_job_renders_the_new_card(db, capsys, monkeypatch):
+    today_utc = TODAY
+    monkeypatch.setattr(recap, "utcnow", lambda: today_utc)
+    for offset in range(7):
+        day = (today_utc.date() - timedelta(days=7 - offset)).isoformat()
+        _pick(db, date=day, rank=offset + 1, label="Geylang International FC Win", price=1.44)
 
+    # TODAY is Sunday, and the report covers the completed Sunday-Saturday week.
     text = recap.run(db, Config(timezone="UTC"), None, dry_run=True)
 
     # The recap is marks-only: no teams, scores, markets or odds.
-    assert text.startswith("📊 SUREODDS RESULTS")
-    assert "⚽ DAILY PICKS" in text and "✅" in text and "1 Win | 0 Losses" in text
+    assert text.startswith("📊 SUREODDS WEEKLY RESULTS")
+    assert "2030-05-26 – 2030-06-01" in text
+    assert "⚽ DAILY PICKS" in text and "✅" in text and "7 Wins | 0 Losses" in text
     assert "Geylang" not in text and "@1.44" not in text
     assert text in capsys.readouterr().out
 
@@ -144,8 +148,8 @@ def test_failed_configured_recap_is_retryable_and_only_success_is_recorded(db, m
     tg.enabled.return_value = True
     tg.send.side_effect = [None, "sent"]
     assert recap.run(db, cfg, tg)
-    assert not db.post_done("recap", YESTERDAY)
+    assert not db.post_done("weekly_recap", YESTERDAY)
     assert recap.run(db, cfg, tg)
-    assert db.post_done("recap", YESTERDAY)
+    assert db.post_done("weekly_recap", YESTERDAY)
     assert recap.run(db, cfg, tg, force=True) is None
     assert tg.send.call_count == 2

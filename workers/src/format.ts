@@ -434,12 +434,12 @@ export function compactRecapSection(title: string, statuses: string[]): string[]
   return [title, "", marks, "", parts.join(" | ")];
 }
 
-export function compactRecapText(top: string[], daily: string[]): string | null {
+export function compactRecapText(top: string[], daily: string[], heading = "📊 SUREODDS RESULTS", period?: string): string | null {
   const sections: string[][] = [];
   if (top.length) sections.push(compactRecapSection("🏆 BET OF THE DAY", top));
   if (daily.length) sections.push(compactRecapSection("⚽ DAILY PICKS", daily));
   if (!sections.length) return null;
-  return ["<b>📊 SUREODDS RESULTS</b>", ...sections.map((s) => ["", ...s].join("\n"))].join("\n");
+  return [`<b>${heading}</b>`, ...(period ? [period] : []), ...sections.map((s) => ["", ...s].join("\n"))].join("\n");
 }
 
 export const NO_RESULTS_YET = "📊 No results yet — the first recap arrives the morning after the first slate.";

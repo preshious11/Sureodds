@@ -415,19 +415,20 @@ def _seed_yesterday_fixture(db, pick_date: str, start_utc: str) -> None:
 
 
 def test_deliver_recap_waits_for_the_last_fixture_then_dedupes(db, monkeypatch):
-    """Recap lands only after the day's last fixture has finished in their zone."""
+    """Weekly recap lands only after Saturday's last fixture has finished."""
     db.subscriber_add("42")
-    _seed_yesterday_fixture(db, "2030-05-31", "2030-05-31T23:00:00Z")   # +4h buffer -> 03:00
+    _seed_yesterday_fixture(db, "2030-06-01", "2030-06-01T23:00:00Z")   # +4h buffer -> Sunday 03:00
     tg = FakeTG()
     cfg = Config(timezone="UTC")
+    text = "📊 SUREODDS WEEKLY RESULTS\n2030-05-26 – 2030-06-01"
 
-    _freeze(monkeypatch, "2030-06-01T02:00:00")          # fixtures still running
-    assert broadcast.deliver_recap(db, cfg, tg, "📊 RESULTS · Sat 31 May") == 0
+    _freeze(monkeypatch, "2030-06-02T02:00:00")          # Sunday, but fixture still running
+    assert broadcast.deliver_recap(db, cfg, tg, text) == 0
     assert tg.sends == []
 
-    _freeze(monkeypatch, "2030-06-01T04:00:00")          # last fixture done
-    assert broadcast.deliver_recap(db, cfg, tg, "📊 RESULTS · Sat 31 May") == 1
-    assert broadcast.deliver_recap(db, cfg, tg, "📊 RESULTS · Sat 31 May") == 0
+    _freeze(monkeypatch, "2030-06-02T04:00:00")          # Sunday, last fixture done
+    assert broadcast.deliver_recap(db, cfg, tg, text) == 1
+    assert broadcast.deliver_recap(db, cfg, tg, text) == 0
     assert len(tg.sends) == 1
 
 
@@ -494,4 +495,3 @@ def test_page_callbacks_still_work_after_router_change(db):
 def datetime_now_utc() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-

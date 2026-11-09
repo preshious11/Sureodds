@@ -10,7 +10,7 @@ import {
   getDayCache,
   getFirstPickDate,
   getItemizedStatsRowsForDate,
-  getRecapStatuses,
+  getRecapStatusesForRange,
   getStatsAggregateForRange,
   getStatsRowsForDate,
   getStatsRowsForDateByCollection,
@@ -433,14 +433,18 @@ async function renderStatsLike(
  * reuse the interactive view's title verbatim.
  */
 export async function renderGroupRecap(env: Env, localDate: string): Promise<{ text: string }> {
-  // Compact marks-only recap of YESTERDAY's published Top and Daily picks.
-  // Membership-scoped queries: an All-only prediction can never appear.
-  const yesterday = shiftDate(localDate, -1);
+  // Sunday morning reports the previous Sunday through Saturday, after that
+  // completed week has had its final settlement run.
+  const sinceDate = shiftDate(localDate, -7);
+  const throughDate = shiftDate(localDate, -1);
   const [top, daily] = await Promise.all([
-    getRecapStatuses(env.DB, yesterday, "top"),
-    getRecapStatuses(env.DB, yesterday, "daily"),
+    getRecapStatusesForRange(env.DB, sinceDate, localDate, "top"),
+    getRecapStatusesForRange(env.DB, sinceDate, localDate, "daily"),
   ]);
-  return { text: compactRecapText(top, daily) ?? `<b>📊 SUREODDS RESULTS</b>\n\n${NO_RESULTS_YET}` };
+  return {
+    text: compactRecapText(top, daily, "📊 SUREODDS WEEKLY RESULTS", `${sinceDate} – ${throughDate}`)
+      ?? `<b>📊 SUREODDS WEEKLY RESULTS</b>\n${sinceDate} – ${throughDate}\n\n${NO_RESULTS_YET}`,
+  };
 }
 
 export async function renderView(
@@ -499,15 +503,10 @@ export async function renderView(
 
 
 export async function renderRecapStats(env: Env, day: string): Promise<string> {
-  // WHY: reuse the existing aggregate and formatter without rendering a user-facing stats route.
-  const [yesterday, seven] = await Promise.all([
-    getStatsAggregateForRange(env.DB,shiftDate(day,-1),day),
-    getStatsAggregateForRange(env.DB,shiftDate(day,-7),day),
-  ]);
-  const block = (label: string, aggregate: typeof yesterday) => {
+  const aggregate = await getStatsAggregateForRange(env.DB, shiftDate(day, -7), day);
+  const block = (label: string) => {
     const lines = historicalLines(label, statsBlockFromAggregate(aggregate));
-    // WHY: a forced recap with pending legs must still identify both statistics windows.
     return lines.length ? lines : [label, 'No settled results yet.'];
   };
-  return [...block('Yesterday', yesterday), '', ...block('Last 7 days', seven)].map(escHtml).join('\n');
+  return block('Weekly performance').map(escHtml).join('\n');
 }

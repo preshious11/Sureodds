@@ -535,7 +535,7 @@ def _compact_section(title: str, statuses) -> List[str]:
     return [title, "", " ".join(_COMPACT_MARK.get(s, "⏳") for s in statuses), "", " | ".join(parts)]
 
 
-def compact_recap_message(top, daily) -> Optional[str]:
+def compact_recap_message(top, daily, heading="📊 SUREODDS RESULTS", period: Optional[str] = None) -> Optional[str]:
     """Marks-only recap of PUBLISHED Top and Daily settlement statuses: no teams, scores, markets or odds. Half
     results, pushes and voids keep their own labels and are never folded into full wins or losses."""
     sections = []
@@ -545,7 +545,7 @@ def compact_recap_message(top, daily) -> Optional[str]:
         sections.append(_compact_section("⚽ DAILY PICKS", daily))
     if not sections:
         return None
-    return "\n".join(["📊 SUREODDS RESULTS"] + ["\n".join([""] + sec) for sec in sections])
+    return "\n".join([heading] + ([period] if period else []) + ["\n".join([""] + sec) for sec in sections])
 
 
 def stats_message(s: Dict) -> str:

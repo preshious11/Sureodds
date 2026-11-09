@@ -1,4 +1,4 @@
-"""Tiny in-process scheduler (no external deps): daily recap, daily picks and
+"""Tiny in-process scheduler (no external deps): weekly recap, daily picks and
 smart settlement (runs after all predictions end), all in the configured timezone.
 
 Overlap: a job never runs twice at once in this process. While a job's previous run is still going, it is not
@@ -78,6 +78,11 @@ class DailyJob(_Runner):
             return                         # not marked as run: retried on the next tick
         self.last_run_date = to_local(now, self.tz).strftime("%Y-%m-%d")
         self._start()
+
+
+class WeeklyJob(DailyJob):
+    def due(self, now: datetime) -> bool:
+        return to_local(now, self.tz).weekday() == 6 and super().due(now)
 
 
 class IntervalJob(_Runner):

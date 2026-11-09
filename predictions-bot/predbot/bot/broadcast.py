@@ -372,7 +372,7 @@ def deliver_picks(db: Database, cfg, tg: Telegram,
 
 
 def deliver_recap(db: Database, cfg, tg: Telegram, text: Optional[str]) -> int:
-    """Send recap to each subscriber after last fixture ends in their timezone.
+    """Send the weekly recap to subscribers after the reporting Saturday ends.
 
     Disabled entirely when ``SUBSCRIBER_DELIVERY_ENABLED`` is false; the
     channel recap is unaffected.
@@ -381,13 +381,19 @@ def deliver_recap(db: Database, cfg, tg: Telegram, text: Optional[str]) -> int:
         return 0
     if not text:
         return 0
-    yesterday = (to_local(utcnow(), cfg.timezone) - timedelta(days=1)).strftime("%Y-%m-%d")
+    local = to_local(utcnow(), cfg.timezone)
+    if local.weekday() != 6:
+        return 0
+    report_end = (local - timedelta(days=1)).strftime("%Y-%m-%d")
+    report_start = (local - timedelta(days=7)).strftime("%Y-%m-%d")
+    if f"{report_start} – {report_end}" not in text:
+        return 0
     lock = run_lock(db, "recap")
     if not lock.acquire(blocking=False):
         log.info("broadcast: a recap delivery run is still in progress - not starting another")
         return 0
     try:
-        return _deliver_recap_after_fixtures(db, cfg, tg, "recap", yesterday, text, "recap")
+        return _deliver_recap_after_fixtures(db, cfg, tg, "weekly_recap", report_end, text, "weekly recap")
     finally:
         lock.release()
 
@@ -533,10 +539,10 @@ def recap_text_for(db: Database, cfg, date_str: str) -> str:
 
 def _deliver_recap_after_fixtures(db: Database, cfg, tg: Telegram, kind: str, date_str: str,
                                    text: str, label: str) -> int:
-    """Send the recap of ``date_str`` to each subscriber once that day's last fixture has ended.
+    """Send a weekly recap once the reporting Saturday's last fixture has ended.
 
-    The end is one instant for everybody; a subscriber's zone does not change it. The card is computed once per
-    run, the receipt is written as each send is accepted, and a shutdown request stops the run between chats."""
+    The end is one instant for everybody; a subscriber's zone does not change it. The receipt is written as each
+    send is accepted, and a shutdown request stops the run between chats."""
     if not tg.token or not text:
         return 0
     last_fixture_end = _get_last_fixture_end_time(db, date_str)
@@ -556,7 +562,7 @@ def _deliver_recap_after_fixtures(db: Database, cfg, tg: Telegram, kind: str, da
             log.info("recap: shutdown requested - stopping; the rest is sent by the next run")
             break
         if card is None:
-            card = recap_text_for(db, cfg, date_str)
+            card = text
         if tg.send(card, chat_id=chat_id):
             db.mark_delivery(kind, date_str, chat_id)
             sent += 1

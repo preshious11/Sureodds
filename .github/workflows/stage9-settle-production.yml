@@ -23,7 +23,7 @@ name: stage9-settle-production
 
 on:
   schedule:
-    - cron: "30 5 * * *" # 05:30 UTC = 06:30 Africa/Lagos (no DST) - before the 07:45 recap
+    - cron: "30 5 * * *" # 05:30 UTC = 06:30 Africa/Lagos (no DST) - before Sunday's 07:45 weekly recap
     - cron: "30 22 * * *" # 22:30 UTC = 23:30 Africa/Lagos
   workflow_dispatch:
     inputs:

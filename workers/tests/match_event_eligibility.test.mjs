@@ -545,6 +545,9 @@ describe("daily posting schedule and failure handling", () => {
     const m = /crons\s*=\s*\[([^\]]*)\]/.exec(toml);
     const crons = [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
     for (const c of [CRON_POST_SWEEP, CRON_RECAP_SWEEP, CRON_DELIVER_SWEEP]) assert.ok(crons.includes(c), c);
+    assert.ok(!crons.includes("*/5 6-7 * * *"), "daily recap cron is removed");
+    assert.match(readFileSync(new URL("../bot/systemd/sureodds-recap-sweep.timer", import.meta.url), "utf8"),
+      /OnCalendar=Sun \*-\*-\* 06\.\.07:00\/5:00/);
     // 08:00 UTC is 09:00 Lagos (UTC+1, no DST); 06:00 UTC is 07:00 Lagos.
     assert.equal(lagosMinutes(Date.UTC(2026, 9, 16, 8, 0)), 9 * 60);
     assert.equal(lagosMinutes(Date.UTC(2026, 9, 16, 6, 45)), 7 * 60 + 45);
@@ -600,7 +603,7 @@ describe("daily posting schedule and failure handling", () => {
     assert.deepEqual(r.sent.map((s) => s.chat), ["-100"]);
   });
 
-  it("handleScheduled routes the deliver sweep to match events", async () => {
+  it("handleScheduled records match state but does not send match-event notifications", async () => {
     const w = world();
     w.fixture("fx", { collections: ["top"], live: "in_progress" });
     w.publish("top");
@@ -617,16 +620,14 @@ describe("daily posting schedule and failure handling", () => {
     } finally {
       globalThis.fetch = realFetch;
     }
-    // 2 for the match-event (group + owner), +1 for maybeDispatchLiveMonitor's
-    // missing-config alert to the owner (bug 6): the "in_progress" fixture's
-    // live_fixture_state row has notifications_done=0, which is real work,
-    // and this env has no GITHUB_REPO/TOKEN configured.
-    assert.equal(calls, 3);
+    // The remaining call is maybeDispatchLiveMonitor's missing-config alert;
+    // the match event itself is recorded but never sent.
+    assert.equal(calls, 1);
   });
 });
 
 describe("integration: publication -> kickoff -> settlement -> full time -> next-morning recap", () => {
-  it("runs the whole day through the real cron dispatcher; All-only stays out; only group + owner receive anything", async () => {
+  it("runs the whole day through the real dispatcher; match events are not sent and weekly recap remains", async () => {
     const w = world();
     const env = { ...w.env, STAGE3_CRON_ENABLED: "1", TELEGRAM_BOT_TOKEN: "t" };
     w.sql.exec("CREATE TABLE telegram_updates(update_id INTEGER, status TEXT, attempts INTEGER, last_error TEXT)");
@@ -668,15 +669,12 @@ describe("integration: publication -> kickoff -> settlement -> full time -> next
       // Live monitor (GitHub Actions) records start events for tracked fixtures only; All-only has none.
       for (const k of ["top-fx", "daily-fx", "both-fx"]) w.event(k, "start");
       sent.length = 0;
-      // live_fixture_state rows exist with notifications_done=0, so
-      // maybeDispatchLiveMonitor (bug 6) sees real work; this env has no
-      // GITHUB_REPO/TOKEN configured, so it DMs the owner once (the +1
-      // below) instead of dispatching — claimPost-guarded, so the second
-      // sweep's duplicate check still holds at the same total.
+      // The match events are not sent. The missing live-monitor dispatch
+      // configuration still produces its single owner operational alert.
       await handleScheduled(env, CRON_DELIVER_SWEEP, KICKOFF + 2 * 60_000);
-      assert.equal(sent.length, 7, "3 fixtures x (group, owner), plus one missing-live-monitor-config alert");
+      assert.equal(sent.length, 1, "only the missing-live-monitor-config alert is sent");
       await handleScheduled(env, CRON_DELIVER_SWEEP, KICKOFF + 7 * 60_000);
-      assert.equal(sent.length, 7, "duplicate sweep sends nothing more");
+      assert.equal(sent.length, 1, "duplicate sweep sends nothing more");
 
       // Full time: settlement lands, end events follow.
       w.sql.prepare("UPDATE live_fixture_state SET status='final', settlement_done=1").run();
@@ -686,20 +684,19 @@ describe("integration: publication -> kickoff -> settlement -> full time -> next
       sent.length = 0;
       await handleScheduled(env, CRON_DELIVER_SWEEP, KICKOFF + 120 * 60_000);
       await handleScheduled(env, CRON_DELIVER_SWEEP, KICKOFF + 125 * 60_000);
-      assert.equal(sent.length, 6);
+      assert.equal(sent.length, 0, "match-end alerts and result messages stay disabled");
       assert.ok(w.sql.prepare("SELECT status FROM picks WHERE id=?").get(allFx).status === "pending", "All-only never settled");
 
-      // 07:50 Lagos next morning: compact recap to group + owner.
+      // 07:50 Lagos Sunday: weekly recap to owner.
       sent.length = 0;
-      await handleScheduled(env, CRON_RECAP_SWEEP, Date.UTC(2026, 9, 17, 6, 50));
+      await handleScheduled(env, CRON_RECAP_SWEEP, Date.UTC(2026, 9, 18, 6, 50));
       assert.equal(sent.length, 1);
       assert.equal(sent[0].chat, "999");
-      const recap = sent[0].text.split("\n\nYesterday")[0];
-      assert.equal(
-        recap,
-        "<b>📊 SUREODDS RESULTS</b>\n\n🏆 BET OF THE DAY\n\n✅ ✅\n\n2 Wins | 0 Losses\n\n⚽ DAILY PICKS\n\n❌ ✅\n\n1 Win | 1 Loss"
-          .replace("❌ ✅", recap.includes("✅ ❌") ? "✅ ❌" : "❌ ✅"),
-      );
+      const recap = sent[0].text;
+      assert.match(recap, /<b>📊 SUREODDS WEEKLY RESULTS<\/b>/);
+      assert.match(recap, /2026-10-11 – 2026-10-17/);
+      assert.match(recap, /2 Wins \| 0 Losses/);
+      assert.match(recap, /1 Win \| 1 Loss/);
       assert.doesNotMatch(recap, /Hidden|H to Win|@|vs/);
     } finally {
       globalThis.fetch = realFetch;

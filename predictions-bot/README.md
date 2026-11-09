@@ -38,7 +38,7 @@ worker process (a Docker container; the root `Dockerfile` runs `python main.py`)
 - **Only picks that can be settled.** A candidate is accepted only if some provider
   can later return its result (see "Settlement"); otherwise it is rejected as
   `NO_RESULTS_PATH` and counted per league in the generation diagnostics.
-- **Auto-settlement + stats.** It posts a daily recap (each pick ✅/❌, win–loss,
+- **Auto-settlement + stats.** It posts a weekly recap (each pick ✅/❌, win–loss,
   best win, 7-day ROI) and a rolling 7-day record.
 
 ---
@@ -263,10 +263,10 @@ schedule) is documented in `.env.example`.
 Community mode uses the existing `TELEGRAM_CHAT_ID`; no extra destination variables
 are needed. Top and Daily are separate static cards sent when the existing
 `POST_TIME` generation finishes. Private prediction views retain their keyboards.
-The daily recap goes to the configured destination at `RECAP_TIME`. With live
-updates enabled, Match Started/Ended messages include only predictions in Top/Daily
-collections successfully published to that destination. Match Ended uses the
-existing settled prediction statuses and formatter.
+The weekly recap covers the previous Sunday through Saturday and goes to the
+configured destination at `RECAP_TIME` on Sunday. Live match monitoring and result
+settlement continue, but match-start, match-end, and individual outcome messages
+are not sent.
 
 Successful configured cards keep their existing `posts` markers and also record
 `community_picks_top` / `community_picks_daily` destination receipts in the existing
@@ -337,13 +337,13 @@ python cli.py test-post          # verify Telegram works
 python cli.py picks --dry-run    # build today's picks without posting
 python cli.py picks              # build and post
 python cli.py settle             # settle finished games now
-python cli.py recap              # post yesterday's recap
+python cli.py recap              # post this week's recap (Sunday only)
 python cli.py stats              # print the rolling record
 python cli.py budget             # show API usage today / this month
 python main.py                   # run the scheduler (what the container runs)
 ```
 
-`main.py` runs the scheduler loop: recap at `RECAP_TIME`, picks generated at
+`main.py` runs the scheduler loop: weekly recap on Sunday at `RECAP_TIME`, picks generated at
 `POST_TIME` and posted to `TELEGRAM_CHAT_ID`, optional subscriber delivery at
 `DELIVERY_TIME`, a PARTIAL slate retried every
 `CACHE_RETRY_SECONDS` until then, and settlement dynamically after the day's last
@@ -805,3 +805,44 @@ existing pinned markup is not edited or automatically repinned.
 The overall/weakest rules, security guarantees, regression results, limitations
 and 12-step Telegram acceptance plan are documented in
 [the Phase 2C.3 report](TICKET_AUDIT_FOUNDATION_REPORT.md#29-phase-2c3--private-telegram-ticket-audit-v1).
+
+## SportyBet Top Picks booking-code generation
+
+The separate [booking command](./tools/sporty_booking_generate.py) reads the
+active Top Picks revision from `DB_PATH` through the database collection API.
+It never regenerates or updates predictions. Its default mode validates the
+complete collection against SportyBet without creating a code:
+
+```powershell
+python tools/sporty_booking_generate.py --date YYYY-MM-DD
+```
+
+Live creation requires both `--live` and
+`SPORTYBET_BOOKING_ENABLED=true`. It is limited to five selections, rejects
+odds drift, reserves one slot in a separate durable quota ledger before its
+single creation request, and discloses a code only after exact readback
+verification. The default daily creation limit is one. An ambiguous creation
+outcome consumes that slot and must not be retried. Verified results are sent
+only to the single configured owner's private Telegram chat; no group,
+subscriber, publication-ledger, or prediction-post path is used.
+
+On Oracle, first verify that `DB_PATH` names the existing Python predictions
+database with the expected collection/revision schema. Do not point it at the
+Worker/D1 database unless that database is proven to provide this same
+interface. Configure `/etc/sureodds/sporty-booking.env` with the verified
+`DB_PATH`, the existing Telegram bot token, exactly one owner in
+`TELEGRAM_ADMIN_IDS`, and deliberate booking enablement. Keep the service
+manual; do not install or enable a timer. The
+[systemd oneshot unit](./systemd/sureodds-sporty-booking.service) has a
+180-second timeout and an exclusive process lock:
+
+```sh
+sudo install -m 0644 systemd/sureodds-sporty-booking.service \
+  /etc/systemd/system/sureodds-sporty-booking.service
+sudo systemctl daemon-reload
+sudo systemctl start sureodds-sporty-booking.service
+```
+
+Only start it after the Oracle database, catalogue access, Telegram owner
+destination, quota ledger, and active revision have been independently
+verified. This command is separate from prediction generation and settlement.
