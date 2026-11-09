@@ -87,8 +87,28 @@ def test_summarize_snapshot_never_leaks_secrets_or_internals():
     text = json.dumps(summarize_snapshot(snap))
     assert "SECRET" not in text
     assert set(json.loads(text)) == {"snapshot_status", "snapshot_date", "top_picks",
-                                     "daily_picks", "all_predictions", "provider_coverage",
-                                     "error_type", "error_traceback"}
+                                     "daily_picks", "all_predictions", "selection",
+                                     "provider_coverage", "error_type", "error_traceback"}
+
+
+def test_summarize_snapshot_includes_allowlisted_selector_diagnostics():
+    snap = _snapshot(status="COMPLETE", generation={
+        "ticket_candidates": 490,
+        "top": {"candidates": 0, "selected": 0, "rejections": {"below_probability": 456},
+                "provider_payload": "must not appear"},
+        "daily": {"candidates": 13, "selected": 0, "combined_odds": 1.92,
+                  "reason": "target_unreachable", "rejections": {"price_range": 1}},
+        "provider_coverage": {},
+        "api_key": "sk-live-SECRET",
+    })
+    summary = summarize_snapshot(snap)
+    assert summary["selection"] == {
+        "ticket_candidates": 490,
+        "top": {"candidates": 0, "selected": 0, "rejections": {"below_probability": 456}},
+        "daily": {"candidates": 13, "selected": 0, "combined_odds": 1.92,
+                  "reason": "target_unreachable", "rejections": {"price_range": 1}},
+    }
+    assert "SECRET" not in json.dumps(summary)
 
 
 def test_summarize_snapshot_carries_sanitized_traceback():

@@ -110,12 +110,26 @@ def summarize_snapshot(snapshot) -> dict:
     """
     generation = getattr(snapshot, "generation", None) or {}
     coverage = generation.get("provider_coverage") or {}
+    selection = {}
+    for product in ("top", "daily"):
+        diagnostics = generation.get(product)
+        if isinstance(diagnostics, dict):
+            selection[product] = {
+                key: diagnostics[key]
+                for key in ("candidates", "selected", "combined_odds", "target_reached",
+                            "reason", "rejections", "search_details")
+                if key in diagnostics
+            }
     return {
         "snapshot_status": getattr(snapshot, "status", "unknown"),
         "snapshot_date": getattr(snapshot, "date", ""),
         "top_picks": len(getattr(snapshot, "top_picks", None) or []),
         "daily_picks": len(getattr(snapshot, "daily_picks", None) or []),
         "all_predictions": len(getattr(snapshot, "all_predictions", None) or []),
+        "selection": {
+            "ticket_candidates": generation.get("ticket_candidates"),
+            **selection,
+        },
         "provider_coverage": {
             "required": list(coverage.get("required", [])),
             "missing_required": list(coverage.get("missing_required", [])),
