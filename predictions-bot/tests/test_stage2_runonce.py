@@ -8,6 +8,8 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from run_once import summarize_snapshot
+from run_once import summarize_selection_candidates
+from predbot.config import Config
 
 RUN_ONCE = os.path.join(os.path.dirname(__file__), "..", "run_once.py")
 
@@ -109,6 +111,61 @@ def test_summarize_snapshot_includes_allowlisted_selector_diagnostics():
                   "reason": "target_unreachable", "rejections": {"price_range": 1}},
     }
     assert "SECRET" not in json.dumps(summary)
+
+
+def test_summarize_selection_candidates_replays_the_stored_ticket_pool():
+    rows = []
+    for number in range(2):
+        rows.append({
+            "id": f"candidate-{number}",
+            "pick_date": "2030-06-01",
+            "fixture_key": f"fixture-{number}",
+            "canonical_event_id": f"event-{number}",
+            "status": "pending",
+            "home": f"Home {number}",
+            "away": f"Away {number}",
+            "sport": "football",
+            "league": f"League {number}",
+            "start_utc": "2030-06-02T12:00:00Z",
+            "market": "result3",
+            "selection": "home",
+            "period": "full",
+            "stat": "points",
+            "entity": "all",
+            "line": None,
+            "price": 1.5,
+            "prob": 0.6,
+            "ev": -0.1,
+            "edge_ev": None,
+            "rank_score": 0.6,
+            "quality": "main",
+            "books": 3,
+            "sources": json.dumps({"_notes": {
+                "evidence": {"lcb": 0.55},
+                "independent": False,
+                "edge": 0,
+            }}),
+        })
+
+    class CandidateDb:
+        def ticket_candidate_rows(self, day):
+            assert day == "2030-06-01"
+            return rows
+
+    snapshot = SimpleNamespace(
+        date="2030-06-01",
+        generation={"generated_at": "2030-06-01T18:00:00Z"},
+    )
+    trace = summarize_selection_candidates(CandidateDb(), Config(), snapshot)
+
+    assert trace["available"] is True
+    assert trace["evaluated_at"] == "2030-06-01T18:00:00Z"
+    assert trace["ticket_candidates"] == 2
+    assert trace["top"]["rejections"] == {"below_probability": 2}
+    assert trace["daily"]["reason"] == "target_unreachable"
+    assert trace["daily"]["combined_odds"] == 2.25
+    assert len(trace["daily_eligible_candidates"]) == 2
+    assert "sources" not in trace["daily_eligible_candidates"][0]
 
 
 def test_summarize_snapshot_carries_sanitized_traceback():
