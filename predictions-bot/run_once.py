@@ -166,6 +166,16 @@ def summarize_selection_candidates(db, cfg, snapshot) -> dict:
               "price", "prob", "ev", "edge_ev", "rank_score", "quality", "books")
     daily_eligible.sort(key=lambda row: (row["start_utc"], row["fixture_key"], row["market"],
                                          row["selection"], row["price"]))
+    ticket_publications = db.query(
+        "SELECT collection, revision_id, destination, state, message_id, attempts, error "
+        "FROM ticket_publications WHERE pick_date=? ORDER BY collection, revision_id, destination",
+        (snapshot.date,),
+    )
+    posts = db.query(
+        "SELECT kind, message_id FROM posts WHERE post_date=? AND kind IN "
+        "('picks', 'picks_top', 'picks_daily') ORDER BY kind",
+        (snapshot.date,),
+    )
     return {
         "available": True,
         "evaluated_at": evaluated_at,
@@ -177,6 +187,11 @@ def summarize_selection_candidates(db, cfg, snapshot) -> dict:
         ],
         "recomputed_top_picks": len(top),
         "recomputed_daily_picks": len(daily),
+        "publication_records": {
+            "active_revision": db.active_ticket_revision(snapshot.date),
+            "ticket_publications": ticket_publications,
+            "legacy_posts": posts,
+        },
     }
 
 

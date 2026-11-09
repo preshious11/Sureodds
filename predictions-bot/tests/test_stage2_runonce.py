@@ -152,6 +152,14 @@ def test_summarize_selection_candidates_replays_the_stored_ticket_pool():
             assert day == "2030-06-01"
             return rows
 
+        def query(self, statement, params):
+            assert params == ("2030-06-01",)
+            return []
+
+        def active_ticket_revision(self, day):
+            assert day == "2030-06-01"
+            return None
+
     snapshot = SimpleNamespace(
         date="2030-06-01",
         generation={"generated_at": "2030-06-01T18:00:00Z"},
@@ -166,6 +174,11 @@ def test_summarize_selection_candidates_replays_the_stored_ticket_pool():
     assert trace["daily"]["combined_odds"] == 2.25
     assert len(trace["daily_eligible_candidates"]) == 2
     assert "sources" not in trace["daily_eligible_candidates"][0]
+    assert trace["publication_records"] == {
+        "active_revision": None,
+        "ticket_publications": [],
+        "legacy_posts": [],
+    }
 
 
 def test_summarize_snapshot_carries_sanitized_traceback():
