@@ -167,7 +167,7 @@ def summarize_selection_candidates(db, cfg, snapshot) -> dict:
     daily_eligible.sort(key=lambda row: (row["start_utc"], row["fixture_key"], row["market"],
                                          row["selection"], row["price"]))
     ticket_publications = db.query(
-        "SELECT collection, revision_id, destination, state, message_id, attempts, error "
+        "SELECT collection, revision_id, destination, state, message_id, attempts "
         "FROM ticket_publications WHERE pick_date=? ORDER BY collection, revision_id, destination",
         (snapshot.date,),
     )
