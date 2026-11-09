@@ -1,6 +1,5 @@
-// systemd timer entry point for the former CRON_RECAP_SWEEP trigger
-// ("*/5 6-7 * * *" - 07:00-08:55 Lagos). See post-sweep.ts's header comment -
-// same pattern, different cron constant.
+// systemd timer entry point for the weekly CRON_RECAP_SWEEP trigger
+// ("*/5 6-7 * * 0" - Sunday, 07:00-08:55 Lagos).
 import { handleScheduled, CRON_RECAP_SWEEP } from "../../src/cron.ts";
 import { requireEnvVars, buildServerEnv } from "../server-env.ts";
 

@@ -128,7 +128,7 @@ def _recap_world(db, monkeypatch, now_iso):
     from tests.test_subscribers_broadcast import _seed_yesterday_fixture
     for chat, zone in (("1", "Africa/Lagos"), ("2", "Asia/Tokyo"), ("3", "America/New_York")):
         db.subscriber_add(chat, timezone=zone)
-    _seed_yesterday_fixture(db, "2030-05-31", "2030-05-31T15:00:00Z")
+    _seed_yesterday_fixture(db, "2030-06-01", "2030-06-01T23:00:00Z")
     frozen = datetime.fromisoformat(now_iso).replace(tzinfo=timezone.utc)
     monkeypatch.setattr(broadcast, "utcnow", lambda: frozen)
     from predbot.jobs import stats
@@ -138,32 +138,34 @@ def _recap_world(db, monkeypatch, now_iso):
     return seen
 
 
-def test_the_recap_is_computed_once_for_its_explicit_date_whatever_each_subscribers_zone(db, monkeypatch):
-    # 16:00 UTC on 1 June = 17:00 Lagos (1 June), 01:00 Tokyo (2 June!), 12:00 New York (1 June)
-    seen = _recap_world(db, monkeypatch, "2030-06-01T16:00:00")
+def test_the_weekly_recap_is_shared_and_deduped_for_every_subscriber(db, monkeypatch):
+    # 16:00 UTC Sunday = 17:00 Lagos, 01:00 Tokyo Monday; all get the same Saturday report.
+    seen = _recap_world(db, monkeypatch, "2030-06-02T16:00:00")
     tg = FakeTG()
-    assert broadcast.deliver_recap(db, Config(timezone="Africa/Lagos"), tg, "x") == 3
-    assert len(seen) == 1                                       # once per run, not once per subscriber
-    assert seen[0].date().isoformat() == "2030-06-01"           # i.e. the recap of 31 May for every reader
-    assert len({s["text"] for s in tg.sends}) == 1               # Tokyo gets the same card as Lagos
-    assert {d for d in ("2030-05-31",) if db.deliveries_done("recap", d) == {"1", "2", "3"}} == {"2030-05-31"}
+    text = "📊 SUREODDS WEEKLY RESULTS\n2030-05-26 – 2030-06-01"
+    assert broadcast.deliver_recap(db, Config(timezone="Africa/Lagos"), tg, text) == 3
+    assert not seen                                             # each subscriber receives the shared weekly card
+    assert {s["text"] for s in tg.sends} == {text}
+    assert db.deliveries_done("weekly_recap", "2030-06-01") == {"1", "2", "3"}
 
 
 def test_overlapping_recap_runs_do_not_double_send(db, monkeypatch):
-    _recap_world(db, monkeypatch, "2030-06-01T16:00:00")
+    _recap_world(db, monkeypatch, "2030-06-02T16:00:00")
     lock = broadcast.run_lock(db, "recap")
     lock.acquire()                                              # a run is in progress
     try:
         tg = FakeTG()
-        assert broadcast.deliver_recap(db, Config(timezone="Africa/Lagos"), tg, "x") == 0 and tg.sends == []
+        text = "📊 SUREODDS WEEKLY RESULTS\n2030-05-26 – 2030-06-01"
+        assert broadcast.deliver_recap(db, Config(timezone="Africa/Lagos"), tg, text) == 0 and tg.sends == []
     finally:
         lock.release()
-    assert broadcast.deliver_recap(db, Config(timezone="Africa/Lagos"), FakeTG(), "x") == 3
+    assert broadcast.deliver_recap(db, Config(timezone="Africa/Lagos"), FakeTG(), text) == 3
 
 
 def test_the_recap_still_waits_for_the_last_fixture(db, monkeypatch):
-    _recap_world(db, monkeypatch, "2030-05-31T18:00:00")          # last kick-off 15:00 + 4 h not reached
-    assert broadcast.deliver_recap(db, Config(timezone="Africa/Lagos"), FakeTG(), "x") == 0
+    _recap_world(db, monkeypatch, "2030-06-02T02:00:00")          # Saturday kick-off 23:00 + 4 h not reached
+    text = "📊 SUREODDS WEEKLY RESULTS\n2030-05-26 – 2030-06-01"
+    assert broadcast.deliver_recap(db, Config(timezone="Africa/Lagos"), FakeTG(), text) == 0
 
 
 # ============================================================================== Telegram client

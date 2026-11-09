@@ -117,20 +117,17 @@ def test_start_final_multiple_tiers_repeated_polls_and_restart(db, env):
     db.close()
     db = Database(path)
     poll(db, env)
-    assert len(env[3].messages) == 1
-    assert "Chelsea to Win" in env[3].messages[0][1] and "Over 3.5" in env[3].messages[0][1]
+    assert not env[3].messages
     assert env[0].calls == 4  # once per fixture, not per tier
     final(env)
     poll(db, env)
     assert {r["status"] for r in db.picks_for_date(DAY)} == {"won", "lost"}
-    assert len(env[3].messages) == 2
-    assert "Chelsea 2–1 Arsenal" in env[3].messages[-1][1]
-    assert "— WON" in env[3].messages[-1][1] and "— LOST" in env[3].messages[-1][1]
+    assert not env[3].messages
     before = [dict(r) for r in db.picks_for_date(DAY)]
     db.close()
     db = Database(path)
     poll(db, env)
-    assert env[0].calls == 5 and len(env[3].messages) == 2
+    assert env[0].calls == 5 and not env[3].messages
     assert [dict(r) for r in db.picks_for_date(DAY)] == before
     assert Elo(db).get("football", "Chelsea")[1] == 1
     assert len(db.query("SELECT * FROM results_seen")) == 1
@@ -149,7 +146,7 @@ def test_final_without_start_settles_before_duration_and_keeps_fallback_gate(db,
     monkeypatch.setattr(live_results.Calibrator, "refit", refit)
     poll(db, env)
     assert db.picks_for_date(DAY)[0]["status"] == "won"
-    assert len(env[3].messages) == 1 and "Match Ended" in env[3].messages[0][1]
+    assert not env[3].messages
     refit.assert_called_once()
     assert settle.run(fallback, db, env[2])["settled"] == 0
 
@@ -167,29 +164,25 @@ def test_recipient_eligibility_and_personalized_predictions(db, env):
     env[0].result = MatchResult("in_progress", source="espn")
     poll(db, env)
     assert env[0].calls == 2
-    top = [text for chat, text in env[3].messages if chat == "top"]
-    assert len(top) == 1 and "Chelsea to Win" in top[0] and "Over 2.5" not in top[0]
-    assert len([1 for chat, _ in env[3].messages if chat == "daily"]) == 2
-    assert not any(chat in ("late", "inactive") for chat, _ in env[3].messages)
+    assert not env[3].messages
 
 
-def test_failed_end_delivery_retries_only_missing_after_restart_without_refetch(db, env):
+def test_end_settlement_completes_without_telegram_delivery_or_refetch(db, env):
     pick(db)
     received(db, "1")
     received(db, "2")
     final(env)
-    env[3].fail.add("2")
     poll(db, env)
     settled_at = db.picks_for_date(DAY)[0]["settled_at"]
-    assert [c for c, _ in env[3].messages] == ["1"]
+    assert not env[3].messages
+    assert db.query("SELECT notifications_done FROM live_fixture_state")[0]["notifications_done"] == 1
     path = db.path
     db.close()
     db = Database(path)
-    env[3].fail.clear()
-    # Delivery can retry even after the stale tracking cutoff.
+    # Result tracking is complete and no Telegram send is retried.
     poll(db, env, NOW + timedelta(days=6))
     assert env[0].calls == 1
-    assert [c for c, _ in env[3].messages] == ["1", "2"]
+    assert not env[3].messages
     assert db.picks_for_date(DAY)[0]["settled_at"] == settled_at
     assert Elo(db).get("football", "Chelsea")[1] == 1
     db.close()
@@ -210,39 +203,38 @@ def test_crash_after_persisted_final_recovers_without_lookup(db, env, monkeypatc
     monkeypatch.setattr(live_results, "_settle_fixture", original)
     poll(db, env)
     assert not db.pending_picks() and env[0].calls == 1
-    assert len(env[3].messages) == 1
+    assert not env[3].messages
     db.close()
 
 
-def test_crash_between_settlement_and_send_does_not_repeat_grading(db, env, monkeypatch):
+def test_settlement_does_not_call_live_message_handlers(db, env, monkeypatch):
     pick(db)
     received(db)
     final(env)
-    deliver = live_results.deliver_live
-    monkeypatch.setattr(live_results, "deliver_live", Mock(side_effect=RuntimeError("crash")))
-    with pytest.raises(RuntimeError):
-        poll(db, env)
+    monkeypatch.setattr(live_results, "deliver_live", Mock(side_effect=AssertionError("must not send")))
+    poll(db, env)
     assert not db.pending_picks() and not env[3].messages
     path = db.path
     db.close()
     db = Database(path)
-    monkeypatch.setattr(live_results, "deliver_live", deliver)
     monkeypatch.setattr(live_results, "_settle_fixture", Mock(side_effect=AssertionError("settled twice")))
     poll(db, env)
-    assert env[0].calls == 1 and len(env[3].messages) == 1
+    assert env[0].calls == 1 and not env[3].messages
     assert Elo(db).get("football", "Chelsea")[1] == 1
     db.close()
 
 
 @pytest.mark.parametrize("status", ["postponed", "cancelled"])
-def test_postponed_cancelled_void_without_false_notification(db, env, status):
+def test_postponed_cancelled_matches_settle_without_notifications(db, env, status):
     pick(db)
     received(db)
     env[0].result = MatchResult(status, source="espn")
     poll(db, env)
     poll(db, env)
     assert db.picks_for_date(DAY)[0]["status"] == "void"
-    assert not env[3].messages and env[0].calls == 1
+    assert env[0].calls == 1
+    assert not env[3].messages
+    assert db.query("SELECT notifications_done FROM live_fixture_state")[0]["notifications_done"] == 1
 
 
 def test_no_early_or_stale_or_unknown_competition_polling(db, env):
@@ -260,9 +252,9 @@ def test_subscribers_never_multiply_result_calls(db, env):
         received(db, str(i))
     env[0].result = MatchResult("in_progress", source="espn")
     poll(db, env)
-    assert len(env[3].messages) == 100 and env[0].calls == 1
+    assert not env[3].messages and env[0].calls == 1
     poll(db, env)
-    assert len(env[3].messages) == 100 and env[0].calls == 2
+    assert not env[3].messages and env[0].calls == 2
 
 
 def test_espn_scoreboard_shared_between_fixtures_in_one_poll(db, env):
@@ -285,16 +277,16 @@ def test_free_source_priority_football_data_fallback_and_euroleague_final_only(d
     assert fd.calls == 0  # ESPN scheduled is authoritative
     env[0].result = None
     poll(db, env)
-    assert fd.calls == 1 and len(env[3].messages) == 1
+    assert fd.calls == 1 and not env[3].messages
     pick(db, sport="basketball", league="EuroLeague", sources={"_league_id": "euroleague"},
          home="Olympiacos", away="Real Madrid", provider_event_id="euro")
     euro = Provider("in_progress", "euroleague")
     env[1].providers["euroleague"] = euro
     poll(db, env)
-    assert euro.calls == 1 and len(env[3].messages) == 1
+    assert euro.calls == 1 and not env[3].messages
     euro.result = MatchResult("final", {"full": (92., 85.)}, source="euroleague")
     poll(db, env)
-    assert len(env[3].messages) == 2 and "Match Ended" in env[3].messages[-1][1]
+    assert not env[3].messages
 
 
 def test_unknown_football_competition_does_not_query_football_data(db, env):
@@ -320,7 +312,7 @@ def test_richer_final_path_once_and_missing_stat_stays_pending(db, env, availabl
     poll(db, env)
     assert env[0].calls == richer.calls == 1
     assert {p["status"] for p in db.picks_for_date(DAY)} == ({"won"} if available else {"pending"})
-    assert "— WON" in env[3].messages[0][1] if available else "— PENDING" in env[3].messages[0][1]
+    assert not env[3].messages
 
 
 def test_paid_result_lookup_only_on_ungradable_final_and_not_on_later_polls(db, env):
@@ -392,8 +384,7 @@ def test_reversed_fixture_legs_keep_score_orientation_and_learn_once(db, env):
     assert {r["status"] for r in db.picks_for_date(DAY)} == {"won"}
     assert Elo(db).get("football", "Chelsea")[1] == 1
     assert len(db.query("SELECT * FROM results_seen")) == 1
-    assert "Chelsea 2–1 Arsenal" in next(t for c, t in env[3].messages if c == "top")
-    assert "Arsenal 1–2 Chelsea" in next(t for c, t in env[3].messages if c == "daily")
+    assert not env[3].messages
 
 
 def test_normal_and_live_grading_match_and_stale_row_cannot_settle_twice(db, env, monkeypatch):
@@ -414,7 +405,7 @@ def test_normal_and_live_grading_match_and_stale_row_cannot_settle_twice(db, env
     assert db.picks_for_date("2030-05-31")[0]["status"] == early["status"]
 
 
-def test_fallback_settled_an_active_watch_still_gets_end_alert(db, env, monkeypatch):
+def test_fallback_settled_an_active_watch_completes_without_end_alert(db, env, monkeypatch):
     pick(db)
     received(db)
     env[0].result = MatchResult("in_progress", source="espn")
@@ -423,8 +414,7 @@ def test_fallback_settled_an_active_watch_still_gets_end_alert(db, env, monkeypa
     monkeypatch.setattr(settle, "utcnow", lambda: NOW + timedelta(hours=4))
     assert settle.run(ResultsResolver({"espn": env[0]}), db, env[2])["settled"] == 1
     poll(db, env, NOW + timedelta(hours=4))
-    assert len(env[3].messages) == 2
-    assert "Match Ended" in env[3].messages[-1][1]
+    assert not env[3].messages
     assert Elo(db).get("football", "Chelsea")[1] == 1
 
 
@@ -468,11 +458,29 @@ def test_scheduler_installs_optional_interval_without_startup_poll(db, env, monk
     main.main()
     run.assert_not_called()
     assert any(isinstance(j, main.DynamicJob) and j.name == "settle" for j in jobs)
-    assert any(j.name == "recap" for j in jobs)
+    recap_jobs = [j for j in jobs if j.name == "recap"]
+    assert len(recap_jobs) == 1 and isinstance(recap_jobs[0], main.WeeklyJob)
     live = [j for j in jobs if j.name == "live_results"]
     assert len(live) == int(enabled)
     if enabled:
         assert isinstance(live[0], main.IntervalJob) and live[0].every == timedelta(minutes=3)
+
+
+def test_weekly_recap_job_is_due_only_at_or_after_sunday_recap_time():
+    from predbot.jobs.scheduler import WeeklyJob
+
+    job = WeeklyJob("recap", "07:45", "Africa/Lagos", lambda: None)
+    saturday = parse_iso("2030-06-01T10:00:00Z")
+    sunday_before = parse_iso("2030-06-02T06:44:00Z")
+    sunday_due = parse_iso("2030-06-02T06:45:00Z")
+    monday = parse_iso("2030-06-03T08:00:00Z")
+
+    assert not job.due(saturday)
+    assert not job.due(sunday_before)
+    assert job.due(sunday_due)
+    job.last_run_date = "2030-06-02"
+    assert not job.due(sunday_due)
+    assert not job.due(monday)
 
 
 def test_overlapping_poll_is_skipped(db, env):

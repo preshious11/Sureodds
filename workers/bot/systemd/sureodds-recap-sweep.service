@@ -1,5 +1,5 @@
 [Unit]
-Description=Sureodds recap sweep (yesterday's results to the group)
+Description=Sureodds weekly recap sweep (previous Sunday-Saturday results to the owner)
 
 [Service]
 Type=oneshot

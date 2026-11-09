@@ -153,6 +153,9 @@ class UnifiedFetcher:
                     pool.store(pickset)
                     snapshot.generation.update(pool.package(self.cfg, iso(now)))
                     self._hydrate_collections(snapshot, pool)
+                    if kept_previous:
+                        snapshot.top_picks = cached.top_picks
+                        snapshot.daily_picks = cached.daily_picks
                     # WHY: recheck the actual stored card after the scratch fallback preview.
                     coverage = snapshot.generation.get('provider_coverage', {})
                     if coverage.get('fallback_used') and not (snapshot.top_picks or snapshot.daily_picks):
@@ -331,4 +334,3 @@ class UnifiedFetcher:
         pool = pool or PredictionPool.persistent(self.db, snapshot.date)
         for collection, attribute in (('all', 'all_predictions'), ('top', 'top_picks'), ('daily', 'daily_picks')):
             setattr(snapshot, attribute, [self._pick_from_row(r) for r in pool.rows(collection)])
-

@@ -67,12 +67,24 @@ def _channel_tg():
     return tg
 
 
+def _publishable_snapshot(db):
+    snapshot = _snapshot()
+    snapshot.top_picks[0].price = 2.2
+    for pick in snapshot.daily_picks:
+        pick.price = 2.2
+    with db.transaction():
+        db.create_ticket_revision(snapshot.date, "hardening-publication", snapshot.generated_at)
+    return snapshot
+
+
 def test_first_publication_posts_once_then_run_with_force_sends_nothing(db):
-    svc = _Service(_snapshot())
+    svc = _Service(_publishable_snapshot(db))
     tg = _channel_tg()
     daily_picks.run(None, db, CFG, tg, service=svc)
     assert tg.send.call_count == 2
-    assert db.post_done("picks_top", "2030-06-01") and db.post_done("picks_daily", "2030-06-01")
+    revision = db.active_ticket_revision("2030-06-01")
+    assert db.ticket_publication("2030-06-01", "top", revision, "group")["state"] == "sent"
+    assert db.ticket_publication("2030-06-01", "daily", revision, "group")["state"] == "sent"
 
     # /run equivalent: regeneration requested, but the cards are already posted.
     daily_picks.run(None, db, CFG, tg, force=True, service=svc)
@@ -81,7 +93,7 @@ def test_first_publication_posts_once_then_run_with_force_sends_nothing(db):
 
 
 def test_repeated_run_is_idempotent_from_the_channel_view(db):
-    svc = _Service(_snapshot())
+    svc = _Service(_publishable_snapshot(db))
     tg = _channel_tg()
     for force in (False, True, True):
         daily_picks.run(None, db, CFG, tg, force=force, service=svc)
@@ -91,7 +103,7 @@ def test_repeated_run_is_idempotent_from_the_channel_view(db):
 def test_recap_with_force_does_not_repost(db, monkeypatch):
     from predbot.jobs import recap
 
-    monkeypatch.setattr(recap, "utcnow", lambda: datetime(2030, 6, 1, 8, 0, tzinfo=timezone.utc))
+    monkeypatch.setattr(recap, "utcnow", lambda: datetime(2030, 6, 2, 8, 0, tzinfo=timezone.utc))
     tg = _channel_tg()
     # Seed one settled pick so there is something to recap.
     pid = db.insert_pick(dict(pick_date="2030-05-31", tier="all", rank=1, provider="sharpapi",
@@ -141,6 +153,9 @@ def test_late_night_empty_regeneration_preserves_the_valid_cached_snapshot(db, m
     fetcher = UnifiedFetcher(None, db, Config(timezone="UTC"))
     from predbot.util.timeutil import utcnow
     valid = _snapshot()
+    valid.top_picks[0].price = 2.2
+    for pick in valid.daily_picks:
+        pick.price = 2.2
     valid.date = _today()  # the cache key is today's date
     valid.status = "COMPLETE"
     fetcher._store(valid, utcnow())
@@ -250,12 +265,14 @@ def test_disabled_flag_stops_subscriber_recap(db):
 
 
 def test_channel_posting_continues_while_subscriber_delivery_is_disabled(db):
-    svc = _Service(_snapshot())
+    svc = _Service(_publishable_snapshot(db))
     tg = _channel_tg()
     cfg = Config(timezone="UTC", subscriber_delivery_enabled=False)
     daily_picks.run(None, db, cfg, tg, service=svc)
     assert tg.send.call_count == 2, "channel publishing must continue normally"
-    assert db.post_done("picks_top", "2030-06-01") and db.post_done("picks_daily", "2030-06-01")
+    revision = db.active_ticket_revision("2030-06-01")
+    assert db.ticket_publication("2030-06-01", "top", revision, "group")["state"] == "sent"
+    assert db.ticket_publication("2030-06-01", "daily", revision, "group")["state"] == "sent"
 
 
 def test_reenabled_flag_restores_subscriber_delivery(db):
@@ -296,11 +313,12 @@ def test_disabled_flag_skips_live_pushes_but_still_settles(db, monkeypatch):
     assert db.query("SELECT COUNT(*) AS n FROM deliveries WHERE kind LIKE 'match_%'")[0]["n"] == 0
 
 
-def test_enabled_flag_sends_live_pushes(db, monkeypatch):
+def test_enabled_flag_does_not_restore_live_pushes(db, monkeypatch):
     pick(db)
     received(db)
     provider, resolver, cfg, tg = _live_env(db, monkeypatch, enabled=True)
     final((provider,))
     live_results.run(resolver, db, cfg, tg, now=NOW)
     assert db.picks_for_date(DAY)[0]["status"] == "won"
-    assert len(tg.messages) == 1, "push restored when enabled"
+    assert tg.messages == [], "individual live messages remain disabled"
+    assert db.query("SELECT notifications_done FROM live_fixture_state")[0]["notifications_done"] == 1

@@ -5,7 +5,7 @@
 // with no triggers configured yet).
 //
 // Division of labour (Lagos times preserved: POST 09:00, DELIVERY 09:30,
-// RECAP 07:45):
+// weekly RECAP Sunday 07:45):
 //   Worker Cron (lightweight, no providers): delivery sweeps, update-retry
 //     observability, missed-run detection. Never generates, never refetches.
 //   GitHub Actions (heavy): generation + provider settlement (manual
@@ -29,7 +29,7 @@ import {
   getJobLastRunAt,
   type MatchEventContext,
   type MatchEventRow,
-  getRecapStatuses,
+  getRecapStatusesForRange,
   getUndeliveredMatchEvents,
   hasPosted,
   liveMonitorWorkExists,
@@ -458,7 +458,7 @@ export async function postProPicksToAdmin(
 export const DEFAULT_RECAP_DEADLINE = "08:45";
 
 /**
- * Sends yesterday's settled recap privately to the owner — production equivalent is
+ * Sends the previous Sunday-Saturday results recap privately to the owner — production equivalent is
  * predbot/jobs/recap.py (single group send, post_done("recap", date) gate).
  */
 export async function postGroupRecap(
@@ -470,25 +470,26 @@ export async function postGroupRecap(
   const gate = parseHhmm(env.RECAP_TIME ?? "07:45");
   if (lagosMinutes(nowMs) < gate) return "waiting";
   const localDate = lagosDateString(nowMs);
+  if (new Date(`${localDate}T00:00:00Z`).getUTCDay() !== 0) return "waiting";
   if (!(await hasPosted(env.DB, "recap", localDate))) {
-    const yesterday = shiftDate(localDate, -1);
+    const sinceDate = shiftDate(localDate, -7);
     const [topStatuses, dailyStatuses] = await Promise.all([
-      getRecapStatuses(env.DB, yesterday, "top"),
-      getRecapStatuses(env.DB, yesterday, "daily"),
+      getRecapStatusesForRange(env.DB, sinceDate, localDate, "top"),
+      getRecapStatusesForRange(env.DB, sinceDate, localDate, "daily"),
     ]);
     if (topStatuses.length === 0 && dailyStatuses.length === 0) {
-      // predbot/jobs/recap.py: no rows for yesterday -> skip entirely (never the
+      // No rows for the reporting week -> skip entirely (never the
       // "No results yet" placeholder, which reads as a bug, not an empty slate).
       // Claim+confirm the receipt (a non-null sentinel, never NULL, so it can
       // never look like an abandoned in-flight claim) so every later sweep in
       // the window hits the hasPosted() short-circuit above instead of re-running
-      // these two getRecapStatuses queries on every 5-minute tick until the deadline.
+      // these two range queries on every 5-minute tick until the deadline.
       await claimPost(env.DB, "recap", localDate);
       await confirmPosted(env.DB, "recap", localDate, "skipped-empty");
-      await setJobResult(env.DB, "post", `recap ${localDate}: nothing to recap for ${yesterday}, marked handled`);
+      await setJobResult(env.DB, "post", `recap ${localDate}: nothing to recap for ${sinceDate}–${shiftDate(localDate, -1)}, marked handled`);
       return "skipped";
     }
-    // Before the deadline, hold off if yesterday's Top/Daily legs are still
+    // Before the deadline, hold off if the reporting week's Top/Daily legs are still
     // "pending" (settlement from the live monitor hasn't landed yet): the posts
     // receipt below would otherwise lock in an unfinished recap for the rest of
     // the day. At/after the deadline, fall through and post regardless, so the
@@ -1148,8 +1149,8 @@ export async function dailyHealthReport(env: Env, nowMs = Date.now(), sender: ty
 // trigger. A same-day COMPLETE cache, however late, now always gets
 // picked up by the next 5-minute fire instead of requiring one.
 export const CRON_POST_SWEEP = "*/5 8-22 * * *"; // 08:00-22:55 UTC = 09:00-23:55 Lagos
-export const CRON_RECAP_SWEEP = "*/5 6-7 * * *"; // 06:00-07:55 UTC = 07:00-08:55 Lagos
-export const CRON_DELIVER_SWEEP = "*/5 * * * *"; // webhook-retry observability + match-event delivery, any time
+export const CRON_RECAP_SWEEP = "*/5 6-7 * * 0"; // Sunday, 06:00-07:55 UTC = 07:00-08:55 Lagos
+export const CRON_DELIVER_SWEEP = "*/5 * * * *"; // webhook-retry observability + workflow dispatch, any time
 export const CRON_WATCH = "0 10 * * *"; // 11:00 Lagos: log a miss if generation never landed
 
 export async function handleScheduled(env: Env, cron: string, nowMs = Date.now()): Promise<void> {
@@ -1166,13 +1167,10 @@ export async function handleScheduled(env: Env, cron: string, nowMs = Date.now()
     await postProPicksToAdmin(env, nowMs);
     await postGroupPicks(env, "top", nowMs);
     await postGroupPicks(env, "daily", nowMs);
-    await sweepResultGifs(env, nowMs);
   } else if (cron === CRON_DELIVER_SWEEP) {
     await reportFailedUpdates(env);
-    // Match-start/match-end events: written by GitHub Actions, delivered
-    // only here (group + owner, independent receipts — see sweepMatchEvents).
-    await sweepMatchEvents(env, nowMs);
-    // Dispatches the live-monitoring workflow on demand instead of it
+    // Match events remain recorded by the live monitor but are not sent to Telegram.
+    // This sweep still dispatches the live-monitoring workflow on demand instead of it
     // running unconditionally every 5 minutes (bug 6/A3).
     await maybeDispatchGeneration(env, nowMs);
     await maybeDispatchSettlement(env, nowMs);

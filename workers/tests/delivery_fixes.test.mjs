@@ -56,11 +56,10 @@ function stubDb({ cache = null, statuses = {} } = {}) {
           return null;
         },
         async all() {
-          // getRecapStatuses: "SELECT p.status AS status FROM picks p JOIN
-          // prediction_memberships m ..." — distinguished from the picks-page
-          // query (getAllPicksForCollection) by its unique "AS status" select.
+          // getRecapStatusesForRange: the collection is the third bound
+          // argument; distinguished from the picks-page query by its select.
           if (this._sql.includes("AS status FROM picks")) {
-            const [, collection] = this._args;
+            const [, , collection] = this._args;
             return { results: (statuses[collection] ?? []).map((status) => ({ status })) };
           }
           if (this._sql.includes("FROM picks p JOIN prediction_memberships")) {

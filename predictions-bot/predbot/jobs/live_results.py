@@ -195,9 +195,6 @@ def run(resolver, db, cfg, tg, now=None, sink=None):
 
 
 def _run(resolver, db, cfg, tg, now, sink=None):
-    # Subscriber pushes can be disabled independently of configured community
-    # delivery. Result tracking and settlement are unchanged in either mode.
-    notify = getattr(cfg, "subscriber_delivery_enabled", True)
     started = time.monotonic()
     # Honor an explicit run timestamp while advancing eligibility during slow provider requests.
     clock = lambda: now + timedelta(seconds=time.monotonic() - started)
@@ -255,38 +252,21 @@ def _run(resolver, db, cfg, tg, now, sink=None):
             if result.status in TERMINAL:
                 if not state or not state["settlement_done"]:
                     _settle_fixture(resolver, db, picks, result, now, cache, begun, clock)
-                if result.status == "final":
-                    fresh = db.picks_where("p.pick_date=? AND p.fixture_key=?", (pick_date, fixture_key))
-                    if sink is not None:
-                        # D1-event-sink mode: one durable event record stands
-                        # in for all three legacy destinations — the Worker
-                        # owns group/owner delivery and its own receipts.
-                        complete = community_complete = owner_complete = deliver_match_event(
-                            db, sink, pick_date, fixture_key, fresh, result, reference=picks[0], ended=True,
-                            now=clock(), start_window_min=cfg.match_start_window_min)
-                    else:
-                        complete = True
-                        if notify:
-                            _, complete = deliver_live(db, tg, pick_date, fixture_key, fresh, result, ended=True)
-                        _, community_complete = deliver_community_live(
-                            db, tg, pick_date, fixture_key, fresh, result, ended=True)
-                        _, owner_complete = deliver_owner_live(
-                            db, tg, cfg, pick_date, fixture_key, fresh, result, reference=picks[0], ended=True)
-                    if complete and community_complete and owner_complete:
-                        # Disabled subscriber pushes are treated as handled;
-                        # a failed community or owner delivery still keeps
-                        # the final retryable, independently of the other.
-                        db.complete_live_notifications(pick_date, fixture_key)
+                # Final / postponed / cancelled fixtures are settled and marked
+                # complete without sending match or individual outcome messages.
+                fresh = db.picks_where("p.pick_date=? AND p.fixture_key=?", (pick_date, fixture_key))
+                if sink is not None:
+                    # Preserve durable event tracking for the Worker/backend.
+                    complete = community_complete = owner_complete = deliver_match_event(
+                        db, sink, pick_date, fixture_key, fresh, result, reference=picks[0], ended=True,
+                        now=clock(), start_window_min=cfg.match_start_window_min)
                 else:
+                    complete = community_complete = owner_complete = True
+                if complete and community_complete and owner_complete:
                     db.complete_live_notifications(pick_date, fixture_key)
             elif result.status == "in_progress":
                 if sink is not None:
                     deliver_match_event(db, sink, pick_date, fixture_key, picks, result, reference=picks[0],
                                         now=clock(), start_window_min=cfg.match_start_window_min)
-                else:
-                    if notify:
-                        deliver_live(db, tg, pick_date, fixture_key, picks, result)
-                    deliver_community_live(db, tg, pick_date, fixture_key, picks, result)
-                    deliver_owner_live(db, tg, cfg, pick_date, fixture_key, picks, result, reference=picks[0])
         except settle.PICK_ERRORS:
             log.exception("live: fixture processing failed; will retry")

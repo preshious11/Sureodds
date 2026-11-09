@@ -48,8 +48,7 @@ def service(db, monkeypatch, football_error=False):
     # Exercise real selection and persistence; isolate only the probability model.
     def score(events, *args):
         return [sc(e, 'result3' if e.sport == 'football' else 'result2',
-                   'home' if int(e.provider_event_id) % 2 else 'away', .76,
-                   1.40 if int(e.provider_event_id) % 2 else 1.45) for e in events]
+                   'home' if int(e.provider_event_id) % 2 else 'away', .76, 2.20) for e in events]
     monkeypatch.setattr(daily_picks, 'score_events', score)
     # These tests are about caching, not settlement: every fake event has a results path.
     monkeypatch.setattr(daily_picks, 'make_results_gate', lambda cfg, providers: (lambda event: 'test'))
@@ -73,7 +72,7 @@ def test_miss_hit_and_restart_roundtrip(tmp_path, monkeypatch, clock):
     assert first.status == 'COMPLETE'
     assert all_sports(first) == {'football', 'baseball'}
     assert first.top_picks and first.daily_picks
-    assert prod(p.price for p in first.top_picks) == pytest.approx(2.03)
+    assert prod(p.price for p in first.top_picks) == pytest.approx(2.20)
     assert app.get_daily_snapshot().to_dict() == first.to_dict()
     assert football.fetch_events.call_count == baseball.fetch_events.call_count == 1
     assert db.get_prediction_cache(app._key(first.date))['status'] == 'COMPLETE'
@@ -96,7 +95,7 @@ def test_miss_hit_and_restart_roundtrip(tmp_path, monkeypatch, clock):
     tg = FakeTG()
     handle_command('/top', '42', service=fresh, tg=tg, cfg=fresh.cfg)
     assert 'BET OF THE DAY' in tg.sends[0]['text']
-    assert '2.03' in tg.sends[0]['text']
+    assert '2.20' in tg.sends[0]['text']
     assert fresh.published_snapshot().to_dict() == second.to_dict()
     f2.fetch_events.assert_not_called()
     reopened.close()

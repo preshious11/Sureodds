@@ -45,7 +45,7 @@ function cronDb({
   posted = new Set(),
   events = [],
   contextFor = null,
-  // Backs getRecapStatuses: non-empty/non-pending by default so every
+  // Backs getRecapStatusesForRange: non-empty/non-pending by default so every
   // existing test that doesn't care about recap content still gets a
   // normal "sent" recap (B4's empty-day skip only matters to tests that
   // explicitly set this).
@@ -132,7 +132,7 @@ function cronDb({
           }
           if (this._sql.includes("FROM telegram_updates")) return { results: [] };
           if (this._sql.includes("AS status FROM picks")) {
-            const [, collection] = this._args;
+            const collection = this._args[this._args.length - 1];
             return { results: (recapStatuses[collection] ?? []).map((status) => ({ status })) };
           }
           if (this._sql.includes("FROM picks p JOIN prediction_memberships") && this._sql.includes("UNION ALL")) {
@@ -379,12 +379,22 @@ describe("group posting (production model: single group, never per-subscriber)",
     // Matches predbot/jobs/recap.py's recap_message() title exactly
     // ("📊 RESULTS") — distinct from the interactive /yesterday button's
     // own "🗓 YESTERDAY" title (UI-parity audit, 2026-10-15).
-    assert.match(texts[0], /^<b>📊 SUREODDS RESULTS<\/b>/);
-    assert.doesNotMatch(texts[0], /YESTERDAY/);
+    assert.match(texts[0], /^<b>📊 SUREODDS WEEKLY RESULTS<\/b>\n2026-10-04 – 2026-10-10/);
+    assert.match(texts[0], /Weekly performance/);
     const outcome2 = await postGroupRecap(env, RECAP_AFTER, async () => {
       throw new Error("must not post recap twice");
     });
     assert.equal(outcome2, "skipped");
+  });
+  it("recap does not run on any day except Sunday", async () => {
+    const db = cronDb();
+    const env = { DB: db, TIMEZONE: "Africa/Lagos", TELEGRAM_ADMIN_IDS: "999" };
+    const saturdayAfterGate = Date.UTC(2026, 9, 10, 7, 0);
+    const outcome = await postGroupRecap(env, saturdayAfterGate, async () => {
+      throw new Error("weekly recap must not send on Saturday");
+    });
+    assert.equal(outcome, "waiting");
+    assert.equal(db.posted.size, 0);
   });
   it("a definite failed send records a retryable receipt", async () => {
     const db = cronDb({ cache: { status: "COMPLETE", payload_json: "{}" } });
@@ -587,7 +597,7 @@ describe("handleScheduled dispatches on the exact Cron Trigger pattern, never a 
     assert.equal(db.posted.size, 0);
     assert.equal(db.jobs.last, undefined);
   });
-  it("POST posts game tickets; RECAP only sends the owner", async () => {
+  it("POST posts game tickets; the Sunday RECAP only sends the owner", async () => {
     const db = cronDb({ cache: { status: "COMPLETE", payload_json: "{}" } });
     const env = {
       DB: db,
