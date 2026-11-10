@@ -94,13 +94,22 @@ def lookup(*identifiers: str) -> Optional[Competition]:
     return None
 
 
+def by_id(competition_id: str) -> Optional[Competition]:
+    return next((c for c in COMPETITIONS if c.id == competition_id), None)
+
+
 def competition_for_event(event) -> Optional[Competition]:
     """Resolve the competition of an event (or a stored pick) from whatever the
     origin provider recorded: ``extra["sport_key"]`` (Odds API), ``league_id``
     (SharpAPI slug / SGO league id), then the display ``league``."""
     extra = getattr(event, "extra", None) or {}
-    return lookup(str(extra.get("sport_key") or ""), str(getattr(event, "league_id", "") or ""),
-                  str(getattr(event, "league", "") or ""))
+    found = lookup(str(extra.get("sport_key") or ""), str(getattr(event, "league_id", "") or ""),
+                   str(getattr(event, "league", "") or ""))
+    # WHY: a bare display name "Championship" is only ever the English Championship in football (other feeds say
+    # "England - Championship"). Without this alias such picks had no results path and were voided as not obtainable.
+    if found is None and getattr(event, "sport", "") == "football"             and _norm(getattr(event, "league", "")) == "championship":
+        return by_id("championship")
+    return found
 
 
 def by_espn(slug: str) -> Optional[Competition]:

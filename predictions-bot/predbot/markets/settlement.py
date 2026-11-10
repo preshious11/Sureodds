@@ -308,6 +308,16 @@ def _sgo_covers(event, sgo, comp) -> bool:
     return comp.sgo in covered
 
 
+WOMENS_SUFFIXES = (" women", " [w]", " (w)")
+
+
+def is_womens_fixture(event) -> bool:
+    """A women's fixture ends a team name with "Women", "[W]" or "(W)" (e.g. "Crvena Zvezda Women",
+    "Basket Zaragoza [W]"). The men's EuroLeague API cannot match these, so they must not be sent there."""
+    names = (str(getattr(event, "home", "") or ""), str(getattr(event, "away", "") or ""))
+    return any(n.strip().lower().endswith(WOMENS_SUFFIXES) for n in names)
+
+
 def result_paths(event, cfg, providers: Dict) -> List[ResultPath]:
     """Every provider that can settle a pick on this event, cheapest and most reliable
     first, each with the periods/stats it can grade. Empty = nothing can settle it.
@@ -331,7 +341,7 @@ def result_paths(event, cfg, providers: Dict) -> List[ResultPath]:
         out.append(_path("football_data", comp))
     if providers.get("espn") is not None and comp is not None and comp.espn:
         out.append(_path("espn", comp))
-    if providers.get("euroleague") is not None and comp is not None and comp.euroleague:
+    if providers.get("euroleague") is not None and comp is not None and comp.euroleague             and not is_womens_fixture(event):
         out.append(_path("euroleague", comp))
     if providers.get("oddsapi") is not None and "oddsapi" in sources             and str(extra.get("sport_key") or "").startswith("soccer_"):
         out.append(_path("oddsapi", comp))

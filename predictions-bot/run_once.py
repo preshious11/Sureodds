@@ -110,12 +110,26 @@ def summarize_snapshot(snapshot) -> dict:
     """
     generation = getattr(snapshot, "generation", None) or {}
     coverage = generation.get("provider_coverage") or {}
+    selection = {}
+    for product in ("top", "daily"):
+        diagnostics = generation.get(product)
+        if isinstance(diagnostics, dict):
+            selection[product] = {
+                key: diagnostics[key]
+                for key in ("candidates", "selected", "combined_odds", "target_reached",
+                            "reason", "rejections", "search_details")
+                if key in diagnostics
+            }
     return {
         "snapshot_status": getattr(snapshot, "status", "unknown"),
         "snapshot_date": getattr(snapshot, "date", ""),
         "top_picks": len(getattr(snapshot, "top_picks", None) or []),
         "daily_picks": len(getattr(snapshot, "daily_picks", None) or []),
         "all_predictions": len(getattr(snapshot, "all_predictions", None) or []),
+        "selection": {
+            "ticket_candidates": generation.get("ticket_candidates"),
+            **selection,
+        },
         "provider_coverage": {
             "required": list(coverage.get("required", [])),
             "missing_required": list(coverage.get("missing_required", [])),
@@ -124,6 +138,60 @@ def summarize_snapshot(snapshot) -> dict:
         },
         "error_type": generation.get("error_type"),
         "error_traceback": generation.get("error_traceback"),
+    }
+
+
+def summarize_selection_candidates(db, cfg, snapshot) -> dict:
+    generation = getattr(snapshot, "generation", None) or {}
+    evaluated_at = generation.get("generated_at")
+    if not evaluated_at:
+        return {"available": False, "reason": "missing_generation_timestamp"}
+
+    from predbot.selection.daily import select_daily
+    from predbot.selection.picker import prediction_identity
+    from predbot.selection.top import promotion_reason, select_top
+
+    rows = db.ticket_candidate_rows(snapshot.date)
+    top, top_diagnostics = select_top(rows, cfg, evaluated_at)
+    top_keys = {prediction_identity(row) for row in top}
+    daily_pool = [row for row in rows if prediction_identity(row) not in top_keys]
+    daily, daily_diagnostics = select_daily(daily_pool, cfg, evaluated_at)
+    daily_eligible = [
+        row for row in daily_pool
+        if promotion_reason(row, cfg, evaluated_at) is None
+        and cfg.daily_min_odds <= row["price"] <= cfg.daily_max_odds
+    ]
+    fields = ("fixture_key", "canonical_event_id", "home", "away", "sport", "league",
+              "start_utc", "status", "market", "selection", "period", "stat", "line",
+              "price", "prob", "ev", "edge_ev", "rank_score", "quality", "books")
+    daily_eligible.sort(key=lambda row: (row["start_utc"], row["fixture_key"], row["market"],
+                                         row["selection"], row["price"]))
+    ticket_publications = db.query(
+        "SELECT collection, revision_id, destination, state, message_id, attempts "
+        "FROM ticket_publications WHERE pick_date=? ORDER BY collection, revision_id, destination",
+        (snapshot.date,),
+    )
+    posts = db.query(
+        "SELECT kind, message_id FROM posts WHERE post_date=? AND kind IN "
+        "('picks', 'picks_top', 'picks_daily') ORDER BY kind",
+        (snapshot.date,),
+    )
+    return {
+        "available": True,
+        "evaluated_at": evaluated_at,
+        "ticket_candidates": len(rows),
+        "top": top_diagnostics,
+        "daily": daily_diagnostics,
+        "daily_eligible_candidates": [
+            {key: row.get(key) for key in fields} for row in daily_eligible
+        ],
+        "recomputed_top_picks": len(top),
+        "recomputed_daily_picks": len(daily),
+        "publication_records": {
+            "active_revision": db.active_ticket_revision(snapshot.date),
+            "ticket_publications": ticket_publications,
+            "legacy_posts": posts,
+        },
     }
 
 
@@ -170,6 +238,15 @@ def live_run(job: str, force: bool) -> dict:
             # post (empty unevaluated slate); a missing snapshot is itself
             # diagnostic evidence, recorded without any further provider calls.
             report["generation"] = summarize_snapshot(snapshot) if snapshot is not None else None
+            if snapshot is not None:
+                try:
+                    report["selection_candidate_trace"] = summarize_selection_candidates(db, cfg, snapshot)
+                except Exception as exc:  # noqa: BLE001 - diagnostics must not fail after publication
+                    import logging
+                    logging.getLogger(__name__).exception("selection candidate trace failed")
+                    report["selection_candidate_trace"] = {
+                        "available": False, "error_type": type(exc).__name__
+                    }
             record_job(db, "generate", report["generation"])
             return report
         elif job == "settle":
