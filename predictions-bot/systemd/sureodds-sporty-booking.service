@@ -1,0 +1,22 @@
+[Unit]
+Description=SureOdds verified SportyBet Top Picks booking code
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sureodds
+WorkingDirectory=/opt/sureodds
+EnvironmentFile=/etc/sureodds/sporty-booking.env
+Environment=SPORTYBET_BOOKING_QUOTA_DB=/var/lib/sureodds/sporty_booking_quota.sqlite3
+ExecStart=/opt/sureodds/predictions-bot/.venv/bin/python3 /opt/sureodds/predictions-bot/tools/sporty_booking_generate.py --live
+TimeoutStartSec=180
+RuntimeMaxSec=180
+TimeoutStopSec=10
+Restart=no
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sureodds
+StandardOutput=journal
+StandardError=journal

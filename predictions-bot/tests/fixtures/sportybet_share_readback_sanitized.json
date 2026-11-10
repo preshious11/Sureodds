@@ -1,0 +1,114 @@
+{
+  "bizCode": 10000,
+  "message": "synthetic",
+  "data": {
+    "shareCode": "SAFE42",
+    "ticket": {
+      "selections": [
+        {
+          "eventId": "sr:match:1001",
+          "marketId": "18",
+          "specifier": "total=3.5",
+          "outcomeId": "13",
+          "productId": 3,
+          "parentBetBuilderMarketId": "",
+          "sportId": "sr:sport:1"
+        },
+        {
+          "eventId": "sr:match:1002",
+          "marketId": "18",
+          "specifier": "total=3.5",
+          "outcomeId": "13",
+          "productId": 3,
+          "parentBetBuilderMarketId": "",
+          "sportId": "sr:sport:1"
+        }
+      ]
+    },
+    "deadline": 1893672000000,
+    "outcomes": [
+      {
+        "eventId": "sr:match:1001",
+        "estimateStartTime": 1893585600000,
+        "status": 0,
+        "matchStatus": "Not start",
+        "homeTeamName": "Synthetic Home 1",
+        "awayTeamName": "Synthetic Away 1",
+        "sport": {
+          "id": "sr:sport:1",
+          "name": "Football",
+          "category": {
+            "id": "synthetic-category",
+            "name": "Synthetic",
+            "tournament": {
+              "id": "synthetic-tournament",
+              "name": "Synthetic League"
+            }
+          }
+        },
+        "markets": [
+          {
+            "id": "18",
+            "specifier": "total=3.5",
+            "desc": "Over/Under",
+            "status": 0,
+            "name": "Over/Under",
+            "banned": false,
+            "outcomes": [
+              {
+                "id": "13",
+                "odds": "1.90",
+                "isActive": 1,
+                "desc": "Under 3.5"
+              }
+            ]
+          }
+        ],
+        "bookingStatus": "Booked",
+        "banned": false
+      },
+      {
+        "eventId": "sr:match:1002",
+        "estimateStartTime": 1893585600000,
+        "status": 0,
+        "matchStatus": "Not start",
+        "homeTeamName": "Synthetic Home 2",
+        "awayTeamName": "Synthetic Away 2",
+        "sport": {
+          "id": "sr:sport:1",
+          "name": "Football",
+          "category": {
+            "id": "synthetic-category",
+            "name": "Synthetic",
+            "tournament": {
+              "id": "synthetic-tournament",
+              "name": "Synthetic League"
+            }
+          }
+        },
+        "markets": [
+          {
+            "id": "18",
+            "specifier": "total=3.5",
+            "desc": "Over/Under",
+            "status": 0,
+            "name": "Over/Under",
+            "banned": false,
+            "outcomes": [
+              {
+                "id": "13",
+                "odds": "1.90",
+                "isActive": 1,
+                "desc": "Under 3.5"
+              }
+            ]
+          }
+        ],
+        "bookingStatus": "Booked",
+        "banned": false
+      }
+    ],
+    "unavailableOutcomes": []
+  },
+  "fixture_provenance": "synthetic sanitized structure only; not live success evidence"
+}

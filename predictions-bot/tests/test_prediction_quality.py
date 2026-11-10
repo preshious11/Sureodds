@@ -58,9 +58,9 @@ def cand(event, market="result3", selection="home", p=0.70, price=1.5, *, quotes
 
 
 # =========================================================================== config: one authoritative threshold
-def test_daily_target_is_10_to_12_odds():
+def test_daily_target_is_5_to_7_odds():
     c = Config()
-    assert (c.daily_odds_min, c.daily_odds_max) == (10.0, 12.0)
+    assert (c.daily_odds_min, c.daily_odds_max) == (5.0, 7.0)
 
 
 def test_top_target_is_unchanged():
@@ -95,7 +95,7 @@ def test_a_sub_floor_leg_is_never_admitted_to_fill_a_ticket():
     ps = select(weak + strong, c, dt())
     assert all(s.p_model >= c.daily_min_prob for s in ps.daily + ps.top)
     assert len(ps.all()) == 33                                              # weak predictions exist, just not promoted
-    assert math.prod(s.price for s in ps.daily) < c.daily_odds_min          # short of 10, and posted short
+    assert math.prod(s.price for s in ps.daily) < c.daily_odds_min          # short of 5, and posted short
 
 
 def test_misconfigured_daily_floor_is_flagged(caplog):
@@ -105,7 +105,7 @@ def test_misconfigured_daily_floor_is_flagged(caplog):
     assert any("DAILY_MIN_PROB" in r.message for r in caplog.records)
 
 
-# =========================================================================== Daily sizing (10-12, never forced)
+# =========================================================================== Daily sizing (5-7, never forced)
 _KINDS = (("result3", "home", None), ("total", "over", 2.5), ("btts", "yes", None), ("dnb", "home", None))
 
 
@@ -116,28 +116,28 @@ def _daily_pool(price, n=40, p=0.70):
 
 
 @pytest.mark.parametrize("price", [1.25, 1.30, 1.35, 1.40, 1.45, 1.50, 1.60, 1.80])
-def test_daily_never_exceeds_12(price):
+def test_daily_never_exceeds_7(price):
     ps = select(_daily_pool(price), Config(), dt())
-    assert math.prod(s.price for s in ps.daily) <= 12.0 + 1e-9
+    assert math.prod(s.price for s in ps.daily) <= 7.0 + 1e-9
 
 
 def test_daily_lands_inside_the_band_when_the_slate_allows():
     ps = select(_daily_pool(1.35), Config(), dt())
     ticket = math.prod(s.price for s in ps.daily)
-    assert 10.0 <= ticket <= 12.0
+    assert 5.0 <= ticket <= 7.0
     assert ps.diagnostics["daily"]["target_reached"] is True
 
 
 def test_daily_stops_as_soon_as_the_target_is_reached():
     ps = select(_daily_pool(1.35), Config(), dt())
-    assert len(ps.daily) == 8 and math.prod(s.price for s in ps.daily) * 1.35 > 12.0
+    assert len(ps.daily) == 6 and math.prod(s.price for s in ps.daily) * 1.35 > 7.0
 
 
-def test_daily_returns_below_10_when_no_further_qualified_pick_exists():
+def test_daily_returns_below_5_when_no_further_qualified_pick_exists():
     pool = [cand(_fx(i), _KINDS[i][0], _KINDS[i][1], p=0.70, price=1.7, line=_KINDS[i][2]) for i in range(4)]
     ps = select(pool, Config(), dt())
     ticket = math.prod(s.price for s in ps.daily)
-    assert 0 < len(ps.daily) and ticket < 10.0
+    assert 0 < len(ps.daily) and ticket < 5.0
     assert ps.diagnostics["daily"]["target_reached"] is False
 
 

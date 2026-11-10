@@ -148,8 +148,8 @@ def test_daily_list_is_sized_by_the_combined_odds_window():
     c = cfg()
     ticket = math.prod(s.price for s in ps.daily)
 
-    assert c.daily_odds_min <= ticket <= c.daily_odds_max   # 10 .. 12 on the Daily's own legs
-    assert len(ps.daily) == 8                               # 1.35**8 = 11.03: it stops the moment 10 is passed
+    assert c.daily_odds_min <= ticket <= c.daily_odds_max   # 5 .. 7 on the Daily's own legs
+    assert len(ps.daily) == 6                               # 1.35**6 = 6.05: it stops the moment 5 is passed
     assert ps.diagnostics["daily"]["target_reached"]
     assert len(ps.all()) == 30                              # the Daily never deletes a prediction
 

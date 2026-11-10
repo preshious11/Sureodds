@@ -14,13 +14,16 @@ from predbot.config import INTERNATIONAL_ODDS_KEYS, INTERNATIONAL_SHARP_LEAGUES,
 def _fresh_warnings(monkeypatch):
     cfgmod._STALE_WARNED.clear()
     for name in ("HONOR_PINNED_VALUES", "INTERNATIONAL_FOOTBALL", "SHARPAPI_LEAGUES", "ODDS_API_LEAGUE_ALLOWLIST",
-                 "DAILY_COMBINED_MAX_ODDS", "DAILY_PICKS_TARGET", "DAILY_MIN_PROB", "TOP_RELAX_PROB", "TOP_MIN_BOOKS"):
+                 "DAILY_COMBINED_MAX_ODDS", "DAILY_COMBINED_MIN_ODDS", "DAILY_PICKS_TARGET", "DAILY_MIN_PROB",
+                 "TOP_RELAX_PROB", "TOP_MIN_BOOKS"):
         monkeypatch.delenv(name, raising=False)
 
 
 # ----------------------------------------------------------------------------------------- stale pins
 @pytest.mark.parametrize("name,old,attr,new", [
-    ("DAILY_COMBINED_MAX_ODDS", "20", "daily_odds_max", 12.0),
+    ("DAILY_COMBINED_MAX_ODDS", "20", "daily_odds_max", 7.0),
+    ("DAILY_COMBINED_MAX_ODDS", "12", "daily_odds_max", 7.0),
+    ("DAILY_COMBINED_MIN_ODDS", "10", "daily_odds_min", 5.0),
     ("DAILY_PICKS_TARGET", "20", "daily_target", 12),
     ("DAILY_MIN_PROB", "0.30", "daily_min_prob", 0.55),
     ("DAILY_MIN_PROB", "0.3", "daily_min_prob", 0.55),

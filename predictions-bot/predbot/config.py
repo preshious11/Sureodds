@@ -41,7 +41,8 @@ def mask(name: str, value: Any) -> str:
 #: of the old default (nobody chose "20 combined odds" or "a 30% Daily leg" on purpose after this change), so it is
 #: ignored with a warning and the new default applies. Set HONOR_PINNED_VALUES=1 to make an old value stick anyway.
 _STALE_PINS: Dict[str, Tuple[str, ...]] = {
-    "DAILY_COMBINED_MAX_ODDS": ("20", "20.0", "20.00"),
+    "DAILY_COMBINED_MAX_ODDS": ("20", "20.0", "20.00", "12", "12.0", "12.00"),
+    "DAILY_COMBINED_MIN_ODDS": ("10", "10.0", "10.00"),
     "DAILY_PICKS_TARGET": ("20",),
     "DAILY_MIN_PROB": ("0.30", "0.3"),
     "TOP_RELAX_PROB": ("0.04",),
@@ -154,6 +155,15 @@ class Config:
     #: all delivery history; flipping it back to ``true`` and restarting
     #: restores automatic subscriber delivery.
     subscriber_delivery_enabled: bool = field(default_factory=lambda: _bool("SUBSCRIBER_DELIVERY_ENABLED", True))
+
+    # SportyBet booking-code generation (Oracle batch; owner-only delivery).
+    # Kept OFF until production configuration deliberately enables it.
+    sportybet_booking_enabled: bool = field(default_factory=lambda: _bool("SPORTYBET_BOOKING_ENABLED", False))
+    #: Hard daily cap on creation POSTs; a slot is reserved in the durable
+    #: sidecar ledger BEFORE the request and never refunded.
+    sportybet_booking_max_per_day: int = field(default_factory=lambda: _int("SPORTYBET_BOOKING_MAX_PER_DAY", 1))
+    #: Dedicated quota ledger path; empty = sporty_booking_quota.sqlite3 next to DB_PATH.
+    sportybet_booking_quota_db: str = field(default_factory=lambda: _env("SPORTYBET_BOOKING_QUOTA_DB", ""))
 
     # Providers
     sgo_key: str = field(default_factory=lambda: _env("SPORTSGAMEODDS_KEY"))
@@ -286,8 +296,8 @@ class Config:
     #: Daily ticket: ``DAILY_COMBINED_MIN_ODDS`` is the odds the builder AIMS for (it stops adding legs once it is
     #: reached) and ``DAILY_COMBINED_MAX_ODDS`` is a hard ceiling it never exceeds. Neither is ever bought with a
     #: weaker pick: a slate below the minimum is withheld.
-    daily_odds_min: float = field(default_factory=lambda: _float("DAILY_COMBINED_MIN_ODDS", 10.0))
-    daily_odds_max: float = field(default_factory=lambda: _float("DAILY_COMBINED_MAX_ODDS", 12.0))
+    daily_odds_min: float = field(default_factory=lambda: _float("DAILY_COMBINED_MIN_ODDS", 5.0))
+    daily_odds_max: float = field(default_factory=lambda: _float("DAILY_COMBINED_MAX_ODDS", 7.0))
     pick_window_hours: int = field(default_factory=lambda: _int("PICK_WINDOW_HOURS", 24))
     #: The day window ends at local midnight + this many hours, so late-evening
     #: kickoffs (e.g. 23:30 Lagos) stay in scope; dedupe against the previous
@@ -467,6 +477,10 @@ class Config:
         if not 1 <= self.top_legs_max <= 3:
             log.warning("Config: TOP_LEGS_MAX=%s outside the supported 1-3 range; using 3", self.top_legs_max)
             self.top_legs_max = 3
+        if not 1 <= self.sportybet_booking_max_per_day <= 10:
+            log.warning("Config: SPORTYBET_BOOKING_MAX_PER_DAY=%s outside the supported 1-10 range; using 1",
+                        self.sportybet_booking_max_per_day)
+            self.sportybet_booking_max_per_day = 1
         if self.price_mode not in ("median", "best"):
             log.warning("Config: PRICE_MODE=%r is not median|best - using median", self.price_mode)
             self.price_mode = "median"

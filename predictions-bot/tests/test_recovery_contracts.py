@@ -30,13 +30,13 @@ def test_accumulator_uses_product_of_distinct_fixture_prices():
     assert diag['combined_odds']==pytest.approx(1.44*1.44)
 
 
-@pytest.mark.parametrize('selector,target,ceiling',[(select_top,2.,2.3),(select_daily,10.,12.)])
+@pytest.mark.parametrize('selector,target,ceiling',[(select_top,2.,2.3),(select_daily,5.,7.)])
 @pytest.mark.parametrize('price,valid',[(1.44,False),(2.,True),(2.2,True),(2.6,False)])
 def test_combined_target_is_mandatory(selector,target,ceiling,price,valid):
     cfg=Config()
     cfg.top_odds_target=2.;cfg.top_odds_max=2.3
     if selector is select_daily:
-        cfg.daily_min_odds=1.;cfg.daily_max_odds=20.;price*=5
+        cfg.daily_min_odds=1.;cfg.daily_max_odds=20.;cfg.daily_odds_min=5.;cfg.daily_odds_max=7.;price*=3
     rows,diag=selector([candidate(price)],cfg,'2030-06-01T12:00:00Z')
     assert bool(rows)==valid
     if rows: assert target<=diag['combined_odds']<=ceiling

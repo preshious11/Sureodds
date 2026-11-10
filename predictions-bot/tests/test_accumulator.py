@@ -128,15 +128,15 @@ def test_top_ticket_never_overshoots_the_target():
     assert ticket <= cfg().top_odds_target * 1.7
 
 
-def test_daily_section_lands_in_the_10_to_12_window():
+def test_daily_section_lands_in_the_5_to_7_window():
     now = dt()
     kinds = [("result3", "home", None), ("total", "over", 2.5), ("btts", "yes", None), ("dnb", "home", None)]
     pool = [sc(_fx(i), kinds[i % 4][0], kinds[i % 4][1], 0.62, 1.35, line=kinds[i % 4][2]) for i in range(40)]
     ps = select(pool, cfg(), now)
     ticket = math.prod(s.price for s in ps.daily)
     c = cfg()
-    assert (c.daily_odds_min, c.daily_odds_max) == (10.0, 12.0)
-    assert c.daily_odds_min <= ticket <= c.daily_odds_max      # 10..12: the Daily ALONE, the Top is not counted
+    assert (c.daily_odds_min, c.daily_odds_max) == (5.0, 7.0)
+    assert c.daily_odds_min <= ticket <= c.daily_odds_max      # 5..7: the Daily ALONE, the Top is not counted
     assert len(ps.daily) <= c.daily_target                     # hard pick cap on the Daily section
 
 

@@ -1,4 +1,4 @@
-"""The Daily aims for DAILY_COMBINED_MIN_ODDS (10) on its OWN legs, never exceeds DAILY_COMBINED_MAX_ODDS (12), stops as
+"""The Daily aims for DAILY_COMBINED_MIN_ODDS (5) on its OWN legs, never exceeds DAILY_COMBINED_MAX_ODDS (7), stops as
 soon as the aim is reached, and is never padded with weak legs when it cannot get there. The Top's odds are not part
 of its product."""
 from __future__ import annotations
@@ -18,7 +18,7 @@ def select(scored, cfg, now, **kw):
 from tests.conftest import dt
 from tests.test_picker import _fx, ev, sc
 
-PRICE = 1.35          # 1.35**8 = 11.03: eight legs land inside 10..12, seven (8.17) fall short, nine (14.9) overshoot
+PRICE = 1.35          # 1.35**6 = 6.05: six legs land inside 5..7, five (4.48) fall short, seven (8.17) overshoot
 _KINDS = (("result3", "home", None), ("total", "over", 2.5), ("btts", "yes", None), ("dnb", "home", None))
 
 
@@ -43,11 +43,11 @@ def test_the_daily_alone_reaches_the_band_with_a_top_of_about_two():
     ps = select(pool(), Config(), dt())
     top_odds = math.prod(s.price for s in ps.top)
     assert 2.0 <= top_odds <= 2.5
-    assert 10.0 <= own(ps) <= 12.0                               # the Daily on its own
-    assert len(ps.daily) == 8                                    # the fewest legs that reach 10 (seven make 8.17)
+    assert 5.0 <= own(ps) <= 7.0                                 # the Daily on its own
+    assert len(ps.daily) == 6                                    # the fewest legs that reach 5 (five make 4.48)
     assert ps.diagnostics["daily"]["target_reached"]
-    # it stops the moment the target is reached: one more leg would only add risk (and break the 12 ceiling)
-    assert own(ps) * PRICE > 12.0
+    # it stops the moment the target is reached: one more leg would only add risk (and break the 7 ceiling)
+    assert own(ps) * PRICE > 7.0
 
 
 def test_seven_legs_worth_8_2_are_not_enough_but_nothing_weak_is_added_to_get_there():
@@ -61,7 +61,7 @@ def test_seven_legs_worth_8_2_are_not_enough_but_nothing_weak_is_added_to_get_th
 def test_the_daily_never_exceeds_the_ceiling_even_when_the_next_leg_would_land_just_past_it():
     for price in (1.30, 1.35, 1.40, 1.45, 1.50, 1.60):
         ps = select(pool(price=price), Config(), dt())
-        assert own(ps) <= 12.0 + 1e-9, price
+        assert own(ps) <= 7.0 + 1e-9, price
 
 
 def test_the_top_ticket_is_identical_whatever_the_daily_band():

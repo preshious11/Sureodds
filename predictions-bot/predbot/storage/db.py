@@ -10,6 +10,7 @@ import threading
 import logging
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 SCHEMA = """
@@ -319,8 +320,9 @@ class Database:
     _publication_locks = {}
     _prediction_locks_guard = threading.Lock()
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, *, read_only: bool = False):
         self.path = path
+        self.read_only = read_only
         logging.getLogger(__name__).info("SQLite database path: %s | exists=%s",
                                         os.path.abspath(path), os.path.isfile(path))
         with self._prediction_locks_guard:
@@ -330,24 +332,25 @@ class Database:
         self._transaction_depth = 0
         #: instrumentation: statements executed / commits issued (see tools/replay.py)
         self.stats = {"executes": 0, "commits": 0}
-        d = os.path.dirname(os.path.abspath(path))
-        os.makedirs(d, exist_ok=True)
         self._lock = threading.RLock()
-        # timeout=30s: the in-process lock only coordinates threads within one
-        # process: a manual `cli.py` command and the scheduler's `main.py`
-        # worker are separate processes sharing this file, so SQLite's own
-        # busy-wait is the only thing standing between them and an immediate
-        # "database is locked" error during a longer write (e.g. picks
-        # generation blocked on a provider API call).
-        self.conn = sqlite3.connect(path, check_same_thread=False, timeout=30)
+        if read_only:
+            uri = Path(path).resolve().as_uri() + "?mode=ro"
+            self.conn = sqlite3.connect(uri, uri=True, check_same_thread=False, timeout=30)
+        else:
+            d = os.path.dirname(os.path.abspath(path))
+            os.makedirs(d, exist_ok=True)
+            # timeout=30s: the in-process lock only coordinates threads within
+            # one process. SQLite's busy-wait covers separate processes.
+            self.conn = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA busy_timeout=30000")
-        with self._lock:
-            self.conn.executescript(SCHEMA)
-            self.conn.commit()
-            self._migrate()
+        if not read_only:
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA synchronous=NORMAL")
+            with self._lock:
+                self.conn.executescript(SCHEMA)
+                self.conn.commit()
+                self._migrate()
 
     def _migrate(self) -> None:
         """Additive migrations for databases created by older versions."""
