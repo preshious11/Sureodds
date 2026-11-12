@@ -181,6 +181,51 @@ def test_summarize_selection_candidates_replays_the_stored_ticket_pool():
     }
 
 
+def test_summarize_selection_candidates_publication_records_are_json_serializable():
+    # db.query() returns real sqlite3.Row objects in production (predbot/
+    # storage/db.py) - a stub returning plain dicts/lists (as above) can
+    # never catch a Row escaping into the report un-converted, which is
+    # exactly what broke the 2026-11-12 stage7 runs (TypeError: Object of
+    # type Row is not JSON serializable).
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE ticket_publications(pick_date TEXT, collection TEXT, revision_id INTEGER,"
+        " destination TEXT, state TEXT, message_id TEXT, attempts INTEGER)"
+    )
+    conn.execute(
+        "INSERT INTO ticket_publications VALUES('2030-06-01','daily',1,'group','sent','42',1)"
+    )
+    conn.execute("CREATE TABLE posts(post_date TEXT, kind TEXT, message_id TEXT)")
+    conn.execute("INSERT INTO posts VALUES('2030-06-01','picks_daily','42')")
+
+    class RealRowDb:
+        def ticket_candidate_rows(self, day):
+            return []
+
+        def query(self, statement, params):
+            return conn.execute(statement, params).fetchall()
+
+        def active_ticket_revision(self, day):
+            return 1
+
+    snapshot = SimpleNamespace(
+        date="2030-06-01",
+        generation={"generated_at": "2030-06-01T18:00:00Z"},
+    )
+    trace = summarize_selection_candidates(RealRowDb(), Config(), snapshot)
+    json.dumps(trace)  # must not raise
+    assert trace["publication_records"]["ticket_publications"] == [
+        {"collection": "daily", "revision_id": 1, "destination": "group",
+         "state": "sent", "message_id": "42", "attempts": 1},
+    ]
+    assert trace["publication_records"]["legacy_posts"] == [
+        {"kind": "picks_daily", "message_id": "42"},
+    ]
+
+
 def test_summarize_snapshot_carries_sanitized_traceback():
     snap = _snapshot(generation={"complete": False, "error_type": "AttributeError",
                                  "error_traceback": "daily_picks.py:166 in build_picks",
