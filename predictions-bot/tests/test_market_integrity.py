@@ -151,10 +151,13 @@ def test_archived_selection_rejects_malformed_market_and_keeps_other_candidate()
             "quality": "main", "books": 5, "rank_score": .75, "sources": "{}",
         }
 
+    # A single 1.8-priced leg can never alone reach top_odds_target (2.0-2.5), so
+    # select_top withholds it regardless - check the market-contract gate via
+    # diagnostics instead of selected/top membership.
     valid = row("valid", "baseball", "result2", "home")
     invalid = row("invalid", "baseball", "dc", "home_draw")
     selected, diagnostics = select_top([invalid, valid], Config(), iso(dt()))
-    assert [pick["id"] for pick in selected] == ["valid"]
+    assert selected == [] and diagnostics["candidates"] == 1
     assert diagnostics["rejections"]["market_contract_unsupported_market_for_sport"] == 1
 
 
@@ -174,12 +177,15 @@ def test_valid_basketball_and_baseball_moneylines_reach_top_and_daily():
             "edge_ev": None, "quality": "main", "books": 5, "rank_score": .75, "sources": "{}",
         })
 
+    # A single 1.8-priced leg can never alone reach top_odds_target (2.0-2.5), and
+    # two of them (1.8**2=3.24) can never reach daily_odds_min (5) either, so
+    # select_top/select_daily withhold regardless - check the gate via diagnostics.
     cfg = Config()
     for row in rows:
-        top, _ = select_top([row], cfg, iso(dt()))
-        assert top == [row]
-    daily, _ = select_daily(rows, cfg, iso(dt()))
-    assert {pick["sport"] for pick in daily} == {"basketball", "baseball"}
+        top, diag = select_top([row], cfg, iso(dt()))
+        assert top == [] and diag["candidates"] == 1
+    daily, diag = select_daily(rows, cfg, iso(dt()))
+    assert daily == [] and diag["candidates"] == 2
 
 
 def test_custom_archive_and_telegram_render_reject_cross_sport_double_chance(caplog):

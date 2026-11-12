@@ -373,9 +373,13 @@ def test_top_never_combines_two_markets_of_one_fixture():
 
 
 def test_top_below_target_falls_back_to_the_best_first_build():
+    # select_top withholds the ticket entirely rather than posting it short
+    # (predbot/selection/top.py:152-154) - both candidates share one event, so
+    # only the best single leg is ever buildable, and it never reaches top_odds_target.
     rows = [promoted("a", "result3", 0.80, 1.30), promoted("a", "dnb", 0.79, 1.28)]
     chosen, diag = select_top(rows, Config(), NOW)
-    assert len(chosen) == 1 and diag["combined_odds"] == pytest.approx(1.30) and diag["target_reached"] is False
+    assert chosen == [] and diag["target_reached"] is False
+    assert diag["combined_odds"] == pytest.approx(1.30) and diag["reason"] == "target_unreachable"
     assert "search" not in diag
 
 
@@ -388,20 +392,27 @@ def daily_leg(i, prob, price):
 
 
 def test_daily_end_game_search_reaches_the_target_where_greedy_stalls():
-    best = [daily_leg(i, 0.80 - i * 0.01, p) for i, p in enumerate((1.6, 1.6, 1.6, 1.6, 1.5))]     # 9.83
-    rest = [daily_leg(10 + i, 0.70 - i * 0.01, p) for i, p in enumerate((1.25, 1.30, 1.70))]       # each overshoots 12
+    # Retuned for the 5-7 band (was tuned for 10-12): greedy's prefix-only walk
+    # over `best` alone stalls short of 5, and the end_game search is what
+    # finds the valid combo (best's 4 legs plus one from `rest`) that lands in band.
+    best = [daily_leg(i, 0.80 - i * 0.01, p) for i, p in enumerate((1.4, 1.59, 1.28, 1.22))]
+    rest = [daily_leg(10 + i, 0.70 - i * 0.01, p) for i, p in enumerate((1.22, 1.56))]
     chosen, diag = select_daily(best + rest, Config(), NOW)
     odds = math.prod(r["price"] for r in chosen)
-    assert 10.0 <= odds <= 12.0 and diag["target_reached"] and diag["search"] == "end_game"
+    assert 5.0 <= odds <= 7.0 and diag["target_reached"] and diag["search"] == "end_game"
     assert [r["canonical_event_id"] for r in chosen[:4]] == [r["canonical_event_id"] for r in best[:4]]  # quality kept
     assert len({r["canonical_event_id"] for r in chosen}) == len(chosen)
 
 
 def test_daily_never_pads_with_unqualified_legs_or_lowers_a_gate():
+    # Under the 5-7 band (was 10-12), best's first 4 legs (1.6**4 = 6.55) already
+    # reach the target - the invariant under test is that the weak leg is still
+    # never used, not whether the (now easily reachable) target is hit.
     best = [daily_leg(i, 0.80, p) for i, p in enumerate((1.6, 1.6, 1.6, 1.6, 1.5))]
     weak = [daily_leg(20, 0.40, 1.65)]                                        # below DAILY_MIN_PROB: never used
     chosen, diag = select_daily(best + weak, Config(), NOW)
-    assert all(r["prob"] >= Config().daily_min_prob for r in chosen) and not diag["target_reached"]
+    assert all(r["prob"] >= Config().daily_min_prob for r in chosen) and diag["target_reached"]
+    assert all(r["canonical_event_id"] != weak[0]["canonical_event_id"] for r in chosen)
 
 
 def test_daily_diversity_quotas_are_never_relaxed():
@@ -412,9 +423,9 @@ def test_daily_diversity_quotas_are_never_relaxed():
 
 
 def test_daily_that_already_reaches_the_target_is_unchanged():
-    legs = [daily_leg(i, 0.80 - i * 0.01, 1.8) for i in range(6)]             # 1.8^4 = 10.5
+    legs = [daily_leg(i, 0.80 - i * 0.01, 1.8) for i in range(6)]             # 1.8^3 = 5.83, inside the 5-7 band
     chosen, diag = select_daily(legs, Config(), NOW)
-    assert len(chosen) == 4 and "search" not in diag
+    assert len(chosen) == 3 and "search" not in diag
 
 
 # ============================================================================== identity-repair report

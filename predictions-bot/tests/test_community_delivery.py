@@ -20,7 +20,9 @@ COMMUNITY = "-1001234567890"
 
 def pick(db, **changes):
     tier = changes.get("tier", "top")
-    changes.setdefault("price", 2.2 if tier == "top" else 1.6 if tier == "daily" else 1.8)
+    # 1.43**5 = 5.98, inside the daily_odds_min/max band (5-7) for ensure_daily_ticket's
+    # 5-leg pad. Was 1.6 (1.6**5=10.49, inside the retired 10-12 band).
+    changes.setdefault("price", 2.2 if tier == "top" else 1.43 if tier == "daily" else 1.8)
     return _pick(db, **changes)
 
 

@@ -70,8 +70,10 @@ def _channel_tg():
 def _publishable_snapshot(db):
     snapshot = _snapshot()
     snapshot.top_picks[0].price = 2.2
+    # 1.8**3 = 5.832, inside the daily_odds_min/max band (5-7). Was 2.2
+    # (2.2**3=10.65, inside the retired 10-12 band).
     for pick in snapshot.daily_picks:
-        pick.price = 2.2
+        pick.price = 1.8
     with db.transaction():
         db.create_ticket_revision(snapshot.date, "hardening-publication", snapshot.generated_at)
     return snapshot

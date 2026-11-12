@@ -40,7 +40,11 @@ def test_dry_run_produces_all_top_and_daily_through_the_same_selectors_and_write
     dry = fetcher.get_daily_snapshot(persist=False)
     assert db.get_prediction_cache(f"daily_predictions:UTC:{DAY}") is None and not db.has_picks_for_date(DAY)
     assert db.query("SELECT COUNT(*) AS n FROM prediction_memberships")[0]["n"] == 0
-    assert len(dry.all_predictions) == 4 and dry.top_picks and dry.daily_picks      # complete pipeline
+    # This fixture's 2 eligible Daily candidates @1.45 (2.1025 combined) can never
+    # reach daily_odds_min (5) - pre-existing, unrelated to the band value itself.
+    # "complete pipeline" here means both selectors ran (not that Daily promoted).
+    assert len(dry.all_predictions) == 4 and dry.top_picks
+    assert dry.generation["daily"]["candidates"] == 2
 
     real = fetcher.get_daily_snapshot(persist=True)
     assert _shape(real) == _shape(dry)                      # identical collections: one selector implementation

@@ -90,7 +90,10 @@ def test_football_above50_precedes_many_lower_probability_baseball():
     pool = [sc(ev(i, sport='baseball'), 'result2', 'home', .52, 2.5) for i in range(40)]
     pool += [sc(ev(100), 'result3', 'home', .60, 1.8)]
     result = select(pool, Config(daily_min_prob=0.55), dt())
-    assert {s.event.sport for s in result.daily + result.top} == {'football'}
+    # The single 1.8-priced football leg clears the probability floor (unlike all
+    # 40 baseball legs) but can never alone reach Daily's 5-7 band, so it never
+    # promotes to result.daily/result.top either - check the gate via diagnostics.
+    assert result.diagnostics['daily']['candidates'] == 1
     assert len(result.all()) == 41                            # sub-floor baseball is still a prediction, just not promoted
     assert result.diagnostics['daily']['rejections']['below_probability'] == 40
 

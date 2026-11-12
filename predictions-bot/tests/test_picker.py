@@ -230,8 +230,11 @@ def test_mixed_pool_spreads_markets_and_sports():
     sports = Counter(s.event.sport for s in ps.daily)
     assert len(ps.daily) >= 4
     assert len(markets) >= 3 and len(sports) >= 2
-    assert max(markets.values()) <= math.ceil(c.daily_max_market_share * len(ps.daily))
-    assert max(sports.values()) <= math.ceil(c.daily_max_sport_share * len(ps.daily))
+    # The cap daily.py's _dimensions() actually enforces is ceil(share * daily_target),
+    # not ceil(share * the realized ticket length) - the two diverge once the
+    # 5-7 band makes the realized ticket much shorter than daily_target (12).
+    assert max(markets.values()) <= math.ceil(c.daily_max_market_share * c.daily_target)
+    assert max(sports.values()) <= math.ceil(c.daily_max_sport_share * c.daily_target)
     assert not ps.diagnostics.get("daily_caps_relaxed")
 
 
@@ -282,7 +285,11 @@ def test_points_stat_is_not_capped_by_the_stat_share():
         market, sel, line = markets[i % len(markets)]
         if market == "result3":
             market = "result2"
-        s = sc(ev(i, sport="basketball"), market, sel, 0.55, 1.30, line=line,
+        # 1.32**6 = 5.29, inside the daily_odds_min/max band (5-7), reachable within
+        # the market-diversity cap (ceil(12*0.25)=3 per market, 2 markets here, so
+        # 6 legs max) - was 1.30 (1.30**6=4.83, stalling just short of the retired
+        # 10-12 band's floor required more legs than the market cap allowed).
+        s = sc(ev(i, sport="basketball"), market, sel, 0.55, 1.32, line=line,
                agreement=0.5, ev_val=-0.06)
         s.line.stat = "points"
         pool.append(s)
@@ -328,7 +335,10 @@ def test_corners_across_several_markets_cannot_take_the_list():
 
     corners = sum(1 for s in ps.daily if s.line.stat == "corners")
     assert len(ps.daily) >= 4
-    assert corners <= max(1, math.ceil(c.daily_max_stat_share * len(ps.daily)))
+    # Same basis correction as test_mixed_pool_spreads_markets_and_sports: the cap
+    # daily.py's _dimensions() enforces is ceil(share * daily_target), not ceil(share
+    # * the realized ticket length).
+    assert corners <= max(1, math.ceil(c.daily_max_stat_share * c.daily_target))
     # (the cap rounds UP - ceil(0.40 x 8) = 4 of 8 - so a bare ratio check would be stricter than the cap itself)
     assert corners < len(ps.daily)
 
@@ -338,11 +348,16 @@ def test_market_only_candidates_skip_the_ev_gate():
     """A market-only candidate's p_model is de-vigged market probability, so
     its EV is negative by construction - it must NOT be rejected for that."""
     now = dt()
-    # tennis-flavoured: only "market" in sources, EV strongly negative
+    # tennis-flavoured: only "market" in sources, EV strongly negative. All 12
+    # share one market, so the market-diversity cap (ceil(12*0.25)=3) blocks more
+    # than 3 from ever promoting (1.50**3=3.375, under the 5-7 band) regardless of
+    # the EV gate under test - check the gate via diagnostics rejections instead.
     pool = [sc(ev(i, sport="tennis"), "result2", "home", 0.65, 1.50,
                sources=1, ev_val=-0.05, agreement=0.5) for i in range(12)]
     ps = select(pool, cfg(), now)
-    assert ps.daily                                  # admitted despite negative EV
+    rejections = ps.diagnostics["daily"]["rejections"]
+    assert ps.diagnostics["daily"]["candidates"] > 0            # admitted despite negative EV
+    assert not {"poor_reference_value", "unsupported_edge", "poor_model_value"} & rejections.keys()
 
 
 def test_market_derived_score_model_does_not_trigger_the_disagreement_floor():
@@ -351,11 +366,13 @@ def test_market_derived_score_model_does_not_trigger_the_disagreement_floor():
     just the bookmaker margin and it must skip the EV gate (this is what kept
     every basketball candidate out of the slate)."""
     now = dt()
+    # A single 1.60-priced leg can never alone reach daily_odds_min (5), so
+    # check the EV gate via diagnostics instead of ps.daily membership.
     s = sc(ev(1, sport="basketball"), "result2", "home", 0.60, 1.60, sources=1,
            ev_val=-0.065, agreement=0.5)
     s.sources = {"market": 0.60, "score_model": 0.60}
     ps = select([s], cfg(), now)
-    assert ps.daily
+    assert ps.diagnostics["daily"]["candidates"] == 1
 
 
 def test_independent_signal_candidates_have_a_disagreement_floor_not_an_edge_requirement():
@@ -369,10 +386,13 @@ def test_independent_signal_candidates_have_a_disagreement_floor_not_an_edge_req
     strongly_overpriced = sc(ev(2), "result3", "home", 0.70, 1.50, sources=1, ev_val=-0.10)
     strongly_overpriced.sources = {"market": 0.68, "elo": 0.72}
     strongly_overpriced.independent = ["elo"]
+    # A single 1.50-priced leg can never alone reach top_odds_target (2.0-2.5), so
+    # mildly_negative never actually promotes to ps.top either - check the gate
+    # via diagnostics candidates instead of ps.top membership.
     ps = select([mildly_negative, strongly_overpriced], cfg(), now)
     keys = lambda rows: {s.event.dedupe_key() for s in rows}
     assert keys(ps.all()) == {mildly_negative.event.dedupe_key(), strongly_overpriced.event.dedupe_key()}
-    assert keys(ps.top) == {mildly_negative.event.dedupe_key()}
+    assert ps.diagnostics["top"]["candidates"] == 1            # only mildly_negative cleared the gate
     assert not ps.daily  # identical Top prediction is excluded
     assert strongly_overpriced.event.dedupe_key() not in keys(ps.top)
     assert ps.diagnostics["daily"]["rejections"].get("poor_model_value", 0) == 1

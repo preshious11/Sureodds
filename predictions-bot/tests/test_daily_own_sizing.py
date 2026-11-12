@@ -51,11 +51,13 @@ def test_the_daily_alone_reaches_the_band_with_a_top_of_about_two():
 
 
 def test_seven_legs_worth_8_2_are_not_enough_but_nothing_weak_is_added_to_get_there():
-    """Short of 10 with everything that qualifies: the ticket is posted short (1.35**7 = 8.17), never padded."""
+    """Short of 5 with everything that qualifies: select_daily withholds the ticket
+    entirely (daily.py:116-118) rather than posting it short - never padded either way."""
     ps = select(pool(n=7), Config(), dt())
-    assert len(ps.daily) == 7 - len(ps.top)
-    assert own(ps) == pytest.approx(PRICE ** len(ps.daily), abs=0.01)
+    assert ps.daily == []
+    assert ps.diagnostics["daily"]["combined_odds"] < 5.0
     assert not ps.diagnostics["daily"]["target_reached"]
+    assert ps.diagnostics["daily"]["reason"] == "target_unreachable"
 
 
 def test_the_daily_never_exceeds_the_ceiling_even_when_the_next_leg_would_land_just_past_it():
@@ -81,11 +83,13 @@ def test_the_daily_counts_its_own_legs_only_without_sharing_top_predictions():
 
 
 def test_the_league_cap_is_never_waived_to_reach_the_band():
-    """There is no relaxed second pass: every event in ONE league leaves the Daily at the league cap, short of 10."""
+    """There is no relaxed second pass: the league cap holds, leaving the ticket
+    short of 5 - withheld entirely (daily.py:116-118), never relaxed to post it anyway."""
     c = Config()
     ps = select(pool(league="One League"), c, dt())
-    assert len(ps.daily) == c.daily_max_per_league
-    assert own(ps) < c.daily_odds_min and not ps.diagnostics["daily"]["target_reached"]
+    assert ps.daily == []
+    assert ps.diagnostics["daily"]["combined_odds"] < c.daily_odds_min
+    assert not ps.diagnostics["daily"]["target_reached"]
     assert ps.diagnostics["daily"]["rejections"]["diversity_limit"] > 0
     assert len(ps.all()) == 40                                       # the other predictions still exist
 

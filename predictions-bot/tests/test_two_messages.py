@@ -122,7 +122,7 @@ def _channel(db, monkeypatch, tg, force=False):
         def get_daily_snapshot(self, **kw):
             snapshot = _snapshot()
             snapshot.top_picks[0].price = 2.2
-            daily_price = 10.5 ** (1 / len(snapshot.daily_picks))
+            daily_price = 6.0 ** (1 / len(snapshot.daily_picks))     # midpoint of the 5-7 band (was 10.5, 10-12)
             for pick in snapshot.daily_picks:
                 pick.price = daily_price
             return snapshot

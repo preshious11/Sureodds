@@ -70,7 +70,12 @@ def _canary_pool():
     """Well-covered main-market candidates carrying sharp-reference data, so every internal field is populated."""
     pool = []
     for i in range(14):
-        price = 2.20
+        # 2.5**2 = 6.25, inside the current daily_odds_min/max band (5-7): two legs
+        # clear the floor and the greedy build stops before a third pushes past the
+        # ceiling. Was 2.20 (tuned for the retired 10-12 band, where 3 legs ~10.65
+        # cleared the floor) - stopped producing any Daily ticket once the band moved
+        # to 5-7 (2026-11-12 incident fallout).
+        price = 2.50
         quotes = {f"canarybook{k}": round(price + 0.003 * (k - 2), 4) for k in range(5)}
         quotes["pinnacle"] = price
         s = cand(_fx(i), selection="home" if i % 2 == 0 else "away", p=0.70, price=price, quotes=quotes,

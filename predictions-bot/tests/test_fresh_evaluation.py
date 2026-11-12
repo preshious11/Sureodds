@@ -36,7 +36,7 @@ def test_fresh_evaluation_selects_strict_tickets_without_writing_source(db):
     before = list(db.query('SELECT * FROM picks'))
     report = module.evaluate(db, Config(), dt(), None, lambda *args: ps)
     assert report['generation']['fixtures_discovered'] == 12
-    for kind, low, high in [('top', 2, 2.5), ('daily', 10, 12)]:
+    for kind, low, high in [('top', 2, 2.5), ('daily', 5, 7)]:
         assert report['tickets'][kind]['selections']
         assert low <= report['tickets'][kind]['combined_odds'] <= high
     assert list(db.query('SELECT * FROM picks')) == before

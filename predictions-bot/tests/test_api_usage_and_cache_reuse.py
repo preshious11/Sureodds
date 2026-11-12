@@ -78,7 +78,7 @@ def _generated(db, monkeypatch):
     snap = app.get_daily_snapshot(scheduled=True)
     assert snap.status == "COMPLETE" and snap.all_predictions and snap.top_picks and snap.daily_picks
     assert 2.0 <= prod(p.price for p in snap.top_picks) <= 2.5
-    assert 10.0 <= prod(p.price for p in snap.daily_picks) <= 12.0
+    assert 5.0 <= prod(p.price for p in snap.daily_picks) <= 7.0
     return app, snap
 
 

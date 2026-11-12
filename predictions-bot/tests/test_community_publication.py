@@ -44,7 +44,11 @@ def publication(db, monkeypatch):
     service = UnifiedFetcher(chain, db, cfg)
     snapshot = _snapshot()
     snapshot.top_picks = [replace(pick, price=2.2) for pick in snapshot.top_picks]
-    snapshot.daily_picks = [replace(pick, price=2.2) for pick in snapshot.daily_picks]
+    # 1.8**3 = 5.832, inside the daily_odds_min/max band (5-7). Was 2.2 (2.2**3=10.65,
+    # inside the retired 10-12 band) - the publish-time band check (daily_picks.py:398-400,
+    # config-driven, unlike the Cloudflare Worker's hardcoded duplicate fixed 2026-11-12)
+    # started skipping this fixture's Daily card once the band moved to 5-7.
+    snapshot.daily_picks = [replace(pick, price=1.8) for pick in snapshot.daily_picks]
     snapshot.all_predictions = snapshot.top_picks + snapshot.daily_picks
     with db.transaction():
         revision = db.create_ticket_revision(DAY, snapshot.generated_at, NOW.isoformat())

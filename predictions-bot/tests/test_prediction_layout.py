@@ -83,7 +83,12 @@ def test_invalid_or_unset_subscriber_timezone_uses_config(db, zone):
 
 def test_selected_ticket_survives_database_and_cache_with_correct_totals(db):
     configuration = cfg()
-    picks = select([sc(ev(i), 'result3', 'home', .70, 1.45) for i in range(40)], configuration, dt())
+    # Spread across 4 markets (was all 'result3') so the market-diversity cap
+    # (ceil(12*0.25)=3) doesn't block the ticket from reaching the 5-7 band -
+    # a homogeneous pool stalls at 3 legs (1.45**3=3.05), below the floor.
+    _kinds = [('result3', 'home', None), ('total', 'over', 2.5), ('btts', 'yes', None), ('dnb', 'home', None)]
+    picks = select([sc(ev(i), *_kinds[i % 4][:2], .70, 1.45, line=_kinds[i % 4][2]) for i in range(40)],
+                   configuration, dt())
     store_picks(picks, db, '2030-06-01')
     package_predictions(db, '2030-06-01', configuration, iso(dt()))     # memberships: the collections over stored rows
     fetcher = UnifiedFetcher(None, db, configuration)

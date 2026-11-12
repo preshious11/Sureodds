@@ -134,11 +134,15 @@ def test_daily_stops_as_soon_as_the_target_is_reached():
 
 
 def test_daily_returns_below_5_when_no_further_qualified_pick_exists():
+    # select_daily withholds the ticket entirely rather than posting it short
+    # (predbot/selection/daily.py:116-118) - the pool runs out before reaching
+    # the band, so daily is empty, not a sub-floor ticket.
     pool = [cand(_fx(i), _KINDS[i][0], _KINDS[i][1], p=0.70, price=1.7, line=_KINDS[i][2]) for i in range(4)]
     ps = select(pool, Config(), dt())
-    ticket = math.prod(s.price for s in ps.daily)
-    assert 0 < len(ps.daily) and ticket < 5.0
+    assert ps.daily == []
     assert ps.diagnostics["daily"]["target_reached"] is False
+    assert ps.diagnostics["daily"]["combined_odds"] < 5.0
+    assert ps.diagnostics["daily"]["reason"] == "target_unreachable"
 
 
 def test_no_fixed_leg_count_is_required():
@@ -171,8 +175,13 @@ def test_single_book_candidate_never_enters_the_daily():
 
 
 def test_two_books_are_enough_for_a_main_market_daily_leg():
+    # Isolates the book-coverage gate: a 1.3-priced single leg can never alone
+    # reach the 5-7 combined-odds band, so check the gate via diagnostics
+    # rather than ps.daily (which withholds any sub-band selection entirely).
     ok = cand(_fx(0), p=0.80, price=1.3, quotes={"a": 1.30, "b": 1.31})
-    assert select([ok], Config(), dt()).daily == [ok]
+    ps = select([ok], Config(), dt())
+    assert ps.diagnostics["daily"]["candidates"] == 1
+    assert "insufficient_books" not in ps.diagnostics["daily"]["rejections"]
 
 
 def test_secondary_and_restricted_markets_need_more_books():
@@ -184,7 +193,11 @@ def test_secondary_and_restricted_markets_need_more_books():
     assert ps.daily == []
     btts3 = cand(e1, "btts", "yes", 0.70, 1.5, quotes=books(3))
     corners4 = cand(e2, "total", "over", 0.70, 1.5, quotes=books(4), line=9.5, stat="corners")
-    assert {s.line.market for s in select([btts3, corners4], Config(top_min_prob=1.0), dt()).daily} == {"btts", "total"}
+    # Both legs combined (1.5*1.5=2.25) are well under the 5-7 band, so ps.daily
+    # is withheld regardless of the book-coverage gate - check the gate directly.
+    ps2 = select([btts3, corners4], Config(top_min_prob=1.0), dt())
+    assert ps2.diagnostics["daily"]["candidates"] == 2
+    assert "insufficient_books" not in ps2.diagnostics["daily"]["rejections"]
 
 
 def test_top_needs_three_distinct_books():
@@ -301,10 +314,14 @@ def test_ranking_orders_the_daily_by_evidence_not_probability():
 
 def test_without_a_sharp_reference_there_is_no_edge_and_no_edge_gate():
     # WHY: isolate Daily gates; Top must not consume the same synthetic predictions.
+    # A single 1.5-priced leg can never alone reach the 5-7 band, so ps.daily
+    # withholds it regardless - check the gate via diagnostics instead.
     s = cand(_fx(0), p=0.70)
     e = evmod.assess(s, Config(top_min_prob=1.0))
     assert s.p_fair is None and s.edge_ev is None and e.edge is None and e.has_sharp is False
-    assert select([s], Config(top_min_prob=1.0), dt()).daily == [s]       # absence of a reference is not a rejection
+    ps = select([s], Config(top_min_prob=1.0), dt())
+    assert ps.diagnostics["daily"]["candidates"] == 1          # absence of a reference is not a rejection
+    assert ps.diagnostics["daily"]["rejections"] == {}
 
 
 def test_missing_reference_costs_confidence_not_a_fabricated_edge():
@@ -317,10 +334,13 @@ def test_missing_reference_costs_confidence_not_a_fabricated_edge():
 
 def test_an_unsupported_claim_over_the_market_is_rejected():
     # WHY: isolate Daily gates; Top must not consume the same synthetic predictions.
+    # Both legs are priced at 1.4, well under the 5-7 band on their own, so
+    # ps.daily withholds regardless of this gate - check it via diagnostics.
     big = cand(_fx(0), p=0.80, price=1.4, edge=0.12)                      # model says +12 points, nothing independent
     backed = cand(_fx(1), p=0.80, price=1.4, edge=0.12, independent=("elo",))
     ps = select([big, backed], Config(top_min_prob=1.0), dt())
-    assert big not in ps.daily and backed in ps.daily
+    assert ps.diagnostics["daily"]["rejections"].get("unsupported_edge") == 1   # big: edge, nothing independent backing it
+    assert ps.diagnostics["daily"]["candidates"] == 1                           # only backed cleared the gate
     assert big in ps.predictions                             # kept as a prediction, not promoted
     assert ps.diagnostics["daily"]["rejections"]["unsupported_edge"] == 1
 
