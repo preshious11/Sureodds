@@ -19,6 +19,7 @@ import {
   type Env,
   type CachedPick,
 } from "./db.ts";
+import { positiveNumber } from "./cron.ts";
 import {
   allButtonModeFor,
   buildKeyboard,
@@ -144,7 +145,13 @@ export async function renderGroupCard(
     return { text: wrapTitleHtml(picksCard([], localDate, title, { zone: ZONE_LABEL }), title), isEmpty: true, isEligible: false };
   }
   const odds = all.reduce((product, pick) => product * pick.price, 1);
-  const [minOdds, maxOdds] = kind === "top" ? [2, 2.5] : [10, 12];
+  // Must track predbot/config.py's top_odds_target/max and daily_odds_min/max -
+  // drifting out of sync silently skips posting an otherwise-COMPLETE ticket
+  // (2026-11-12 incident: Daily's band here was stuck at the retired 10-12,
+  // after the selection-side band moved to 5-7).
+  const [minOdds, maxOdds] = kind === "top"
+    ? [positiveNumber(env.TOP_COMBINED_ODDS, 2), positiveNumber(env.TOP_ODDS_MAX, 2.5)]
+    : [positiveNumber(env.DAILY_COMBINED_MIN_ODDS, 5), positiveNumber(env.DAILY_COMBINED_MAX_ODDS, 7)];
   const allFuture = all.every((pick) => {
     const kickoff = Date.parse(pick.start_utc);
     return Number.isFinite(kickoff) && kickoff > nowMs;

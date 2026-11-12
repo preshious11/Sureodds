@@ -56,6 +56,10 @@ export function buildServerEnv(): Env {
     GITHUB_DISPATCH_TOKEN: process.env.GITHUB_DISPATCH_TOKEN,
     ALLOWED_SPORTS: process.env.ALLOWED_SPORTS,
     PRO_POLICY_MODE: process.env.PRO_POLICY_MODE,
+    TOP_COMBINED_ODDS: process.env.TOP_COMBINED_ODDS,
+    TOP_ODDS_MAX: process.env.TOP_ODDS_MAX,
+    DAILY_COMBINED_MIN_ODDS: process.env.DAILY_COMBINED_MIN_ODDS,
+    DAILY_COMBINED_MAX_ODDS: process.env.DAILY_COMBINED_MAX_ODDS,
     // handleScheduled() is a no-op unless this is exactly "1" (see
     // workers/src/cron.ts) - the Cron Trigger gate that previously lived
     // in wrangler.toml's [vars] now lives in the server's .env instead.

@@ -69,7 +69,7 @@ def main():
     finally:
         con.close()
     cfg = Config()
-    assert (cfg.top_odds_target, cfg.top_odds_max, cfg.daily_odds_min, cfg.daily_odds_max) == (2, 2.5, 10, 12)
+    assert (cfg.top_odds_target, cfg.top_odds_max, cfg.daily_odds_min, cfg.daily_odds_max) == (2, 2.5, 5, 7)
     require_provider_keys(cfg)
     cfg.telegram_token = cfg.telegram_chat_id = ''
     setup_logging('WARNING', str(folder / 'evaluation.log'),

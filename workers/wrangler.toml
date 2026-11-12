@@ -53,6 +53,18 @@ STAGE3_CRON_ENABLED = "0"
 # behavior) - see pro_policy.ts's own header comment for the rollback
 # guarantee. Rollback: set back to "legacy" (or delete this line) and redeploy.
 PRO_POLICY_MODE = "evidence_v2"
+# Combined-odds eligibility band the automatic group post re-checks at publish
+# time, independent of selection. Must track predbot/config.py's
+# top_odds_target/max and daily_odds_min/max - drifting out of sync here
+# silently skips posting an otherwise-COMPLETE ticket (2026-11-12 incident).
+# This Worker is the passive rollback target (see STAGE3_CRON_ENABLED above);
+# the live values the server actually posts with come from
+# /opt/sureodds/workers/bot/.env, not this file - kept here only so a
+# rollback doesn't resurrect the stale 10/12 band.
+TOP_COMBINED_ODDS = "2"
+TOP_ODDS_MAX = "2.5"
+DAILY_COMBINED_MIN_ODDS = "5"
+DAILY_COMBINED_MAX_ODDS = "7"
 
 # Matches workers/src/cron.ts's exported CRON_POST_SWEEP / CRON_RECAP_SWEEP /
 # CRON_DELIVER_SWEEP / CRON_WATCH exactly — handleScheduled dispatches on

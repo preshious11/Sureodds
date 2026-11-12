@@ -27,6 +27,12 @@ export interface Env {
   LIVE_MONITOR_INTERVAL_MIN?: string;
   /** WHY: bound self-healing provider use even when generation keeps failing. */
   GENERATION_MAX_DISPATCHES_PER_DAY?: string;
+  /** Combined-odds eligibility band for the automatic Top group post, same numbers as predbot's TOP_COMBINED_ODDS/TOP_ODDS_MAX (default 2 / 2.5). */
+  TOP_COMBINED_ODDS?: string;
+  TOP_ODDS_MAX?: string;
+  /** Combined-odds eligibility band for the automatic Daily group post, same numbers as predbot's DAILY_COMBINED_MIN_ODDS/MAX_ODDS (default 5 / 7). Must track predbot/config.py's daily_odds_min/max - drifting out of sync silently skips posting a COMPLETE ticket (2026-11-12 incident). */
+  DAILY_COMBINED_MIN_ODDS?: string;
+  DAILY_COMBINED_MAX_ODDS?: string;
   /** "owner/repo" for the stage8-live-monitor-production.yml workflow_dispatch call. Unset = live-monitor dispatch is disabled (alerts the owner once/day instead, if work exists). */
   GITHUB_REPO?: string;
   /** The ref (branch) to dispatch stage8 against. Defaults to "main". */

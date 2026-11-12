@@ -548,7 +548,7 @@ export const DEFAULT_MATCH_START_WINDOW_MIN = 10;
 export const DEFAULT_MATCH_END_WINDOW_HOURS = 24;
 const NOT_PLAYED_STATUSES = new Set(["postponed", "cancelled", "canceled", "abandoned", "suspended"]);
 
-function positiveNumber(raw: string | undefined, fallback: number): number {
+export function positiveNumber(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
