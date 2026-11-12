@@ -311,6 +311,11 @@ async function postToOwner(
   }
   await finishTicketPublication(env.DB, localDate, collection, revisionId, "owner", "sent",
     messageId != null ? String(messageId) : null);
+  // ticket_publications is the authoritative send receipt; this mirrors it
+  // into the legacy `posts` row that getResultTickets/dailyHealthReport
+  // still read for kind/message_id (0bb0588 moved the claim here without
+  // keeping that write, which silently starved both readers).
+  await markPosted(env.DB, `${kind}_owner`, localDate, messageId != null ? String(messageId) : null);
 }
 
 /**
@@ -393,6 +398,9 @@ export async function postGroupPicks(
   }
   await finishTicketPublication(env.DB, localDate, kind, revisionId, "group", "sent",
     messageId != null ? String(messageId) : null);
+  // Mirrors the group send into the legacy `posts` row - see the matching
+  // comment in postToOwner.
+  await markPosted(env.DB, kind, localDate, messageId != null ? String(messageId) : null);
   await setJobResult(env.DB, "post", `${kind} ${localDate}: posted message=${messageId ?? "?"}`);
   await postToOwner(env, kind, localDate, revisionId, text, replyMarkup, sender, photo);
   return "sent";
