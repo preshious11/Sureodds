@@ -7,7 +7,7 @@
 // plan.json shape: { "plan_id": "...", "files": [...], "checksums": { "<file>": "<sha256-hex>" } }
 import { readFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 export interface ParamStatement {
   sql: string;
@@ -26,6 +26,23 @@ export interface PlanManifest {
 
 export function sha256OfFile(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+/**
+ * Resolves `file` (a manifest.files[] entry) against `batchDir` and rejects
+ * anything that would escape it - a `../` traversal segment or an absolute
+ * path. The manifest is produced by our own trusted CI pipeline today, but
+ * this function is the one place both verify-manifest.ts and apply-plan.ts
+ * turn an arbitrary string from parsed JSON into a filesystem path, so it is
+ * the one place that must never trust that string's shape.
+ */
+export function resolveWithinBatch(batchDir: string, file: string): string {
+  const base = resolve(batchDir);
+  const target = resolve(base, file);
+  if (target !== base && !target.startsWith(base + sep)) {
+    throw new Error(`manifest file path escapes the batch directory: ${file}`);
+  }
+  return target;
 }
 
 /** Throws a descriptive Error on the first problem found; returns the parsed manifest if everything checks out. */
@@ -61,7 +78,7 @@ export function verifyManifest(batchDir: string): PlanManifest {
   for (const file of manifest.files) {
     const expected = manifest.checksums[file];
     if (!expected) throw new Error(`manifest lists ${file} in files[] but has no checksum for it`);
-    const path = join(batchDir, file);
+    const path = resolveWithinBatch(batchDir, file);
     if (!existsSync(path)) throw new Error(`manifest lists ${file} but it is missing from the batch directory`);
     const actual = sha256OfFile(path);
     if (actual !== expected) {

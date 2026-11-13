@@ -110,6 +110,25 @@ describe("verifyManifest", () => {
     assert.equal(manifest.plan_id, "plan-epoch-only");
     assert.equal(manifest.expect_epoch, 7);
   });
+
+  it("rejects a manifest whose files[] entry tries to escape the batch directory via ../ traversal", () => {
+    const secret = join(tmpDir, "outside-secret.sql");
+    writeFileSync(secret, "DROP TABLE subscribers;", "utf8");
+    const traversal = "../outside-secret.sql";
+    const manifest = { plan_id: "plan-traversal", files: [traversal],
+      checksums: { [traversal]: sha256OfFile(secret) } };
+    writeFileSync(join(batchDir, "plan.json"), JSON.stringify(manifest), "utf8");
+    assert.throws(() => verifyManifest(batchDir), /escapes the batch directory/);
+  });
+
+  it("rejects a manifest whose files[] entry is an absolute path", () => {
+    const secret = join(tmpDir, "outside-secret.sql");
+    writeFileSync(secret, "DROP TABLE subscribers;", "utf8");
+    const manifest = { plan_id: "plan-absolute", files: [secret],
+      checksums: { [secret]: sha256OfFile(secret) } };
+    writeFileSync(join(batchDir, "plan.json"), JSON.stringify(manifest), "utf8");
+    assert.throws(() => verifyManifest(batchDir), /escapes the batch directory/);
+  });
 });
 
 describe("apply-plan.ts as a child process: duplicate and interrupted delivery", () => {

@@ -10,9 +10,8 @@
 //
 // Usage: node apply-plan.ts <sqlite-db-path> <batch-dir>
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { LocalSqliteAdapter } from "../local-sqlite-adapter.ts";
-import { verifyManifest } from "./verify-manifest.ts";
+import { resolveWithinBatch, verifyManifest } from "./verify-manifest.ts";
 
 function fail(message: string): never {
   console.error(JSON.stringify({ event: "apply_plan_failed", error: message }));
@@ -35,7 +34,7 @@ try {
   fail(err instanceof Error ? err.message : String(err));
 }
 
-const sqlStatements = manifest.files.map((file) => readFileSync(join(batchDir, file), "utf8"));
+const sqlStatements = manifest.files.map((file) => readFileSync(resolveWithinBatch(batchDir, file), "utf8"));
 
 const adapter = new LocalSqliteAdapter(dbPath);
 try {
