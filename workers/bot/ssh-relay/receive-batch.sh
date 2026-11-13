@@ -64,10 +64,22 @@ timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 batch_dir="$INCOMING_ROOT/${job}-${timestamp}"
 mkdir -p "$batch_dir"
 
-# Extract the incoming tar.gz from stdin. --no-same-owner: the archive was
-# built on a GitHub Actions runner under a different uid - take the
-# sureodds user's own ownership on extraction, not whatever uid tarred it.
-tar -xzf - --no-same-owner -C "$batch_dir"
+# Buffer stdin to a file rather than piping straight into tar: the archive
+# must be LISTED and checked for a path-traversal or absolute member
+# BEFORE anything is extracted, which needs two passes over the same
+# bytes - a pipe from the SSH connection can only be read once.
+tar_file="$batch_dir.tar.gz"
+cat > "$tar_file"
+if tar -tzf "$tar_file" | grep -E '(^/|(^|/)\.\.(/|$))'; then
+  echo "rejected: tar archive contains an absolute path or a .. path-traversal entry" >&2
+  rm -rf "$batch_dir" "$tar_file"
+  exit 1
+fi
+# Extract the (now-checked) tar.gz. --no-same-owner: the archive was built
+# on a GitHub Actions runner under a different uid - take the sureodds
+# user's own ownership on extraction, not whatever uid tarred it.
+tar -xzf "$tar_file" --no-same-owner -C "$batch_dir"
+rm -f "$tar_file"
 
 # pro-value-rows: a small, separate payload (one JSON file, no checksums/
 # plan.json manifest - that format is specific to the main D1-schema
