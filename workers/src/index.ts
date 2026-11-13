@@ -62,7 +62,6 @@ import {
   allButtonModeFor,
   commandToView,
   communityMenuKeyboard,
-  customPicksButton,
   isAuthorized,
   menuKeyboard,
   normalizeCommand,

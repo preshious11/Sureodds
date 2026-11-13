@@ -164,6 +164,17 @@ export class LocalSqliteAdapter implements D1Database {
 
     conn.exec("BEGIN IMMEDIATE;");
     try {
+      // Re-check plan_id too, not just the epoch: two concurrent deliveries
+      // of the SAME plan can both pass the pre-lock `existing` check above
+      // before either commits. Without this second check, the loser would
+      // reach the INSERT below and throw a raw UNIQUE constraint violation
+      // instead of returning "already_applied" - exactly the race this
+      // function's whole design is meant to make impossible.
+      const existingInTxn = conn.prepareGet("SELECT plan_id FROM sync_applied_plans WHERE plan_id = ?", [planId]);
+      if (existingInTxn) {
+        conn.exec("ROLLBACK;");
+        return "already_applied";
+      }
       if (expectEpoch !== undefined && this.currentEpoch() !== expectEpoch) {
         conn.exec("ROLLBACK;");
         return "stale_epoch";
