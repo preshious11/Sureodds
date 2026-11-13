@@ -6,6 +6,7 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 from functools import lru_cache
+from typing import List
 
 #: Generic club-name affixes only, never a word that distinguishes one real
 #: club from another (e.g. "united"/"city"/"real"/"atletico" must stay OUT of

@@ -402,7 +402,6 @@ def _harvest_elo_from_espn(resolver: "ResultsResolver", db: Database, elo: Elo) 
     Zero extra API calls: ESPN caches boards in memory for the run.
     Returns the number of new results learned."""
     from predbot.markets.competitions import COMPETITIONS
-    from predbot.util.timeutil import utcnow
 
     espn = resolver.providers.get("espn")
     if espn is None or not hasattr(espn, "_days") or not hasattr(espn, "_candidates"):

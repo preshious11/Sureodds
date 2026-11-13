@@ -8,10 +8,9 @@ re-requested per user or per prediction run.
 """
 from __future__ import annotations
 
-import sqlite3
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional
 
 from predbot.model.elo import Elo

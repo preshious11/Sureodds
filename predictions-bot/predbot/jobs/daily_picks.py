@@ -3,23 +3,21 @@ from __future__ import annotations
 
 import logging
 import math
-import sqlite3
 import os
 from datetime import datetime, timedelta
 from collections import Counter
 from types import SimpleNamespace
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from predbot.bot.telegram import Telegram
 from predbot.config import Config
-from predbot.jobs import stats as stats_mod
 from predbot.model.calibration import Calibrator
 from predbot.model.elo import Elo
 from predbot.model.ensemble import EventModel, Scored
 from predbot.providers.base import Event
 from predbot.providers.budget import Budget
 from predbot.markets.settlement import make_results_gate
-from predbot.providers.chain import ProviderChain, merge_events
+from predbot.providers.chain import ProviderChain
 from predbot.selection.picker import PickSet
 from predbot.model.engine import generate, ModelSettings
 from predbot.model.independent import IndependentModels

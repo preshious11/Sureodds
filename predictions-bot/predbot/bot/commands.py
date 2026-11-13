@@ -521,7 +521,6 @@ class CommandLoop(threading.Thread):
     def handle(self, cmd: str, user_id: str, chat_id: str = "",
                args: Optional[List[str]] = None) -> Optional[str]:
         """Text-only commands; the three views go through ``_send_view``."""
-        local = to_local(utcnow(), self.cfg.timezone)
         if cmd == "/help":
             extra = ("\n\n<b>Admin</b>: /run · /settle · /recap · /lastrun · /menu"
                      if user_id in self.cfg.telegram_admin_ids else "")

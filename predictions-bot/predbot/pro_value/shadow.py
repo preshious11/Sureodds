@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from predbot.pro_value import botd_archive
-from predbot.pro_value.matching import match_events, match_key
+from predbot.pro_value.matching import match_events
 from predbot.pro_value.oddsapi_raw import load_raw_dir
 from predbot.pro_value.select import Gates, select_pro
 from predbot.util.timeutil import iso

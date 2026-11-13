@@ -5,7 +5,6 @@ import logging
 import os
 import traceback as _traceback
 from datetime import timedelta
-from typing import Optional
 
 from predbot.cache.models import DailySnapshot, PickRecord, StatsSummary, SCHEMA_VERSION
 from predbot.cache.providers import sport_states

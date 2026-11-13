@@ -24,14 +24,13 @@ import io
 import time
 import urllib.request
 from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from predbot.history.ingest import SPORT
 from predbot.history.store import HistoryStore
 from predbot.storage.identity import IdentityRegistry
-from predbot.util.names import canonical_team
 from predbot.util.timeutil import utcnow
 
 SOURCE = "football_data_co_uk"

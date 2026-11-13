@@ -20,7 +20,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
-from predbot.history.store import HistoryStore, season_of
+from predbot.history.store import HistoryStore
 from predbot.markets.competitions import COMPETITIONS
 from predbot.storage.identity import IdentityRegistry
 from predbot.util.names import canonical_team

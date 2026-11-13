@@ -23,7 +23,7 @@ from predbot.bot.pagination import (VIEW_COMMAND, VIEW_DESC, VIEW_ICON,
                                     view_button_label)
 from predbot.bot.telegram import Telegram, esc
 from predbot.cache.fetcher import UnifiedFetcher
-from predbot.cache.models import SPORT_VIEW_PREFIX, VIEW_ALL, VIEW_DAILY, VIEW_STATS, VIEW_TOP, VIEW_YESTERDAY
+from predbot.cache.models import VIEW_ALL, VIEW_DAILY, VIEW_STATS, VIEW_TOP, VIEW_YESTERDAY
 from predbot.config import Config
 from predbot.storage.db import Database
 from predbot.util.timeutil import resolve_timezone

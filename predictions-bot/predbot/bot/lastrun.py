@@ -18,7 +18,7 @@ from predbot.bot.format import kickoff_label
 from predbot.bot.telegram import esc
 from predbot.cache.models import DailySnapshot
 from predbot.util.pipeline_report import pipeline_lines
-from predbot.util.timeutil import parse_hhmm, parse_iso, to_local, utcnow
+from predbot.util.timeutil import parse_hhmm, parse_iso, to_local
 
 
 def latest_snapshot(db) -> Optional[Tuple[DailySnapshot, Dict]]:

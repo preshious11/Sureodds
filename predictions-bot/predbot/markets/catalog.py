@@ -87,7 +87,7 @@ PROP_STAT_WORDS: Dict[str, str] = {
     "strikeouts": "Strikeouts", "strikeouts_thrown": "Strikeouts",
     "pitcher_strikeouts": "Strikeouts", "batter_strikeouts": "Strikeouts",
     "walks": "Walks", "doubles": "Doubles", "triples": "Triples",
-    "rbi": "RBIs", "rbis": "RBIs",
+    "rbis": "RBIs",
     "earned_runs": "Earned Runs", "points": "Points", "rebounds": "Rebounds",
     "assists": "Assists", "three_pointers": "Three-Pointers",
     "threepointers": "Three-Pointers", "three_pointers_made": "Three-Pointers",

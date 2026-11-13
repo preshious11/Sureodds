@@ -39,7 +39,7 @@ from predbot.bot.telegram import Telegram
 from predbot.cache.models import DailySnapshot
 from predbot.storage.db import Database
 from predbot.util.lifecycle import shutting_down
-from predbot.util.timeutil import parse_hhmm, resolve_timezone, local_reached, parse_iso, to_local, utcnow
+from predbot.util.timeutil import parse_hhmm, resolve_timezone, parse_iso, to_local, utcnow
 
 log = logging.getLogger(__name__)
 

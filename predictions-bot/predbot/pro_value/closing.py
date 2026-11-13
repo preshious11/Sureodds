@@ -4,7 +4,7 @@ CLV is defined as SportyBet price at selection divided by the closing fair price
 minus one. Only picks inside the window before kickoff are captured; nothing is captured after kickoff."""
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from predbot.pro_value.fair import primary_fair, sharp_books_1x2
 from predbot.pro_value.matching import match_key

@@ -10,7 +10,7 @@ mu / mu_t are solved from the main spread and total lines *and their prices*
 from __future__ import annotations
 
 import math
-from typing import Optional, Tuple
+from typing import Optional
 
 from predbot.providers.base import MarketLine
 from predbot.model.payoff import Payoff, line_payoff, nfl_tie_sensitive

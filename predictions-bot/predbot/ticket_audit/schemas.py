@@ -4,7 +4,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-import json
 import math
 import unicodedata
 from .resources import ResourceLimit, validate_payload

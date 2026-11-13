@@ -6,7 +6,6 @@ No minimum diversity quotas; existing maximum concentration limits remain.
 """
 import math
 from collections import Counter
-from itertools import combinations
 
 from predbot.selection.search import search
 from predbot.selection.top import promotion_reason, ranked
