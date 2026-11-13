@@ -95,6 +95,39 @@ def test_top_picks_meet_quality_bar():
     assert ps.top and ticket >= c.top_odds_target
 
 
+def test_daily_never_backs_the_opposite_side_of_a_fixture_already_used_by_top():
+    """Top backing one team (home win) must not leave Daily free to back the other team
+    (e.g. away handicap) on the SAME fixture - the two readings contradict each other even
+    though the underlying markets don't literally overlap (regression: production sent
+    both "home to win" in Bet of the Day and "away handicap" in Daily for one match)."""
+    now = dt()
+    e1, e2 = ev(1), ev(2)
+    pool = [sc(e1, "result3", "home", 0.70, 1.42, sources=3),
+            sc(e2, "result3", "home", 0.70, 1.42, sources=3),
+            sc(e1, "handicap", "away", 0.65, 1.9, line=1.5, sources=3)]
+    pool += [sc(ev(100 + i), "result3", "home", 0.68, 1.8, sources=3) for i in range(6)]
+    ps = select(pool, cfg(), now)
+    assert any(s.event.canonical_event_id == e1.canonical_event_id and s.line.market == "result3"
+               for s in ps.top)
+    assert not any(s.event.canonical_event_id == e1.canonical_event_id for s in ps.daily)
+
+
+def test_daily_may_still_pick_the_same_side_or_an_unrelated_market_on_a_top_fixture():
+    """Only an OPPOSING team-sided pick is blocked - a non-directional market (totals) on
+    a Top fixture stays ELIGIBLE for Daily (whether end_game's search actually uses it is
+    a separate, unrelated question from whether it was filtered out)."""
+    now = dt()
+    e1, e2 = ev(1), ev(2)
+    pool = [sc(e1, "result3", "home", 0.70, 1.42, sources=3),
+            sc(e2, "result3", "home", 0.70, 1.42, sources=3),
+            sc(e1, "total", "over", 0.65, 1.9, line=2.5, sources=3)]
+    pool += [sc(ev(100 + i), "result3", "home", 0.68, 1.8, sources=3) for i in range(6)]
+    ps = select(pool, cfg(), now)
+    assert any(s.event.canonical_event_id == e1.canonical_event_id and s.line.market == "result3"
+               for s in ps.top)
+    assert ps.diagnostics["daily"]["candidates"] == 7   # all 6 filler legs plus e1's total
+
+
 def test_single_book_never_top():
     now = dt()
     pool = [sc(ev(i), "result3", "home", 0.72, 1.8, sources=1, books=1, agreement=0.0) for i in range(10)]

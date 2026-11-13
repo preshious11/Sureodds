@@ -23,13 +23,17 @@ class PickSet:
         return self.predictions
 
 
+def _canonical_market(market):
+    market = str(market or '').lower()
+    return {'1x2': 'result3', 'moneyline': 'result2', 'over_under': 'total',
+            'spread': 'handicap', 'double_chance': 'dc', 'draw_no_bet': 'dnb'}.get(market, market)
+
+
 def prediction_identity(row):
     """WHY: compare prediction semantics, never display labels or provider spellings."""
     from predbot.selection.representatives import FAMILY_OF_MARKET
     from predbot.providers.base import SIDE_MARKETS
-    market = str(row.get('market') or '').lower()
-    market = {'1x2': 'result3', 'moneyline': 'result2', 'over_under': 'total',
-              'spread': 'handicap', 'double_chance': 'dc', 'draw_no_bet': 'dnb'}.get(market, market)
+    market = _canonical_market(row.get('market'))
     line = row.get('line')
     entity = row.get('entity') or 'all'
     if market in SIDE_MARKETS and entity in ('home', 'away'):
@@ -37,6 +41,18 @@ def prediction_identity(row):
     return (row.get('canonical_event_id') or row.get('fixture_key'),
             FAMILY_OF_MARKET.get(market, market), row.get('stat'), entity, row.get('selection'),
             None if line is None else round(float(line), 2), row.get('period'))
+
+
+def _team_side(row):
+    """The team a directional pick backs ('home'/'away'), or None for a non-team-sided
+    market (totals, btts, props, a draw selection, ...). Used only to catch a Daily leg
+    that backs the OPPOSITE team from an already-selected Top leg on the same fixture -
+    e.g. Top's "home to win" (result3/result2/dnb) against Daily's "away" handicap. Two
+    directional picks on the SAME side (or either side against a non-directional market,
+    like a total) are left alone: they are reinforcing or unrelated, not contradictory."""
+    from predbot.providers.base import SIDE_MARKETS
+    market, selection = _canonical_market(row.get('market')), row.get('selection')
+    return selection if market in SIDE_MARKETS and selection in ('home', 'away') else None
 
 
 class PredictionPool:
@@ -105,7 +121,29 @@ class PredictionPool:
             top_diag['rejection_log_errors'] = errors
         # WHY: Top owns identical predictions; another market on the same fixture remains eligible.
         top_keys = {prediction_identity(row) for row in top}
-        daily_pool = [row for row in pool if prediction_identity(row) not in top_keys]
+        # Top picks at most one leg per fixture (its own duplicate_event guard), so there is
+        # at most one side to record per event here.
+        top_sides = {(row.get('canonical_event_id') or row.get('fixture_key')): side
+                     for row in top if (side := _team_side(row))}
+
+        def opposes_top(row):
+            side = _team_side(row)
+            if side is None:
+                return False
+            eid = row.get('canonical_event_id') or row.get('fixture_key')
+            return top_sides.get(eid) not in (None, side)
+
+        daily_pool = []
+        for row in pool:
+            if prediction_identity(row) in top_keys:
+                continue
+            if opposes_top(row):
+                eid = row.get('canonical_event_id') or row.get('fixture_key')
+                winner = next((t for t in top if (t.get('canonical_event_id') or t.get('fixture_key')) == eid), None)
+                if daily_sink:
+                    daily_sink(row, 'opposes_top_selection', winner_row=winner)
+                continue
+            daily_pool.append(row)
         daily, daily_diag = select_daily(daily_pool, cfg, now_utc, reject_sink=daily_sink)
         if daily_flush and (errors := daily_flush(daily)):
             daily_diag['rejection_log_errors'] = errors
