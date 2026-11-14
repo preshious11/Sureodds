@@ -335,7 +335,11 @@ for(const cron of [CRON_DELIVER_SWEEP,CRON_POST_SWEEP])it(`maximum batch with si
  };
  try {await handleScheduled({DB,STAGE3_CRON_ENABLED:'1',TELEGRAM_CHAT_ID:'-100',TELEGRAM_ADMIN_IDS:'999',RESULT_GIFS_START_DATE:'2026-10-15',
   GITHUB_REPO:'owner/repo',GITHUB_DISPATCH_TOKEN:'t'},cron,NOW);}finally{globalThis.fetch=saved;}
- assert.equal(sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'result_gif_%'").get().n,0);
+ // CRON_DELIVER_SWEEP now runs sweepResultGifs directly (decoupled from the
+ // still-disabled match-event alerts below), so each of the six already-settled
+ // tickets gets a result_gif receipt here - with no GIF files registered, each
+ // is receipted 'no-gif' rather than sent. CRON_POST_SWEEP never touches GIFs.
+ assert.equal(sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'result_gif_%'").get().n,cron===CRON_DELIVER_SWEEP?6:0);
  if(cron===CRON_DELIVER_SWEEP)assert.equal(sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'evt_%_end' AND message_id IS NOT NULL").get().n,0);
  t.diagnostic(`D1 queries: ${DB.count}`);
  // Query count varies with whether revision receipts make a ticket eligible

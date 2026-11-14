@@ -188,6 +188,11 @@ describe('settled ticket GIF replies',()=>{
  assert.equal(w.sent.length,1);assert.equal(w.sent[0].method,'sendAnimation');assert.equal(w.sent[0].animation,`${kind}-file`);
  assert.equal(w.sent[0].chat_id,'-100');assert.deepEqual(w.sent[0].reply_parameters,{message_id:123,allow_sending_without_reply:false});assert.equal(w.sent[0].caption,kind==='won'?'Won':'Lost');
  });}
+ it('a single lost leg fires the lost GIF immediately, without waiting for the ticket\'s other still-pending legs',async()=>{
+ const w=world();ticket(w,['lost','pending']);gif(w,'lost');await sweepResultGifs(w.env,NOW,w.sender);
+ assert.equal(w.sent.length,1);assert.equal(w.sent[0].method,'sendAnimation');assert.equal(w.sent[0].animation,'lost-file');
+ assert.equal(w.sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind='result_gif_top' AND message_id IS NOT NULL").get().n,1);
+ });
  it('all void/push records a receipt without sending; pending/unknown/postponed do nothing',async()=>{
  for(const statuses of [['void','push'],['pending'],['unresolved'],['postponed'],['mystery']]){
  const w=world();ticket(w,statuses);gif(w);await sweepResultGifs(w.env,NOW,w.sender);assert.equal(w.sent.length,0);
@@ -359,13 +364,13 @@ it('one fixture with different Top/Daily markets finishes both, replying to each
  assert.deepEqual(group.slice(1).map(s=>s.reply_parameters.message_id).sort(),[123,456]);
  assert.equal(group.filter(s=>s.method==='sendAnimation').length,2);
 });
-it('even if all legs are settled before delivery, GIF waits for the final queued END alert',async()=>{
+it('once all legs are settled, the GIF fires right away without waiting for the final queued END alert',async()=>{
  const w=world();ticket(w,['won','won']);gif(w);
  const ids=w.sql.prepare('SELECT id FROM picks ORDER BY id').all().map(r=>r.id);
  fixture(w,ids[0],'first');fixture(w,ids[1],'last');
  await sweepMatchEvents(w.env,NOW,w.sender);
- const group=w.sent.filter(s=>s.chat_id==='-100');assert.deepEqual(group.map(s=>s.method),['sendMessage','sendMessage','sendAnimation']);
- assert.equal(group[1].text,'end last');
+ const group=w.sent.filter(s=>s.chat_id==='-100');
+ assert.deepEqual(group.map(s=>s.method),['sendMessage','sendAnimation','sendMessage']);
 });
 it('scheduled POST never sends individual won/lost result GIFs',async()=>{
  const w=world();ticket(w,['won']);gif(w);await scheduled(w,CRON_POST_SWEEP);
@@ -373,18 +378,9 @@ it('scheduled POST never sends individual won/lost result GIFs',async()=>{
  await scheduled(w,CRON_POST_SWEEP);assert.equal(w.sent.filter(s=>s.method==='sendAnimation').length,0);
  assert.equal(w.sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind LIKE 'result_gif_%'").get().n,0);
 });
-it('POST backup racing immediate END delivery sends exactly one GIF, after END confirmation',async()=>{
+it('POST backup racing a concurrent GIF sweep on an already-settled ticket sends exactly one GIF',async()=>{
  const w=world();ticket(w,['won']);gif(w);fixture(w,w.sql.prepare('SELECT id FROM picks').get().id,'race');
- const sender=async(e,method,body)=>{
-  w.sent.push({method,...body});
-  if(method==='sendMessage' && body.chat_id==='-100') await sweepResultGifs(w.env,NOW,sender);
-  if(method==='sendAnimation') {
-   assert.ok(w.sql.prepare("SELECT message_id FROM posts WHERE kind='evt_race_end'").get().message_id);
-   await sweepResultGifs(w.env,NOW,sender);
-  }
-  return {ok:true,messageId:42};
- };
- await Promise.all([sweepMatchEvents(w.env,NOW,sender),sweepResultGifs(w.env,NOW,sender)]);
+ await Promise.all([sweepMatchEvents(w.env,NOW,w.sender),sweepResultGifs(w.env,NOW,w.sender)]);
  assert.equal(w.sent.filter(s=>s.method==='sendAnimation').length,1);
  assert.equal(w.sql.prepare("SELECT COUNT(*) n FROM posts WHERE kind='result_gif_top' AND message_id IS NOT NULL").get().n,1);
  // Reverse the winner: pause the immediate path after its aggregate snapshot,

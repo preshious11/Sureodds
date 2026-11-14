@@ -775,14 +775,22 @@ async function getResultTickets(env:Env,nowMs:number,fixtures?:{date:string;fixt
 async function sendReadyResultGifs(env:Env,nowMs:number,sender:typeof sendTelegram,tickets:ResultTicket[],
   endAlerts=new Set<string>(),alerted=new Set<string>()):Promise<void> {
   const day=lagosDateString(nowMs);
-  const ready=tickets.filter(ticket=>!ticket.pending && /^\d+$/.test(ticket.message_id) && ticket.authorized &&
-    JSON.parse(ticket.pending_ends).every((key:string)=>endAlerts.has(key)));
+  // A ticket replies as soon as its outcome is decided: any lost leg settles
+  // it "lost" right away - no need to wait for the ticket's other games to
+  // finish - otherwise once every leg is resolved. This no longer waits on
+  // pending_ends/endAlerts (the match-end Telegram alert feed): that feed is
+  // never sent in production (see handleScheduled's CRON_DELIVER_SWEEP), so
+  // gating the reply on it meant the reply could never fire at all.
+  const ready=tickets.filter(ticket=>(ticket.losses>0 || !ticket.pending) &&
+    /^\d+$/.test(ticket.message_id) && ticket.authorized);
+  const attempted=new Set<string>();
   for(const ticket of ready) {
+    const key=`${ticket.kind}|${ticket.post_date}`;
     // Re-check (not just the `ready` filter above) in case this ticket object
     // is shared/mutated across a batch - same belt-and-suspenders pattern as
-    // the pending/message_id re-check right below.
-    if (ticket.pending || !/^\d+$/.test(ticket.message_id) || !ticket.authorized) continue;
-    ticket.pending=1; // This batch attempts a ticket at most once, including clean send failures.
+    // the attempted/message_id re-check right below.
+    if (attempted.has(key) || !/^\d+$/.test(ticket.message_id) || !ticket.authorized) continue;
+    attempted.add(key); // This batch attempts a ticket at most once, including clean send failures.
     const receipt=`result_gif_${ticket.kind}`;
     if (!(await claimPost(env.DB,receipt,ticket.post_date))) continue;
     const kind=ticket.losses?'lost':ticket.wins?'won':null;
@@ -1183,6 +1191,7 @@ export async function handleScheduled(env: Env, cron: string, nowMs = Date.now()
     await maybeDispatchGeneration(env, nowMs);
     await maybeDispatchSettlement(env, nowMs);
     await maybeDispatchLiveMonitor(env, nowMs);
+    await sweepResultGifs(env, nowMs);
   } else if (cron === CRON_RECAP_SWEEP) {
     await postGroupRecap(env, nowMs);
   } else if (cron === CRON_WATCH) {
