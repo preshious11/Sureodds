@@ -23,24 +23,6 @@ log = logging.getLogger(__name__)
 from predbot.util.duration import expected_end, live_cutoff, settlement_deadline  # noqa: E402
 SETTLEMENT_BUFFER_MIN = 15  # buffer after last match to ensure all results are available
 
-# A pick past settlement_deadline keeps retrying indefinitely - no provider
-# outage or delayed report should make us fabricate a result just because
-# time passed (12cba67, "Restore authoritative ... settlement", 2026-11-01,
-# removed an earlier auto-void-at-deadline that was voiding picks a
-# resolver would have graded correctly given more retries). But NO backstop
-# at all meant a handful of genuinely unresolvable fixtures (a provider
-# gap, e.g. lower-tier tennis/basketball legs - never an outage) stayed
-# `pending` forever: as of 2026-11-14 the oldest was a full month old, and
-# every leg of a published Top/Daily ticket must be non-pending before its
-# won/lost GIF reply can ever fire (workers/src/cron.ts sendReadyResultGifs)
-# - one permanently-stuck leg blocks that ticket's GIF forever too. This is
-# a much longer, deliberately generous outer bound - 14 days past the
-# normal settlement_deadline, not AT it - so normal delayed/retried
-# settlement is untouched and only a fixture that is truly never going to
-# resolve eventually gets voided as unresolved (jobs/stats.py's
-# UNRESOLVED_REASONS already expects exactly this reason string).
-GIVE_UP_AFTER = timedelta(days=14)
-
 
 def compute_settlement_deadline(db: Database, today_local_date: str) -> Optional[datetime]:
     """Compute when to run settlement: when the latest match today will finish + buffer.
@@ -162,20 +144,9 @@ def _void_expired(r, db: Database, now: datetime, counts: Dict[str, int]) -> Non
     start = parse_iso(r["start_utc"])
     if start is None or now < settlement_deadline(start, r["sport"]):
         return
-    deadline = settlement_deadline(start, r["sport"])
-    if now < deadline + GIVE_UP_AFTER:
-        # Elapsed time proves neither a result nor cancellation. Keep retryable.
-        counts['pending'] += 1
-        log.warning('overdue unresolved pick %s; awaiting authoritative result', r['id'])
-        return
-    with db.transaction():
-        current = db.query("SELECT status FROM picks WHERE id=?", (r["id"],))
-        if not current or current[0]["status"] != PENDING:
-            return
-        db.settle_pick(r["id"], VOID, {"reason": "settlement deadline expired", "deadline": iso(deadline)})
-        counts["void"] += 1
-        log.error("settlement: giving up on pick %s after %s - no authoritative result in %s days "
-                  "past its deadline; voided as unresolved", r["id"], r["sport"], GIVE_UP_AFTER.days)
+    # Elapsed time proves neither a result nor cancellation. Keep retryable.
+    counts['pending'] += 1
+    log.warning('overdue unresolved pick %s; awaiting authoritative result', r['id'])
 
 
 def expire_pending(db: Database, now: datetime, counts: Optional[Dict[str, int]] = None) -> Dict[str, int]:
