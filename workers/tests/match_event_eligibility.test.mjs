@@ -587,7 +587,7 @@ describe("daily posting schedule and failure handling", () => {
   it("a transient group failure is retried by the next sweep without duplicating the owner", async () => {
     const w = world();
     w.sql.prepare("INSERT INTO prediction_cache VALUES(?,?,?,?,?)").run("k", DAY, "Africa/Lagos", "COMPLETE", "{}");
-    w.fixture("publish-daily", { collections: ["daily"], price: 10.5 });
+    w.fixture("publish-daily", { collections: ["daily"], price: 6 }); // inside DAILY_COMBINED_MIN/MAX_ODDS' 5-7 default band
     const at = Date.UTC(2026, 9, 16, 8, 35);
     const first = recorder(new Set(["-100"]));
     const quiet = console.error;
@@ -634,9 +634,10 @@ describe("integration: publication -> kickoff -> settlement -> full time -> next
     w.sql.prepare("INSERT INTO prediction_cache VALUES(?,?,?,?,?)").run("k", DAY, "Africa/Lagos", "COMPLETE", "{}");
     // Persisted selection: Top-only, Daily-only, in both, All-only fixture, All-only sibling of a Top fixture.
     const topOnly = w.fixture("top-fx", { collections: ["all", "top"], price: 1.5 });
-    const dailyOnly = w.fixture("daily-fx", { collections: ["all", "daily"], price: 3.2 });
+    // dailyOnly * bothB = 2.4*2.4 = 5.76, inside DAILY_COMBINED_MIN/MAX_ODDS' 5-7 default band.
+    const dailyOnly = w.fixture("daily-fx", { collections: ["all", "daily"], price: 2.4 });
     const bothA = w.fixture("both-fx", { collections: ["all", "top"], price: 1.5 });
-    const bothB = w.fixture("both-fx", { collections: ["all", "daily"], price: 3.2 });
+    const bothB = w.fixture("both-fx", { collections: ["all", "daily"], price: 2.4 });
     const allFx = w.fixture("all-fx", { collections: ["all"] });
     const allSibling = w.fixture("top-fx", { collections: ["all"] });
     w.sql.prepare("UPDATE picks SET label='Hidden pick' WHERE id IN (?,?)").run(allFx, allSibling);

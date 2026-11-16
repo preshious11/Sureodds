@@ -64,7 +64,9 @@ function seedDay(sql, day, { dailyCount = 8 } = {}) {
     "INSERT INTO picks(id,pick_date,tier,rank,sport,league,home,away,start_utc,market,selection,label,price,prob,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
   );
   const insertMembership = sql.prepare("INSERT INTO prediction_memberships VALUES(?,?,?)");
-  const price = dailyCount > 5 ? 1.35 : 2.2;
+  // Must land the combined odds inside DAILY_COMBINED_MIN_ODDS/MAX_ODDS'
+  // default band (5-7) or renderGroupCard silently skips the ticket.
+  const price = dailyCount > 5 ? 1.25 : 1.8;
   for (let i = 1; i <= dailyCount; i += 1) {
     insertPick.run(
       i, day, "all", i, "football", "League", `Home${i}`, `Away${i}`,

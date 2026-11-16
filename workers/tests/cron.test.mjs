@@ -61,11 +61,14 @@ function cronDb({
       market: "result3", period: "full", stat: "points", entity: "all", line: null,
       selection: "home", label: "Alpha to Win", price: 2.2, prob: 0.7, status: "pending",
     }],
+    // 1.8^3 ≈ 5.83, inside the current DAILY_COMBINED_MIN_ODDS/MAX_ODDS
+    // default band (5-7) - at 2.2 each (≈10.6 combined) the ticket fell
+    // outside that band and renderGroupCard silently skipped it.
     daily: [1, 2, 3].map((id) => ({
       id: id + 10, tier: "daily", rank: id, revision_id: 1, sport: "football", league: `League ${id}`,
       home: `Home ${id}`, away: `Away ${id}`, start_utc: new Date(Date.now() + 3_600_000).toISOString(),
       market: "result3", period: "full", stat: "points", entity: "all", line: null,
-      selection: "home", label: `Home ${id} to Win`, price: 2.2, prob: 0.7, status: "pending",
+      selection: "home", label: `Home ${id} to Win`, price: 1.8, prob: 0.7, status: "pending",
     })),
   };
   // Models the real `posts` table: a row with message_id === null is an

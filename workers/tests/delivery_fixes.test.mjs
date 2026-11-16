@@ -29,11 +29,12 @@ function stubDb({ cache = null, statuses = {} } = {}) {
       stat: "points", entity: "all", line: null, selection: "home", label: "Alpha to Win",
       price: 2.2, prob: 0.7, status: "pending",
     }],
+    // 1.8^3 ≈ 5.83, inside DAILY_COMBINED_MIN/MAX_ODDS' 5-7 default band (2.2^3 ≈ 10.6 is not).
     daily: [1, 2, 3].map((id) => ({
       id: id + 10, tier: "daily", rank: id, revision_id: 1, sport: "football", league: `League ${id}`,
       home: `Home ${id}`, away: `Away ${id}`, start_utc: startUtc, market: "result3", period: "full",
       stat: "points", entity: "all", line: null, selection: "home", label: `Home ${id} to Win`,
-      price: 2.2, prob: 0.7, status: "pending",
+      price: 1.8, prob: 0.7, status: "pending",
     })),
   };
   return {

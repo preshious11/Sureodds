@@ -100,7 +100,7 @@ describe("revision-aware ticket lifecycle", () => {
     try {
       sql.prepare("INSERT INTO ticket_revisions VALUES(?,?,?,?)").run(DAY, 1, "fresh-daily", `${DAY}T09:00:00Z`);
       sql.prepare("INSERT INTO active_ticket_revisions VALUES(?,?,?)").run(DAY, 1, `${DAY}T09:00:00Z`);
-      addPick(sql, { id: 10, revision: 1, collection: "daily", price: 10.5 });
+      addPick(sql, { id: 10, revision: 1, collection: "daily", price: 6 }); // inside DAILY_COMBINED_MIN/MAX_ODDS' 5-7 default band
       const env = { DB, TIMEZONE: "Africa/Lagos", TELEGRAM_CHAT_ID: "-100", DELIVERY_TIME: "09:30" };
       let sends = 0;
       assert.equal(await postGroupPicks(env, "daily", NOW, async () => {

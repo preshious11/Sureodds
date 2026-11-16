@@ -67,7 +67,8 @@ describe('Bet of the Day photo publications',()=>{
   assert.equal(w.sql.prepare("SELECT message_id FROM ticket_publications WHERE collection='top' AND destination='group'").get().message_id,'101');
   assert.equal(w.sql.prepare("SELECT message_id FROM ticket_publications WHERE collection='top' AND destination='owner'").get().message_id,'202');
   ticket(w,['pending'],'daily');
-  w.sql.prepare("UPDATE picks SET start_utc=?,price=10.5 WHERE tier='daily'").run(new Date(NOW+3600000).toISOString());
+  // price=6 (not 10.5) stays inside DAILY_COMBINED_MIN/MAX_ODDS' 5-7 default band, or renderGroupCard skips the ticket.
+ w.sql.prepare("UPDATE picks SET start_utc=?,price=6 WHERE tier='daily'").run(new Date(NOW+3600000).toISOString());
   await postGroupPicks(w.env,'daily',NOW,w.sender);assert.equal(w.sent.at(-1).method,'sendMessage');
  });
  it('invalid media falls back once and upload failures stay retryable',async()=>{
