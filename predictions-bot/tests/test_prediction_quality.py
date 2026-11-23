@@ -296,7 +296,7 @@ def test_negative_edge_vs_sharp_cannot_beat_a_stronger_positive_edge_on_raw_prob
 
 
 def test_a_clearly_negative_edge_vs_sharp_is_rejected_outright():
-    assert Config().min_edge_vs_sharp == -0.04
+    assert Config().min_edge_vs_sharp == 0.0
     bad = cand(_fx(0), p=0.80, price=1.30, p_fair=0.78, edge_ev=-0.07)
     ps = select([bad], Config(), dt())
     assert ps.daily == [] and ps.diagnostics["daily"]["rejections"]["poor_reference_value"] == 1
@@ -651,3 +651,20 @@ def test_an_old_database_without_the_evidence_columns_is_migrated(tmp_path):
     assert {"p_fair", "edge_ev", "rank_score", "books", "quality", "closing_price", "clv"} <= cols
     assert stats_mod.accuracy_report(db)["legs"]["wins"] == 1                       # old rows still read
     db.close()
+
+
+def test_a_sharp_confirmed_leg_ranks_above_an_equal_leg_without_a_reference():
+    """Nov 2026 audit: sharp-confirmed non-negative-edge legs won 70% against 57% predicted; unreferenced ones track the market."""
+    from predbot.selection.evidence import assess
+    cfg = Config()
+    confirmed = cand(_fx(0), p=0.62, price=1.62, p_fair=0.62, edge_ev=0.01)
+    plain = cand(_fx(1), p=0.62, price=1.62)
+    assert assess(confirmed, cfg).rank - assess(plain, cfg).rank >= cfg.sharp_confirmed_rank_bonus - 1e-9
+
+
+def test_a_leg_priced_exactly_at_the_sharp_fair_price_is_kept_and_one_below_it_is_not():
+    cfg = Config()
+    kept = cand(_fx(0), p=0.80, price=1.30, p_fair=0.78, edge_ev=0.0)
+    dropped = cand(_fx(1), p=0.80, price=1.30, p_fair=0.78, edge_ev=-0.001)
+    assert select([kept], cfg, dt()).diagnostics["daily"]["rejections"].get("poor_reference_value", 0) == 0
+    assert select([dropped], cfg, dt()).diagnostics["daily"]["rejections"]["poor_reference_value"] == 1

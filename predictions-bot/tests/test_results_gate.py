@@ -131,12 +131,12 @@ def _provs(*names):
 def test_paths_are_ordered_cheapest_and_most_reliable_first():
     e = _event("oddsapi", league_id="soccer_epl", extra={"sport_key": "soccer_epl"}, sources=["oddsapi", "sportsgameodds"])
     assert [p.name for p in result_paths(e, None, _provs("sportsgameodds", "football_data", "espn", "oddsapi"))] == [
-        "sportsgameodds", "football_data", "espn", "oddsapi"]
+        "sportsgameodds", "football_data", "espn"]
 
 
-def test_the_paid_scores_path_is_last_and_only_for_odds_api_soccer_events():
+def test_the_odds_api_is_never_a_result_path():
     e = _event("oddsapi", league_id="soccer_uefa_europa_league", extra={"sport_key": "soccer_uefa_europa_league"})
-    assert [p.name for p in result_paths(e, None, _provs("espn", "oddsapi"))] == ["espn", "oddsapi"]
+    assert [p.name for p in result_paths(e, None, _provs("espn", "oddsapi"))] == ["espn"]
     assert [p.name for p in result_paths(_event(league_id="uefa_-_europa_league"), None, _provs("espn", "oddsapi"))] == ["espn"]
 
 

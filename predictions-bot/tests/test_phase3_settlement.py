@@ -253,12 +253,12 @@ def test_sportsgameodds_events_have_a_path():
                         _providers(sportsgameodds=1)) == "sportsgameodds"
 
 
-def test_oddsapi_events_need_a_scores_covered_sport_key():
+def test_the_odds_api_is_never_a_settlement_source():
+    """Its credits belong to generation (sharp prices); the sports result APIs settle every pick."""
     prov = _providers(oddsapi=1)
-    assert results_path(_event("oddsapi", extra={"sport_key": "soccer_epl"}), Config(), prov) == "oddsapi"
-    assert results_path(_event("oddsapi", extra={"sport_key": "tennis_atp_us_open"}, sport="tennis",
-                               league_id=""), Config(), prov) is None
-    assert results_path(_event("oddsapi", league_id=""), Config(), prov) is None            # no key stored
+    assert results_path(_event("oddsapi", extra={"sport_key": "soccer_epl"}), Config(), prov) is None
+    assert results_path(_event("oddsapi", extra={"sport_key": "soccer_epl"}), Config(),
+                        _providers(oddsapi=1, espn=1)) in (None, "espn")
 
 
 def test_football_needs_football_data_and_a_mapped_league():
@@ -348,7 +348,8 @@ def test_resolver_follows_the_results_paths_cheapest_first():
     provs, calls = _spied(football_data=None, espn=None, oddsapi=_res(source="oddsapi"), sportsgameodds=_res(source="sgo"))
     r = ResultsResolver(provs).resolve("sharpapi", "1", "football", "A", "B", dt(), alt_ids={"oddsapi": "9"},
                                        hints={"league_id": "england_-_premier_league", "sport_key": "soccer_epl"})
-    assert r.source == "oddsapi" and calls == ["football_data", "espn", "oddsapi"]      # sgo never reached
+    assert "oddsapi" not in calls and calls[:2] == ["football_data", "espn"]            # the Odds API is never asked
+    provs["oddsapi"].fetch_result.assert_not_called()
 
 
 @pytest.mark.parametrize("answers,winner", [

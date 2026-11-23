@@ -324,8 +324,8 @@ def result_paths(event, cfg, providers: Dict) -> List[ResultPath]:
 
     ``event`` only needs ``sport``, ``league``, ``league_id``, ``provider``, ``sources``
     and ``extra`` (a stored pick works too). Order: the origin SportsGameOdds id,
-    football-data.org, ESPN, EuroLeague, The Odds API ``/scores`` (costs credits, so
-    last), then a SportsGameOdds team+time lookup.
+    football-data.org, ESPN, EuroLeague, then a SportsGameOdds team+time lookup. The Odds API
+    ``/scores`` is deliberately NOT a result source: its credits belong to generation (sharp prices).
     """
     providers = providers or {}
     if getattr(event, "sport", "") == "tennis" and is_doubles(getattr(event, "home", ""), getattr(event, "away", "")):
@@ -343,8 +343,6 @@ def result_paths(event, cfg, providers: Dict) -> List[ResultPath]:
         out.append(_path("espn", comp))
     if providers.get("euroleague") is not None and comp is not None and comp.euroleague             and not is_womens_fixture(event):
         out.append(_path("euroleague", comp))
-    if providers.get("oddsapi") is not None and "oddsapi" in sources             and str(extra.get("sport_key") or "").startswith("soccer_"):
-        out.append(_path("oddsapi", comp))
     if sgo is not None and not any(p.name == "sportsgameodds" for p in out) and _sgo_covers(event, sgo, comp):
         out.append(_path("sportsgameodds", comp))
     return out

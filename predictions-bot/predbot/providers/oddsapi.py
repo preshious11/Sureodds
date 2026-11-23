@@ -71,8 +71,10 @@ class OddsApiProvider(BaseProvider):
                  monthly_limit: int = 500, max_credits_per_cycle: int = 15,
                  reserve_credits: int = 50, min_keys_per_sport: int = 1,
                  league_allowlist: Optional[List[str]] = None, price_mode: str = "median",
-                 settlement_reserve_credits: int = 0):
+                 settlement_reserve_credits: int = 0, settlement_enabled: bool = True):
         self.key = api_key
+        #: False = never spend credits on /scores for settlement (a result already cached today is still used).
+        self.settlement_enabled = settlement_enabled
         self.price_mode = price_mode
         self.budget = budget
         self.min_interval = min_interval
@@ -647,6 +649,9 @@ class OddsApiProvider(BaseProvider):
         if stored is not None:                          # a run earlier today already paid for it
             self._scores_cache[sport_key] = stored
             return stored
+        if not self.settlement_enabled:
+            self._scores_cache[sport_key] = None
+            return None
         if not self.can_spend_credits(self.SCORES_COST, purpose="settlement"):
             self._scores_cache[sport_key] = None
             return None

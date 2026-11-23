@@ -787,3 +787,14 @@ def test_editor_and_agent_workspaces_are_ignored_by_git():
 
 def test_legacy_deployment_files_are_gone():
     assert not (ROOT / "Procfile").exists() and not (ROOT / "railway.json").exists()
+
+
+def test_the_odds_api_never_spends_settlement_credits_when_settlement_is_disabled(budget):
+    from predbot.config import Config
+    from predbot.providers.oddsapi import OddsApiProvider
+    p = OddsApiProvider("fake", budget, reserve_credits=80, settlement_enabled=False)
+    p.requests_remaining = 400
+    calls = []
+    p._get = lambda *a, **k: calls.append(a) or []
+    assert p._scores_for("soccer_epl") is None and calls == []
+    assert Config().oddsapi_settlement_enabled is False

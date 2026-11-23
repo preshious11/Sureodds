@@ -151,6 +151,8 @@ def assess(s, cfg, tables: Optional[Dict[int, dict]] = None) -> Evidence:
     p_lcb = max(0.01, s.p_model - cfg.rank_z * se)
     edge = edge_points(s)
     rank = p_lcb + (cfg.edge_rank_weight * min(0.08, max(-0.06, edge)) if edge is not None else 0.0)
+    if edge is not None and edge >= 0:
+        rank += cfg.sharp_confirmed_rank_bonus      # a sharp book confirms the price is no worse than fair
     return Evidence(books=ml.distinct_books(), providers=ml.provider_count(), dispersion=ml.price_dispersion(),
                     quality=quality, se=se, p_lcb=p_lcb, edge=edge, has_sharp=has_sharp, rank=rank)
 

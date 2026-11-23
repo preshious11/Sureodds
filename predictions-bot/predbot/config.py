@@ -190,6 +190,12 @@ class Config:
     #: 0 (default) keeps one shared floor, i.e. generation behaves exactly as before.
     oddsapi_settlement_reserve_credits: int = field(
         default_factory=lambda: _int("ODDSAPI_SETTLEMENT_RESERVE_CREDITS", 0))
+    #: Whether settlement may spend Odds API credits on ``/scores`` lookups (2 credits per sport key per run). OFF by
+    #: default: audited Nov 2026 - settlement spent 12-14 credits per run, twice a day (~26 of the ~35 credits used per
+    #: day), exhausted the 500-credit month by Nov 13, and from then on generation had no Odds API odds, so no sharp
+    #: reference. ESPN / football-data.org / EuroLeague / SportsGameOdds settle the picks; none of the Top/Daily legs
+    #: audited was ever settled by the Odds API. Set ODDSAPI_SETTLEMENT_ENABLED=1 to restore the lookups.
+    oddsapi_settlement_enabled: bool = field(default_factory=lambda: _bool("ODDSAPI_SETTLEMENT_ENABLED", False))
     #: Each allowed Odds API sport (football, tennis) that has >= 1 event in the
     #: window is guaranteed this many odds keys per cycle before the remaining
     #: credits are ranked by event count, so one busy sport can't starve another.
@@ -351,7 +357,10 @@ class Config:
     #: Judgement value from a live capture of 28 sharp-covered lines (best soft price vs fair: median -3.1%, quartiles
     #: -5.7% / -0.6%): -0.04 drops roughly the worst-priced third. -0.01 dropped 71% of them and, measured against the
     #: MEDIAN soft price, 100% - a median book always carries its margin. Refit from ``cli.py accuracy`` later.
-    min_edge_vs_sharp: float = field(default_factory=lambda: _float("MIN_EDGE_VS_SHARP", -0.04))
+    #: 0.0 since the Nov 2026 audit of 5,873 graded predictions: legs whose best soft price was BELOW the sharp fair
+    #: price returned -9% flat-staked (-31% for those that reached a Daily), legs at or above it +21% (n=135, same
+    #: sign in both halves of the sample). A leg with a sharp reference must therefore not be priced worse than it.
+    min_edge_vs_sharp: float = field(default_factory=lambda: _float("MIN_EDGE_VS_SHARP", 0.0))
     #: Which soft price the edge is measured against: ``best`` (the shoppable price, default) or ``median``.
     edge_price: str = field(default_factory=lambda: _env("EDGE_PRICE", "best").strip().lower())
     #: Without a sharp reference the model may not claim to beat the market by more than this (p_model - p_market):
@@ -362,6 +371,9 @@ class Config:
     #: standard guard against the winner's curse when the best of ~1,000 noisy lines is picked.
     rank_z: float = field(default_factory=lambda: _float("RANK_Z", 1.0))
     edge_rank_weight: float = field(default_factory=lambda: _float("EDGE_RANK_WEIGHT", 1.0))
+    #: Added to the rank of a leg whose sharp reference CONFIRMS a non-negative edge, so confirmed-value legs are
+    #: offered to the Top/Daily builders ahead of legs resting on soft prices alone (never shown, never a probability).
+    sharp_confirmed_rank_bonus: float = field(default_factory=lambda: _float("SHARP_CONFIRMED_RANK_BONUS", 0.10))
     #: Prior noise (probability points) of a de-vigged market probability by market quality. Judgement values, NOT
     #: fitted: refit them from ``accuracy`` reports (hit rate vs predicted probability per quality tier) once
     #: enough picks have settled.

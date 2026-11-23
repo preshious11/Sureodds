@@ -63,6 +63,7 @@ def build_providers(cfg: Config, db: Database) -> Dict[str, BaseProvider]:
                                          max_credits_per_cycle=cfg.oddsapi_max_credits_per_cycle,
                                          reserve_credits=cfg.oddsapi_reserve_credits,
                                          settlement_reserve_credits=cfg.oddsapi_settlement_reserve_credits,
+                                         settlement_enabled=cfg.oddsapi_settlement_enabled,
                                          min_keys_per_sport=cfg.oddsapi_min_keys_per_sport,
                                          league_allowlist=cfg.odds_api_league_allowlist)
     if cfg.football_data_key:
@@ -287,8 +288,7 @@ class ResultsResolver:
 
     The providers to ask, and in which order, come from
     ``markets.settlement.result_paths``: the origin SportsGameOdds id, football-data.org,
-    ESPN, EuroLeague, The Odds API ``/scores`` (last - it costs credits), then a
-    SportsGameOdds team+time lookup. The first usable result wins, and every provider
+    ESPN, EuroLeague, then a SportsGameOdds team+time lookup (the Odds API is never asked). The first usable result wins, and every provider
     call is wrapped so one provider being down never stops the rest."""
 
     def __init__(self, providers: Dict[str, BaseProvider]):
